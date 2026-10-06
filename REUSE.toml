@@ -1,0 +1,9 @@
+version = 1
+
+# Everything in this repository is Rerail's own work unless a more specific annotation below,
+# or an SPDX header in the file itself, says otherwise. Copied or adapted third-party material
+# gets its own [[annotations]] entry and an UPSTREAM.md record beside it.
+[[annotations]]
+path = "**"
+SPDX-FileCopyrightText = "2026 Nera Software Inc."
+SPDX-License-Identifier = "Apache-2.0"
