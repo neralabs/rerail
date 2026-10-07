@@ -13,7 +13,7 @@
  * harness must score golden rules with the pack's docs. Rules TSLint cannot run without configuration
  * (`REQUIRES_CONFIGURATION`, audited `requires-config`) stay out of it.
  */
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -74,7 +74,10 @@ describe("bundled rules", () => {
 
   it("has a fixture file for every rule and none for rules that do not exist", () => {
     const stems = Object.values(stemByRuleId);
-    const fixtureStems = readdirSync(FIXTURES).filter(name => name.endsWith(".json")).map(name => name.slice(0, -5));
+    // The package ships no enabled-by-default rules today, so the fixture directory may not exist yet.
+    const fixtureStems = existsSync(FIXTURES)
+      ? readdirSync(FIXTURES).filter(name => name.endsWith(".json")).map(name => name.slice(0, -5))
+      : [];
     expect(fixtureStems.filter(stem => !stems.includes(stem))).toEqual([]);
     expect(stems.filter(stem => !fixtureStems.includes(stem))).toEqual([]);
   });

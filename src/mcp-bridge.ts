@@ -1,12 +1,10 @@
 import { once } from "node:events";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
-import { resolveRerailWorkspaceRoute, type RerailWorkspaceRoute } from "./dev-routing.js";
 
 export type RerailMcpBridgeFetch = (endpoint: URL, init: RequestInit) => Promise<Response>;
 
 export interface RerailMcpBridgeOptions {
-  cwd?: string;
   input?: Readable;
   stdout?: Writable;
   stderr?: Writable;
@@ -64,21 +62,7 @@ async function writeLine(output: Writable, line: string): Promise<void> {
   if (!output.write(`${line}\n`)) await once(output, "drain");
 }
 
-type RerailMcpDestination =
-  | { kind: "endpoint"; url: URL }
-  | { kind: "error"; message: string };
-
-function resolveMcpDestination(route: RerailWorkspaceRoute): RerailMcpDestination {
-  switch (route.kind) {
-    case "workspace":
-      return { kind: "endpoint", url: new URL("/mcp", route.instance.url) };
-    case "host":
-      return { kind: "endpoint", url: new URL("http://127.0.0.1:4737/mcp") };
-    case "disabled":
-      return { kind: "error", message: `Rerail is disabled for workspace ${route.workspaceRoot}` };
-  }
-}
-
+const MCP_ENDPOINT = new URL("http://127.0.0.1:4737/mcp");
 
 /** Relays one request; returns the line to answer with, or undefined when the server answered with no body. */
 async function relay(endpoint: URL, request: string, fetchImpl: RerailMcpBridgeFetch): Promise<string | undefined> {
@@ -96,15 +80,13 @@ async function relay(endpoint: URL, request: string, fetchImpl: RerailMcpBridgeF
 }
 
 async function relayRequest(
-  destination: RerailMcpDestination,
   request: string,
   stdout: Writable,
   stderr: Writable,
   fetchImpl: RerailMcpBridgeFetch,
 ): Promise<void> {
   try {
-    if (destination.kind === "error") throw new Error(destination.message);
-    const body = await relay(destination.url, request, fetchImpl);
+    const body = await relay(MCP_ENDPOINT, request, fetchImpl);
     if (body !== undefined) await writeLine(stdout, body);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -115,18 +97,16 @@ async function relayRequest(
 }
 
 /**
- * Immutable host-side MCP bridge. Its process cwd selects a checkout instance
- * once, so a harness session can never be redirected by another worktree.
+ * Stdio MCP bridge to the machine's Rerail daemon.
  * A failed request answers its own ids with a JSON-RPC error; only stdin EOF ends the bridge.
  */
 export async function runRerailMcpBridge(options: RerailMcpBridgeOptions = {}): Promise<void> {
-  const destination = resolveMcpDestination(await resolveRerailWorkspaceRoute(options.cwd ?? process.cwd()));
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
   const fetchImpl = options.fetch ?? fetch;
   const lines = createInterface({ input: options.input ?? process.stdin, crlfDelay: Infinity });
   for await (const request of lines) {
     if (request.trim() === "") continue;
-    await relayRequest(destination, request, stdout, stderr, fetchImpl);
+    await relayRequest(request, stdout, stderr, fetchImpl);
   }
 }

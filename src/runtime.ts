@@ -23,7 +23,7 @@ import { bootstrapPolicyDslCatalog, type PolicyDslCatalog } from "./policy-dsl-c
 import { loadBundledRules } from "./rule-bootstrap.js";
 import { defaultRerailDatabasePath } from "./database.js";
 import { resolveRepositoryContext, ScopedRuleCatalog, type RepositoryContext } from "./scoped-rule-catalog.js";
-import { effectiveRepositoryStartState, RepositoryStartWatch } from "./repository-start.js";
+import { contextStartState, RepositoryStartWatch } from "./repository-start.js";
 import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "./semantic-primitives.js";
 import { CosineRuleRegistry, type RuleMatch } from "./registry.js";
 import { LiveCosineRules } from "./cosine-rule-sync.js";
@@ -491,7 +491,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       );
       ruleCatalog = catalog;
       // Bundled rules arrive only where Rerail is started; `rerail start` seeds a new repository.
-      if (effectiveRepositoryStartState(catalog.path, catalog.context()) === "started") catalog.seed(loadBundledRules());
+      if (contextStartState(catalog.path, catalog.context()) === "started") catalog.seed(loadBundledRules());
       startWatch = options.startGate === true ? new RepositoryStartWatch(catalog.path, catalog.context()) : undefined;
       policyCatalog = bootstrapPolicyDslCatalog({
         databasePath: catalog.path, store: catalog,

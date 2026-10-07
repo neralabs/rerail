@@ -6,7 +6,6 @@ import { presentationDaemonSchema, presentationResponseSchema, type sessionRespo
 import { withinCheckout } from "./checkout-control.js";
 import { DAEMON_STATE_FILE, processAlive, readDaemonState } from "./daemon-control.js";
 import type { DaemonState } from "./daemon.js";
-import { resolveRerailWorkspaceRoute, type RerailDevInstance } from "./dev-routing.js";
 import { readRepositoryId } from "./repository-identity.js";
 import type { RepositoryStartState } from "./repository-start.js";
 import type { PresentationPresence } from "./schema.js";
@@ -131,16 +130,10 @@ async function appendEvaluation(
   }
 }
 
-async function matchesWorkspace(actual: string | undefined, expected: string | undefined): Promise<boolean> {
-  return expected === undefined || (actual !== undefined && await realpath(actual) === expected);
-}
-
 interface VerifiedDaemon {
   workspace: string;
-  instance: RerailDevInstance | undefined;
   state: DaemonState;
   origin: URL;
-  publicOrigin: URL;
 }
 
 /** `/healthz` answers with the daemon's own identity, so a stale locator cannot borrow another listener. */
@@ -175,17 +168,14 @@ async function liveHealth(origin: URL, pid: number): Promise<z.infer<typeof heal
  */
 async function verifyDaemon(cwd: string): Promise<VerifiedDaemon | string> {
   const workspace = await realpath(cwd);
-  const route = await resolveRerailWorkspaceRoute(workspace);
-  if (route.kind === "disabled") return NOT_ON_HERE;
-  const instance = route.kind === "workspace" ? route.instance : undefined;
-  const state = await readDaemonState(instance?.stateFile ?? join(defaultRerailHome(), DAEMON_STATE_FILE));
-  if (state === undefined || !await matchesWorkspace(state.workspaceRoot, instance?.workspaceRoot)) return "daemon unavailable";
-  const origin = instance?.url ?? new URL(state.url);
+  const state = await readDaemonState(join(defaultRerailHome(), DAEMON_STATE_FILE));
+  if (state === undefined) return "daemon unavailable";
+  const origin = new URL(state.url);
   if (origin.protocol !== "http:" || !["127.0.0.1", "[::1]", "localhost"].includes(origin.hostname)
       || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
     return "daemon unavailable";
   }
-  return { workspace, instance, state, origin, publicOrigin: instance?.publicUrl ?? origin };
+  return { workspace, state, origin };
 }
 
 /**
@@ -201,11 +191,9 @@ export async function readRulesPage({ cwd }: RulesPageRequest): Promise<RulesPag
     if (typeof daemon === "string") return { url: null, reason: daemon };
     const health = await liveHealth(daemon.origin, daemon.state.pid);
     if (health === undefined) return { url: null, reason: "daemon unavailable" };
-    if (daemon.instance === undefined) {
-      const repositoryId = readRepositoryId(daemon.workspace);
-      if (repositoryId === undefined || health.repositoryId !== repositoryId) return { url: null, reason: "daemon serves another repository" };
-    }
-    return { url: rulesPageUrl(daemon.publicOrigin), reason: null };
+    const repositoryId = readRepositoryId(daemon.workspace);
+    if (repositoryId === undefined || health.repositoryId !== repositoryId) return { url: null, reason: "daemon serves another repository" };
+    return { url: rulesPageUrl(daemon.origin), reason: null };
   } catch {
     return { url: null, reason: "unavailable" };
   }
@@ -215,13 +203,12 @@ export async function readRulesPage({ cwd }: RulesPageRequest): Promise<RulesPag
  * Whether Rerail is started in `cwd`'s repository, from the live host daemon, or null when none
  * answers. One request: the recorded pid must be alive and the reply must parse as a presentation.
  * Passive, and free of SQLite, so hooks and hosts that cannot load the binding (OMP runs on Bun)
- * ask this first. A repository-operations workspace's container is not consulted.
+ * ask this first.
  */
 export async function readRepositoryState(cwd: string, host: RerailHost): Promise<RepositoryStartState | null> {
   try {
     const daemon = await verifyDaemon(cwd);
-    if (daemon === NOT_ON_HERE) return "stopped";
-    if (typeof daemon === "string" || daemon.instance !== undefined || !processAlive(daemon.state.pid)) return null;
+    if (typeof daemon === "string" || !processAlive(daemon.state.pid)) return null;
     const response = await get(daemon.origin, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationResponseSchema);
     return response.repositoryState;
   } catch {
@@ -239,16 +226,13 @@ export async function readPresentation({ sessionId, host, cwd, onDemand = false 
   try {
     // The `/api/presentation` response proves liveness; it must not pay for a second probe.
     const daemon = await verifyDaemon(cwd);
-    // A repository-operations workspace that switched its container off is stopped there.
-    if (daemon === NOT_ON_HERE) return unavailable(NOT_ON_HERE, presence, "stopped");
     if (typeof daemon === "string") return unavailable(daemon, presence);
-    const { workspace, instance, state, origin, publicOrigin } = daemon;
+    const { workspace, state, origin } = daemon;
     const response = await get(origin, `/api/presentation?${new URLSearchParams({
       repository: workspace, host, sessionId, onDemand: String(onDemand),
     })}`, presentationResponseSchema);
     const context = response.context;
-    if (context === undefined || context.daemon.pid !== state.pid
-        || !await matchesWorkspace(context.daemon.workspaceRoot, instance?.workspaceRoot)) return unavailable("daemon unavailable", presence);
+    if (context === undefined || context.daemon.pid !== state.pid) return unavailable("daemon unavailable", presence);
     presence = response.presence;
     if (presence === "silent" && !onDemand) return presentation([], presence, response.repositoryState);
     // A session in a repository where Rerail is not started is never recorded, so this comes first.
@@ -260,7 +244,7 @@ export async function readPresentation({ sessionId, host, cwd, onDemand = false 
     if (session.sessionId !== sessionId || session.host !== host || !withinCheckout(root, workspace)) {
       return unavailable("session unavailable", presence, "started");
     }
-    const parts = sessionParts(publicOrigin, context.session);
+    const parts = sessionParts(origin, context.session);
     // History failure must not discard already verified session counters.
     await appendEvaluation(parts, context.session, context.daemon.native.ok, root, onDemand);
     return presentation(parts, presence, "started");

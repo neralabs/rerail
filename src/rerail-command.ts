@@ -4,7 +4,6 @@ import { readPresentation, readRulesPage } from "./session-presentation.js";
 import { nodeExecutable, openPage, type PageOpening } from "./daemon-control.js";
 import { policyControlsSchema } from "./scan-control-schema.js";
 import type { PolicyControls, PolicySettings } from "./scan-control-schema.js";
-import { resolveRerailWorkspaceRoute, rerailDevLauncher } from "./dev-routing.js";
 
 /** Minimal command-host surface shared by OMP and Pi. */
 export interface RerailCommandHost {
@@ -93,16 +92,12 @@ interface LauncherResult {
   stderr: string;
 }
 
-/** `hostArgs` apply only to the installed CLI: a development workspace's container has its own Rerail home. */
-async function runLauncher(options: RerailCommandOptions, args: readonly string[], hostArgs: readonly string[] = []): Promise<LauncherResult> {
-  const route = await resolveRerailWorkspaceRoute(options.cwd());
-  let workspace;
-  if (route.kind === "workspace") workspace = route.instance;
-  else if (route.kind === "disabled") workspace = route;
-  const launcher = workspace === undefined
-    ? { command: nodeExecutable(), args: [join(options.packageRoot, "dist", "cli.js"), ...args, ...hostArgs], cwd: options.cwd() }
-    : { ...rerailDevLauncher(workspace, args), cwd: workspace.workspaceRoot };
-  const child = spawn(launcher.command, launcher.args, { cwd: launcher.cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+async function runLauncher(options: RerailCommandOptions, args: readonly string[]): Promise<LauncherResult> {
+  const child = spawn(nodeExecutable(), [join(options.packageRoot, "dist", "cli.js"), ...args], {
+    cwd: options.cwd(),
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   const { promise, resolve, reject } = Promise.withResolvers<LauncherResult>();
   const output = { stdout: "", stderr: "" };
   const append = (stream: keyof typeof output, chunk: string): void => {
@@ -194,7 +189,7 @@ export function registerRerailCommands(pi: RerailCommandHost, options: RerailCom
   for (const command of repositoryCommands) {
     register(command.name, command.description, async ctx => {
       const database = options.databasePath?.();
-      const result = await runLauncher(options, command.argv, database === undefined ? [] : ["--database", database]);
+      const result = await runLauncher(options, database === undefined ? command.argv : [...command.argv, "--database", database]);
       // Re-attaching attaches the runtime where Rerail is started, and leaves only the "not on here" footer where it is not.
       if (result.code === 0) await options.reattach?.();
       ctx.ui.notify((result.stdout + result.stderr).trim() || `/${command.name} exited with code ${result.code}.`, result.code === 0 ? "info" : "error");

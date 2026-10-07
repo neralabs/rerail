@@ -2,6 +2,16 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+/** Attach-retry tests replace daemon discovery, which polls on real timers, with a daemon that is already up. */
+const daemonRoute = vi.hoisted(() => ({ start: undefined as (() => Promise<unknown>) | undefined }));
+vi.mock("../src/daemon-control.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/daemon-control.js")>("../src/daemon-control.js");
+  return {
+    ...actual,
+    startDaemonForPackage: (...args: Parameters<typeof actual.startDaemonForPackage>) =>
+      daemonRoute.start?.() ?? actual.startDaemonForPackage(...args),
+  };
+});
 import Database from "better-sqlite3";
 import type { CustomMessagePayload, ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { z } from "zod";
@@ -35,6 +45,7 @@ const shutdowns: Array<() => Promise<unknown>> = [];
 
 afterEach(async () => {
   for (const shutdown of shutdowns.splice(0)) await shutdown();
+  daemonRoute.start = undefined;
   await closeNativeTestDaemons();
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -46,35 +57,6 @@ afterEach(async () => {
 interface RegisteredTool {
   name: string;
   execute(id: string, input: unknown): Promise<unknown>;
-}
-
-/** Points the checkout at a fake per-worktree dev container with distinctive observable replies. */
-function stubDevInstance(cwd: string, options: {
-  semanticResult?: unknown;
-  ingestDelivery?: string;
-} = {}): { remove(): void } {
-  mkdirSync(join(cwd, ".nera"), { recursive: true });
-  const path = join(cwd, ".nera", "instance.env");
-  writeFileSync(path, 'NERA_RERAIL_ENABLED="true"\nNERA_RERAIL_PUBLIC_URL="http://127.0.0.1:4737"\n');
-  const fetchNative = globalThis.fetch;
-  vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
-    if (url.port !== "4737") return fetchNative(url, init);
-    const operation = z.object({ operation: z.string() }).parse(JSON.parse(String(init.body))).operation;
-    const deliveries = operation === "ingest" && options.ingestDelivery !== undefined
-      ? [{
-          sessionId: "omp-test-session",
-          requested: "steer",
-          mechanism: "native-queue",
-          content: options.ingestDelivery,
-        }]
-      : [];
-    return Response.json({
-      result: operation === "semantic" ? options.semanticResult ?? null : null,
-      deliveries,
-      entries: [],
-    });
-  });
-  return { remove: () => rmSync(path) };
 }
 
 async function createHarness({ started = true }: { started?: boolean } = {}) {
@@ -534,72 +516,14 @@ describe("OMP cosine-rules extension", () => {
     }
   });
 
-  it("moves semantic tools to the Node daemon when the dev container is gone on the next session_start", async () => {
-    const harness = await createHarness();
-    const tools = new Map<string, RegisteredTool>();
-    Object.assign(harness.pi, { registerTool(tool: RegisteredTool) { tools.set(tool.name, tool); } });
-    const devSelection = { runtime: "dev-container", marker: "dev-only-result" };
-    const dev = stubDevInstance(harness.context.cwd, { semanticResult: devSelection });
-    createCosineRulesExtension({
-      modelPath: resolve("model"),
-      rules: [sentenceRule],
-      registerCommand: false,
-    })(harness.pi);
-    await harness.handlers.get("session_start")?.({ type: "session_start" }, harness.context);
-    const select = tools.get("rerail_select");
-    if (select === undefined) throw new Error("OMP extension did not register rerail_select");
-    await expect(select.execute("dev-call", { spec: { order: "source" } })).resolves.toEqual(
-      expect.objectContaining({ details: devSelection }),
-    );
-
-    dev.remove();
-    await harness.handlers.get("session_start")?.({ type: "session_start" }, harness.context);
-    await harness.handlers.get("before_agent_start")?.(
-      { type: "before_agent_start", prompt: "Guest checkout remains available." },
-      harness.context,
-    );
-
-    await expect(select.execute("daemon-call", { spec: { order: "source" } })).resolves.toEqual(
-      expect.objectContaining({
-        details: expect.objectContaining({ selectionId: expect.any(String) }),
-      }),
-    );
-  });
-
-  it("stops routing to a stale dev container when the same OMP session returns to the Node daemon", async () => {
-    const harness = await createHarness();
-    createCosineRulesExtension({
-      modelPath: resolve("model"),
-      rules: [sentenceRule],
-      registerTool: false,
-      registerCommand: false,
-    })(harness.pi);
-    await harness.handlers.get("session_start")?.({ type: "session_start" }, harness.context);
-    const staleGuidance = "Wrong guidance from the stale dev runtime.";
-    const dev = stubDevInstance(harness.context.cwd, { ingestDelivery: staleGuidance });
-    await harness.handlers.get("session_switch")?.({ type: "session_switch" }, harness.context);
-
-    dev.remove();
-    await harness.handlers.get("session_start")?.({ type: "session_start" }, harness.context);
-    await harness.handlers.get("message_update")?.(
-      {
-        type: "message_update",
-        message: { role: "assistant", timestamp: 100, responseId: "response-1" },
-        assistantMessageEvent: { type: "text_delta", delta: "Guest checkout remains available. Next" },
-      },
-      harness.context,
-    );
-
-    const delivered = harness.messages.map(sent => sent.message.content);
-    expect(delivered).toContain("Check checkout requirements.");
-    expect(delivered).not.toContain(staleGuidance);
-  });
-
   describe("attach retry", () => {
-    /** A dev container that can refuse named sessions, and whose next initialize can be held mid-flight. */
-    function flakyDevInstance(cwd: string) {
+    /** A running daemon whose native sessions can be refused by name, and whose next initialize can be held mid-flight. */
+    function flakyDaemon(cwd: string) {
+      daemonRoute.start = async () => ({
+        started: false,
+        daemon: { state: { url: "http://127.0.0.1:4737/", nativeToken: "native-token" }, health: { workspaceRoot: cwd } },
+      });
       const fetchNative = globalThis.fetch;
-      stubDevInstance(cwd);
       const state = { down: new Set<string>(), hold: undefined as PromiseWithResolvers<void> | undefined };
       const requests: Array<{ operation: string; sessionId: string }> = [];
       vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
@@ -619,110 +543,110 @@ describe("OMP cosine-rules extension", () => {
 
     it("surfaces the first failure, retries quietly with backoff, and reports once when it attaches", async () => {
       const harness = await createHarness();
-      const dev = flakyDevInstance(harness.context.cwd);
+      const daemon = flakyDaemon(harness.context.cwd);
       vi.useFakeTimers();
       const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
       createCosineRulesExtension({ modelPath: resolve("model"), rules: [sentenceRule], registerTool: false, registerCommand: false })(harness.pi);
-      dev.state.down.add("omp-test-session");
+      daemon.state.down.add("omp-test-session");
       await expect(harness.handlers.get("session_start")!({ type: "session_start" }, harness.context)).rejects.toThrow("fetch failed");
-      expect(dev.initializes("omp-test-session")).toBe(1);
+      expect(daemon.initializes("omp-test-session")).toBe(1);
 
       await vi.advanceTimersByTimeAsync(1_000);
-      await vi.waitFor(() => expect(dev.initializes("omp-test-session")).toBe(2));
+      await vi.waitFor(() => expect(daemon.initializes("omp-test-session")).toBe(2));
       await vi.advanceTimersByTimeAsync(2_000);
-      await vi.waitFor(() => expect(dev.initializes("omp-test-session")).toBe(3));
+      await vi.waitFor(() => expect(daemon.initializes("omp-test-session")).toBe(3));
       expect(stderr).not.toHaveBeenCalled();
 
-      dev.state.down.delete("omp-test-session");
+      daemon.state.down.delete("omp-test-session");
       await vi.advanceTimersByTimeAsync(4_000);
-      await vi.waitFor(() => expect(dev.initializes("omp-test-session")).toBe(4));
+      await vi.waitFor(() => expect(daemon.initializes("omp-test-session")).toBe(4));
       expect(stderr).toHaveBeenCalledTimes(1);
       expect(stderr).toHaveBeenCalledWith(expect.stringContaining("Rerail attached after 3 failed attempt(s)"));
       await harness.handlers.get("before_agent_start")!({ type: "before_agent_start", prompt: "hello" }, harness.context);
-      expect(dev.requests.at(-1)).toEqual({ operation: "ingest", sessionId: "omp-test-session" });
+      expect(daemon.requests.at(-1)).toEqual({ operation: "ingest", sessionId: "omp-test-session" });
       vi.useRealTimers();
     });
 
     it("drops a retry that was in flight when a newer session attached", async () => {
       const harness = await createHarness();
-      const dev = flakyDevInstance(harness.context.cwd);
+      const daemon = flakyDaemon(harness.context.cwd);
       vi.useFakeTimers();
       vi.spyOn(process.stderr, "write").mockReturnValue(true);
       createCosineRulesExtension({ modelPath: resolve("model"), rules: [sentenceRule], registerTool: false, registerCommand: false })(harness.pi);
       const next = { ...harness.context, sessionManager: { getSessionId: () => "omp-next-session", getBranch: () => [] } } as unknown as ExtensionContext;
-      dev.state.down.add("omp-test-session");
+      daemon.state.down.add("omp-test-session");
       await expect(harness.handlers.get("session_start")!({ type: "session_start" }, harness.context)).rejects.toThrow();
 
       // The retry fires and its initialize is held open when the host switches sessions.
       const held = Promise.withResolvers<void>();
-      dev.state.hold = held;
+      daemon.state.hold = held;
       await vi.advanceTimersByTimeAsync(1_000);
-      await vi.waitFor(() => expect(dev.initializes("omp-test-session")).toBe(2));
+      await vi.waitFor(() => expect(daemon.initializes("omp-test-session")).toBe(2));
       const switching = harness.handlers.get("session_switch")!({ type: "session_switch" }, next) as Promise<void>;
       held.resolve();
       await expect(switching).resolves.toBeUndefined();
-      expect(dev.initializes("omp-next-session")).toBe(1);
+      expect(daemon.initializes("omp-next-session")).toBe(1);
 
       await vi.advanceTimersByTimeAsync(60_000);
       await settleIo();
-      expect(dev.initializes("omp-test-session")).toBe(2);
+      expect(daemon.initializes("omp-test-session")).toBe(2);
       await harness.handlers.get("before_agent_start")!({ type: "before_agent_start", prompt: "hello" }, next);
-      expect(dev.requests.at(-1)).toEqual({ operation: "ingest", sessionId: "omp-next-session" });
+      expect(daemon.requests.at(-1)).toEqual({ operation: "ingest", sessionId: "omp-next-session" });
       vi.useRealTimers();
     });
 
     it("drops a retry that was in flight at shutdown", async () => {
       const harness = await createHarness();
-      const dev = flakyDevInstance(harness.context.cwd);
+      const daemon = flakyDaemon(harness.context.cwd);
       vi.useFakeTimers();
       vi.spyOn(process.stderr, "write").mockReturnValue(true);
       createCosineRulesExtension({ modelPath: resolve("model"), rules: [sentenceRule], registerTool: false, registerCommand: false })(harness.pi);
-      dev.state.down.add("omp-test-session");
+      daemon.state.down.add("omp-test-session");
       await expect(harness.handlers.get("session_start")!({ type: "session_start" }, harness.context)).rejects.toThrow();
 
       const held = Promise.withResolvers<void>();
-      dev.state.hold = held;
+      daemon.state.hold = held;
       await vi.advanceTimersByTimeAsync(1_000);
-      await vi.waitFor(() => expect(dev.initializes("omp-test-session")).toBe(2));
+      await vi.waitFor(() => expect(daemon.initializes("omp-test-session")).toBe(2));
       const shutdown = harness.handlers.get("session_shutdown")!({}, harness.context) as Promise<void>;
       held.resolve();
       await shutdown;
 
       await vi.advanceTimersByTimeAsync(60_000);
       await settleIo();
-      expect(dev.initializes("omp-test-session")).toBe(2);
+      expect(daemon.initializes("omp-test-session")).toBe(2);
       vi.useRealTimers();
     });
 
     it("drops a breaker-driven reattach that fired while a newer session was attaching", async () => {
       const harness = await createHarness();
-      const dev = flakyDevInstance(harness.context.cwd);
+      const daemon = flakyDaemon(harness.context.cwd);
       vi.useFakeTimers();
       vi.spyOn(process.stderr, "write").mockReturnValue(true);
       createCosineRulesExtension({ modelPath: resolve("model"), rules: [sentenceRule], registerTool: false, registerCommand: false })(harness.pi);
       const next = { ...harness.context, sessionManager: { getSessionId: () => "omp-next-session", getBranch: () => [] } } as unknown as ExtensionContext;
       await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
-      expect(dev.initializes("omp-test-session")).toBe(1);
+      expect(daemon.initializes("omp-test-session")).toBe(1);
 
       // Three failed polls (100, then 100 and 200 of backoff) put the breaker one 400ms wait from asking the host to rebuild.
-      dev.state.down.add("omp-test-session");
+      daemon.state.down.add("omp-test-session");
       await vi.advanceTimersByTimeAsync(400);
-      expect(dev.requests.filter(r => r.operation === "poll")).toHaveLength(3);
+      expect(daemon.requests.filter(r => r.operation === "poll")).toHaveLength(3);
 
       // The switch's initialize is held open when the old session's rebuild fires; the daemon has healed by then.
       const held = Promise.withResolvers<void>();
-      dev.state.hold = held;
+      daemon.state.hold = held;
       const switching = harness.handlers.get("session_switch")!({ type: "session_switch" }, next) as Promise<void>;
-      await vi.waitFor(() => expect(dev.initializes("omp-next-session")).toBe(1));
-      dev.state.down.delete("omp-test-session");
+      await vi.waitFor(() => expect(daemon.initializes("omp-next-session")).toBe(1));
+      daemon.state.down.delete("omp-test-session");
       await vi.advanceTimersByTimeAsync(400);
       held.resolve();
       await expect(switching).resolves.toBeUndefined();
       await settleIo();
 
-      expect(dev.initializes("omp-test-session")).toBe(1);
+      expect(daemon.initializes("omp-test-session")).toBe(1);
       await harness.handlers.get("before_agent_start")!({ type: "before_agent_start", prompt: "hello" }, next);
-      expect(dev.requests.at(-1)).toEqual({ operation: "ingest", sessionId: "omp-next-session" });
+      expect(daemon.requests.at(-1)).toEqual({ operation: "ingest", sessionId: "omp-next-session" });
       vi.useRealTimers();
     });
   });

@@ -18,7 +18,6 @@ import { defaultRerailDatabasePath } from "./database.js";
 import { daemonKernelSocket } from "./daemon-control.js";
 import { ingestKernelEvent } from "./kernel-service.js";
 import { isMainRerailBuild } from "./rerail-build.js";
-import { ingestRerailDevEvent, resolveRerailWorkspaceRoute } from "./dev-routing.js";
 
 export interface RerailEventStreamOptions {
   eventLoop: RerailEventLoop;
@@ -97,19 +96,6 @@ export async function runRerailEventStream(options: RunRerailEventStreamOptions 
   };
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
-  // As hooks do: a development workspace's container records its events in its own Rerail home, and a
-  // workspace that switched its container off records nothing. Neither reaches this database.
-  const route = await resolveRerailWorkspaceRoute(workspaceRoot);
-  if (route.kind === "disabled") {
-    await serveRerailEventStream({ eventLoop: { ingest: async () => [] }, input, output });
-    return;
-  }
-  if (route.kind === "workspace") {
-    const instance = route.instance;
-    const containerConfiguration = { storageRoot, modelPath, workspaceRoot: instance.workspaceRoot };
-    await serveRerailEventStream({ eventLoop: { ingest: event => ingestRerailDevEvent(instance, event, containerConfiguration) }, input, output });
-    return;
-  }
   if (isMainRerailBuild()) {
     // The main daemon is the machine's one main instance; an in-process runtime here would be a second one.
     // The first event may replace a daemon from another package, as hooks do; later ones keep whichever daemon

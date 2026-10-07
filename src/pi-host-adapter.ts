@@ -74,7 +74,7 @@ function rememberCompleted(ids: Map<string, undefined>, id: string): void {
 }
 
 
-/** Registers Pi's host surface once; runtime ownership decides between local and development-container execution. */
+/** Registers Pi's host surface once; runtime ownership decides between in-process and daemon execution. */
 export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRuntime): void {
   const streamedMessages = new Map<string, undefined>();
   const completedStreams = new Map<string, undefined>();

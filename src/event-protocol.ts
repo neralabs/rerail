@@ -5,7 +5,7 @@ import { RULE_MODES } from "./rule-mode.js";
 export const RERAIL_EVENT_PROTOCOL_PREFACE = "RERAIL-EVENTS/1";
 export const RERAIL_EVENT_MAX_FRAME_BYTES = 1024 * 1024;
 
-export const SessionSchema = z.object({
+const SessionSchema = z.object({
   host: z.enum(["omp", "pi", "claude-code", "codex", "cursor"]),
   sessionId: z.string().min(1),
   cwd: z.string().min(1),

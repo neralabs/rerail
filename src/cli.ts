@@ -19,8 +19,7 @@ import {
   type SignedUpdatePolicy,
 } from "./activation-cli.js";
 import { CustomerActivationManager, CustomerProfileStore } from "./customer-profile.js";
-import { effectiveStartState, repositoryName, startRerail, stopRerail, workspaceStartState, type RepositorySetupIo } from "./repository-start.js";
-import { devWorkspaceEnabled } from "./dev-routing.js";
+import { repositoryName, startRerail, stopRerail, workspaceStartState, type RepositorySetupIo } from "./repository-start.js";
 import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "./daemon.js";
 import { defaultRerailDatabasePath, RERAIL_DATABASE_FILE } from "./database.js";
 import {
@@ -33,7 +32,7 @@ import {
   type RunningDaemon,
 } from "./daemon-control.js";
 import { deviceSecretStore } from "./device-keystore.js";
-import { runRerailMcpBridge } from "./dev-bridge.js";
+import { runRerailMcpBridge } from "./mcp-bridge.js";
 import { runResetCommand, runRulesCommand, snapshotDatabaseBeforeUpdate } from "./project-cli.js";
 import { MOCK_COSINE_RULES, MOCK_POLICY_RULES, seedRerailDatabase } from "./seed.js";
 import { runScanCommand } from "./scan-cli.js";
@@ -169,7 +168,6 @@ async function runStatusCommand(home: string): Promise<number> {
   const name = repositoryName(workspace);
   if (state === "started") process.stdout.write(`Rerail is on in ${name}.\n`);
   else if (state === "stopped") process.stdout.write(`Rerail is stopped in ${name}. Start it again with rerail start.\n`);
-  else if (devWorkspaceEnabled(workspace)) process.stdout.write(`Rerail is on in ${name} through its development workspace.\n`);
   else process.stdout.write(`Rerail has not been started in ${name}. Start it with rerail start.\n`);
   const lookup = await lookupDaemon(home);
   if (lookup.status === "absent") {
@@ -341,7 +339,7 @@ function runStateCommand(args: readonly string[]): number {
   const { options } = parseArguments(args, { flags: [], options: ["--repo", "--database"] }, argument => `Unknown state option: ${argument}\n\n${usage()}`);
   const databasePath = options.get("--database");
   const workspace = resolve(options.get("--repo") ?? process.cwd());
-  process.stdout.write(`${effectiveStartState(workspace, databasePath === undefined ? undefined : resolve(databasePath))}\n`);
+  process.stdout.write(`${workspaceStartState(workspace, databasePath === undefined ? undefined : resolve(databasePath))}\n`);
   return 0;
 }
 

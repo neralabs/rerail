@@ -31,7 +31,7 @@ export const MOCK_POLICY_RULES: readonly PolicyRule[] = [
     revision: 2,
     mode: "steer",
     description: "Route reads must stay inside the lazy query plan; materializing before filtering defeats the ServerPlan budget.",
-    scope: { include: ["api/nera_api/routes/**/*.py"], exclude: ["api/nera_api/routes/health.py"] },
+    scope: { include: ["api/app/routes/**/*.py"], exclude: ["api/app/routes/health.py"] },
     clauses: [
       {
         id: "list-of-query",

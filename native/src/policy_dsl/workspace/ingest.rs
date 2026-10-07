@@ -27,7 +27,7 @@ pub(super) static PACKAGE_CONTEXT_PATH_VISITS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
 const MAX_BINARY_REQUEST_BYTES: usize = 40 * 1024 * 1024;
-pub(super) const BINARY_REQUEST_MAGIC: &[u8; 8] = b"TEMPORB1";
+pub(super) const BINARY_REQUEST_MAGIC: &[u8; 8] = b"RERAILB1";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

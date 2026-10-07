@@ -613,7 +613,7 @@ describe("Claude Code commands/rerail.md", () => {
 
     const second = await registerHarnesses({ root, home, nodePath, harnesses: options });
     expect(change(second.changes, "claude-code", "rerail.md").action).toBe("unchanged");
-    expect(await readdir(dirname(path))).toEqual(["rerail-start.md", "rerail-stop.md", "rerail-session.md", "rerail-ui.md", "rerail.md"]);
+    expect(await readdir(dirname(path))).toEqual(["rerail-session.md", "rerail-start.md", "rerail-stop.md", "rerail-ui.md", "rerail.md"]);
 
     const removed = await unregisterHarnesses({ root, home, nodePath, harnesses: options });
     expect(change(removed.changes, "claude-code", "rerail.md").action).toBe("updated");
@@ -636,7 +636,7 @@ describe("Claude Code commands/rerail.md", () => {
     const report = await registerHarnesses({ root, home, nodePath, harnesses: options });
     expect(change(report.changes, "claude-code", "rerail-disable.md").action).toBe("updated");
     expect(report.changes.some(entry => entry.path.endsWith("rerail-enable.md"))).toBe(false);
-    expect(await readdir(directory)).toEqual(["rerail-start.md", "rerail-stop.md", "rerail-enable.md", "rerail-session.md", "rerail-ui.md", "rerail.md"]);
+    expect(await readdir(directory)).toEqual(["rerail-enable.md", "rerail-session.md", "rerail-start.md", "rerail-stop.md", "rerail-ui.md", "rerail.md"]);
   });
 
   it("rewrites a stale command that names another node, backing the old one up", async () => {

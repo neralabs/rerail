@@ -3,7 +3,6 @@ import type { AdapterSession, RerailEventLoop } from "./adapter-contract.js";
 import { bundledModelPath } from "./extension.js";
 import { RerailRuntime } from "./runtime.js";
 import { ingestKernelEvent } from "./kernel-service.js";
-import { ingestRerailDevEvent, recordRerailDevReceipt, resolveRerailWorkspaceRoute } from "./dev-routing.js";
 import { daemonKernelSocket } from "./daemon-control.js";
 import {
   bindSteeringReceipt,
@@ -45,7 +44,7 @@ export interface HookOptions {
   embedder?: SemanticEmbedder;
 }
 
-/** Runs a normal package hook against its selected dev container, daemon kernel, or explicit local test runtime. */
+/** Runs a normal package hook against the daemon kernel, or an explicit local test runtime. */
 export async function runHostHook(
   host: HookHost,
   workspace: string,
@@ -53,23 +52,10 @@ export async function runHostHook(
   options: HookOptions,
   handle: (runtime: RerailEventLoop, storageRoot: string) => Promise<HookOutput>,
 ): Promise<HookOutput> {
-  const route = await resolveRerailWorkspaceRoute(workspace);
-  if (route.kind === "disabled") return {};
   const storageRoot = options.storageRoot ?? process.env.RERAIL_STORAGE_ROOT ?? join(workspace, ".rerail", "sessions");
   return withSessionLock(storageRoot, host, sessionId, async () => {
     const databasePath = options.databasePath ?? defaultRerailDatabasePath();
     const session: AdapterSession = { host, sessionId, cwd: workspace };
-    const developmentInstance = route.kind === "workspace" ? route.instance : undefined;
-    if (developmentInstance !== undefined) {
-      // The container kernel records into its own Rerail home; it never takes a host database path.
-      const configuration = {
-        storageRoot,
-        modelPath: options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath(),
-        workspaceRoot: developmentInstance.workspaceRoot,
-      };
-      const output = await handle({ ingest: event => ingestRerailDevEvent(developmentInstance, event, configuration) }, storageRoot);
-      return bindSteeringReceipt(output, (receiptId, ruleIds) => recordRerailDevReceipt(developmentInstance, session, receiptId, ruleIds));
-    }
     if (options.embedder === undefined) {
       const socketPath = options.kernelSocketPath ?? process.env.RERAIL_KERNEL_SOCKET
         ?? await daemonKernelSocket(true);

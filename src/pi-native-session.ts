@@ -1,34 +1,34 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AdapterDelivery, AdapterEvent, AdapterSession } from "./adapter-contract.js";
 import {
-  createDevNativeSession,
-  DevNativeClient,
-  type DevNativeInitializationOptions,
-  type DevNativeSessionRoute,
-  type DevNativeSessionHost,
-} from "./dev-native-client.js";
+  createNativeSession,
+  NativeSessionClient,
+  type NativeSessionInitializationOptions,
+  type NativeSessionRoute,
+  type NativeSessionHost,
+} from "./native-session-client.js";
 
-export interface PiDevNativeSessionOptions {
+export interface PiNativeSessionOptions {
   entries(context?: ExtensionContext): readonly unknown[];
   appendEntry(customType: string, data: unknown): void;
-  deliver(client: DevNativeClient, deliveries: readonly AdapterDelivery[]): void | Promise<void>;
+  deliver(client: NativeSessionClient, deliveries: readonly AdapterDelivery[]): void | Promise<void>;
   /** The extension's serialized initialize; a faulted client asks for it to rebuild the session. */
   reattach(context: ExtensionContext): Promise<unknown>;
   closeFallback?(): Promise<void>;
 }
 
-/** Owns Pi's checkout-container client without importing any host-local runtime or database code. */
-export class PiDevNativeSession {
-  readonly #options: PiDevNativeSessionOptions;
-  #client: DevNativeClient | undefined;
+/** Owns Pi's daemon client without importing any host-local runtime or database code. */
+export class PiNativeSession {
+  readonly #options: PiNativeSessionOptions;
+  #client: NativeSessionClient | undefined;
   #context: ExtensionContext | undefined;
   #session: AdapterSession | undefined;
 
-  constructor(options: PiDevNativeSessionOptions) {
+  constructor(options: PiNativeSessionOptions) {
     this.#options = options;
   }
 
-  current(): DevNativeClient | undefined {
+  current(): NativeSessionClient | undefined {
     return this.#client;
   }
 
@@ -52,8 +52,8 @@ export class PiDevNativeSession {
     context: ExtensionContext,
     session: AdapterSession & { host: "pi" },
     rebuild: boolean,
-    initialization: DevNativeInitializationOptions,
-  ): Promise<DevNativeSessionRoute> {
+    initialization: NativeSessionInitializationOptions,
+  ): Promise<NativeSessionRoute> {
     const host = {
       current: () => this.#client,
       matchesCurrent: candidate => this.#session?.sessionId === candidate.sessionId && this.#session.cwd === candidate.cwd,
@@ -70,8 +70,8 @@ export class PiDevNativeSession {
       appendEntry: this.#options.appendEntry,
       deliver: this.#options.deliver,
       reattach: this.#options.reattach,
-    } satisfies DevNativeSessionHost<ExtensionContext>;
-    return createDevNativeSession(host, context, session, rebuild, initialization);
+    } satisfies NativeSessionHost<ExtensionContext>;
+    return createNativeSession(host, context, session, rebuild, initialization);
   }
 
   async close(): Promise<void> {

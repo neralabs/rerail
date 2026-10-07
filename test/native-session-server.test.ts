@@ -2,13 +2,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DevNativeServer } from "../src/dev-native-server.js";
+import { NativeSessionServer } from "../src/native-session-server.js";
 import { SqliteTranscriptReader } from "../src/transcript-store.js";
 import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
 
-describe("DevNativeServer request boundary", () => {
+describe("NativeSessionServer request boundary", () => {
   let root: string | undefined;
-  let server: DevNativeServer | undefined;
+  let server: NativeSessionServer | undefined;
 
   afterEach(async () => {
     await server?.close();
@@ -20,7 +20,7 @@ describe("DevNativeServer request boundary", () => {
   it("rejects a request addressed to another checkout", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-native-server-"));
     vi.stubEnv("RERAIL_HOME", join(root, "home"));
-    server = new DevNativeServer({
+    server = new NativeSessionServer({
       workspaceRoot: root,
       modelPath: join(root, "model"),
       databasePath: join(root, "rerail.sqlite"),
@@ -37,7 +37,7 @@ describe("DevNativeServer request boundary", () => {
     vi.stubEnv("RERAIL_HOME", join(root, "home"));
     startTestRepository(root, join(root, "rerail.sqlite"));
     const databasePath = join(root, "rerail.sqlite");
-    server = new DevNativeServer({
+    server = new NativeSessionServer({
       workspaceRoot: root,
       modelPath: resolve("model"),
       databasePath,
@@ -72,10 +72,10 @@ describe("DevNativeServer request boundary", () => {
     vi.stubEnv("RERAIL_HOME", join(root, "home"));
     const databasePath = join(root, "rerail.sqlite");
     startTestRepository(root, databasePath);
-    server = new DevNativeServer({ workspaceRoot: root, modelPath: resolve("model"), databasePath });
+    server = new NativeSessionServer({ workspaceRoot: root, modelPath: resolve("model"), databasePath });
     const session = { workspaceRoot: root, sessionId: "s", host: "omp" as const };
     await server.handle({ ...session, operation: "initialize", entries: [] });
-    // `/rerail-stop` in the dev Pi bridge stops the checkout, then reattaches with a rebuild.
+    // `/rerail-stop` stops the checkout, then the host reattaches with a rebuild.
     stopTestRepository(root, databasePath);
     await server.handle({ ...session, operation: "initialize", entries: [], input: { rebuild: true } });
     const reader = new SqliteTranscriptReader(databasePath);
@@ -92,7 +92,7 @@ describe("DevNativeServer request boundary", () => {
     vi.stubEnv("RERAIL_HOME", join(root, "home"));
     startTestRepository(root, join(root, "rerail.sqlite"));
     const databasePath = join(root, "rerail.sqlite");
-    server = new DevNativeServer({
+    server = new NativeSessionServer({
       workspaceRoot: root,
       modelPath: resolve("model"),
       databasePath,
@@ -124,7 +124,7 @@ describe("DevNativeServer request boundary", () => {
     vi.stubEnv("RERAIL_HOME", join(root, "home"));
     startTestRepository(root, join(root, "rerail.sqlite"));
     const databasePath = join(root, "rerail.sqlite");
-    server = new DevNativeServer({
+    server = new NativeSessionServer({
       workspaceRoot: root,
       modelPath: resolve("model"),
       databasePath,

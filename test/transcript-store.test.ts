@@ -16,7 +16,7 @@ import { MOCK_COSINE_RULES, MOCK_POLICY_RULES } from "../src/seed.js";
 import { decodeTranscriptPayload, SqliteTranscriptReader, SqliteTranscriptStore } from "../src/transcript-store.js";
 import { testEmbedder } from "./hook-fixtures.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "./native-daemon-fixture.js";
-import { DevNativeClient } from "../src/dev-native-client.js";
+import { NativeSessionClient } from "../src/native-session-client.js";
 import { startTestRepository } from "./support/started-repository.js";
 
 const temporaryDirectories: string[] = [];
@@ -158,7 +158,7 @@ describe("SQLite transcript persistence", () => {
   it("preserves circular and BigInt tool payloads across the native daemon boundary", async () => {
     const root = await temporaryDirectory();
     const daemon = await startNativeTestDaemon(root);
-    const client = new DevNativeClient({
+    const client = new NativeSessionClient({
       instance: { workspaceRoot: root, url: new URL(daemon.url) },
       token: daemon.state().nativeToken!,
       host: "omp", sessionId: "non-json", entries: () => [],
@@ -192,7 +192,7 @@ describe("SQLite transcript persistence", () => {
     const daemon = await startNativeTestDaemon(root);
     const branch: Array<{ type: string; id: string; timestamp: string; customType: string; data: unknown }> = [];
     let nextEntry = 1;
-    const client = new DevNativeClient({
+    const client = new NativeSessionClient({
       instance: { workspaceRoot: root, url: new URL(daemon.url) },
       token: daemon.state().nativeToken!,
       host: "omp",

@@ -4,12 +4,16 @@ import superjson from "superjson";
 import type { AdapterDelivery, AdapterEvent, AdapterSession } from "./adapter-contract.js";
 import type { NativeSemanticToolRuntime } from "./native-semantic-tools.js";
 import type { ProjectionSpec, RelationSpec, SelectionSpec, WatermarkChange } from "./semantic-types.js";
-import { resolveRerailWorkspaceRoute, type RerailDevInstance } from "./dev-routing.js";
 import { startDaemonForPackage } from "./daemon-control.js";
 import { isMainRerailBuild } from "./rerail-build.js";
 import { defaultRerailHome } from "./rerail-home.js";
 import { RULE_MODES } from "./rule-mode.js";
-type DevNativeInstance = Pick<RerailDevInstance, "workspaceRoot" | "url">;
+
+/** The daemon a client talks to: its URL and the checkout its native sessions address. */
+interface NativeSessionEndpoint {
+  workspaceRoot: string;
+  url: URL;
+}
 
 const POLL_INTERVAL_MS = 100;
 const POLL_BACKOFF_CEILING_MS = 5_000;
@@ -36,21 +40,21 @@ interface Outage {
   open: boolean;
 }
 
-export interface DevNativeReply {
+export interface NativeSessionReply {
   result?: unknown;
   resultRevisionEntry?: number;
   deliveries: AdapterDelivery[];
   entries: Array<{ customType: string; data: unknown }>;
 }
 
-export interface DevNativeClientOptions {
-  instance: DevNativeInstance;
+export interface NativeSessionClientOptions {
+  instance: NativeSessionEndpoint;
   sessionId: string;
   host: "omp" | "pi";
   entries: () => readonly unknown[];
-  token?: string;
+  token: string;
   appendEntry: (customType: string, data: unknown) => void;
-  deliver: (client: DevNativeClient, deliveries: readonly AdapterDelivery[]) => void | Promise<void>;
+  deliver: (client: NativeSessionClient, deliveries: readonly AdapterDelivery[]) => void | Promise<void>;
   /**
    * Builds a fresh session when this client cannot heal itself: the daemon restarted with a new
    * token, or the workspace binding changed. Omitted, such a fault leaves the stream shut for good.
@@ -58,19 +62,19 @@ export interface DevNativeClientOptions {
   reattach?: () => Promise<unknown>;
 }
 
-export interface DevNativeSessionHost<Context> {
-  current: () => DevNativeClient | undefined;
+export interface NativeSessionHost<Context> {
+  current: () => NativeSessionClient | undefined;
   matchesCurrent: (session: AdapterSession) => boolean;
   close: () => Promise<void>;
-  activate: (client: DevNativeClient, context: Context, session: AdapterSession) => void;
+  activate: (client: NativeSessionClient, context: Context, session: AdapterSession) => void;
   entries: (context?: Context) => readonly unknown[];
   appendEntry: (customType: string, data: unknown) => void;
-  deliver: (client: DevNativeClient, deliveries: readonly AdapterDelivery[]) => void | Promise<void>;
-  /** The host's serialized session (re)build; runs `createDevNativeSession` for the same context. */
+  deliver: (client: NativeSessionClient, deliveries: readonly AdapterDelivery[]) => void | Promise<void>;
+  /** The host's serialized session (re)build; runs `createNativeSession` for the same context. */
   reattach: (context: Context) => Promise<unknown>;
 }
 
-export interface DevNativeInitializationOptions {
+export interface NativeSessionInitializationOptions {
   maxInputTokens?: number;
   maxRules?: number;
   rules?: readonly unknown[];
@@ -80,43 +84,34 @@ export interface DevNativeInitializationOptions {
   storageRoot?: string;
 }
 
-export type DevNativeSessionRoute = "attached" | "host" | "disabled";
+export type NativeSessionRoute = "attached" | "host";
 
-export async function createDevNativeSession<Context>(
-  host: DevNativeSessionHost<Context>,
+export async function createNativeSession<Context>(
+  host: NativeSessionHost<Context>,
   context: Context,
-  session: AdapterSession & Pick<DevNativeClientOptions, "host">,
+  session: AdapterSession & Pick<NativeSessionClientOptions, "host">,
   rebuild: boolean,
-  initialization: DevNativeInitializationOptions,
-): Promise<DevNativeSessionRoute> {
-  const route = await resolveRerailWorkspaceRoute(session.cwd);
-  let instance: DevNativeInstance | undefined = route.kind === "workspace" ? route.instance : undefined;
+  initialization: NativeSessionInitializationOptions,
+): Promise<NativeSessionRoute> {
   const current = host.current();
-  if (route.kind === "disabled") {
-    if (current !== undefined) await host.close();
-    return "disabled";
-  }
   // A pi session from a checkout keeps its in-process runtime over that checkout's own store. The main build's
   // pi goes through the daemon like omp: the daemon is the machine's one main instance, and an in-process main
   // runtime would be a second one opening the machine-wide content store.
-  if (route.kind === "host" && session.host === "pi" && !isMainRerailBuild()) {
+  if (session.host === "pi" && !isMainRerailBuild()) {
     if (current !== undefined) await host.close();
     return "host";
   }
-  let token: string | undefined;
-  if (instance === undefined) {
-    const { daemon } = await startDaemonForPackage({
-      home: defaultRerailHome(),
-      packageRoot: resolve(dirname(fileURLToPath(import.meta.url)), ".."),
-    }, {
-      dev: false,
-      port: 0,
-      cwd: session.cwd,
-    });
-    instance = { workspaceRoot: daemon.health.workspaceRoot, url: new URL(daemon.state.url) };
-    token = daemon.state.nativeToken;
-    if (token === undefined) throw new Error("Rerail daemon lacks native session support; run rerail daemon stop and retry.");
-  }
+  const { daemon } = await startDaemonForPackage({
+    home: defaultRerailHome(),
+    packageRoot: resolve(dirname(fileURLToPath(import.meta.url)), ".."),
+  }, {
+    dev: false,
+    port: 0,
+    cwd: session.cwd,
+  });
+  const instance = { workspaceRoot: daemon.health.workspaceRoot, url: new URL(daemon.state.url) };
+  const token = daemon.state.nativeToken;
+  if (token === undefined) throw new Error("Rerail daemon lacks native session support; run rerail daemon stop and retry.");
   const input = { ...initialization, cwd: session.cwd, rebuild };
   if (current !== undefined && host.matchesCurrent(session) && current.matches(instance, token)) {
     await current.initialize(input, host.entries(context));
@@ -124,9 +119,9 @@ export async function createDevNativeSession<Context>(
     host.activate(current, context, session);
     return "attached";
   }
-  const client = new DevNativeClient({
+  const client = new NativeSessionClient({
     instance,
-    ...(token === undefined ? {} : { token }),
+    token,
     sessionId: session.sessionId,
     host: session.host,
     entries: () => host.entries(context),
@@ -146,11 +141,11 @@ export async function createDevNativeSession<Context>(
   return "attached";
 }
 
-/** Native facade for either the checkout bridge or the machine's Node daemon. */
-export class DevNativeClient implements NativeSemanticToolRuntime {
-  readonly #options: DevNativeClientOptions;
+/** Native facade for the machine's Node daemon. */
+export class NativeSessionClient implements NativeSemanticToolRuntime {
+  readonly #options: NativeSessionClientOptions;
   #pending: Promise<unknown> = Promise.resolve();
-  readonly #buffer: DevNativeReply[] = [];
+  readonly #buffer: NativeSessionReply[] = [];
   #active = false;
   #closing = false;
   #timer: ReturnType<typeof setTimeout> | undefined;
@@ -158,11 +153,11 @@ export class DevNativeClient implements NativeSemanticToolRuntime {
   #dropped = 0;
   #initialization: unknown;
 
-  constructor(options: DevNativeClientOptions) {
+  constructor(options: NativeSessionClientOptions) {
     this.#options = options;
   }
 
-  matches(instance: DevNativeInstance, token?: string): boolean {
+  matches(instance: NativeSessionEndpoint, token: string): boolean {
     return instance.url.href === this.#options.instance.url.href && instance.workspaceRoot === this.#options.instance.workspaceRoot && token === this.#options.token;
   }
 
@@ -315,7 +310,7 @@ export class DevNativeClient implements NativeSemanticToolRuntime {
         this.#dropped += 1;
         return undefined;
       }
-      let reply: DevNativeReply;
+      let reply: NativeSessionReply;
       try {
         reply = await this.#send(operation, payload);
       } catch (error) {
@@ -340,7 +335,7 @@ export class DevNativeClient implements NativeSemanticToolRuntime {
   async #send(
     operation: "initialize" | "ingest" | "cosine" | "semantic" | "poll" | "close" | "record-steering-delivery",
     payload: { event?: unknown; eventEncoding?: "superjson"; input?: unknown; entries?: readonly unknown[] } = {},
-  ): Promise<DevNativeReply> {
+  ): Promise<NativeSessionReply> {
     const { instance, sessionId, host } = this.#options;
     const { entries, ...rest } = payload;
     const branch = operation === "initialize" || operation === "semantic" || operation === "cosine"
@@ -348,7 +343,7 @@ export class DevNativeClient implements NativeSemanticToolRuntime {
       : undefined;
     const response = await fetch(new URL("/native/session", instance.url), {
       method: "POST",
-      headers: { "content-type": "application/json", ...(this.#options.token === undefined ? {} : { authorization: `Bearer ${this.#options.token}` }) },
+      headers: { "content-type": "application/json", authorization: `Bearer ${this.#options.token}` },
       body: JSON.stringify({
         workspaceRoot: instance.workspaceRoot,
         sessionId,
@@ -371,7 +366,7 @@ export class DevNativeClient implements NativeSemanticToolRuntime {
     return reply;
   }
 
-  async #deliver(reply: DevNativeReply): Promise<string | undefined> {
+  async #deliver(reply: NativeSessionReply): Promise<string | undefined> {
     let committedRevision: string | undefined;
     for (const [index, entry] of reply.entries.entries()) {
       const previousEntries = index === reply.resultRevisionEntry ? [...this.#options.entries()] : undefined;
@@ -400,7 +395,7 @@ function rebuildBackoffMs(outage: Outage): number {
 }
 
 /** A watermark operation answers with its receipt stamped by the revision the host committed. */
-function watermarkReceipt(reply: DevNativeReply, committedRevision: string | undefined): Record<string, unknown> {
+function watermarkReceipt(reply: NativeSessionReply, committedRevision: string | undefined): Record<string, unknown> {
   if (committedRevision === undefined) {
     throw new Error("Rerail did not observe the host-assigned watermark revision");
   }
@@ -426,7 +421,7 @@ function unrecoverable(error: unknown): boolean {
     || message.includes("native session owner mismatch");
 }
 
-function isReply(value: unknown): value is DevNativeReply {
+function isReply(value: unknown): value is NativeSessionReply {
   if (value === null || typeof value !== "object" || Array.isArray(value)
     || !("deliveries" in value) || !Array.isArray(value.deliveries) || !value.deliveries.every(hasRuleMode)
     || !("entries" in value) || !Array.isArray(value.entries)

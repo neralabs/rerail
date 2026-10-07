@@ -128,44 +128,7 @@ describe("Rerail daemon", () => {
     expect(existsSync(join(root, "rerail.sqlite"))).toBe(false);
   });
 
-  it("rejects a kernel bridge session from a different checkout despite a matching configuration", async () => {
-    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
-    const daemon = await start();
-    const response = await fetch(new URL("/kernel/events", daemon.url), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        event: {
-          kind: "session-start",
-          eventId: "cross-worktree",
-          session: { host: "codex", sessionId: "session-1", cwd: join(root, "..", "other") },
-        },
-        configuration: {
-          storageRoot: join(root, ".rerail", "sessions"),
-          databasePath: join(root, ".rerail", "rerail.sqlite"),
-          modelPath: join(root, "model"),
-          workspaceRoot: root,
-        },
-      }),
-    });
-
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "kernel-workspace-mismatch" });
-  });
-
-  it("rejects browser-originated requests to the private kernel bridge", async () => {
-    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
-    const daemon = await start();
-    const response = await fetch(new URL("/kernel/events", daemon.url), {
-      method: "POST",
-      headers: { origin: "http://attacker.test" },
-    });
-
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "kernel-origin-forbidden" });
-  });
-
-  it("requires the private capability for cross-workspace native sessions and protects their ownership", async () => {
+  it("requires the private capability for every native session and protects its ownership", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const workspaceRoot = join(root, "daemon-workspace");
     const cwd = join(root, "session-workspace");
@@ -179,17 +142,19 @@ describe("Rerail daemon", () => {
       method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body),
     });
     const unauthorized = await request(input);
-    expect(unauthorized.status).toBe(400);
-    expect(await unauthorized.json()).toMatchObject({ error: "native-request-invalid" });
+    expect(unauthorized.status).toBe(403);
+    expect(await unauthorized.json()).toEqual({ error: "native-authorization-invalid" });
     expect(existsSync(join(cwd, "custom.sqlite"))).toBe(false);
     const authorization = `Bearer ${daemon.state().nativeToken!}`;
     expect((await request(input, { authorization: "Bearer invalid" })).status).toBe(403);
-    expect((await request(input, { authorization, origin: "http://attacker.test" })).status).toBe(403);
+    const browser = await request(input, { authorization, origin: "http://attacker.test" });
+    expect(browser.status).toBe(403);
+    expect(await browser.json()).toEqual({ error: "native-origin-forbidden" });
     const initialized = await request(input, { authorization });
     expect(initialized.status).toBe(200);
     expect(existsSync(join(cwd, "custom.sqlite"))).toBe(true);
     const close = { workspaceRoot, sessionId: input.sessionId, host: "omp", operation: "close" };
-    expect((await request(close)).status).toBe(400);
+    expect((await request(close)).status).toBe(403);
     expect((await request({ ...close, operation: "cosine", input: { action: "list" } }, { authorization })).status).toBe(200);
     expect((await request(close, { authorization })).status).toBe(200);
     expect((await getJson(daemon, "/healthz")).body).not.toHaveProperty("nativeToken");
@@ -315,12 +280,6 @@ describe("Rerail daemon", () => {
     await mkdir(join(root, "nested"));
     query.set("repository", join(root, "nested"));
     expect((await getJson(daemon, `/api/presentation?${query}`)).body).toMatchObject({ presence: "silent", context: { session: compact.context!.session } });
-    const receipt = { session: { host: "omp", sessionId: "large-run", cwd: join(root, "nested") }, receiptId: "bridge-handoff" };
-    expect(await sendJson(daemon, "/kernel/steering-receipts", "POST", receipt)).toEqual({ status: 200, body: { receiptId: "bridge-handoff" } });
-    expect(await sendJson(daemon, "/kernel/steering-receipts", "POST", receipt)).toEqual({ status: 200, body: { receiptId: "bridge-handoff" } });
-    expect(await sendJson(daemon, "/kernel/steering-receipts", "POST", { ...receipt, session: { ...receipt.session, cwd: tmpdir() } }))
-      .toEqual({ status: 403, body: { error: "kernel-workspace-mismatch" } });
-    expect((await getJson<{ hud: { steeringCount: number } }>(daemon, "/api/sessions/large-run")).body.hud.steeringCount).toBe(1);
   });
 
   it("reads an encoded transcript session id through the read-only API", async () => {
@@ -858,7 +817,7 @@ describe("Rerail daemon", () => {
       expect(await rawRequest(daemon, "/healthz", { headers: { host } })).toEqual(misdirected);
       expect(await rawRequest(daemon, "/", { headers: { host } })).toEqual(misdirected);
       expect(await rawRequest(daemon, "/mcp", { method: "POST", headers: { host, accept: "application/json, text/event-stream" }, body: mcpCall })).toEqual(misdirected);
-      expect(await rawRequest(daemon, "/kernel/events", { method: "POST", headers: { host }, body: "{}" })).toEqual(misdirected);
+      expect(await rawRequest(daemon, "/native/session", { method: "POST", headers: { host }, body: "{}" })).toEqual(misdirected);
     }
 
     // Every loopback spelling on any port, since a port mapping may present one the daemon never bound.

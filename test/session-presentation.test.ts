@@ -124,46 +124,12 @@ describe("installed session presentation", () => {
     expect(await read()).toMatchObject({ parts: [], repositoryState: "never" });
   });
 
-  it("reports a repository-operations workspace that switched its container off as stopped, without a daemon", async () => {
-    await mkdir(join(cwd, ".nera"));
-    await writeFile(join(cwd, ".nera", "instance.env"), 'NERA_RERAIL_ENABLED="false"\n');
-    expect(await read()).toMatchObject({ text: "Rerail | not on here", repositoryState: "stopped" });
-    expect(requested).toEqual([]);
-  });
-
   it("rereads the daemon locator after restart", async () => {
     await read();
     state.url = "http://127.0.0.1:5737/";
     state.port = 5737;
     await writeFile(join(home, "daemon.json"), JSON.stringify(state));
     expect((await read()).url).toContain(":5737/");
-  });
-
-  it("uses checkout identity instead of the host daemon and refuses sibling or missing identity before silent preferences", async () => {
-    const directory = join(cwd, ".nera");
-    await mkdir(directory);
-    await writeFile(join(directory, "instance.env"), 'NERA_RERAIL_ENABLED="true"\nNERA_RERAIL_PUBLIC_URL="http://127.0.0.1:35007"\n');
-    const locator = join(directory, "rerail-daemon.json");
-    await writeFile(locator, JSON.stringify({ ...state, pid: 1, host: "0.0.0.0", url: "http://0.0.0.0:4737/", workspaceRoot: cwd }));
-    Object.assign(response.context!.daemon, { pid: 1, workspaceRoot: cwd });
-    const result = await read();
-    expect(result.text).toBe("Rerail | 3 rules | steered 2×");
-    expect(result.url).toContain("http://127.0.0.1:35007/");
-    expect(requested).toHaveLength(1);
-    vi.stubEnv("RERAIL_WORKSPACE", await realpath(cwd));
-    vi.stubEnv("RERAIL_INTERNAL_PORT", "4737");
-    requested = [];
-    expect((await read()).url).toBe(result.url);
-    expect(new URL(requested[0]!).port).toBe("4737");
-    expect(requested).toHaveLength(1);
-
-    response.presence = "silent";
-    response.context!.daemon.workspaceRoot = home;
-    expect((await read()).text).toBe("Rerail | daemon unavailable");
-    await rm(locator);
-    requested = [];
-    expect((await read()).text).toBe("Rerail | daemon unavailable");
-    expect(requested).toEqual([]);
   });
 
   it("rejects replaced daemon identity, remote locators, and oversized responses", async () => {
@@ -276,21 +242,6 @@ describe("rules page", () => {
   it("refuses a listener that answers as a different daemon", async () => {
     const port = await listen(999_999);
     await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
-    expect(await readRulesPage({ cwd })).toEqual({ url: null, reason: "daemon unavailable" });
-  });
-
-  it("prefers the checkout instance's public address over its internal listener, and drops it once dead", async () => {
-    const port = await listen(1);
-    const directory = join(cwd, ".nera");
-    await mkdir(directory);
-    await writeFile(join(directory, "instance.env"), 'NERA_RERAIL_ENABLED="true"\nNERA_RERAIL_PUBLIC_URL="http://127.0.0.1:35007"\n');
-    const locator = join(directory, "rerail-daemon.json");
-    await record(locator, { pid: 1, host: "0.0.0.0", port, url: `http://0.0.0.0:${port}/`, workspaceRoot: cwd });
-    vi.stubEnv("RERAIL_WORKSPACE", await realpath(cwd));
-    vi.stubEnv("RERAIL_INTERNAL_PORT", String(port));
-    expect(await readRulesPage({ cwd })).toEqual({ url: "http://127.0.0.1:35007/#rules", reason: null });
-    await stop();
-    await record(locator, { pid: 999_999 });
     expect(await readRulesPage({ cwd })).toEqual({ url: null, reason: "daemon unavailable" });
   });
 });

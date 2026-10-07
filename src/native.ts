@@ -174,7 +174,7 @@ export function encodePolicyWorkspaceRequest(request: {
     "utf8",
   );
   const header = Buffer.allocUnsafe(12);
-  header.write("TEMPORB1", 0, "ascii");
+  header.write("RERAILB1", 0, "ascii");
   header.writeUInt32LE(metadata.byteLength, 8);
   const length = 12 + metadata.byteLength + sources.reduce((sum, source) => sum + source.byteLength, 0);
   return Buffer.concat([header, metadata, ...sources], length);

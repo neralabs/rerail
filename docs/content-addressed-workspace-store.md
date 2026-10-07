@@ -149,10 +149,6 @@ Each workspace has separate session state, policy state, parse state, and result
 The installed daemon shares its process, native module, model files, and machine rule catalog.
 Linked Git worktrees also share the repository identity from the Git common directory.
 
-The experimental development lifecycle uses one container and one daemon for each enabled worktree.
-These daemons do not share resident workspace state.
-
-The CAS design supports both daemon arrangements.
 Cross-process sharing occurs through SQLite and the operating-system page cache, not JavaScript objects.
 
 ## Storage alternatives

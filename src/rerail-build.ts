@@ -10,7 +10,7 @@ import { RERAIL_PACKAGE_NAME } from "./updater.js";
  * Which Rerail is running. `main` is the managed installation, loaded from
  * `<home>/versions/<version>/node_modules/@neralabs/rerail` (usually through `<home>/current`); it alone owns
  * the machine-wide content store. `dev` is any build running from a Git checkout (source, `dist/`, tests,
- * benchmarks, worktrees, the development container); it keeps a content store private to that checkout.
+ * benchmarks, worktrees); it keeps a content store private to that checkout.
  */
 export type RerailBuild =
   | { kind: "main"; home: string; version: string; packageRoot: string }

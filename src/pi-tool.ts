@@ -46,7 +46,7 @@ export function registerPiCosineRulesTool(pi: ExtensionAPI, runtime: PiCosineRul
       if (remoteExecute !== undefined) {
         const details = await remoteExecute(input);
         if (details === null || typeof details !== "object" || Array.isArray(details)) {
-          throw new Error("Rerail development cosine response has an invalid result");
+          throw new Error("Rerail daemon cosine response has an invalid result");
         }
         return toolResult(details as Record<string, unknown>);
       }

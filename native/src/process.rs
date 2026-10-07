@@ -2,8 +2,8 @@
 //!
 //! Windows `CreateProcess` with handle inheritance enabled (how Node and libuv spawn) gives the child every
 //! inheritable handle in the parent, not just its stdio. A launcher written in Rust, such as `just`, leaves its own
-//! stdout inheritable, so a long-lived daemon started below it kept the caller's output pipe open: `just rerail`
-//! with captured output never finished while the daemon ran. `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` limits
+//! stdout inheritable, so a long-lived daemon started below it kept the caller's output pipe open: a `just`
+//! recipe with captured output never finished while the daemon ran. `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` limits
 //! inheritance to NUL stdin and the log file.
 
 use napi::{Error, Result, Status};

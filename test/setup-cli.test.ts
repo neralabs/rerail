@@ -150,15 +150,15 @@ describe("rerail install --root", () => {
     expect((await readdir(context.home)).filter(name => name.includes(".sqlite"))).toEqual([]);
   });
 
-  it("keeps rules and history when a development bridge registered with --root is removed", async () => {
+  it("keeps rules and history when another checkout registered with --root is removed", async () => {
     const { context, harnessHome, packageRoot } = await fixture();
     await runInstallCommand(["--root", packageRoot, "--harness", "claude-code"], context);
     await writeFile(join(context.home, "rerail.sqlite"), "live database");
-    // The dev-bridge undo names the bridge, not the managed install `current` points at.
-    const bridgeRoot = join(harnessHome, "..", "bridge");
-    await mkdir(join(bridgeRoot, "dist"), { recursive: true });
+    // The undo names that checkout, not the managed install `current` points at.
+    const checkoutRoot = join(harnessHome, "..", "checkout");
+    await mkdir(join(checkoutRoot, "dist"), { recursive: true });
 
-    expect(await runInstallCommand(["--root", bridgeRoot, "--remove"], context)).toBe(0);
+    expect(await runInstallCommand(["--root", checkoutRoot, "--remove"], context)).toBe(0);
 
     expect(await readFile(join(context.home, "rerail.sqlite"), "utf8")).toBe("live database");
     expect((await readdir(harnessHome)).filter(name => name.startsWith(".rerail-clean-"))).toEqual([]);

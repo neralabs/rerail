@@ -7,7 +7,6 @@ import {
   AdapterEventSchema,
   decodeRerailEventResult,
   encodeRerailEventResult,
-  SessionSchema,
   RERAIL_EVENT_MAX_FRAME_BYTES,
 } from "./event-protocol.js";
 import { defaultRerailDatabasePath } from "./database.js";
@@ -39,23 +38,15 @@ const RequestSchema = z
   })
   .strict();
 
-export interface KernelRequest {
+interface KernelRequest {
   event: AdapterEvent;
   configuration: KernelRuntimeConfiguration | undefined;
 }
 
-export function parseKernelRequest(value: unknown): KernelRequest {
+function parseKernelRequest(value: unknown): KernelRequest {
   const { event, configuration } = RequestSchema.parse(value);
   return { event, configuration };
 }
-
-/** A confirmed harness handoff the checkout daemon persists for a hook process that never opens the database. */
-export const KernelReceiptSchema = z.object({
-  session: SessionSchema,
-  receiptId: z.string().min(1),
-  // Hook processes from a build without re-rail attribution post no rule ids.
-  ruleIds: z.array(z.string()).default([]),
-}).strict();
 
 function isWindowsNamedPipe(endpoint: string): boolean {
   return endpoint.startsWith("\\\\.\\pipe\\");

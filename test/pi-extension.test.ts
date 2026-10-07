@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ChildProcess } from "node:child_process";
@@ -11,6 +11,16 @@ vi.mock("node:child_process", async () => ({
   ...await vi.importActual<Record<string, unknown>>("node:child_process"),
   spawn: launcher.spawn,
 }));
+/** A main build's Pi goes through the daemon; tests that set `main` stand in for that daemon. */
+const daemonRoute = vi.hoisted(() => ({ main: undefined as boolean | undefined, startDaemonForPackage: vi.fn() }));
+vi.mock("../src/rerail-build.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/rerail-build.js")>("../src/rerail-build.js");
+  return { ...actual, isMainRerailBuild: () => daemonRoute.main ?? actual.isMainRerailBuild() };
+});
+vi.mock("../src/daemon-control.js", async () => ({
+  ...await vi.importActual<Record<string, unknown>>("../src/daemon-control.js"),
+  startDaemonForPackage: daemonRoute.startDaemonForPackage,
+}));
 import Database from "better-sqlite3";
 import { RULE_MESSAGE_TYPE } from "../src/adapter-contract.js";
 import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistory } from "../src/database.js";
@@ -21,7 +31,7 @@ import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../src/session-state.js";
 import { SqliteTranscriptStore } from "../src/transcript-store.js";
 import type { CosineRule } from "../src/rule-schema.js";
 import type { RerailCommandContext } from "../src/rerail-command.js";
-import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
+import { startTestRepository } from "./support/started-repository.js";
 
 // Every test here builds real sessions (native model, kernel, rule catalog); on a loaded CI runner a
 // build alone can pass the 5 s default, whichever test happens to pay the cold start.
@@ -52,6 +62,8 @@ const shutdowns: Array<() => Promise<unknown>> = [];
 
 afterEach(async () => {
   for (const shutdown of shutdowns.splice(0)) await shutdown();
+  daemonRoute.main = undefined;
+  daemonRoute.startDaemonForPackage.mockReset();
   vi.unstubAllGlobals();
   vi.useRealTimers();
   if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
@@ -62,20 +74,6 @@ afterEach(async () => {
 interface RegisteredTool {
   name: string;
   execute(id: string, input: unknown): Promise<unknown>;
-}
-
-/** Points the checkout at a fake per-worktree dev container and records every bridge request. */
-function stubDevInstance(cwd: string): { operations: string[]; remove(): void } {
-  const operations: string[] = [];
-  mkdirSync(join(cwd, ".nera"), { recursive: true });
-  const path = join(cwd, ".nera", "instance.env");
-  writeFileSync(path, 'NERA_RERAIL_ENABLED="true"\nNERA_RERAIL_PUBLIC_URL="http://127.0.0.1:4737"\n');
-  vi.stubGlobal("fetch", async (_url: URL, init: { body: string }) => {
-    const operation = (JSON.parse(init.body) as { operation: string }).operation;
-    if (operation !== "poll") operations.push(operation);
-    return new Response(JSON.stringify({ result: null, deliveries: [], entries: [] }), { status: 200 });
-  });
-  return { operations, remove: () => rmSync(path) };
 }
 
 function createHarness(branch: unknown[] = []): PiHarness {
@@ -411,95 +409,14 @@ describe("Pi cosine-rules extension", () => {
     }
   });
 
-  it("reattaches the retained dev checkout after rerail-stop closes its native client", async () => {
-    const harness = createHarness();
-    const dev = stubDevInstance(harness.context.cwd);
-    createPiCosineRulesExtension({
-      modelPath: resolve("model"),
-      rules: [messageRule],
-      registerTool: false,
-    })(harness.pi);
-    await harness.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, harness.context);
-
-    const ui = {
-      notify() {},
-      confirm: async () => true,
-      select: async () => undefined,
-      input: async () => undefined,
-    };
-    // The launcher is the CLI's `start` / `stop`; here it changes the state the extension then reads.
-    const launch = (change: (workspace: string) => string) => launcher.spawn.mockImplementationOnce((_command: string, _args: readonly string[], spawnOptions: { cwd?: string }) => {
-      const child = new EventEmitter() as ChildProcess;
-      const output = Object.assign(new EventEmitter(), { setEncoding() {} });
-      Object.assign(child, { stdout: output, stderr: output });
-      change(spawnOptions.cwd!);
-      process.nextTick(() => child.emit("close", 0, null));
-      return child;
-    });
-    launch(workspace => stopTestRepository(workspace));
-    await harness.commands.get("rerail-stop")?.("", { ui });
-    launch(workspace => startTestRepository(workspace));
-    await harness.commands.get("rerail-start")?.("", { ui });
-
-    expect(dev.operations).toEqual(["initialize", "close", "initialize"]);
-  });
-
-  it("rebuilds the local semantic runtime when the dev container is gone on the next session_start", async () => {
-    const harness = createHarness();
-    const tools = new Map<string, RegisteredTool>();
-    Object.assign(harness.pi, { registerTool(tool: RegisteredTool) { tools.set(tool.name, tool); } });
-    const dev = stubDevInstance(harness.context.cwd);
-    createPiCosineRulesExtension({
-      modelPath: resolve("model"),
-      rules: [messageRule],
-      registerCommand: false,
-    })(harness.pi);
-    await harness.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, harness.context);
-    await harness.handlers.get("input")?.({ type: "input", text: "hello" }, harness.context);
-    expect(dev.operations).toEqual(["initialize", "ingest"]);
-
-    dev.remove();
-    await harness.handlers.get("session_start")?.({ type: "session_start", reason: "resume" }, harness.context);
-    await harness.handlers.get("input")?.({ type: "input", text: "Guest checkout remains available." }, harness.context);
-    const select = tools.get("rerail_select");
-    if (select === undefined) throw new Error("Pi extension did not register rerail_select");
-
-    expect(dev.operations).toEqual(["initialize", "ingest", "close"]);
-    await expect(select.execute("call-1", { spec: { order: "source" } })).resolves.toEqual(
-      expect.objectContaining({ details: expect.objectContaining({ selectionId: expect.any(String) }) }),
-    );
-  });
-
-  it("stops routing to a stale dev container when the same Pi session re-initializes locally", async () => {
-    const harness = createHarness();
-    await install(harness);
-    const dev = stubDevInstance(harness.context.cwd);
-    await harness.handlers.get("session_start")?.({ type: "session_start", reason: "resume" }, harness.context);
-    expect(dev.operations).toEqual(["initialize"]);
-
-    dev.remove();
-    await harness.handlers.get("session_start")?.({ type: "session_start", reason: "resume" }, harness.context);
-    await harness.handlers.get("message_end")?.(
-      {
-        type: "message_end",
-        message: {
-          role: "assistant",
-          timestamp: 100,
-          responseId: "response-1",
-          content: [{ type: "text", text: "Guest checkout remains available." }],
-        },
-      },
-      harness.context,
-    );
-
-    expect(dev.operations).toEqual(["initialize", "close"]);
-    expect(harness.messages.map(sent => (sent.message as { content: string }).content)).toEqual(["Check checkout requirements."]);
-  });
-
   it("drops a breaker-driven reattach that fired while a newer session was attaching", async () => {
     const harness = createHarness();
-    stubDevInstance(harness.context.cwd);
-    // A dev container that can refuse the old session, and whose next initialize can be held mid-flight.
+    daemonRoute.main = true;
+    daemonRoute.startDaemonForPackage.mockResolvedValue({
+      started: false,
+      daemon: { state: { url: "http://127.0.0.1:4737/", nativeToken: "native-token" }, health: { workspaceRoot: harness.context.cwd } },
+    });
+    // The daemon can refuse the old session, and its next initialize can be held mid-flight.
     const state = { down: new Set<string>(), hold: undefined as PromiseWithResolvers<void> | undefined };
     const requests: Array<{ operation: string; sessionId: string }> = [];
     vi.stubGlobal("fetch", async (_url: URL, init: { body: string }) => {

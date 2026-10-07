@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +9,6 @@ import { openRerailDatabase } from "../src/database.js";
 import { loadBundledRules } from "../src/rule-bootstrap.js";
 import { MOCK_COSINE_RULES, seedRerailDatabase } from "../src/seed.js";
 import {
-  effectiveStartState,
   isRerailStarted,
   repositoryStartState,
   startRepository,
@@ -153,24 +152,6 @@ describe("repository start state", () => {
     }
   });
 
-  it("treats a development workspace that runs its own container as started until it is stopped, even never set up", async () => {
-    const root = await temporary("rerail-start-dev-");
-    const databasePath = join(root, "rerail.sqlite");
-    const checkout = gitRepository(join(root, "checkout"));
-    mkdirSync(join(checkout, ".nera"));
-    writeFileSync(join(checkout, ".nera", "instance.env"), 'NERA_RERAIL_ENABLED="true"\nNERA_RERAIL_PUBLIC_URL="http://127.0.0.1:4737"\n');
-    expect(isRerailStarted(checkout, databasePath)).toBe(true);
-
-    const io = recorder("terminal");
-    expect(stopRerail(checkout, io, databasePath)).toBe("started");
-    expect(io.lines[0]).toMatch(/^○ Rerail is stopped in checkout\. /u);
-    expect(isRerailStarted(checkout, databasePath)).toBe(false);
-    expect(workspaceStartState(checkout, databasePath)).toBe("stopped");
-
-    await startRerail(checkout, recorder(), { databasePath });
-    expect(isRerailStarted(checkout, databasePath)).toBe(true);
-  });
-
   it("makes a resident runtime record and steer nothing once the repository is stopped elsewhere", async () => {
     const root = await temporary("rerail-start-resident-");
     const databasePath = join(root, "rerail.sqlite");
@@ -274,39 +255,6 @@ describe("repository start state", () => {
     const io = recorder("terminal");
     expect(stopRerail(checkout, io, join(root, "rerail.sqlite"))).toBe("never");
     expect(io.lines).toEqual(["○ Rerail has not been started in landing-page, so there is nothing to stop. Start it with rerail start."]);
-  });
-
-  it("never starts a repository from a session recorded under a development workspace's flag", async () => {
-    const root = await temporary("rerail-dev-flag-");
-    const databasePath = join(root, "rerail.sqlite");
-    const main = gitRepository(join(root, "acme"));
-    const flagged = join(root, "acme-flagged");
-    const sibling = join(root, "acme-sibling");
-    execFileSync("git", ["worktree", "add", "-q", "-b", "flagged", flagged], { cwd: main });
-    execFileSync("git", ["worktree", "add", "-q", "-b", "sibling", sibling], { cwd: main });
-    mkdirSync(join(flagged, ".nera"));
-    writeFileSync(join(flagged, ".nera", "instance.env"), 'NERA_RERAIL_ENABLED="true"\nNERA_RERAIL_PUBLIC_URL="http://127.0.0.1:4737"\n');
-    // A gated runtime in this database (the event stream or daemon kernel) runs there through the flag.
-    const runtime = new RerailRuntime({
-      storageRoot: join(root, "sessions"), databasePath, workspaceRoot: flagged,
-      embedder: testEmbedder, autostart: false, startGate: true,
-    });
-    try {
-      await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "omp", sessionId: "flagged", cwd: flagged } });
-    } finally {
-      await runtime.dispose();
-    }
-    const raw = new Database(databasePath, { readonly: true });
-    try {
-      expect(raw.prepare("SELECT session_id FROM sessions").pluck().all()).toEqual(["flagged"]);
-    } finally {
-      raw.close();
-    }
-
-    // Recording a session never starts a repository; the flag alone must not start it.
-    expect(workspaceStartState(main, databasePath)).toBe("never");
-    expect(workspaceStartState(sibling, databasePath)).toBe("never");
-    expect(effectiveStartState(flagged, databasePath)).toBe("started");
   });
 
   it("keeps a repository never started after `rerail seed` records its mock session", async () => {

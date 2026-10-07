@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AdapterDelivery } from "../src/adapter-contract.js";
@@ -66,20 +66,6 @@ describe("Codex one-shot hook", () => {
     startTestRepository(root, hookOptions(root).databasePath);
     stopTestRepository(root, hookOptions(root).databasePath);
     expect(await runCodexHook(start, hookOptions(root))).toEqual({});
-    expect(transcriptQuery(root, "SELECT session_id FROM sessions")).toEqual([]);
-  });
-
-  it("does not activate host Rerail below a repository-operations workspace where Rerail is disabled", async () => {
-    const root = await temporaryDirectory();
-    const worktree = join(root, "tmp", "baseline-gate-audit");
-    await mkdir(join(root, ".nera"));
-    await writeFile(join(root, ".nera", "instance.env"), 'NERA_RERAIL_ENABLED="false"\n');
-    await mkdir(worktree, { recursive: true });
-
-    expect(await runCodexHook(
-      { session_id: "codex-session", cwd: worktree, hook_event_name: "SessionStart", source: "startup" },
-      hookOptions(root),
-    )).toEqual({});
     expect(transcriptQuery(root, "SELECT session_id FROM sessions")).toEqual([]);
   });
 

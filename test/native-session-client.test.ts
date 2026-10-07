@@ -1,12 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 const nativeBoundary = vi.hoisted(() => ({
-  resolveRoute: vi.fn(),
   startDaemonForPackage: vi.fn(),
   isMainRerailBuild: vi.fn<() => boolean>(),
-}));
-vi.mock("../src/dev-routing.js", async () => ({
-  ...await vi.importActual<Record<string, unknown>>("../src/dev-routing.js"),
-  resolveRerailWorkspaceRoute: nativeBoundary.resolveRoute,
 }));
 vi.mock("../src/daemon-control.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../src/daemon-control.js"),
@@ -22,7 +17,7 @@ import { join, resolve } from "node:path";
 import superjson from "superjson";
 import type { AdapterDelivery } from "../src/adapter-contract.js";
 import type { DaemonLaunchOptions } from "../src/daemon-control.js";
-import { createDevNativeSession, DevNativeClient } from "../src/dev-native-client.js";
+import { createNativeSession, NativeSessionClient } from "../src/native-session-client.js";
 import { MUTATION_ENTRY_TYPE } from "../src/session-state.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "./native-daemon-fixture.js";
 
@@ -43,7 +38,6 @@ const readBody = (init: RequestInit): NativeRequestBody => JSON.parse(String(ini
 
 afterEach(async () => {
   await closeNativeTestDaemons();
-  nativeBoundary.resolveRoute.mockReset();
   nativeBoundary.startDaemonForPackage.mockReset();
   nativeBoundary.isMainRerailBuild.mockReset();
   vi.unstubAllGlobals();
@@ -72,8 +66,9 @@ describe("daemon native client delivery lifecycle", () => {
         entries: request.operation === "close" ? [{ customType: "closed", data: 1 }] : [],
       });
     });
-    const client = new DevNativeClient({
+    const client = new NativeSessionClient({
       instance: { workspaceRoot: "/workspace", url: new URL("http://127.0.0.1:4737") },
+      token: "native-token",
       host: "omp", sessionId: "session", entries: () => [],
       appendEntry: type => { received.push(type); },
       deliver: (_client, deliveries) => { received.push(...deliveries.map(item => item.content)); },
@@ -95,8 +90,7 @@ describe("daemon native client delivery lifecycle", () => {
 
   it("starts and leaves the shared fallback daemon in bundled UI mode", async () => {
     let sharedUi: "bundled" | "dev" | undefined;
-    const active: DevNativeClient[] = [];
-    nativeBoundary.resolveRoute.mockResolvedValue({ kind: "host" });
+    const active: NativeSessionClient[] = [];
     nativeBoundary.startDaemonForPackage.mockImplementation(async (_control: unknown, options: DaemonLaunchOptions) => {
       sharedUi = options.dev ? "dev" : "bundled";
       return {
@@ -109,7 +103,7 @@ describe("daemon native client delivery lifecycle", () => {
     });
     vi.stubGlobal("fetch", async () => Response.json({ deliveries: [], entries: [] }));
 
-    await expect(createDevNativeSession({
+    await expect(createNativeSession({
       current: () => undefined,
       matchesCurrent: () => false,
       close: async () => undefined,
@@ -128,40 +122,15 @@ describe("daemon native client delivery lifecycle", () => {
     await active[0]?.close();
     expect(sharedUi).toBe("bundled");
   });
-
-  it("does not start the shared fallback daemon for an explicitly disabled workspace", async () => {
-    nativeBoundary.resolveRoute.mockResolvedValue({
-      kind: "disabled",
-      workspaceRoot: "/workspace",
-      configurationFile: "/workspace/.nera/instance.env",
-    });
-
-    await expect(createDevNativeSession({
-      current: () => undefined,
-      matchesCurrent: () => false,
-      close: async () => undefined,
-      activate() {},
-      entries: () => [],
-      appendEntry() {},
-      deliver() {},
-      reattach: async () => undefined,
-    }, {}, {
-      host: "omp",
-      sessionId: "disabled-workspace",
-      cwd: "/workspace/tmp/baseline-gate-audit",
-    }, false, {})).resolves.toBe("disabled");
-
-    expect(nativeBoundary.startDaemonForPackage).not.toHaveBeenCalled();
-  });
 });
 
 describe("pi session routing", () => {
   const piSession = { host: "pi" as const, sessionId: "pi-session", cwd: "/workspace" };
-  const piHost = (active: DevNativeClient[]) => ({
+  const piHost = (active: NativeSessionClient[]) => ({
     current: () => undefined,
     matchesCurrent: () => false,
     close: async () => undefined,
-    activate(client: DevNativeClient) { active.push(client); },
+    activate(client: NativeSessionClient) { active.push(client); },
     entries: () => [],
     appendEntry() {},
     deliver() {},
@@ -169,10 +138,9 @@ describe("pi session routing", () => {
   });
 
   it("sends a main build's pi session to the daemon, since an in-process main runtime would be a second main instance", async () => {
-    const active: DevNativeClient[] = [];
+    const active: NativeSessionClient[] = [];
     const initialized: Array<{ host?: unknown; operation?: unknown }> = [];
     nativeBoundary.isMainRerailBuild.mockReturnValue(true);
-    nativeBoundary.resolveRoute.mockResolvedValue({ kind: "host" });
     nativeBoundary.startDaemonForPackage.mockResolvedValue({
       started: false,
       daemon: { state: { url: "http://127.0.0.1:4737", nativeToken: "private-token" }, health: { workspaceRoot: "/workspace" } },
@@ -182,7 +150,7 @@ describe("pi session routing", () => {
       return Response.json({ deliveries: [], entries: [] });
     });
 
-    await expect(createDevNativeSession(piHost(active), {}, piSession, false, {})).resolves.toBe("attached");
+    await expect(createNativeSession(piHost(active), {}, piSession, false, {})).resolves.toBe("attached");
 
     expect(nativeBoundary.startDaemonForPackage).toHaveBeenCalledOnce();
     expect(initialized[0]).toEqual(expect.objectContaining({ host: "pi", operation: "initialize" }));
@@ -190,11 +158,10 @@ describe("pi session routing", () => {
   });
 
   it("keeps a checkout's pi session in-process and starts no daemon", async () => {
-    const active: DevNativeClient[] = [];
+    const active: NativeSessionClient[] = [];
     nativeBoundary.isMainRerailBuild.mockReturnValue(false);
-    nativeBoundary.resolveRoute.mockResolvedValue({ kind: "host" });
 
-    await expect(createDevNativeSession(piHost(active), {}, piSession, false, {})).resolves.toBe("host");
+    await expect(createNativeSession(piHost(active), {}, piSession, false, {})).resolves.toBe("host");
 
     expect(nativeBoundary.startDaemonForPackage).not.toHaveBeenCalled();
     expect(active).toEqual([]);
@@ -232,7 +199,7 @@ describe("daemon native client branch encoding", () => {
       bodies.push(readBody(init));
       return network(url, init);
     });
-    const client = new DevNativeClient({
+    const client = new NativeSessionClient({
       instance: { workspaceRoot: root, url: new URL(daemon.url) },
       token: daemon.state().nativeToken!,
       host: "omp", sessionId: "branch-encoding", entries: () => branch,
@@ -267,8 +234,9 @@ describe("daemon native client polling resilience", () => {
       if (polls === 1) throw new TypeError("fetch failed");
       return Response.json({ deliveries: [delivery("background")], entries: [] });
     });
-    const client = new DevNativeClient({
+    const client = new NativeSessionClient({
       instance: { workspaceRoot: "/workspace", url: new URL("http://127.0.0.1:4737") },
+      token: "native-token",
       host: "omp", sessionId: "transient", entries: () => [],
       appendEntry() {},
       deliver: (_client, deliveries) => { received.push(...deliveries.map(item => item.content)); },
@@ -308,8 +276,9 @@ describe("daemon native client polling resilience", () => {
       if (request.operation === "poll") return Response.json({ deliveries: [delivery("resumed")], entries: [] });
       return Response.json({ deliveries: [], entries: [], result: { ok: true } });
     });
-    const client = new DevNativeClient({
+    const client = new NativeSessionClient({
       instance: { workspaceRoot: "/workspace", url: new URL("http://127.0.0.1:4737") },
+      token: "native-token",
       host: "omp", sessionId: "expired", entries: () => branch,
       appendEntry() {},
       deliver: (_client, deliveries) => { received.push(...deliveries.map(item => item.content)); },
@@ -352,8 +321,9 @@ describe("daemon native client polling resilience", () => {
       }
       return Response.json({ deliveries: request.operation === "poll" ? [delivery("resumed")] : [], entries: [] });
     });
-    const client = new DevNativeClient({
+    const client = new NativeSessionClient({
       instance: { workspaceRoot: "/workspace", url: new URL("http://127.0.0.1:4737") },
+      token: "native-token",
       host: "omp", sessionId: "restoring", entries: () => [],
       appendEntry() {},
       deliver: (_client, deliveries) => { received.push(...deliveries.map(item => item.content)); },
@@ -390,8 +360,9 @@ describe("daemon native client polling resilience", () => {
       }
       return Response.json({ deliveries: [], entries: [], result: { ok: true } });
     });
-    const client = new DevNativeClient({
+    const client = new NativeSessionClient({
       instance: { workspaceRoot: "/workspace", url: new URL("http://127.0.0.1:4737") },
+      token: "native-token",
       host: "omp", sessionId: "outage", entries: () => [],
       appendEntry() {},
       deliver() {},
@@ -438,8 +409,9 @@ describe("daemon native client polling resilience", () => {
       if (request.operation === "cosine") return Response.json({ error: "native-request-invalid", message: "unknown action" }, { status: 400 });
       return Response.json({ deliveries: [], entries: [], result: { ok: true } });
     });
-    const client = new DevNativeClient({
+    const client = new NativeSessionClient({
       instance: { workspaceRoot: "/workspace", url: new URL("http://127.0.0.1:4737") },
+      token: "native-token",
       host: "omp", sessionId: "explicit", entries: () => [],
       appendEntry() {},
       deliver() {},
@@ -460,8 +432,9 @@ describe("daemon native client polling resilience", () => {
       const retired = readBody(init).operation === "cosine" ? [{ ...delivery("Recorded only."), requested: "observe" }] : [];
       return Response.json({ deliveries: retired, entries: [], result: null });
     });
-    const client = new DevNativeClient({
+    const client = new NativeSessionClient({
       instance: { workspaceRoot: "/workspace", url: new URL("http://127.0.0.1:4737") },
+      token: "native-token",
       host: "omp", sessionId: "skewed", entries: () => [],
       appendEntry() {},
       deliver(_client, deliveries) { delivered.push(...deliveries); },
@@ -489,8 +462,9 @@ describe("daemon native client polling resilience", () => {
       // The host resolved a live daemon: with a rejected token it retires this client for a new one.
       if (mode === "new-token") await client.close();
     });
-    const client = new DevNativeClient({
+    const client = new NativeSessionClient({
       instance: { workspaceRoot: "/workspace", url: new URL("http://127.0.0.1:4737") },
+      token: "native-token",
       host: "omp", sessionId: "rebuild", entries: () => [],
       appendEntry() {},
       deliver() {},
@@ -543,8 +517,9 @@ describe("daemon native client polling resilience", () => {
       return Response.json({ deliveries: [], entries: [], result: { ok: true } });
     });
     const reattach = vi.fn(async () => { throw new Error("daemon still starting"); });
-    const client = new DevNativeClient({
+    const client = new NativeSessionClient({
       instance: { workspaceRoot: "/workspace", url: new URL("http://127.0.0.1:4737") },
+      token: "native-token",
       host: "omp", sessionId: "gone", entries: () => [],
       appendEntry() {},
       deliver() {},
@@ -596,8 +571,9 @@ describe("daemon native client polling resilience", () => {
       if (attempts !== 3) throw new Error("daemon still starting");
       healthy = true;
     });
-    const client = new DevNativeClient({
+    const client = new NativeSessionClient({
       instance: { workspaceRoot: "/workspace", url: new URL("http://127.0.0.1:4737") },
+      token: "native-token",
       host: "omp", sessionId: "late", entries: () => [],
       appendEntry() {},
       deliver() {},

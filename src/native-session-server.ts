@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import { z } from "zod";
 import superjson from "superjson";
 import type { AdapterDelivery, AdapterEvent, AdapterSample, AdapterSession, RerailHost } from "./adapter-contract.js";
@@ -17,9 +17,9 @@ import { openScopedRuleCatalog } from "./scoped-rule-catalog.js";
 import { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE, type RuleMutation } from "./session-state.js";
 import { RerailRuntime } from "./runtime.js";
 
-export type DevNativeRequest = z.infer<typeof requestSchema>;
+export type NativeSessionRequest = z.infer<typeof requestSchema>;
 
-export interface DevNativeResponse {
+export interface NativeSessionResponse {
   result?: unknown;
   deliveries: readonly AdapterDelivery[];
   resultRevisionEntry?: number;
@@ -30,7 +30,6 @@ const NATIVE_SESSION_SWEEP_INTERVAL_MS = 5_000;
 
 
 interface NativeSession {
-  trusted: boolean;
   session: AdapterSession;
   registry: CosineRuleRegistry;
   ruleSync: LiveCosineRules;
@@ -69,7 +68,7 @@ const cosineInputSchema = objectSchema.extend({ action: z.string() });
 
 
 /** Branch entries carry arbitrary host payloads, so the client encodes them; plain JSON stays accepted. */
-function decodeEntries(input: DevNativeRequest): unknown {
+function decodeEntries(input: NativeSessionRequest): unknown {
   if (input.entries === undefined || input.entriesEncoding !== "superjson") return input.entries;
   return superjson.deserialize(input.entries as Parameters<typeof superjson.deserialize>[0]);
 }
@@ -83,12 +82,7 @@ function parseEvent(value: unknown, session: AdapterSession): AdapterEvent {
   }
   return event;
 }
-
-function contained(root: string, candidate: string): boolean {
-  const path = relative(root, resolve(candidate));
-  return !isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`);
-}
-export class DevNativeServer {
+export class NativeSessionServer {
   readonly #workspaceRoot: string;
   readonly #modelPath: string;
   readonly #databasePath: string;
@@ -120,11 +114,11 @@ export class DevNativeServer {
     this.#sweepTimer.unref();
   }
 
-  async handle(input: unknown, options: { trusted?: boolean } = {}): Promise<unknown> {
+  async handle(input: unknown): Promise<unknown> {
     const parsed = requestSchema.parse(input);
     if (resolve(parsed.workspaceRoot) !== this.#workspaceRoot) throw new RangeError("native workspace mismatch");
     return this.#lanes.run(parsed.sessionId, async () => {
-      const response = await this.#handle(parsed, options.trusted === true);
+      const response = await this.#handle(parsed);
       if (parsed.operation !== "close") {
         const active = this.#sessions.get(parsed.sessionId);
         if (active !== undefined) active.leaseExpiresAt = Date.now() + this.#sessionLeaseMs;
@@ -140,9 +134,9 @@ export class DevNativeServer {
       this.#lanes.run(sessionId, () => this.#close(sessionId))));
   }
 
-  async #handle(input: DevNativeRequest, trusted: boolean): Promise<DevNativeResponse> {
-    const session = this.#sessionForRequest(input, trusted);
-    if (input.operation === "initialize") return this.#initialize(input, trusted);
+  async #handle(input: NativeSessionRequest): Promise<NativeSessionResponse> {
+    const session = this.#sessionForRequest(input);
+    if (input.operation === "initialize") return this.#initialize(input);
     if (input.operation === "close") {
       await this.#close(input.sessionId);
       return session === undefined ? { deliveries: [], entries: [] } : this.#reply(session);
@@ -179,27 +173,23 @@ export class DevNativeServer {
     return { ...reply, result: semantic.result, resultRevisionEntry };
   }
 
-  #sessionForRequest(input: DevNativeRequest, trusted: boolean): NativeSession | undefined {
+  #sessionForRequest(input: NativeSessionRequest): NativeSession | undefined {
     const session = this.#sessions.get(input.sessionId);
-    if (session !== undefined && (session.session.host !== input.host || session.trusted !== trusted)) {
+    if (session !== undefined && session.session.host !== input.host) {
       throw new Error("native session owner mismatch");
     }
     return session;
   }
 
-  #reply(session: NativeSession): DevNativeResponse {
+  #reply(session: NativeSession): NativeSessionResponse {
     return { deliveries: session.pendingDeliveries.splice(0), entries: session.appendEntries.splice(0) };
   }
 
-  /** Only trusted callers may redirect the model, database, and session storage paths. */
+  /** Model, database, and session storage paths resolve against the session's cwd. */
   #sessionPaths(
     options: { modelPath?: string; databasePath?: string; storageRoot?: string },
     cwd: string,
-    trusted: boolean,
   ): { modelPath: string; databasePath: string; storageRoot: string } {
-    if (!trusted) {
-      return { modelPath: this.#modelPath, databasePath: this.#databasePath, storageRoot: join(this.#workspaceRoot, ".rerail", "sessions") };
-    }
     return {
       modelPath: resolve(cwd, options.modelPath ?? this.#modelPath),
       databasePath: options.databasePath === undefined ? this.#databasePath : resolve(cwd, options.databasePath),
@@ -207,7 +197,7 @@ export class DevNativeServer {
     };
   }
 
-  async #initialize(input: DevNativeRequest, trusted: boolean): Promise<DevNativeResponse> {
+  async #initialize(input: NativeSessionRequest): Promise<NativeSessionResponse> {
     const branch = entriesSchema.parse(decodeEntries(input)) as SessionEntry[];
     const options = objectSchema.extend({
       cwd: z.string().optional(),
@@ -222,7 +212,6 @@ export class DevNativeServer {
       maxInputTokens?: number; maxRules?: number; rebuild?: boolean;
     };
     const cwd = resolve(options.cwd ?? this.#workspaceRoot);
-    if (!trusted && !contained(this.#workspaceRoot, cwd)) throw new RangeError("native session cwd is outside workspace");
     const existing = this.#sessions.get(input.sessionId);
     if (existing !== undefined && existing.session.cwd === cwd && options.rebuild !== true) {
       existing.ruleSync.prime();
@@ -231,7 +220,7 @@ export class DevNativeServer {
       existing.entries = branch;
       return this.#reply(existing);
     }
-    const { modelPath, databasePath, storageRoot } = this.#sessionPaths(options, cwd, trusted);
+    const { modelPath, databasePath, storageRoot } = this.#sessionPaths(options, cwd);
     const session: AdapterSession = { host: input.host as RerailHost, sessionId: input.sessionId, cwd };
     const registry = new CosineRuleRegistry({
       modelPath,
@@ -267,7 +256,7 @@ export class DevNativeServer {
         },
       });
       const attached: NativeSession = {
-        trusted, session, registry, ruleSync, runtime, semantic, entries: branch, turn,
+        session, registry, ruleSync, runtime, semantic, entries: branch, turn,
         pendingDeliveries: [], appendEntries: [], leaseExpiresAt: Date.now() + this.#sessionLeaseMs,
       };
       semantic.initialize({

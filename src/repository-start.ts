@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { basename, dirname, resolve, sep } from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "./database.js";
-import { devWorkspaceEnabled } from "./dev-routing.js";
 import type { Harness } from "./harness-registration.js";
 import { readRepositoryIdAt, repositoryIdentityLocation, type RepositoryIdentityLocation } from "./repository-identity.js";
 import { loadBundledRules } from "./rule-bootstrap.js";
@@ -202,24 +201,11 @@ export function workspaceStartState(workspace: string, databasePath = defaultRer
   }
 }
 
-/**
- * A development workspace that enables its own container counts as started until the repository
- * is stopped: that flag is its explicit opt-in.
- */
-function withDevelopmentWorkspace(state: RepositoryStartState, developmentWorkspace: boolean): RepositoryStartState {
-  return state === "never" && developmentWorkspace ? "started" : state;
-}
-
-/** Whether Rerail runs in `workspace`, as hooks, runtimes, the daemon and the footer see it. */
-export function effectiveStartState(workspace: string, databasePath = defaultRerailDatabasePath()): RepositoryStartState {
-  return withDevelopmentWorkspace(workspaceStartState(workspace, databasePath), devWorkspaceEnabled(workspace));
-}
-
-/** The effective state of the checkout a resolved repository context runs in, as seeding needs it. */
-export function effectiveRepositoryStartState(databasePath: string, context: RepositoryContext): RepositoryStartState {
+/** The state of the checkout a resolved repository context runs in, as seeding needs it. */
+export function contextStartState(databasePath: string, context: RepositoryContext): RepositoryStartState {
   const database = openRerailDatabase(databasePath);
   try {
-    return withDevelopmentWorkspace(checkoutStartState(database, contextCheckout(context)), devWorkspaceEnabled(context.workspaceRoot));
+    return checkoutStartState(database, contextCheckout(context));
   } finally {
     database.$client.close();
   }
@@ -249,8 +235,7 @@ export function startStateReader(database: RerailDatabase): (workspace: string) 
         checkouts.set(key, checkout);
       }
     }
-    const state = checkout === undefined ? "never" : checkoutStartState(database, checkout);
-    return withDevelopmentWorkspace(state, devWorkspaceEnabled(key));
+    return checkout === undefined ? "never" : checkoutStartState(database, checkout);
   };
 }
 
@@ -262,16 +247,14 @@ export function startStateReader(database: RerailDatabase): (workspace: string) 
 export class RepositoryStartWatch {
   readonly #database: RerailDatabase;
   readonly #checkout: Checkout;
-  readonly #developmentWorkspace: boolean;
 
   constructor(databasePath: string, context: RepositoryContext) {
     this.#checkout = contextCheckout(context);
     this.#database = openRerailDatabase(databasePath, { readonly: true });
-    this.#developmentWorkspace = devWorkspaceEnabled(context.workspaceRoot);
   }
 
   started(): boolean {
-    return withDevelopmentWorkspace(checkoutStartState(this.#database, this.#checkout), this.#developmentWorkspace) === "started";
+    return checkoutStartState(this.#database, this.#checkout) === "started";
   }
 
   close(): void {
@@ -281,7 +264,7 @@ export class RepositoryStartWatch {
 
 /** The one check hooks, runtimes and the daemon make before doing anything in a checkout. */
 export function isRerailStarted(workspace: string, databasePath = defaultRerailDatabasePath()): boolean {
-  return effectiveStartState(workspace, databasePath) === "started";
+  return workspaceStartState(workspace, databasePath) === "started";
 }
 
 /**
@@ -408,12 +391,11 @@ export async function startRerail(workspace: string, io: RepositorySetupIo, opti
  * Stop Rerail in the checkout `workspace` is in and every worktree that follows it, as `startRerail`
  * describes. Worktrees with their own setting and the checkouts that contain it keep their state.
  * Rules and history are kept.
- * A development workspace that runs only on its container flag has no row yet, so one is written stopped.
  */
 export function stopRerail(workspace: string, io: RepositorySetupIo, databasePath = defaultRerailDatabasePath()): RepositoryStartState {
   const name = checkoutName(workspace);
   const startCommand = io.lane === "agent" ? "/rerail-start" : "rerail start";
-  const previous = effectiveStartState(workspace, databasePath);
+  const previous = workspaceStartState(workspace, databasePath);
   if (previous === "never") {
     io.say(`○ Rerail has not been started in ${name}, so there is nothing to stop. Start it with ${startCommand}.`);
     return previous;

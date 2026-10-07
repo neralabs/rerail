@@ -12,7 +12,7 @@ const STAMPER = resolve("scripts/stamp-plugin-versions.mjs");
 const PluginManifestSchema = z.object({
   name: z.literal("rerail"),
   description: z.string().min(1),
-  license: z.literal("MIT"),
+  license: z.literal("Apache-2.0"),
   hooks: z.string().optional(),
 }).strict();
 

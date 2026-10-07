@@ -21,9 +21,8 @@ import {
 } from "./adapter-contract.js";
 import { registerCosineRulesCommand } from "./command.js";
 import { nodeExecutable } from "./daemon-control.js";
-import { devWorkspaceEnabled } from "./dev-routing.js";
 import { registerOmpSemanticTools, type NativeSemanticToolRuntime } from "./native-semantic-tools.js";
-import { createDevNativeSession, DevNativeClient, type DevNativeSessionHost } from "./dev-native-client.js";
+import { createNativeSession, NativeSessionClient, type NativeSessionHost } from "./native-session-client.js";
 import type { ExtensionTranscriptOptions } from "./extension-transcript.js";
 import type { CosineRuleSourceOptions } from "./rule-sources.js";
 import { registerRerailCommands } from "./rerail-command.js";
@@ -58,8 +57,7 @@ const STATE_CHECK_TIMEOUT_MS = 15_000;
  * Whether Rerail is started in `cwd`. Under Node the built package reads the database itself; it is
  * loaded at run time so this bundle never links the SQLite binding. OMP runs extensions on Bun,
  * which cannot load that binding: a running daemon answers, and otherwise the CLI does under Node,
- * reading the configured database when one is given. A development bridge ships neither, and its
- * workspace flag is its start switch.
+ * reading the configured database when one is given. Without a built CLI, Rerail is off.
  */
 async function rerailStarted(cwd: string, databasePath: string | undefined): Promise<boolean> {
   const readerPath = join(PACKAGE_ROOT, "dist", "repository-start.js");
@@ -73,7 +71,7 @@ async function rerailStarted(cwd: string, databasePath: string | undefined): Pro
     if (answered !== null) return answered === "started";
   }
   const cli = join(PACKAGE_ROOT, "dist", "cli.js");
-  if (!existsSync(cli)) return devWorkspaceEnabled(cwd);
+  if (!existsSync(cli)) return false;
   const databaseArgs = databasePath === undefined ? [] : ["--database", databasePath];
   const { stdout } = await execFileAsync(nodeExecutable(), [cli, "state", "--repo", cwd, ...databaseArgs], { cwd, timeout: STATE_CHECK_TIMEOUT_MS });
   return stdout.trim() === "started";
@@ -121,7 +119,7 @@ export function createCosineRulesExtension(options: CosineRulesOptions = {}): Ex
     const streamedMessages = new Set<string>();
     const policyTools = new Map<string, string>();
     let semantic: NativeSemanticToolRuntime | undefined;
-    let remote: DevNativeClient | undefined;
+    let remote: NativeSessionClient | undefined;
 
     const activeSemantic = (): NativeSemanticToolRuntime => {
       if (semantic === undefined) throw new Error("rerail semantic tools received an event before session_start");
@@ -147,7 +145,7 @@ export function createCosineRulesExtension(options: CosineRulesOptions = {}): Ex
       return pending;
     };
 
-    const sendDeliveries = (current: DevNativeClient, deliveries: readonly AdapterDelivery[]): Promise<void> =>
+    const sendDeliveries = (current: NativeSessionClient, deliveries: readonly AdapterDelivery[]): Promise<void> =>
       sendNativeDeliveries(deliveries, async (message, options_) => {
         const context = currentContext;
         pi.sendMessage(message, options_);
@@ -183,7 +181,7 @@ export function createCosineRulesExtension(options: CosineRulesOptions = {}): Ex
       // Serialized through `attaching` and dropped once its context stopped being current, so a
       // probe that lost the race to a session switch cannot resurrect the old session.
       reattach: context => initialize(context, { onlyIfCurrent: true }),
-    } satisfies DevNativeSessionHost<ExtensionContext>;
+    } satisfies NativeSessionHost<ExtensionContext>;
 
     /** The initialize in flight, if any: an event that arrives first waits for it instead of failing. */
     let attaching: Promise<void> | undefined;
@@ -263,17 +261,12 @@ export function createCosineRulesExtension(options: CosineRulesOptions = {}): Ex
         presentation.start(ctx, { off: true });
         return;
       }
-      const activation = await createDevNativeSession(nativeHost, ctx, session, options_.rebuild === true, {
+      const activation = await createNativeSession(nativeHost, ctx, session, options_.rebuild === true, {
         ...options,
         modelPath: resolve(options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath()),
         ...(databasePath === undefined ? {} : { databasePath }),
         storageRoot: resolve(ctx.cwd, process.env.RERAIL_STORAGE_ROOT ?? ".rerail/sessions"),
       });
-      if (activation === "disabled") {
-        presentation.stop();
-        currentContext = ctx;
-        return;
-      }
       if (activation !== "attached") throw new Error("OMP Rerail routing did not attach a runtime");
       presentation.start(ctx);
     };

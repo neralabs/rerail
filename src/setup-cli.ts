@@ -179,7 +179,7 @@ export async function runInstallCommand(args: readonly string[], context: SetupC
     : await registerHarnesses(registrationOptions(root, harnessHome(), parsed, templateRoot));
   printReport(report, parsed.dryRun);
   // Removing every coding agent from the managed install is the uninstall. Removing one coding agent, or a
-  // checkout or development bridge registered with `--root`, leaves the shared rules and history in place.
+  // checkout registered with `--root`, leaves the shared rules and history in place.
   const uninstall = remove && parsed.harnesses === undefined && (explicitRoot === undefined || root === context.updater.currentLink);
   if (uninstall) await backUpRulesAndHistory(context.home, parsed.dryRun);
   if (explicitRoot !== undefined && !remove) {

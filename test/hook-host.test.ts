@@ -1,15 +1,13 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { AdapterDelivery } from "../src/adapter-contract.js";
-import { openRerailDatabase } from "../src/database.js";
-import { emitHookOutput, pendingPath, persistPending, readPending, runHostHook, serveHook, takePending, withSessionLock, type HookInput, type HookOptions, type HookOutput } from "../src/hook-host.js";
+import { emitHookOutput, pendingPath, persistPending, readPending, serveHook, takePending, withSessionLock, type HookInput, type HookOptions, type HookOutput } from "../src/hook-host.js";
 import { runClaudeHook } from "../src/claude-hook.js";
 import { runCodexHook } from "../src/codex-hook.js";
 import { runCursorHook } from "../src/cursor-hook.js";
-import { resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
-import { hookOptions, serveText, temporaryDirectories, testEmbedder, transcriptQuery } from "./hook-fixtures.js";
+import { hookOptions, serveText, temporaryDirectories, transcriptQuery } from "./hook-fixtures.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-hook-host-");
 
@@ -180,55 +178,5 @@ describe("hook host durable state", () => {
       throw new Error("ingest failed");
     })).rejects.toThrow("ingest failed");
     await expect(withSessionLock(root, "codex", "session-1", async () => "recovered")).resolves.toBe("recovered");
-  });
-});
-
-describe("hooks in a development workspace", () => {
-  it("records a flagged workspace's session only in its container, never in the host database", async () => {
-    const root = await temporaryDirectory({ started: false });
-    const workspace = join(root, "workspace");
-    await mkdir(join(workspace, ".nera"), { recursive: true });
-    const { repositoryId } = resolveRepositoryContext(workspace);
-    const hostDatabasePath = join(root, "host", "rerail.sqlite");
-    openRerailDatabase(hostDatabasePath).$client.close();
-    // The local test runtime records into `databasePath` in-process, so any host-side path would land a row there.
-    const options: HookOptions = { storageRoot: join(root, "sessions"), databasePath: hostDatabasePath, embedder: testEmbedder };
-    const prompt = (sessionId: string) => runHostHook("claude-code", workspace, sessionId, options, async loop => {
-      await loop.ingest({ kind: "session-start", eventId: `${sessionId}:start`, session: { host: "claude-code", sessionId, cwd: workspace } });
-      await loop.ingest({ kind: "user-prompt", eventId: `${sessionId}:prompt`, sessionId, text: "Mind the API." });
-      return {};
-    });
-    const hostRows = () => {
-      const database = openRerailDatabase(hostDatabasePath);
-      try {
-        return {
-          sessions: database.$client.prepare("SELECT session_id FROM sessions WHERE cwd = ? OR repository_id = ?").pluck().all(workspace, repositoryId),
-          starts: database.$client.prepare("SELECT state FROM repository_starts WHERE repository_id = ?").pluck().all(repositoryId),
-        };
-      } finally {
-        database.$client.close();
-      }
-    };
-
-    await writeFile(join(workspace, ".nera", "instance.env"), 'NERA_RERAIL_ENABLED="true"\nNERA_RERAIL_PUBLIC_URL="http://127.0.0.1:4737"\n');
-    const container: Array<{ path: string; body: { configuration: Record<string, unknown> } }> = [];
-    vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
-      const body = JSON.parse(String(init.body)) as { event: { eventId: string }; configuration: Record<string, unknown> };
-      container.push({ path: url.pathname, body });
-      return Response.json({ eventId: body.event.eventId, deliveries: [] });
-    });
-    try {
-      await prompt("flagged");
-    } finally {
-      vi.unstubAllGlobals();
-    }
-    expect(container.map(request => request.path)).toEqual(["/kernel/events", "/kernel/events"]);
-    expect(container.every(request => !("databasePath" in request.body.configuration))).toBe(true);
-    expect(hostRows()).toEqual({ sessions: [], starts: [] });
-
-    // The same hook without the flag takes the host path and does reach the host database.
-    await rm(join(workspace, ".nera", "instance.env"));
-    await prompt("unflagged");
-    expect(hostRows().sessions).toEqual(["unflagged"]);
   });
 });

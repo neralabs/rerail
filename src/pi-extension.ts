@@ -14,8 +14,8 @@ import type { ExtensionTranscriptOptions } from "./extension-transcript.js";
 import type { ModelFingerprint } from "./native.js";
 import type { NativeSemanticToolRuntime } from "./native-semantic-tools.js";
 import { NativeSemanticRuntime } from "./native-semantic-runtime.js";
-import type { DevNativeClient } from "./dev-native-client.js";
-import { PiDevNativeSession } from "./pi-dev-native-session.js";
+import type { NativeSessionClient } from "./native-session-client.js";
+import { PiNativeSession } from "./pi-native-session.js";
 import { registerPiHostAdapter } from "./pi-host-adapter.js";
 import { CosineRuleRegistry, type RuleMatch } from "./registry.js";
 import { cosineRuleLoader, type CosineRuleSourceOptions } from "./rule-sources.js";
@@ -142,7 +142,7 @@ export function createPiCosineRulesExtension(options: PiCosineRulesOptions = {})
       pendingBackgroundDeliveries.delete(next.runtime);
       void sendDeliveries(next.runtime, pending);
     };
-    /** Releases the dev-container client or the local runtime immediately; callers already inside `attaching` use this. */
+    /** Releases the daemon client or the local runtime immediately; callers already inside `attaching` use this. */
     const closeRuntimeNow = async (): Promise<void> => {
       if (native.current() !== undefined) {
         await native.close();
@@ -157,10 +157,10 @@ export function createPiCosineRulesExtension(options: PiCosineRulesOptions = {})
       attaching = pending;
       return pending;
     };
-    const sendDeliveries = (current: RerailRuntime | DevNativeClient, deliveries: readonly AdapterDelivery[]): Promise<void> =>
+    const sendDeliveries = (current: RerailRuntime | NativeSessionClient, deliveries: readonly AdapterDelivery[]): Promise<void> =>
       sendNativeDeliveries(deliveries, (message, options_) => pi.sendMessage(message, options_),
         (sessionId, receiptId, ruleIds) => current.recordSteeringDelivery(sessionId, receiptId, ruleIds));
-    const native = new PiDevNativeSession({
+    const native = new PiNativeSession({
       entries: context => (context ?? currentContext)?.sessionManager.getBranch() ?? [],
       appendEntry: (customType, data) => pi.appendEntry(customType, data),
       deliver: sendDeliveries,
@@ -205,10 +205,6 @@ export function createPiCosineRulesExtension(options: PiCosineRulesOptions = {})
       const session = { host: "pi", sessionId: ctx.sessionManager.getSessionId(), cwd: ctx.cwd } satisfies AdapterSession & { host: "pi" };
       const activation = await native.initialize(ctx, session, options_.rebuild === true, options);
       if (activation === "attached") return;
-      if (activation === "disabled") {
-        currentContext = ctx;
-        return;
-      }
       semantic ??= new NativeSemanticRuntime({
         modelPath: options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath(),
         sourceId: "pi:message",

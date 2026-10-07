@@ -7,17 +7,16 @@ import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { KernelReceiptSchema, parseKernelRequest, startKernelService, type KernelRequest, type KernelService } from "./kernel-service.js";
-import { DevNativeServer } from "./dev-native-server.js";
+import { startKernelService, type KernelService } from "./kernel-service.js";
+import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
-import { Hono, type Context } from "hono";
-import { withinCheckout } from "./checkout-control.js";
+import { Hono } from "hono";
 import { createRerailApi, hostAllowlist, publicHostSet } from "./api/http.js";
 import { createRerailMcpHandler } from "./api/mcp.js";
 import { operations, type RerailApiStores } from "./api/operations.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "./native.js";
 import { loadBundledRules } from "./rule-bootstrap.js";
-import { effectiveRepositoryStartState, effectiveStartState, startStateReader, type RepositoryStartState } from "./repository-start.js";
+import { contextStartState, startStateReader, workspaceStartState, type RepositoryStartState } from "./repository-start.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "./database.js";
 import {
   openScopedRuleCatalog,
@@ -66,7 +65,7 @@ export interface DaemonHealth extends Pick<DaemonState, "version" | "pid" | "ui"
   uptimeMs: number;
   database: { path: string; exists: boolean };
   native: NativeStatus;
-  /** Absolute checkout path accepted by the private dev kernel bridge. */
+  /** Absolute checkout path native sessions address. */
   workspaceRoot: string;
   /** Stable identity of the repository the page, listings, and rule context are scoped to. */
   repositoryId: string;
@@ -120,13 +119,6 @@ function readNativeStatus(probe: () => NativeHealth): NativeStatus {
   } catch (error) {
     return { ok: false, error: (error as Error).message };
   }
-}
-
-/** Private loopback bridges: browsers always send Origin, and Rerail processes always send JSON. */
-function rejectBridgeRequest(context: Context, bridge: "kernel" | "native"): Response | undefined {
-  if (context.req.header("origin") !== undefined) return context.json({ error: `${bridge}-origin-forbidden` }, 403);
-  if (context.req.header("content-type") !== "application/json") return context.json({ error: `${bridge}-content-type-required` }, 415);
-  return undefined;
 }
 
 /**
@@ -187,7 +179,7 @@ class DaemonStores implements RerailApiStores {
 
   repositoryState(workspace: string): RepositoryStartState {
     // A daemon with no sessions yet must not create the database to answer that nothing is started.
-    if (!existsSync(this.#path)) return effectiveStartState(workspace, this.#path);
+    if (!existsSync(this.#path)) return workspaceStartState(workspace, this.#path);
     this.#startStates ??= startStateReader(this.database());
     return this.#startStates(workspace);
   }
@@ -254,7 +246,7 @@ export class RerailDaemon {
   readonly #databasePath: string;
   readonly #workspaceRoot: string;
   readonly kernelSocketPath: string;
-  readonly #nativeServer: DevNativeServer;
+  readonly #nativeServer: NativeSessionServer;
   readonly #nativeToken: string;
   #closed = false;
 
@@ -270,7 +262,7 @@ export class RerailDaemon {
     native: NativeStatus;
     ui: DaemonState["ui"];
     workspaceRoot: string;
-    nativeServer: DevNativeServer;
+    nativeServer: NativeSessionServer;
     nativeToken: string;
   }) {
     const address = server.address() as AddressInfo;
@@ -293,8 +285,8 @@ export class RerailDaemon {
 
   static async start(options: RerailDaemonOptions): Promise<RerailDaemon> {
     const bindHost = options.host ?? DEFAULT_DAEMON_HOST;
-    // A daemon bound off loopback (`--allow-remote`) is dialled by its own literal address, e.g. the
-    // container's `http://0.0.0.0:4737/` state URL. An IP literal cannot arrive by DNS rebinding —
+    // A daemon bound off loopback (`--allow-remote`) is dialled by its own literal address, e.g. a
+    // `http://0.0.0.0:4737/` state URL. An IP literal cannot arrive by DNS rebinding —
     // that attack's `Host` is a DNS name — so the bound address is as safe to answer as loopback.
     const publicHosts = publicHostSet([
       ...(options.publicHosts ?? []),
@@ -318,48 +310,18 @@ export class RerailDaemon {
       repositoryContext: repository,
     });
     const nativeToken = randomBytes(32).toString("hex");
-    const nativeServer = new DevNativeServer({ workspaceRoot, modelPath, databasePath });
+    const nativeServer = new NativeSessionServer({ workspaceRoot, modelPath, databasePath });
     let daemon: RerailDaemon | undefined;
     const stores = new DaemonStores(databasePath, repository, () => daemon!.health());
     const mcp = createRerailMcpHandler(stores, operations, { version: options.version, publicHosts });
     const app = new Hono();
     app.use("*", hostAllowlist(publicHosts));
     app.get("/healthz", context => context.json(daemon!.health()));
-    app.post("/kernel/events", async (context) => {
-      const rejected = rejectBridgeRequest(context, "kernel");
-      if (rejected !== undefined) return rejected;
-      let request: KernelRequest;
-      try {
-        request = parseKernelRequest(await context.req.json());
-      } catch {
-        return context.json({ error: "kernel-request-invalid" }, 400);
-      }
-      const { event, configuration } = request;
-      const sessionCwd = event.kind === "session-start" ? event.session.cwd : event.session?.cwd;
-      if (
-        configuration?.workspaceRoot === undefined
-        || resolve(configuration.workspaceRoot) !== workspaceRoot
-        || (sessionCwd !== undefined && !withinCheckout(workspaceRoot, sessionCwd))
-      ) {
-        return context.json({ error: "kernel-workspace-mismatch" }, 403);
-      }
-      const deliveries = await kernel.ingest(event, { storageRoot, modelPath, databasePath, workspaceRoot });
-      return context.json({ eventId: event.eventId, deliveries });
-    });
-    app.post("/kernel/steering-receipts", async (context) => {
-      const rejected = rejectBridgeRequest(context, "kernel");
-      if (rejected !== undefined) return rejected;
-      const receipt = KernelReceiptSchema.safeParse(await context.req.json().catch(() => undefined));
-      if (!receipt.success) return context.json({ error: "kernel-request-invalid" }, 400);
-      if (!withinCheckout(workspaceRoot, receipt.data.session.cwd)) return context.json({ error: "kernel-workspace-mismatch" }, 403);
-      stores.transcripts().recordSteeringDelivery(receipt.data.session, receipt.data.receiptId, receipt.data.ruleIds);
-      return context.json({ receiptId: receipt.data.receiptId });
-    });
     app.post("/native/session", async (context) => {
-      const rejected = rejectBridgeRequest(context, "native");
-      if (rejected !== undefined) return rejected;
-      const authorization = context.req.header("authorization");
-      if (authorization !== undefined && authorization !== `Bearer ${nativeToken}`) {
+      // Browsers always send Origin, and Rerail processes always send JSON with the private capability.
+      if (context.req.header("origin") !== undefined) return context.json({ error: "native-origin-forbidden" }, 403);
+      if (context.req.header("content-type") !== "application/json") return context.json({ error: "native-content-type-required" }, 415);
+      if (context.req.header("authorization") !== `Bearer ${nativeToken}`) {
         return context.json({ error: "native-authorization-invalid" }, 403);
       }
       let body: unknown;
@@ -374,8 +336,7 @@ export class RerailDaemon {
       }
       if (resolve(body.workspaceRoot) !== workspaceRoot) return context.json({ error: "native-workspace-mismatch" }, 403);
       try {
-        const trusted = authorization !== undefined;
-        return context.json(await nativeServer.handle(body, { trusted }));
+        return context.json(await nativeServer.handle(body));
       } catch (error) {
         return context.json({
           error: "native-request-invalid",
@@ -624,7 +585,7 @@ export async function runRerailDaemon(argv: readonly string[]): Promise<void> {
   const catalog = openScopedRuleCatalog(workspaceRoot, databasePath);
   const repository = catalog.context();
   // The daemon is shared by every repository; it seeds bundled rules only where Rerail is started.
-  const bootstrap = effectiveRepositoryStartState(databasePath, repository) === "started"
+  const bootstrap = contextStartState(databasePath, repository) === "started"
     ? catalog.seed(loadBundledRules())
     : undefined;
   catalog.close();
