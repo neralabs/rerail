@@ -8,6 +8,7 @@ use crate::content_store::{
 use gix::bstr::ByteSlice;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
+#[cfg(unix)]
 use std::io::Read;
 use std::path::{Path, PathBuf};
 #[cfg(test)]

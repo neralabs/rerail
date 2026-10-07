@@ -1,6 +1,8 @@
 //! Decompressed read cache: an LRU of source and tape bytes backed by an anonymous mmap arena.
 
-use super::{CachedBytes, HashKey, StoreError, StoreResult};
+#[cfg(unix)]
+use super::StoreError;
+use super::{CachedBytes, HashKey, StoreResult};
 use std::collections::HashMap;
 use std::ops::Deref;
 #[cfg(unix)]
@@ -96,7 +98,7 @@ impl MmapArena {
         }
         #[cfg(not(unix))]
         {
-            unsafe { &(*self.bytes.get())[offset..offset + length] }
+            unsafe { &(&*self.bytes.get())[offset..offset + length] }
         }
     }
 }
