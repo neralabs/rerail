@@ -7,6 +7,8 @@ use sha2::{Digest, Sha256};
 /// named sources that also decide a tape (a grammar built from vendored sources, how a tape's view
 /// of its file is built).
 pub fn grammar_build_id(lock_text: &str, sources: &[(&str, &[u8])]) -> String {
+    // A Windows checkout with `core.autocrlf` has a CRLF Cargo.lock; the identity reads LF lines.
+    let lock_text = &lock_text.replace("\r\n", "\n");
     let mut grammar = Sha256::new();
     grammar.update(b"rerail-grammar-build-v1\0");
     for package in grammar_packages(lock_text) {
@@ -94,5 +96,13 @@ mod tests {
             );
         }
         assert_eq!(baseline, grammar_build_id(LOCK, &[]));
+    }
+
+    #[test]
+    fn grammar_build_id_reads_a_crlf_lockfile() {
+        assert_eq!(
+            grammar_build_id(LOCK, &[]),
+            grammar_build_id(&LOCK.replace('\n', "\r\n"), &[])
+        );
     }
 }
