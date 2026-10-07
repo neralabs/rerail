@@ -13,12 +13,13 @@ export const CONTRACT_CURSOR_EXECUTE_POLICY = {
   format: "rerail.policy/v1",
   id: "contract:cursor-execute",
   revision: 1,
+  mode: "steer",
   scope: { include: ["api/**/*"], exclude: [] },
-  checks: [
+  clauses: [
     {
       id: "cursor-execute",
       forbid: { regex: { pattern: "cursor\\.execute\\s*\\(", source: "file.content" } },
-      finding: { anchor: "witness.span", code: "CURSOR_EXECUTE", severity: "error", message: "Direct cursor access bypasses the typed API and backend portability." },
+      violation: { anchor: "witness.span", code: "CURSOR_EXECUTE", message: "Direct cursor access bypasses the typed API and backend portability." },
     },
   ],
 };

@@ -21,7 +21,7 @@ const MAX_SOURCE_BYTES = 1_000_000;
 /** Paths observed per wave; on network or virtualised mounts each lstat/read is a round trip, so latency, not bandwidth, bounds the walk. */
 const OBSERVATION_CONCURRENCY = 16;
 const IGNORED_DIRECTORIES = new Set([
-  ".git", ".hg", ".svn", ".rerail", ".nera", ".venv", "__pycache__", "node_modules", "dist", "build", ".next",
+  ".git", ".hg", ".svn", ".rerail", ".venv", "__pycache__", "node_modules", "dist", "build", ".next",
   ".turbo", "coverage", "target", "vendor",
 ]);
 const SOURCE_LANGUAGES = new Map<string, PolicySourceLanguage>([
@@ -153,7 +153,7 @@ function sameSource(left: ObservedSource | undefined, right: Source | undefined)
   return left?.digest === right?.digest && left?.readError === right?.readError;
 }
 function emptyResponse(revision: number): ExecutablePolicyResponse {
-  return { revision, disposition: "continue", findings: [], failures: [] };
+  return { revision, disposition: "continue", violations: [], failures: [] };
 }
 function underBaselineRoot(roots: ReadonlySet<string>, path: string): boolean {
   for (const root of roots) if (root === "" || path.startsWith(`${root}/`)) return true;
@@ -695,7 +695,7 @@ export class ExecutablePolicyBridge {
     return {
       ...this.#lastResponse,
       failures: [...this.#lastResponse.failures, {
-        checkId: "source-discovery", code: "source-incomplete", message, stage: "scan",
+        clauseId: "source-discovery", code: "source-incomplete", message, stage: "scan",
       }],
     };
   }

@@ -1,20 +1,19 @@
 import type { PolicyExecutionFailure, PolicyMode, PolicyScope } from "./policy-execution.js";
+import type { RuleMode } from "./rule-mode.js";
 import type { PolicyAstLanguage, PolicyDialectLabel } from "./policy-languages.js";
 import type { PolicyDslSemanticAstRuleFields, PolicyDslSemanticCompareText, PolicyDslSuppress } from "./executable-policy-semantic.js";
 
-
-
 export type PolicyDslScalar = boolean | number | string | null;
 export type PolicyDslValue = PolicyDslScalar | PolicyDslValue[] | { [key: string]: PolicyDslValue };
-export type PolicyDslFindingSeverity = "advisory" | "warning" | "error";
 
 export interface PolicyDslDocument {
   format: "rerail.policy/v1";
   id: string;
   revision: number;
+  mode: RuleMode;
   description?: string;
   scope?: PolicyDslScope;
-  checks: PolicyDslCheck[];
+  clauses: PolicyDslCheck[];
 }
 
 export interface PolicyDslScope {
@@ -25,14 +24,13 @@ export interface PolicyDslScope {
 /**
  * Where a finding's `span` points: the whole witness, a zero-width point at its start or end, or
  * a capture: an ast metavariable, a named group (`(?<NAME>…)`) of an ast `regex` that tests the
- * witness node itself, or a named group of a regex query. Fact checks (`require_each`, `budget`)
+ * witness node itself, or a named group of a regex query. Fact clauses (`require_each`, `budget`)
  * accept only `witness.span`. The finding id always derives from the witness span.
  */
 export type PolicyDslFindingAnchor = "witness.span" | "witness.start" | "witness.end" | "file.start" | `capture.${string}`;
 
 export interface PolicyDslFindingSpec {
   code: string;
-  severity: PolicyDslFindingSeverity;
   anchor: PolicyDslFindingAnchor;
   /**
    * `$NAME` / `$$$NAME` interpolate captured text, as in ast-grep rule messages; a name the query cannot bind is an
@@ -74,21 +72,21 @@ export interface PolicyDslFindingSpec {
 
 export interface PolicyDslCheckBase {
   id: string;
-  finding: PolicyDslFindingSpec;
+  violation: PolicyDslFindingSpec;
   define?: never;
 }
 
 /**
- * A check: one that reports findings (`forbid`, `require_each`, `budget`, `llm`), or a `define`, which reports nothing
- * and holds what the others share.
+ * A clause: one that reports violations (`forbid`, `require_each`, `budget`, `llm`), or a `define`, which reports
+ * nothing and holds what the others share.
  */
 export type PolicyDslCheck = PolicyDslReportingCheck | PolicyDslDefineCheck;
 
-/** A define check (a Rerail extension): definitions the document's other checks share. It has no finding. */
+/** A define clause (a Rerail extension): definitions the document's other clauses share. It has no violation. */
 export interface PolicyDslDefineCheck {
   id: string;
   define: PolicyDslDefine;
-  finding?: never;
+  violation?: never;
   forbid?: never;
   require_each?: never;
   budget?: never;
@@ -1200,10 +1198,11 @@ export interface PolicyFindingFix {
 
 export interface ExecutablePolicyFinding {
   id: string;
-  policyId: string;
-  checkId: string;
+  ruleId: string;
+  clauseId: string;
   code: string;
-  severity: "advisory" | "warning" | "error";
+  /** The mode of the rule that produced the finding. */
+  mode: RuleMode;
   message: string;
   path?: string | undefined;
   span?: PolicySourceSpan | undefined;
@@ -1216,8 +1215,8 @@ export type { PolicyExecutionFailure } from "./policy-execution.js";
 
 export interface ExecutablePolicyResponse {
   revision: number;
-  disposition: "continue" | "resteer";
-  findings: ExecutablePolicyFinding[];
+  disposition: "continue" | "steer";
+  violations: ExecutablePolicyFinding[];
   failures: PolicyExecutionFailure[];
 }
 
@@ -1297,9 +1296,9 @@ export function renderExecutablePolicySteering(findings: readonly ExecutablePoli
     .join("\n");
 }
 
-/** Rule ids credited with a steer: the distinct `policyId`s of the rendered findings, in first-seen order. */
+/** Rule ids credited with a steer: the distinct `ruleId`s of the rendered violations, in first-seen order. */
 export function executablePolicySteeringRuleIds(findings: readonly ExecutablePolicyFinding[]): string[] {
-  return [...new Set(findings.map((finding) => finding.policyId))];
+  return [...new Set(findings.map((finding) => finding.ruleId))];
 }
 
 /** The rendered steering text with its contributing rule ids; the text is byte-identical to `renderExecutablePolicySteering`. */

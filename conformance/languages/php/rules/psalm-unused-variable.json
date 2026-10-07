@@ -1,0 +1,184 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "psalm-unused-variable",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Psalm 6.19.1 UnusedVariable (--find-unused-variables): a variable whose value no read uses (\"$x is never referenced or the value is not used\"), bound by an assignment statement, a compound assignment or increment, a closure's `use` clause, `global`, or a `foreach` key or destructured element. Psalm reports a `foreach` value as UnusedForeachValue and a parameter as UnusedParam, and skips names starting with `$_`.",
+  "scope": {
+    "include": [
+      "**/*.php"
+    ],
+    "exclude": [
+      "**/*.blade.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "kind": "variable_name",
+            "not": {
+              "any": [
+                {
+                  "regex": "^\\$_"
+                },
+                {
+                  "binds": {
+                    "occurrence": {
+                      "inside": {
+                        "kind": "unset_statement",
+                        "stopBy": "end"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "any": [
+              {
+                "binds": {
+                  "form": "assignment",
+                  "used": false,
+                  "site": {
+                    "kind": "assignment_expression",
+                    "inside": {
+                      "kind": "expression_statement",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                }
+              },
+              {
+                "binds": {
+                  "form": "assignment",
+                  "used": false,
+                  "site": {
+                    "kind": "subscript_expression",
+                    "inside": {
+                      "kind": "assignment_expression",
+                      "stopBy": {
+                        "not": {
+                          "kind": "subscript_expression"
+                        }
+                      },
+                      "inside": {
+                        "kind": "expression_statement",
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  }
+                },
+                "not": {
+                  "binds": {
+                    "redefines": {}
+                  }
+                }
+              },
+              {
+                "binds": {
+                  "form": "augmented",
+                  "used": false,
+                  "site": {
+                    "inside": {
+                      "any": [
+                        {
+                          "kind": "expression_statement"
+                        },
+                        {
+                          "kind": "arrow_function"
+                        }
+                      ],
+                      "stopBy": "neighbor"
+                    }
+                  }
+                }
+              },
+              {
+                "binds": {
+                  "form": "global",
+                  "used": false
+                }
+              },
+              {
+                "binds": {
+                  "form": "parameter",
+                  "used": false,
+                  "site": {
+                    "kind": "anonymous_function_use_clause"
+                  }
+                }
+              },
+              {
+                "binds": {
+                  "form": "for",
+                  "used": false
+                },
+                "not": {
+                  "any": [
+                    {
+                      "inside": {
+                        "kind": "foreach_statement",
+                        "stopBy": "neighbor"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "pair",
+                        "stopBy": "neighbor",
+                        "inside": {
+                          "kind": "foreach_statement",
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      "nthChild": 2
+                    },
+                    {
+                      "inside": {
+                        "kind": "by_ref",
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "inside": {
+                              "kind": "foreach_statement",
+                              "stopBy": "neighbor"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "kind": "pair",
+                              "stopBy": "neighbor",
+                              "inside": {
+                                "kind": "foreach_statement",
+                                "stopBy": "neighbor"
+                              }
+                            },
+                            "nthChild": 2
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "UnusedVariable",
+        "message": "The variable is never referenced or the value is not used",
+        "suppress": {
+          "psalm": {
+            "issues": [
+              "UnusedVariable"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -9,7 +9,7 @@ const rerailHome = mkdtempSync(join(tmpdir(), "rerail-vitest-home-"));
 const contentStoreDirectory = mkdtempSync(join(tmpdir(), "rerail-vitest-store-"));
 
 process.env.RERAIL_HOME = rerailHome;
-// A test run is a dev build, whose store would otherwise be this checkout's `.rerail/content-v3.sqlite`, shared by
+// A test run is a dev build, whose store would otherwise be this checkout's `.rerail/content-v1.sqlite`, shared by
 // every test file; each file gets its own (`contentStorePath` honours the override).
 process.env.RERAIL_CONTENT_STORE_PATH = join(contentStoreDirectory, "content.sqlite");
 

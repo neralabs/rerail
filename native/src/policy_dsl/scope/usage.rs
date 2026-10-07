@@ -9,8 +9,11 @@ mod php;
 use super::{
     Binding, BuildError, DEADLINE_INTERVAL, Form, ImportKind, NodeRef, ScopeKind, ScopeTable,
 };
+use crate::policy_dsl::identifier::python_identifier;
 use ast_grep_core::{Doc, Node};
-use std::collections::{BTreeSet, HashMap};
+use foldhash::{HashMap, HashMapExt};
+use std::borrow::Cow;
+use std::collections::BTreeSet;
 
 /// The forms whose usedness Ruff's `locals()`-aware checks read (F841's `Assignment`,
 /// `NamedExprAssignment` and `WithItemVar`; the unused-argument rules' `Argument`): in a function
@@ -279,25 +282,26 @@ impl Usage {
         }
         // Per function and name, its first read (by where it is read) of the binding its own
         // binding of the name shadows, and whether that is the builtin.
-        let mut first_reads: HashMap<(u32, &str), (usize, usize, bool)> = HashMap::new();
+        let mut first_reads: HashMap<(u32, Cow<'_, str>), (usize, usize, bool)> = HashMap::new();
         // Where each read of a binding that an `except` name later shadows is made: `None` for one
         // Ruff makes after the whole scope (from a function body), and whether it is nested.
         #[allow(clippy::type_complexity)]
-        let mut positions: HashMap<(u32, &str, usize), Vec<(Option<usize>, bool)>> = HashMap::new();
+        let mut positions: HashMap<(u32, Cow<'_, str>, usize), Vec<(Option<usize>, bool)>> =
+            HashMap::new();
         for reference in &table.references {
             steps.take()?;
             let Some(name) = table.reference_name(reference, &text, base) else {
                 continue;
             };
-            let reads = table.reads(reference, name);
-            let before = match table.shadowed_by_local(reference, name) {
+            let reads = table.reads(reference, &name);
+            let before = match table.shadowed_by_local(reference, &name) {
                 Some(Shadowed::Binding(shadowed)) => reads.contains(&shadowed).then_some(false),
                 // A read that resolves to nothing reads the builtin, if the name is one.
                 Some(Shadowed::Builtin) => reads.is_empty().then_some(true),
                 None => None,
             };
             if let Some(builtin) = before {
-                let key = (reference.scope, name);
+                let key = (reference.scope, name.clone());
                 let at = (reference.at, reference.start, builtin);
                 first_reads
                     .entry(key)
@@ -306,25 +310,25 @@ impl Usage {
             }
             for (scope, index) in reads {
                 let read = &mut facts[scope as usize]
-                    .get_mut(name)
+                    .get_mut(name.as_ref())
                     .expect("a resolved name has facts")[index];
                 read.reads += 1;
                 read.nested += u32::from(reference.scope != scope);
                 // An `except` name inherits only the reads made before it (below); a read after
                 // its handler may resolve to the binding before it.
-                let chain = &table.scopes[scope as usize].bindings[name];
+                let chain = &table.scopes[scope as usize].bindings[name.as_ref()];
                 if chain[index + 1..]
                     .iter()
                     .any(|binding| binding.until.is_some())
                 {
                     let late = reference.deferred || table.crosses_function(reference.scope, scope);
                     positions
-                        .entry((scope, name, index))
+                        .entry((scope, name.clone(), index))
                         .or_default()
                         .push(((!late).then_some(reference.at), reference.scope != scope));
                 }
             }
-            if let Some((scope, submodule, index)) = table.submodule_alias(reference, name) {
+            if let Some((scope, submodule, index)) = table.submodule_alias(reference, &name) {
                 let read = &mut facts[scope as usize]
                     .get_mut(submodule)
                     .expect("a submodule import has facts")[index];
@@ -359,7 +363,7 @@ impl Usage {
                             // name gets the reads made before its handler, not those after it,
                             // which resolve to the binding before it.
                             let early = positions
-                                .get(&(scope_index as u32, name.as_ref(), index - 1))
+                                .get(&(scope_index as u32, Cow::Borrowed(name.as_ref()), index - 1))
                                 .into_iter()
                                 .flatten()
                                 .filter(|(at, _)| at.is_some_and(|at| at < binding.offset));
@@ -595,7 +599,7 @@ fn builtin_sequence<D: Doc>(table: &ScopeTable, function: &Node<'_, D>) -> bool 
     };
     match callee.kind().as_ref() {
         "identifier" => {
-            let name = callee.text();
+            let name = python_identifier(&callee);
             let Some(reference) = table.reference(&callee.range()) else {
                 return false;
             };
@@ -615,10 +619,10 @@ fn builtin_sequence<D: Doc>(table: &ScopeTable, function: &Node<'_, D>) -> bool 
             };
             let object = unparenthesized(&object);
             object.kind() == "identifier"
-                && sequence(&attribute.text())
+                && sequence(&python_identifier(&attribute))
                 && table.reference(&object.range()).is_some_and(|reference| {
                     table
-                        .resolve(reference, &object.text())
+                        .resolve(reference, &python_identifier(&object))
                         .is_some_and(|binding| {
                             imports(binding, &|qualified| qualified == "builtins")
                         })
@@ -655,7 +659,7 @@ fn extract<D: Doc>(
             }
         }
         // Another `__all__` adds nothing this module binds.
-        "identifier" if node.text() == "__all__" => {}
+        "identifier" if python_identifier(node) == "__all__" => {}
         // A value that holds no names (Ruff's `INVALID_FORMAT`, which lists none either).
         "none" | "true" | "false" | "integer" | "float" | "ellipsis" => {}
         "unary_operator"
@@ -665,7 +669,7 @@ fn extract<D: Doc>(
         "attribute"
             if node
                 .field("attribute")
-                .is_some_and(|attribute| attribute.text() == "__all__") => {}
+                .is_some_and(|attribute| python_identifier(&attribute) == "__all__") => {}
         "call"
             if node
                 .field("function")

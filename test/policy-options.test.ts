@@ -6,7 +6,8 @@ function withNumber(config: unknown, declaration: Record<string, unknown> = { ty
     format: "rerail.policy/v1",
     id: "test:numbers",
     revision: 1,
-    checks: [
+    mode: "steer",
+    clauses: [
       { id: "options", define: { options: { n: declaration }, config: { n: config } } },
       { id: "use", message: { $option: "n", cases: { "1": "one" }, default: "other" } },
     ],
@@ -16,7 +17,7 @@ function withNumber(config: unknown, declaration: Record<string, unknown> = { ty
 describe("resolvePolicyOptions", () => {
   it("inserts replacement tokens in map and template values literally", () => {
     const resolved = resolvePolicyOptions({
-      checks: [{
+      clauses: [{
         id: "options",
         define: {
           options: {
@@ -35,7 +36,7 @@ describe("resolvePolicyOptions", () => {
 
   it("rejects an array template value even when its template has no placeholder", () => {
     expect(() => resolvePolicyOptions({
-      checks: [{
+      clauses: [{
         id: "options",
         define: {
           options: {
@@ -60,10 +61,10 @@ describe("policy option numbers", () => {
     expect(() => policyOptionValues(withNumber(Number.POSITIVE_INFINITY))).toThrow(/is not exactly representable/);
     expect(() => policyOptionValues(withNumber(1, { type: "number", default: 2 ** 53 }))).toThrow(PolicyOptionError);
     expect(() => policyOptionValues(withNumber(1, { type: "number", enum: [1, 2 ** 53], default: 1 })))
-      .toThrow(expect.objectContaining({ path: ["checks", 0, "define", "options", "n", "enum", 1] }));
+      .toThrow(expect.objectContaining({ path: ["clauses", 0, "define", "options", "n", "enum", 1] }));
     expect(() => policyOptionValues(withNumber([1, 2 ** 53], { type: "array", items: "number", default: [] })))
-      .toThrow(expect.objectContaining({ path: ["checks", 0, "define", "config", "n", 1] }));
+      .toThrow(expect.objectContaining({ path: ["clauses", 0, "define", "config", "n", 1] }));
     expect(policyOptionValues(withNumber(2 ** 53 - 1)).get("n")).toBe(2 ** 53 - 1);
-    expect(resolvePolicyOptions(withNumber(1.0))).toMatchObject({ checks: [{}, { message: "one" }] });
+    expect(resolvePolicyOptions(withNumber(1.0))).toMatchObject({ clauses: [{}, { message: "one" }] });
   });
 });

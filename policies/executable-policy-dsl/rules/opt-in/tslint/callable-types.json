@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:callable-types",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `callable-types` rule with its default options (https://palantir.github.io/tslint/rules/callable-types/). An interface or type literal with only a call signature should be a function type.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "callable-types",
       "forbid": {
@@ -98,10 +99,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "CALLABLE_TYPES",
-        "severity": "error",
         "message": "Only a call signature -- use a function type instead."
       }
     }

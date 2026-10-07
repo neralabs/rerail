@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:switch-final-break",
   "revision": 1,
+  "mode": "steer",
   "description": "The final clause of a switch must end with `break;` (always). Approximation of endsControlFlow: last statement is break/return/throw/continue.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "missing-final-break",
       "forbid": {
@@ -144,10 +145,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "SWITCH_FINAL_BREAK",
-        "severity": "error",
         "message": "Final clause in 'switch' statement should end with 'break;'."
       }
     }

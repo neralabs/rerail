@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-boolean-literal-compare",
   "revision": 1,
+  "mode": "steer",
   "description": "Flags the operand compared (==, ===, !=, !==) to a boolean literal; syntactic only, cannot check the operand is exactly boolean.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "bool-literal-compare",
       "forbid": {
@@ -78,10 +79,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_BOOLEAN_LITERAL_COMPARE",
-        "severity": "error",
         "message": "This expression is unnecessarily compared to a boolean."
       }
     }

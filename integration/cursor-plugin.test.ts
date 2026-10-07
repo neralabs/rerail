@@ -1,9 +1,10 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startKernelService, type KernelService } from "../src/kernel-service.js";
+import { startTestRepository } from "../test/support/started-repository.js";
 
 const temporaryDirectories: string[] = [];
 const kernels: KernelService[] = [];
@@ -49,6 +50,7 @@ describe("Cursor packaged event adapter", () => {
   test("persists normalized hook events without an MCP server", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-cursor-events-"));
     temporaryDirectories.push(root);
+    startTestRepository(root);
     const executable = join(process.cwd(), "dist", "cursor-hook.js");
     const common = { conversation_id: "cursor-session", generation_id: "generation-1", cwd: root };
     const kernelSocketPath = join(root, "kernel.sock");
@@ -75,11 +77,9 @@ describe("Cursor packaged event adapter", () => {
     ]);
   }, 30_000);
 
-  test("does not contact the resident kernel when this checkout is disabled", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rerail-cursor-disabled-"));
+  test("does not contact the resident kernel when this repository is not started", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-cursor-not-started-"));
     temporaryDirectories.push(root);
-    await mkdir(join(root, ".rerail"));
-    await writeFile(join(root, ".rerail", "disabled"), "");
     const executable = join(process.cwd(), "dist", "cursor-hook.js");
 
     expect(await invokeCursorHook(

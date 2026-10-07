@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-return-await",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-return-await` rule with its default options (https://palantir.github.io/tslint/rules/no-return-await/). Disallows unnecessary `return await` (outside try blocks, or catch blocks that have a finally, within the same function), including awaits in arrow expression bodies and in tail positions of parens, ||, &&, comma and ?: to any depth. tree-sitter parses `await x as T` as `await (x as T)`; TypeScript binds the assertion outside the await, so such awaits are exempt.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "return-await",
       "forbid": {
@@ -156,10 +157,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.AWAIT",
         "code": "NO_RETURN_AWAIT",
-        "severity": "error",
         "message": "Unnecessary 'await'.",
         "fix": "$E"
       }

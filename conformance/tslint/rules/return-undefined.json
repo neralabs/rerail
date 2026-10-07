@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:return-undefined",
   "revision": 1,
+  "mode": "steer",
   "description": "Approximation using explicit return-type annotations only, judged at the nearest enclosing function: `return undefined` in a function annotated effectively void (void/undefined and unions of them; for async functions also Promise<...> of those), or in a constructor, setter or generator; bare `return` in a getter or a function annotated with another type except any. Contextual and inferred return types are not visible.",
   "scope": { "include": ["**/*"], "exclude": [] },
-  "checks": [
+  "clauses": [
     {
       "id": "void-return",
       "forbid": {
@@ -119,10 +120,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "RETURN_UNDEFINED",
-        "severity": "error",
         "message": "`void` function should use `return;`, not `return undefined;`."
       }
     },
@@ -263,10 +263,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "RETURN_UNDEFINED",
-        "severity": "error",
         "message": "Value-returning function should use `return undefined;`, not just `return;`."
       }
     }

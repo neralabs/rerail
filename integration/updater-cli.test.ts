@@ -70,9 +70,12 @@ async function createPackageFixture(source: string, root: string, version: strin
   await Promise.all([
     writeFile(join(dist, "index.js"), "export function nativeHealth() { return { ok: true }; }\n"),
     writeFile(join(dist, "event-stream.js"), [
-      'import { readFileSync } from "node:fs";',
+      'import { mkdirSync, readFileSync } from "node:fs";',
+      'import { join } from "node:path";',
       'const lines = readFileSync(0, "utf8").trimEnd().split("\\n");',
       "const request = JSON.parse(lines.at(-1));",
+      "// The health check requires the session to have opened under the storage root.",
+      'mkdirSync(join(process.env.RERAIL_STORAGE_ROOT, "session"), { recursive: true });',
       'process.stdout.write(JSON.stringify({ eventId: request.event.eventId, deliveries: [] }) + "\\n");',
       "",
     ].join("\n")),
@@ -207,7 +210,7 @@ describe("Rerail managed launcher", () => {
     const rollback = await run(["node", "dist/cli.js", "update", "rollback"], environment);
     expect(rollback).toMatchObject({ exitCode: 0, stderr: "" });
     expect(rollback.stdout).toContain(`Activated Rerail ${manifest.version}`);
-  });
+  }, 30_000); // Rollback health-checks this checkout: a real start, then a real session.
 
   test("reports that --skip-start wins during a setup dry run", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-setup-dry-run-"));

@@ -4,7 +4,8 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import type { RerailEventLoop } from "./adapter-contract.js";
+import type { RerailEventLoop, RerailHost } from "./adapter-contract.js";
+import { hookRerailStarted } from "./repository-start.js";
 import { bundledModelPath } from "./extension.js";
 import {
   decodeRerailEventFrame,
@@ -17,6 +18,7 @@ import { defaultRerailDatabasePath } from "./database.js";
 import { daemonKernelSocket } from "./daemon-control.js";
 import { ingestKernelEvent } from "./kernel-service.js";
 import { isMainRerailBuild } from "./rerail-build.js";
+import { ingestRerailDevEvent, resolveRerailWorkspaceRoute } from "./dev-routing.js";
 
 export interface RerailEventStreamOptions {
   eventLoop: RerailEventLoop;
@@ -76,28 +78,50 @@ export interface RunRerailEventStreamOptions {
   storageRoot?: string;
   modelPath?: string;
   databasePath?: string;
+  /** The checkout the stream serves; the process's working directory by default. */
+  workspaceRoot?: string;
   input?: Readable;
   output?: Writable;
 }
 
 export async function runRerailEventStream(options: RunRerailEventStreamOptions = {}): Promise<void> {
+  const workspaceRoot = resolve(options.workspaceRoot ?? process.cwd());
   // Absolute paths: in a main build the daemon, running elsewhere, opens them.
-  const storageRoot = resolve(options.storageRoot ?? process.env.RERAIL_STORAGE_ROOT ?? join(process.cwd(), ".rerail", "sessions"));
+  const storageRoot = resolve(options.storageRoot ?? process.env.RERAIL_STORAGE_ROOT ?? join(workspaceRoot, ".rerail", "sessions"));
+  const modelPath = options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath();
   const configuration = {
     storageRoot,
-    modelPath: options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath(),
+    modelPath,
     databasePath: resolve(options.databasePath ?? defaultRerailDatabasePath()),
-    workspaceRoot: process.cwd(),
+    workspaceRoot,
   };
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
+  // As hooks do: a development workspace's container records its events in its own Rerail home, and a
+  // workspace that switched its container off records nothing. Neither reaches this database.
+  const route = await resolveRerailWorkspaceRoute(workspaceRoot);
+  if (route.kind === "disabled") {
+    await serveRerailEventStream({ eventLoop: { ingest: async () => [] }, input, output });
+    return;
+  }
+  if (route.kind === "workspace") {
+    const instance = route.instance;
+    const containerConfiguration = { storageRoot, modelPath, workspaceRoot: instance.workspaceRoot };
+    await serveRerailEventStream({ eventLoop: { ingest: event => ingestRerailDevEvent(instance, event, containerConfiguration) }, input, output });
+    return;
+  }
   if (isMainRerailBuild()) {
     // The main daemon is the machine's one main instance; an in-process runtime here would be a second one.
     // The first event may replace a daemon from another package, as hooks do; later ones keep whichever daemon
     // runs, so a stream that outlives `rerail update` follows the newer daemon instead of displacing it.
     let replaceOtherPackage = true;
+    let host: RerailHost = "claude-code";
+    const explicitDatabase = options.databasePath === undefined ? undefined : configuration.databasePath;
     const eventLoop: RerailEventLoop = {
       ingest: async (event) => {
+        if (event.kind === "session-start") host = event.session.host;
+        // As hooks do: where Rerail is off nothing is recorded, and asking for the socket would autostart the daemon.
+        if (!await hookRerailStarted(host, workspaceRoot, explicitDatabase)) return [];
         const socketPath = process.env.RERAIL_KERNEL_SOCKET
           ?? await daemonKernelSocket(replaceOtherPackage);
         replaceOtherPackage = false;
@@ -107,7 +131,7 @@ export async function runRerailEventStream(options: RunRerailEventStreamOptions 
     await serveRerailEventStream({ eventLoop, input, output });
     return;
   }
-  const runtime = new RerailRuntime(configuration);
+  const runtime = new RerailRuntime({ ...configuration, startGate: true });
   try {
     await serveRerailEventStream({ eventLoop: runtime, input, output });
   } finally {

@@ -12,7 +12,7 @@ fn compile_check(language: &str, ast: Value, finding: Value) -> Result<CompiledP
     let mut ast = ast;
     ast["language"] = json!(language);
     compile_document_with(
-        check_document(json!({ "id": "m12b", "forbid": { "ast": ast }, "finding": finding })),
+        check_document(json!({ "id": "m12b", "forbid": { "ast": ast }, "violation": finding })),
         &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
     )
 }
@@ -22,7 +22,7 @@ fn findings(ast: Value, finding: Value, source: &str) -> Vec<Value> {
         compile_check("python", ast, finding).unwrap_or_else(|error| panic!("{}", error.reason));
     let result = evaluate_file(&compiled, "python", "a.py", source);
     assert_eq!(result["failures"], json!([]), "{result}");
-    result["findings"].as_array().expect("findings").clone()
+    result["violations"].as_array().expect("findings").clone()
 }
 
 /// A finding's span as source text.
@@ -32,8 +32,7 @@ fn spanned<'s>(finding: &Value, source: &'s str) -> &'s str {
 }
 
 fn anchored(each: Option<&str>, anchor: &str, message: &str) -> Value {
-    let mut finding =
-        json!({ "anchor": anchor, "code": "X", "message": message, "severity": "error" });
+    let mut finding = json!({ "anchor": anchor, "code": "X", "message": message });
     if let Some(each) = each {
         finding["each"] = json!(each);
     }
@@ -110,8 +109,7 @@ fn each_enumerates_a_format_strings_placeholders_by_host_range() {
 fn a_fix_range_replaces_an_exported_capture_in_the_host() {
     let ast = json!({ "rule": { "kind": "string", "parse": { "grammar": "percentFormat",
         "has": { "kind": "mapping_key", "stopBy": "end", "capture": "K" } } } });
-    let fix = json!({ "anchor": "witness.span", "code": "X", "message": "key $K", "severity": "error",
-        "fix": { "template": "b", "range": "capture.K" } });
+    let fix = json!({ "anchor": "witness.span", "code": "X", "message": "key $K", "fix": { "template": "b", "range": "capture.K" } });
     // The key's host range, escapes and all, inside the string.
     for (source, span, message) in [
         ("'%(a)s' % d\n", (3, 4), "key a"),
@@ -169,8 +167,7 @@ fn captures_exported_through_nested_parses_in_utilities_keep_their_host_range() 
         each_texts(recursive.clone(), Some("N"), "capture.N", source),
         (vec!["baz".to_owned(), "foo".to_owned()], 2)
     );
-    let fix = json!({ "anchor": "witness.span", "code": "X", "message": "name $N", "severity": "error",
-        "each": "N", "fix": { "template": "qux", "range": "capture.N" } });
+    let fix = json!({ "anchor": "witness.span", "code": "X", "message": "name $N", "each": "N", "fix": { "template": "qux", "range": "capture.N" } });
     let mut fixes = findings(recursive, fix, source)
         .iter()
         .map(|finding| {
@@ -279,7 +276,7 @@ fn field_is_refused_inside_a_parsed_tree() {
     ));
     assert_eq!(
         reason,
-        "/checks/0/forbid/ast/rule/parse/has/field: field is not supported in a parsed tree's rule"
+        "/clauses/0/forbid/ast/rule/parse/has/field: field is not supported in a parsed tree's rule"
     );
 }
 

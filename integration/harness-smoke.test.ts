@@ -30,7 +30,7 @@ it("accepts a completed violation retry without accepting unrelated or mismatche
     const session: Parameters<SqliteTranscriptStore["openSession"]>[0] = { host: "codex", sessionId, cwd: project };
     store.openSession(session, 100);
     let sequence = 0;
-    const append = (kind: "session-start" | "tool-call" | "tool-result", payload: Record<string, unknown>): void => {
+    const append = (kind: "session-start" | "call" | "result", payload: Record<string, unknown>): void => {
       sequence += 1;
       const event = { ...payload, sessionId, eventId: `event-${sequence}`, kind };
       store.append({ ...event, observedAt: 100 + sequence, payload: event });
@@ -42,15 +42,15 @@ it("accepts a completed violation retry without accepting unrelated or mismatche
     };
     const input = { command: "printf 'cursor.execute(1)' > api/route.py" };
     append("session-start", { session });
-    append("tool-call", { toolCallId: "pty-denied", toolName: "Bash", input });
-    append("tool-result", { toolCallId: "unrelated", toolName: "Bash", output: { exitCode: 0 } });
+    append("call", { toolCallId: "pty-denied", toolName: "Bash", input });
+    append("result", { toolCallId: "unrelated", toolName: "Bash", output: { exitCode: 0 } });
     expect(await accepted()).toBe(false);
 
-    append("tool-call", { toolCallId: "completed-retry", toolName: "Bash", input });
-    append("tool-result", { toolCallId: "completed-retry", toolName: "Read", output: "contents" });
+    append("call", { toolCallId: "completed-retry", toolName: "Bash", input });
+    append("result", { toolCallId: "completed-retry", toolName: "Read", output: "contents" });
     expect(await accepted()).toBe(false);
 
-    append("tool-result", { toolCallId: "completed-retry", toolName: "Bash", output: { exitCode: 0 } });
+    append("result", { toolCallId: "completed-retry", toolName: "Bash", output: { exitCode: 0 } });
     expect(await accepted()).toBe(true);
   } finally {
     store.close();

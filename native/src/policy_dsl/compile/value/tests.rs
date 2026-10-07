@@ -9,7 +9,7 @@ fn compile(language: &str, ast: Value) -> Result<CompiledPolicyDsl> {
     ast["language"] = json!(language);
     compile_document_with(
         check_document(
-            json!({ "id": "ast-match", "forbid": { "ast": ast }, "finding": finding() }),
+            json!({ "id": "ast-match", "forbid": { "ast": ast }, "violation": finding() }),
         ),
         &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
     )
@@ -26,7 +26,7 @@ fn typescript(ast: Value) -> CompiledPolicyDsl {
 /// Each finding as `line:text` (1-based lines).
 fn found(result: &Value, source: &str) -> Vec<String> {
     assert_eq!(result["failures"], json!([]), "{result}");
-    result["findings"]
+    result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -348,7 +348,7 @@ fn a_value_rule_stays_sound_in_a_file_with_syntax_errors() {
     let result = evaluate_file(&rule, "python", "a.py", source);
     // `0` is a literal; `list()` needs the bindings, which an error region may hide.
     assert_eq!(result["failures"][0]["code"], "source-partial", "{result}");
-    let lines = result["findings"]
+    let lines = result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -362,7 +362,7 @@ fn a_value_rule_stays_sound_in_a_file_with_syntax_errors() {
 fn decoding_spends_the_visited_node_budget() {
     let document = check_document(json!({
         "id": "ast-match",
-        "finding": finding(),
+        "violation": finding(),
         "forbid": { "ast": {
             "language": "python",
             "rule": { "kind": "binary_operator", "value": { "gt": 1000 } },
@@ -377,7 +377,7 @@ fn decoding_spends_the_visited_node_budget() {
     let result = evaluate_file(&rule, "python", "a.py", &source);
     assert_eq!(
         result["failures"],
-        json!([{ "checkId": "ast-match", "code": "budget-exceeded", "message": UtilLimit::Value.message(), "path": "a.py" }]),
+        json!([{ "clauseId": "ast-match", "code": "budget-exceeded", "message": UtilLimit::Value.message(), "path": "a.py" }]),
         "{result}"
     );
     let result = evaluate_file(&rule, "python", "a.py", "1000 + 1\n");
@@ -394,47 +394,47 @@ fn value_objects_are_checked() {
     };
     assert_eq!(
         reject(json!({ "eq": 511, "follow": 1 })),
-        "/checks/0/forbid/ast/rule/value/follow must be true or false"
+        "/clauses/0/forbid/ast/rule/value/follow must be true or false"
     );
     assert_eq!(
         reject(json!({ "follow": true })),
-        "/checks/0/forbid/ast/rule/value must hold a predicate: eq, type, constant, startsWith, regex, bitsAny, gt, ge, lt, le or truthy"
+        "/clauses/0/forbid/ast/rule/value must hold a predicate: eq, type, constant, startsWith, regex, bitsAny, gt, ge, lt, le or truthy"
     );
     assert_eq!(
         reject(json!({})),
-        "/checks/0/forbid/ast/rule/value must hold a predicate: eq, type, constant, startsWith, regex, bitsAny, gt, ge, lt, le or truthy"
+        "/clauses/0/forbid/ast/rule/value must hold a predicate: eq, type, constant, startsWith, regex, bitsAny, gt, ge, lt, le or truthy"
     );
     assert_eq!(
         reject(json!({ "eq": [1] })),
-        "/checks/0/forbid/ast/rule/value/eq must be a string, number, boolean or null"
+        "/clauses/0/forbid/ast/rule/value/eq must be a string, number, boolean or null"
     );
     assert_eq!(
         reject(json!({ "type": "string" })),
-        "/checks/0/forbid/ast/rule/value/type/0: `string` is not a Python type name; expected one of int, float, complex, str, bytes, bool, NoneType, ellipsis, tuple, list, set, dict"
+        "/clauses/0/forbid/ast/rule/value/type/0: `string` is not a Python type name; expected one of int, float, complex, str, bytes, bool, NoneType, ellipsis, tuple, list, set, dict"
     );
     assert_eq!(
         reject(json!({ "bitsAny": -1 })),
-        "/checks/0/forbid/ast/rule/value/bitsAny must be a positive integer"
+        "/clauses/0/forbid/ast/rule/value/bitsAny must be a positive integer"
     );
     assert_eq!(
         reject(json!({ "gt": "1" })),
-        "/checks/0/forbid/ast/rule/value/gt must be a number"
+        "/clauses/0/forbid/ast/rule/value/gt must be a number"
     );
     assert_eq!(
         reject(json!({ "regex": "(" })),
-        "/checks/0/forbid/ast/rule/value/regex: Parsing text matcher fails."
+        "/clauses/0/forbid/ast/rule/value/regex: Parsing text matcher fails."
     );
     assert_eq!(
         reject(json!({ "startsWith": [] })),
-        "/checks/0/forbid/ast/rule/value/startsWith must not be empty"
+        "/clauses/0/forbid/ast/rule/value/startsWith must not be empty"
     );
     assert_eq!(
         reject(json!({ "truthy": 1 })),
-        "/checks/0/forbid/ast/rule/value/truthy must be true or false"
+        "/clauses/0/forbid/ast/rule/value/truthy must be true or false"
     );
     assert_eq!(
         reject(json!({ "equals": 1 })),
-        "unknown field `equals` at /checks/0/forbid/ast/rule/value"
+        "unknown field `equals` at /clauses/0/forbid/ast/rule/value"
     );
     let reason = rejection(compile(
         "typescript",

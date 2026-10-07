@@ -1,0 +1,96 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bladestan-array-duplicate-key",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Bladestan 0.11.7 (PHPStan 2.2.16 over the compiled template) array.duplicateKey (DuplicateKeysInLiteralArraysRule): an array literal's first explicitly keyed element (`[$K => $V]`; its key captured, as a Blade rule cannot select a PHP pattern's metavariable) whose key PHP coerces to the same key as a later explicit key's (reported, as PHPStan does, at the first). Arrays spanning more than 256 lines are not checked: comparing every pair of keys of a larger literal (generated data tables) exceeds the per-file AST work budget, which would fail every policy on the file.",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "rule": {
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "array_creation_expression",
+                  "layout": {
+                    "span": {
+                      "max": 256
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "array_element_initializer",
+                "pattern": {
+                  "context": "[$E => $V]",
+                  "selector": "array_element_initializer"
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "end",
+                  "all": [
+                    {
+                      "kind": "array_element_initializer",
+                      "pattern": {
+                        "context": "[$E2 => $V2]",
+                        "selector": "array_element_initializer"
+                      }
+                    },
+                    {
+                      "compare": {
+                        "left": "E",
+                        "op": "eq",
+                        "right": "E2",
+                        "text": "key"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "all": [
+                      {
+                        "kind": "array_element_initializer",
+                        "pattern": {
+                          "context": "[$E0 => $V0]",
+                          "selector": "array_element_initializer"
+                        }
+                      },
+                      {
+                        "compare": {
+                          "left": "E0",
+                          "op": "eq",
+                          "right": "E",
+                          "text": "key"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "array.duplicateKey",
+        "message": "Array has duplicate keys with this value."
+      }
+    }
+  ]
+}

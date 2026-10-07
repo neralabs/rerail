@@ -19,10 +19,11 @@ pub(super) fn compile_typescript_rule(rule: Value) -> Result<CompiledPolicyDsl> 
         "format": "rerail.policy/v1",
         "id": "dialects",
         "revision": 1,
-        "checks": [{
+        "mode": "block",
+        "clauses": [{
             "id": "ast-match",
             "forbid": { "ast": { "language": "typescript", "rule": rule } },
-            "finding": { "anchor": "witness.span", "code": "AST_MATCH", "message": "match", "severity": "error" },
+            "violation": { "anchor": "witness.span", "code": "AST_MATCH", "message": "match" },
         }],
     });
     PolicyDslRuntime::compile(
@@ -54,7 +55,7 @@ pub(super) fn assert_findings(result: &Value, expected: usize) {
     assert_eq!(result["status"], "completed", "{result}");
     assert_eq!(result["failures"], json!([]), "{result}");
     assert_eq!(
-        result["findings"].as_array().map(Vec::len),
+        result["violations"].as_array().map(Vec::len),
         Some(expected),
         "{result}"
     );
@@ -72,11 +73,11 @@ pub(super) fn compile_document_with(
 }
 
 pub(super) fn check_document(check: Value) -> Value {
-    json!({ "format": "rerail.policy/v1", "id": "strict", "revision": 1, "checks": [check] })
+    json!({ "format": "rerail.policy/v1", "id": "strict", "revision": 1, "mode": "block", "clauses": [check] })
 }
 
 pub(super) fn finding() -> Value {
-    json!({ "anchor": "witness.span", "code": "X", "message": "x", "severity": "error" })
+    json!({ "anchor": "witness.span", "code": "X", "message": "x" })
 }
 
 pub(super) fn capabilities_with(edit: impl FnOnce(&mut Value)) -> Value {
@@ -94,7 +95,7 @@ pub(super) fn compile_typescript_ast(mut ast: Value) -> Result<CompiledPolicyDsl
     ast["language"] = json!("typescript");
     compile_document_with(
         check_document(
-            json!({ "id": "ast-match", "forbid": { "ast": ast }, "finding": finding() }),
+            json!({ "id": "ast-match", "forbid": { "ast": ast }, "violation": finding() }),
         ),
         &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
     )
@@ -104,6 +105,62 @@ pub(super) fn compiled(ast: Value) -> CompiledPolicyDsl {
     compile_typescript_ast(ast).unwrap_or_else(|error| panic!("{}", error.reason))
 }
 
+/// ESLint no-dupe-keys as the TypeScript conformance pack ports it (`eslint-no-dupe-keys`): a
+/// property whose static key (`compare` text `key`) an earlier property of the same object has;
+/// a getter pairs with a setter, and a non-computed `__proto__: value` is no key. It reports the
+/// key, `K`.
+pub(super) fn no_dupe_keys_ast() -> Value {
+    let earlier = |extra: Value| {
+        let mut all = vec![json!({ "matches": "cand" })];
+        all.extend(extra.as_array().cloned().unwrap_or_default());
+        json!({ "count": { "min": 1, "follows": {
+            "stopBy": "end",
+            "all": all,
+            "pattern": "$Q",
+            "compare": { "left": "Q", "op": "eq", "right": "P", "text": "key" },
+        } } })
+    };
+    json!({
+        "language": "typescript",
+        "rule": { "all": [
+            { "matches": "cand" },
+            { "pattern": "$P" },
+            { "any": [
+                { "kind": "shorthand_property_identifier", "pattern": "$K" },
+                { "has": { "stopBy": "neighbor", "matches": "key", "not": { "kind": "computed_property_name" }, "pattern": "$K" } },
+                { "has": { "stopBy": "neighbor", "matches": "key", "kind": "computed_property_name",
+                    "has": { "stopBy": "neighbor", "not": { "regex": "^[\\[\\]]$" }, "pattern": "$K" } } },
+            ] },
+            { "any": [
+                { "all": [{ "matches": "getter" }, earlier(json!([{ "not": { "matches": "setter" } }]))] },
+                { "all": [{ "matches": "setter" }, earlier(json!([{ "not": { "matches": "getter" } }]))] },
+                { "all": [
+                    { "not": { "matches": "getter" } },
+                    { "not": { "matches": "setter" } },
+                    earlier(json!([])),
+                ] },
+            ] },
+        ] },
+        "utils": {
+            "cand": { "all": [
+                { "any": [{ "kind": "pair" }, { "kind": "method_definition" }, { "kind": "shorthand_property_identifier" }] },
+                { "inside": { "kind": "object", "stopBy": "neighbor" } },
+                { "not": { "matches": "proto" } },
+            ] },
+            "getter": { "kind": "method_definition", "has": { "stopBy": "neighbor", "regex": "^get$", "not": { "kind": "property_identifier" } } },
+            "setter": { "kind": "method_definition", "has": { "stopBy": "neighbor", "regex": "^set$", "not": { "kind": "property_identifier" } } },
+            "key": {
+                "any": [{ "kind": "property_identifier" }, { "kind": "string" }, { "kind": "number" }, { "kind": "computed_property_name" }],
+                "not": { "follows": { "stopBy": "end", "regex": "^:$" } },
+            },
+            "proto": { "kind": "pair", "has": { "stopBy": "neighbor", "matches": "key", "any": [
+                { "kind": "property_identifier", "regex": "^__proto__$" },
+                { "kind": "string", "value": { "eq": "__proto__" } },
+            ] } },
+        },
+    })
+}
+
 /// Each finding's text, followed by its single-node captures' texts in name order.
 pub(super) fn matched_texts(result: &Value, source: &str) -> Vec<String> {
     let text = |span: &Value| {
@@ -111,7 +168,7 @@ pub(super) fn matched_texts(result: &Value, source: &str) -> Vec<String> {
         let end = span["endByte"].as_u64().expect("end") as usize;
         source[start..end].to_owned()
     };
-    result["findings"]
+    result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -140,8 +197,6 @@ pub(super) fn grammar_matchers(compiled: &CompiledPolicyDsl) -> &[GrammarMatcher
 pub(super) enum Walk {
     SoundVerdict,
     OptionalCaptures,
-    StructureLowers,
-    StructureLowering,
     CaptureVariables,
     AstCaptures,
     NodeRegexes,

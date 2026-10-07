@@ -33,7 +33,7 @@ export function registerCosineRulesTool(pi: ExtensionAPI, runtime: CosineRulesTo
 
 
   pi.registerTool({
-    name: "cosine_rules",
+    name: "conversation_rules",
     label: "Cosine Rules",
     description: "Add, remove, inspect, or test session-scoped cosine-similarity trigger rules.",
     parameters,
@@ -93,7 +93,7 @@ export function registerCosineRulesTool(pi: ExtensionAPI, runtime: CosineRulesTo
           return toolResult({ matches, modelFingerprint: registry.fingerprint() });
         }
       }
-      throw new TypeError(`unsupported cosine_rules action: ${String(input.action)}`);
+      throw new TypeError(`unsupported conversation_rules action: ${String(input.action)}`);
     },
   });
 }

@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-empty-interface",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-empty-interface` rule with its default options (https://palantir.github.io/tslint/rules/no-empty-interface/). Forbids empty interfaces.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "empty-interface",
       "forbid": {
@@ -68,10 +69,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_EMPTY_INTERFACE",
-        "severity": "error",
         "message": "An empty interface is equivalent to `{}`."
       }
     },
@@ -125,10 +125,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_EMPTY_INTERFACE",
-        "severity": "error",
         "message": "An interface declaring no members is equivalent to its supertype."
       }
     }

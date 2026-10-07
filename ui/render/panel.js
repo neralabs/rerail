@@ -3,14 +3,14 @@ import { fmt, plural, whenLabel, stamp } from "../format.js";
 import { originOf, ruleTitle, kindLabel, modeLabel, isLog, scopeText, technical } from "../derive.js";
 import { data, ui, rangeLabel, fires, allFires, rerails, isMeasured, activityAllOf, ruleFindings } from "../state.js";
 
-export const ASK = [["ask", "Ask about it"], ["check", "Change what it checks"], ["scope", "Change where it applies"], ["delivery", "Change what happens"], ["delete", "Delete it"]];
-const ASK_OPEN = { check: true, scope: true, delivery: true };
+export const ASK = [["ask", "Ask about it"], ["check", "Change what it checks"], ["scope", "Change where it applies"], ["mode", "Change what happens"], ["delete", "Delete it"]];
+const ASK_OPEN = { check: true, scope: true, mode: true };
 
 export function askPrompt(stored, k) {
   const ref = `the rule "${stored.rule.id}" (${ruleTitle(stored)})`;
   if (k === "check") return `Using Nera, update ${ref}. Show me the change before saving. I want it to check: `;
   if (k === "scope") return `Using Nera, update ${ref}. Currently it applies to: ${scopeText(stored)} Show me the change before saving. I want it to apply to: `;
-  if (k === "delivery") return `Using Nera, update ${ref}. Currently: ${modeLabel(stored)}. Show me the change before saving. Instead I want it to: `;
+  if (k === "mode") return `Using Nera, update ${ref}. Currently: ${modeLabel(stored)}. Show me the change before saving. Instead I want it to: `;
   if (k === "delete") return `Using Nera, delete ${ref}. Show me what will be removed and ask me to confirm first.`;
   return `Using Nera, explain ${ref}: what it checks, where it applies, and why it triggered most recently.`;
 }
@@ -83,22 +83,16 @@ function lastTriggered(all, lastSeen, measured) {
   return measured ? "never" : "—";
 }
 
-function syncLabel(state) {
-  if (state === "synced") return "Synced with Nera";
-  return state === "pending" ? "Sync pending" : "Local only";
-}
-
 function renderOrigin(stored, id, ob) {
-  setContent(p.from, `${id}|${ob.label}|${stored.applicability}|${stored.syncState}`, () => kv([
+  setContent(p.from, `${id}|${ob.label}|${stored.applicability}`, () => kv([
     ["Origin", ob.label],
     ["Applies", stored.applicability === "project" ? "This project" : "Every project"],
-    ["Sync", syncLabel(stored.syncState)],
     ["Rule id", id, "mono"],
   ]));
 }
 
 function renderHappens(stored, id, rr) {
-  const message = stored.kind === "cosine" ? stored.rule.action.content : ruleFindings(id)[0]?.message ?? stored.rule.checks[0]?.finding?.message ?? "the rule's message";
+  const message = stored.kind === "conversation" ? stored.rule.action.content : ruleFindings(id)[0]?.message ?? stored.rule.clauses[0]?.violation?.message ?? "the rule's message";
   setContent(p.happens, `${modeLabel(stored)}|${isLog(stored)}|${rr}|${ui.range}|${message}`, () => [
     `${modeLabel(stored)}. `,
     rr ? `Steered the agent ${fmt(rr)} ${plural(rr, "time")} ${rangeLabel()}. ` : "",

@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:promise-function-async",
   "revision": 1,
+  "mode": "steer",
   "description": "Requires functions that return promises to be async. Syntactic proxy for the inferred return type: a Promise return annotation, `return new Promise`, or returning a value from a Promise-annotated parameter.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "promise-function-async",
       "forbid": {
@@ -190,10 +191,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "PROMISE_FUNCTION_ASYNC",
-        "severity": "error",
         "message": "functions that return promises must be async"
       }
     }

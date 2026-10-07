@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:await-promise",
   "revision": 1,
+  "mode": "steer",
   "description": "Warns for an awaited value that is not a Promise. Syntactic proxy for the type check: await of a literal, a ternary of literals, or `new X()` where X is not Promise/CustomPromise (option: CustomPromise); for-await over an array literal.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "await-non-promise",
       "forbid": {
@@ -214,10 +215,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "AWAIT_PROMISE",
-        "severity": "error",
         "message": "Invalid 'await' of a non-Promise value."
       }
     },
@@ -251,10 +251,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "AWAIT_PROMISE",
-        "severity": "error",
         "message": "Invalid 'for-await-of' of a non-AsyncIterable value."
       }
     }

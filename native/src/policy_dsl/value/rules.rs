@@ -16,7 +16,7 @@ fn starts(ast: Value, anchor: &str, source: &str) -> Vec<u64> {
     let document = check_document(json!({
         "id": "port",
         "forbid": { "ast": ast },
-        "finding": { "anchor": anchor, "code": "PORT", "message": "port", "severity": "error" },
+        "violation": { "anchor": anchor, "code": "PORT", "message": "port" },
     }));
     let compiled = compile_document_with(
         document,
@@ -25,7 +25,7 @@ fn starts(ast: Value, anchor: &str, source: &str) -> Vec<u64> {
     .unwrap_or_else(|error| panic!("{}", error.reason));
     let result = evaluate_file(&compiled, "python", "fixture.py", source);
     assert_eq!(result["failures"], json!([]), "{result}");
-    let mut starts = result["findings"]
+    let mut starts = result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -941,13 +941,12 @@ fn each_starts(ast: Value, each: Option<&str>, source: &str) -> Vec<u64> {
 fn each_starts_at(ast: Value, anchor: &str, each: Option<&str>, source: &str) -> Vec<u64> {
     let mut ast = ast;
     ast["language"] = json!("python");
-    let mut finding =
-        json!({ "anchor": anchor, "code": "PORT", "message": "port", "severity": "error" });
+    let mut finding = json!({ "anchor": anchor, "code": "PORT", "message": "port" });
     if let Some(each) = each {
         finding["each"] = json!(each);
     }
     let document =
-        check_document(json!({ "id": "port", "forbid": { "ast": ast }, "finding": finding }));
+        check_document(json!({ "id": "port", "forbid": { "ast": ast }, "violation": finding }));
     let compiled = compile_document_with(
         document,
         &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
@@ -955,7 +954,7 @@ fn each_starts_at(ast: Value, anchor: &str, each: Option<&str>, source: &str) ->
     .unwrap_or_else(|error| panic!("{}", error.reason));
     let result = evaluate_file(&compiled, "python", "fixture.py", source);
     assert_eq!(result["failures"], json!([]), "{result}");
-    let mut starts = result["findings"]
+    let mut starts = result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -965,7 +964,7 @@ fn each_starts_at(ast: Value, anchor: &str, each: Option<&str>, source: &str) ->
     starts
 }
 
-/// The Ruff suite's E712 utilities (`rerail/conformance/ruff/rules/E712.json`), verbatim.
+/// The Ruff conformance suite's E712 utilities, verbatim.
 const E712_UTILS: &str = r#"{"constant":{"any":[{"kind":"string","not":{"has":{"stopBy":"end","kind":"interpolation"}}},{"kind":"concatenated_string","not":{"has":{"stopBy":"end","kind":"interpolation"}}},{"kind":"integer"},{"kind":"float"},{"kind":"none"},{"kind":"true"},{"kind":"false"},{"kind":"ellipsis"},{"kind":"parenthesized_expression","has":{"stopBy":"neighbor","matches":"constant"}},{"kind":"tuple","not":{"has":{"stopBy":"neighbor","not":{"any":[{"matches":"constant"},{"regex":"^[(),]$"}]}}}}]},"singleton":{"any":[{"kind":"none"},{"kind":"true"},{"kind":"false"},{"kind":"ellipsis"},{"kind":"parenthesized_expression","has":{"stopBy":"neighbor","matches":"singleton"}}]},"constant-non-singleton":{"all":[{"matches":"constant"},{"not":{"matches":"singleton"}}]},"is-true":{"any":[{"kind":"true"},{"kind":"parenthesized_expression","has":{"stopBy":"neighbor","matches":"is-true"}}]},"is-false":{"any":[{"kind":"false"},{"kind":"parenthesized_expression","has":{"stopBy":"neighbor","matches":"is-false"}}]},"flagged-bool-operand":{"all":[{"any":[{"matches":"is-true"},{"matches":"is-false"}]},{"any":[{"all":[{"not":{"follows":{"stopBy":"neighbor","regex":"(?s)."}}},{"precedes":{"stopBy":"neighbor","regex":"^(==|!=)$","precedes":{"stopBy":"neighbor","not":{"matches":"constant-non-singleton"}}}}]},{"all":[{"follows":{"stopBy":"neighbor","regex":"^(==|!=)$","follows":{"stopBy":"neighbor","not":{"matches":"constant-non-singleton"}}}},{"not":{"any":[{"all":[{"matches":"is-true"},{"follows":{"stopBy":"neighbor","regex":"^==$","follows":{"stopBy":"neighbor","matches":"is-true"}}}]},{"all":[{"matches":"is-false"},{"follows":{"stopBy":"neighbor","regex":"^==$","follows":{"stopBy":"neighbor","matches":"is-false"}}}]}]}}]}]}]}}"#;
 
 /// E712 (M12b): Ruff reports each offending `True`/`False` operand of a chained comparison, each

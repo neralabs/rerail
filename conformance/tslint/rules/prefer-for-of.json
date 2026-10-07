@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:prefer-for-of",
   "revision": 1,
+  "mode": "steer",
   "description": "Flags `for (let|var i = 0; i < a.length; i++ / ++i / i += 1 / i = i + 1 / i = 1 + i)` whose body uses i only as a read of `a[i]` (object compared by text, after one level of parentheses): not assigned, updated, deleted or destructured into; uses under a nearer declaration of i (block, loop, function parameter) are someone else's; a `var` index used outside the loop bails.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "indexed-for",
       "forbid": {
@@ -425,10 +426,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "PREFER_FOR_OF",
-        "severity": "error",
         "message": "Expected a 'for-of' loop instead of a 'for' loop with this simple iteration"
       }
     }

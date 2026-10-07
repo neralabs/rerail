@@ -4,9 +4,11 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { formatTerminalStatus, readPresentation, readRulesPage } from "../src/session-presentation.js";
+import { formatTerminalStatus, readPresentation, readRepositoryState, readRulesPage } from "../src/session-presentation.js";
 import type { presentationResponseSchema, sessionResponseSchema } from "../src/api/session-contracts.js";
 import type { z } from "zod";
+import { openRerailDatabase } from "../src/database.js";
+import { hookRerailStarted, startRepository } from "../src/repository-start.js";
 
 let home: string;
 let cwd: string;
@@ -29,8 +31,8 @@ beforeEach(async () => {
   await writeFile(join(home, "daemon.json"), JSON.stringify(state));
   requested = [];
   sessionContext = { session: { sessionId, host: "claude-code", cwd, repositoryId: "repository-under-test", startedAt: 1, endedAt: null, eventCount: 0 },
-    hud: { activeRuleCount: 3, steeringCount: 2 }, evaluation: null };
-  response = { presence: "compact", context: {
+    hud: { activeRuleCount: 3, steeringCount: 2 }, audit: null };
+  response = { presence: "compact", repositoryState: "started", context: {
     daemon: { pid: process.pid, database: { path: database, exists: true }, native: { ok: true } },
     session: structuredClone(sessionContext),
   } };
@@ -108,6 +110,27 @@ describe("installed session presentation", () => {
     expect((await read()).text).toBe("Rerail | rules unavailable | steering unavailable");
   });
 
+  it("reports not on here, with the state the daemon gave, where Rerail is stopped or was never started", async () => {
+    response.repositoryState = "stopped";
+    const stopped = await read();
+    expect(stopped).toMatchObject({ text: "Rerail | not on here", repositoryState: "stopped" });
+    expect(stopped.parts.every(part => part.url === null)).toBe(true);
+    // A new session in a repository that was never started has no recorded session at all.
+    response.repositoryState = "never";
+    response.context!.session = null;
+    expect(await read()).toMatchObject({ text: "Rerail | not on here", repositoryState: "never" });
+    expect((await read(true)).repositoryState).toBe("never");
+    response.presence = "silent";
+    expect(await read()).toMatchObject({ parts: [], repositoryState: "never" });
+  });
+
+  it("reports a repository-operations workspace that switched its container off as stopped, without a daemon", async () => {
+    await mkdir(join(cwd, ".nera"));
+    await writeFile(join(cwd, ".nera", "instance.env"), 'NERA_RERAIL_ENABLED="false"\n');
+    expect(await read()).toMatchObject({ text: "Rerail | not on here", repositoryState: "stopped" });
+    expect(requested).toEqual([]);
+  });
+
   it("rereads the daemon locator after restart", async () => {
     await read();
     state.url = "http://127.0.0.1:5737/";
@@ -157,7 +180,7 @@ describe("installed session presentation", () => {
   });
 
   it("strips terminal control injection from labels and link targets", () => {
-    const rendered = formatTerminalStatus({ text: "", url: null, presence: "compact", parts: [
+    const rendered = formatTerminalStatus({ text: "", url: null, presence: "compact", repositoryState: "started", parts: [
       { text: "Rerail\u001b\n\u202e", url: "http://127.0.0.1/\u001b\u0007\u202e" },
       { text: "2 rules", url: "http://127.0.0.1/#rules" },
     ] });
@@ -185,8 +208,9 @@ describe("rules page", () => {
     vi.unstubAllGlobals();
     health = { status: "ok", pid, database: { path: database, exists: true }, native: { ok: true }, repositoryId: "repository-under-test" };
     stub = createServer((request, response) => {
-      response.writeHead(request.url === "/healthz" ? 200 : 404, { "content-type": "application/json" });
-      response.end(JSON.stringify(health));
+      const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+      response.writeHead(path === "/healthz" || path === "/api/presentation" ? 200 : 404, { "content-type": "application/json" });
+      response.end(JSON.stringify(path === "/api/presentation" ? { presence: "compact", repositoryState: "stopped" } : health));
     });
     await new Promise<void>(resolve => stub!.listen(0, "127.0.0.1", () => resolve()));
     return (stub!.address() as AddressInfo).port;
@@ -207,6 +231,26 @@ describe("rules page", () => {
     expect(await readRulesPage({ cwd })).toEqual({ url: null, reason: "daemon serves another repository" });
     await rm(join(home, "daemon.json"));
     expect(await readRulesPage({ cwd })).toEqual({ url: null, reason: "daemon unavailable" });
+  });
+
+  it("reads the repository's start state from a live daemon, and nothing from a dead one", async () => {
+    const port = await listen();
+    await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
+    expect(await readRepositoryState(cwd, "omp")).toBe("stopped");
+    await record(join(home, "daemon.json"), { pid: 999_999 });
+    expect(await readRepositoryState(cwd, "omp")).toBeNull();
+  });
+
+  it("lets a live daemon's answer decide the hook start check, and reads the database only once none answers", async () => {
+    const store = openRerailDatabase(database);
+    startRepository(store, "repository-under-test");
+    store.$client.close();
+    const port = await listen();
+    await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
+    // The daemon says stopped; this process's database, which says started, is not read.
+    expect(await hookRerailStarted("claude-code", cwd)).toBe(false);
+    await record(join(home, "daemon.json"), { pid: 999_999 });
+    expect(await hookRerailStarted("claude-code", cwd)).toBe(true);
   });
 
   it("refuses to link the rules view unless both the daemon and the checkout name the same repository", async () => {

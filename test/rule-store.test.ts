@@ -41,7 +41,7 @@ describe("SqliteRuleStore", () => {
     const storedCosine = store.upsertCosine(cosine, { now: 1_000, scope: "global" });
 
     expect(storedPolicy).toEqual({
-      kind: "policy",
+      kind: "file",
       enabled: true,
       scope: "repository",
       revision: policy.revision,
@@ -51,7 +51,7 @@ describe("SqliteRuleStore", () => {
       rule: policy,
     });
     expect(storedCosine).toEqual({
-      kind: "cosine",
+      kind: "conversation",
       enabled: true,
       scope: "global",
       revision: 1,
@@ -64,14 +64,15 @@ describe("SqliteRuleStore", () => {
 
     const database = new Database(path, { readonly: true });
     expect(database.prepare(
-      "SELECT id, kind, format, json_extract(scope_json, '$.include[0]') AS firstInclude, json_array_length(checks_json) AS checkCount, reference FROM rules ORDER BY id",
+      "SELECT id, kind, format, json_extract(scope_json, '$.include[0]') AS firstInclude, json_array_length(clauses_json) AS clauseCount, reference FROM rules ORDER BY id",
     ).all()).toEqual([
-      { id: cosine.id, kind: "cosine", format: null, firstInclude: null, checkCount: null, reference: cosine.reference },
-      { id: policy.id, kind: "policy", format: "rerail.policy/v1", firstInclude: policy.scope!.include[0], checkCount: policy.checks.length, reference: null },
+      { id: cosine.id, kind: "conversation", format: null, firstInclude: null, clauseCount: null, reference: cosine.reference },
+      { id: policy.id, kind: "file", format: "rerail.policy/v1", firstInclude: policy.scope!.include[0], clauseCount: policy.clauses.length, reference: null },
     ]);
-    expect(database.prepare(
-      "SELECT id FROM rules WHERE EXISTS (SELECT 1 FROM json_each(checks_json) WHERE json_extract(value, '$.finding.severity') = 'error')",
-    ).all()).toEqual([{ id: policy.id }]);
+    expect(database.prepare("SELECT id, mode FROM rules ORDER BY id").all()).toEqual([
+      { id: cosine.id, mode: cosine.mode },
+      { id: policy.id, mode: policy.mode },
+    ]);
     database.close();
   });
 
@@ -79,12 +80,12 @@ describe("SqliteRuleStore", () => {
     const store = new SqliteRuleStore(await temporaryDatabase());
     const policy = MOCK_POLICY_RULES[0]!;
 
-    expect(() => store.upsertPolicy({ ...policy, checks: [] })).toThrow();
+    expect(() => store.upsertPolicy({ ...policy, clauses: [] })).toThrow();
     expect(() => store.upsertPolicy({ ...policy, format: "rerail.policy/v2" })).toThrow(/rerail\.policy\/v1/u);
-    expect(() => store.upsertPolicy({ ...policy, checks: [{ ...policy.checks[0]!, budget: { query: { evidence: { as: "x", query: { ast: { language: "python", rule: { kind: "call" } } }, project: { path: "file.path" } } }, count: { lte: 1 } } }] })).toThrow(/exactly one constraint form/u);
-    expect(() => store.upsertPolicy({ ...policy, checks: [policy.checks[0]!, { ...policy.checks[0]! }] })).toThrow(/Duplicate check id/u);
-    expect(() => store.upsertPolicy({ ...policy, checks: [{ ...policy.checks[0]!, forbid: { regex: { source: "stdin", pattern: "x" } } }] })).toThrow();
-    expect(() => store.upsertCosine({ id: "bad", reference: "x", match: { operator: "gte", threshold: 2 }, sample: { source: "user-input", boundary: "message" }, action: { delivery: "steer", content: "y" } })).toThrow(/threshold/u);
+    expect(() => store.upsertPolicy({ ...policy, clauses: [{ ...policy.clauses[0]!, budget: { query: { evidence: { as: "x", query: { ast: { language: "python", rule: { kind: "call" } } }, project: { path: "file.path" } } }, count: { lte: 1 } } }] })).toThrow(/exactly one constraint form/u);
+    expect(() => store.upsertPolicy({ ...policy, clauses: [policy.clauses[0]!, { ...policy.clauses[0]! }] })).toThrow(/Duplicate clause id/u);
+    expect(() => store.upsertPolicy({ ...policy, clauses: [{ ...policy.clauses[0]!, forbid: { regex: { source: "stdin", pattern: "x" } } }] })).toThrow();
+    expect(() => store.upsertCosine({ id: "bad", reference: "x", match: { operator: "gte", threshold: 2 }, sample: { source: "user-input", boundary: "message" }, mode: "steer", action: { content: "y" } })).toThrow(/threshold/u);
     expect(store.list()).toEqual([]);
     store.close();
   });
@@ -104,13 +105,24 @@ describe("SqliteRuleStore", () => {
     database.close();
   });
 
+
   it("still requires a reference for a similarity rule row", async () => {
     const path = await temporaryDatabase();
     new SqliteRuleStore(path).close();
     const database = new Database(path);
     expect(() => database.prepare(
-      "INSERT INTO rules (id, kind, revision, enabled, scope, created_at, updated_at, match_json, sample_json, action_json) VALUES ('x', 'cosine', 1, 1, 'repository', 1, 1, '{\"operator\":\"gte\",\"threshold\":0.5}', '{}', '{}')",
-    ).run()).toThrow(/rules_cosine_columns/u);
+      "INSERT INTO rules (id, kind, mode, revision, enabled, scope, created_at, updated_at, match_json, sample_json, action_json) VALUES ('x', 'conversation', 'steer', 1, 1, 'repository', 1, 1, '{\"operator\":\"gte\",\"threshold\":0.5}', '{}', '{}')",
+    ).run()).toThrow(/rules_conversation_columns/u);
+    database.close();
+  });
+
+  it("stores only the three rule modes", async () => {
+    const path = await temporaryDatabase();
+    new SqliteRuleStore(path).close();
+    const database = new Database(path);
+    expect(() => database.prepare(
+      "INSERT INTO rules (id, kind, mode, revision, enabled, scope, created_at, updated_at, format, clauses_json) VALUES ('x', 'file', 'error', 1, 1, 'repository', 1, 1, 'rerail.policy/v1', '[]')",
+    ).run()).toThrow(/rules_mode/u);
     database.close();
   });
 
@@ -118,7 +130,7 @@ describe("SqliteRuleStore", () => {
     const store = new SqliteRuleStore(await temporaryDatabase());
     store.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "shared" });
 
-    expect(() => store.upsertPolicy({ ...MOCK_POLICY_RULES[0]!, id: "shared" })).toThrow(/exists with kind cosine/u);
+    expect(() => store.upsertPolicy({ ...MOCK_POLICY_RULES[0]!, id: "shared" })).toThrow(/exists with kind conversation/u);
     store.close();
   });
 
@@ -143,7 +155,7 @@ describe("SqliteRuleStore", () => {
     store.upsertCosine(MOCK_COSINE_RULES[0]!, { now: 1 });
     store.upsertCosine(MOCK_COSINE_RULES[1]!, { now: 1, enabled: false, scope: "global" });
 
-    expect(store.list({ kind: "policy" }).map(stored => stored.rule.id)).toEqual(MOCK_POLICY_RULES.map(rule => rule.id).sort());
+    expect(store.list({ kind: "file" }).map(stored => stored.rule.id)).toEqual(MOCK_POLICY_RULES.map(rule => rule.id).sort());
     expect(store.list({ enabled: false }).map(stored => stored.rule.id)).toEqual([MOCK_COSINE_RULES[1]!.id]);
     expect(store.list({ scope: "global" }).map(stored => stored.rule.id)).toEqual([MOCK_COSINE_RULES[1]!.id]);
     expect(store.cosineRules()).toEqual([MOCK_COSINE_RULES[0]]);
@@ -168,12 +180,13 @@ describe("SqliteRuleStore", () => {
     expect(ids({ text: "lazy query" })).toEqual(["mock-lazy-query-shaping"]);
     expect(ids({ text: "100%" })).toEqual([]);
     expect(ids({ source: "user-input" })).toEqual(["mock-cosine-migration-warning"]);
-    expect(ids({ boundary: "sentence", delivery: "steer" })).toEqual(["mock-cosine-prefer-generated-client"]);
-    expect(ids({ kind: "policy", delivery: "steer" })).toEqual([]);
+    expect(ids({ boundary: "sentence", mode: "steer" })).toEqual(["mock-cosine-prefer-generated-client"]);
+    expect(ids({ kind: "file", mode: "steer" })).toEqual(["mock-lazy-query-shaping", "mock-no-console-log"]);
+    expect(ids({ mode: "log" })).toEqual(["mock-generated-client-imports"]);
 
     expect(store.setEnabled({ filter: { text: "generated client" } }, false, 7)).toBe(2);
     expect(ids({ enabled: false })).toEqual(["mock-cosine-prefer-generated-client", "mock-generated-client-imports"]);
-    expect(store.setEnabled({ filter: { kind: "cosine" } }, false)).toBe(1);
+    expect(store.setEnabled({ filter: { kind: "conversation" } }, false)).toBe(1);
     expect(store.setEnabled({ filter: {} }, true)).toBe(3);
     expect(store.setEnabled({ ids: [] }, false)).toBe(0);
     store.close();
@@ -213,11 +226,11 @@ describe("seedRerailDatabase", () => {
     expect(second).toEqual(first);
     const rules = new SqliteRuleStore(path);
     expect(rules.list().map(stored => [stored.rule.id, stored.kind, stored.enabled])).toEqual([
-      ["mock-cosine-migration-warning", "cosine", false],
-      ["mock-cosine-prefer-generated-client", "cosine", true],
-      ["mock-generated-client-imports", "policy", true],
-      ["mock-lazy-query-shaping", "policy", true],
-      ["mock-no-console-log", "policy", true],
+      ["mock-cosine-migration-warning", "conversation", false],
+      ["mock-cosine-prefer-generated-client", "conversation", true],
+      ["mock-generated-client-imports", "file", true],
+      ["mock-lazy-query-shaping", "file", true],
+      ["mock-no-console-log", "file", true],
     ]);
     expect(rules.get("mock-no-console-log")?.createdAt).toBe(100_000);
     rules.close();

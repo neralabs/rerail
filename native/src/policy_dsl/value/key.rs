@@ -179,6 +179,7 @@ pub(crate) fn member_access_name<'r, D: Doc>(
         | "public_field_definition"
         | "method_signature"
         | "property_signature" => (node.field("name")?, false),
+        "field_definition" => (node.field("property")?, false),
         "member_expression" => (node.field("property")?, false),
         "subscript_expression" => (node.field("index")?, true),
         _ => (node.clone(), false),

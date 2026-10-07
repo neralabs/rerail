@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:newline-before-return",
   "revision": 1,
+  "mode": "steer",
   "description": "Enforces a blank line before return when not the only line in the block. AST approximation: return_statement (inside a block) whose previous sibling is a statement; blank lines are not visible, so returns already preceded by a blank line are also flagged.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "return-after-statement",
       "forbid": {
@@ -39,10 +40,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.start",
         "code": "NEWLINE_BEFORE_RETURN",
-        "severity": "error",
         "message": "Missing blank line before return"
       }
     },
@@ -115,10 +115,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.start",
         "code": "NEWLINE_BEFORE_RETURN",
-        "severity": "error",
         "message": "Missing blank line before return"
       }
     }

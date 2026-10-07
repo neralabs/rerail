@@ -661,21 +661,6 @@ pub(crate) fn sub_tree<'r, D: Doc>(node: &ast_grep_core::Node<'r, D>) -> Option<
     doc.downcast_ref::<SubDoc>().map(|doc| &doc.tree)
 }
 
-impl SubDoc {
-    /// The node at a preorder ordinal of the tree.
-    pub(crate) fn node_at(&self, ordinal: u32) -> SubNode<'_> {
-        SubNode {
-            tree: &self.tree,
-            index: ordinal,
-        }
-    }
-}
-
-/// A sub-tree node's preorder ordinal, from its node id (`SubNode::node_id`).
-pub(crate) fn sub_ordinal(node_id: usize) -> u32 {
-    (node_id & ((1 << 24) - 1)) as u32
-}
-
 /// What `parse` reads from a host node.
 pub(crate) enum Parsed {
     Tree(Arc<SubTree>),

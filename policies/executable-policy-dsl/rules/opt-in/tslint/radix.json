@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:radix",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `radix` rule with its default options (https://palantir.github.io/tslint/rules/radix/). Requires the radix parameter for parseInt (bare, global./window./Number., and global./window.Number.).",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "missing-radix",
       "forbid": {
@@ -54,10 +55,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "RADIX",
-        "severity": "error",
         "message": "Missing radix parameter"
       }
     }

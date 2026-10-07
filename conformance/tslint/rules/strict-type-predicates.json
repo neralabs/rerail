@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:strict-type-predicates",
   "revision": 1,
+  "mode": "steer",
   "description": "Warns for type predicates that are always true or always false. APPROXIMATION: only operands that are literals (whose type is known from syntax) are checked; everything else needs the type checker.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "typeof-literal",
       "forbid": {
@@ -86,10 +87,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "STRICT_TYPE_PREDICATES",
-        "severity": "error",
         "message": "Expression is always true or always false."
       }
     },
@@ -163,10 +163,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "STRICT_TYPE_PREDICATES",
-        "severity": "error",
         "message": "Expression is always true or always false."
       }
     }

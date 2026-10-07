@@ -14,9 +14,10 @@ const command = (regex: string): MatchCondition => ({ field: "input.command", re
 function structural(match: unknown): CosineRule {
   return parseCosineRule({
     id: "structural",
+    mode: "steer",
     match,
     sample: { source: "tool:Bash", boundary: "tool-call" },
-    action: { delivery: "steer", content: "c" },
+    action: { content: "c" },
   });
 }
 
@@ -68,7 +69,7 @@ describe("kernel regex validation", () => {
 
     const catalog = ScopedRuleCatalog.open(join(root, "catalog.sqlite"), { repositoryId: "repo", workspaceRoot: "/repo" });
     expect(() => catalog.upsertCosine(bad)).toThrow(/^rule\.match\.regex is not a valid regex/u);
-    expect(() => catalog.restore([{ document: { kind: "cosine", rule: bad } }])).toThrow(/regex/u);
+    expect(() => catalog.restore([{ document: { kind: "conversation", rule: bad } }])).toThrow(/regex/u);
     expect(catalog.listOwned()).toEqual([]);
     catalog.close();
   });

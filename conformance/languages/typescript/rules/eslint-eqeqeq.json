@@ -1,0 +1,548 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-eqeqeq",
+  "revision": 2,
+  "mode": "steer",
+  "description": "ESLint 10.11.0 eqeqeq, default options. Port of ESLint's `eqeqeq` rule (https://eslint.org/docs/latest/rules/eqeqeq). Default options (`always`, null `always`): requires === and !==; autofixes only when an operand is typeof or both operands are literals of one type. Options are declared in the `options` define (the rule's defaults); a variant is a config patch.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "option": {
+            "type": "string",
+            "nullable": true,
+            "default": null
+          },
+          "null": {
+            "type": "string",
+            "nullable": true,
+            "default": null
+          }
+        }
+      }
+    },
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "bigint-lit": {
+            "any": [
+              {
+                "kind": "number",
+                "regex": "n$"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "bigint-lit",
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          },
+          "boolean-lit": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "true"
+                  },
+                  {
+                    "kind": "false"
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "boolean-lit",
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          },
+          "fixable": {
+            "any": [
+              {
+                "has": {
+                  "matches": "typeof-op",
+                  "stopBy": "neighbor"
+                }
+              },
+              {
+                "count": {
+                  "has": {
+                    "matches": "string-lit",
+                    "stopBy": "neighbor"
+                  },
+                  "min": 2
+                }
+              },
+              {
+                "count": {
+                  "has": {
+                    "matches": "number-lit",
+                    "stopBy": "neighbor"
+                  },
+                  "min": 2
+                }
+              },
+              {
+                "count": {
+                  "has": {
+                    "matches": "bigint-lit",
+                    "stopBy": "neighbor"
+                  },
+                  "min": 2
+                }
+              },
+              {
+                "count": {
+                  "has": {
+                    "matches": "boolean-lit",
+                    "stopBy": "neighbor"
+                  },
+                  "min": 2
+                }
+              },
+              {
+                "count": {
+                  "has": {
+                    "matches": "object-lit",
+                    "stopBy": "neighbor"
+                  },
+                  "min": 2
+                }
+              }
+            ]
+          },
+          "null-check": {
+            "has": {
+              "matches": "null-lit",
+              "stopBy": "neighbor"
+            }
+          },
+          "null-lit": {
+            "any": [
+              {
+                "kind": "null"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "null-lit",
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          },
+          "number-lit": {
+            "any": [
+              {
+                "kind": "number",
+                "not": {
+                  "regex": "n$"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "number-lit",
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          },
+          "object-lit": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "null"
+                  },
+                  {
+                    "kind": "regex"
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "object-lit",
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          },
+          "string-lit": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "template_string",
+                    "not": {
+                      "has": {
+                        "kind": "template_substitution",
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "string-lit",
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          },
+          "typeof-op": {
+            "any": [
+              {
+                "kind": "unary_expression",
+                "has": {
+                  "regex": "^typeof$",
+                  "stopBy": "neighbor"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "typeof-op",
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          },
+          "r1": {
+            "all": [
+              {
+                "matches": "null-check"
+              },
+              {
+                "not": {
+                  "matches": "fixable"
+                }
+              }
+            ],
+            "kind": "binary_expression"
+          },
+          "r2": {
+            "all": [
+              {
+                "matches": "null-check"
+              },
+              {
+                "matches": "fixable"
+              }
+            ],
+            "kind": "binary_expression"
+          }
+        }
+      }
+    },
+    {
+      "id": "fix-loose",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "regex": "^(?:==|!=)$",
+            "pattern": "$$OP",
+            "inside": {
+              "kind": "binary_expression",
+              "stopBy": "neighbor",
+              "all": [
+                {
+                  "$option": "null",
+                  "cases": {
+                    "ignore": [
+                      {
+                        "not": {
+                          "matches": "null-check"
+                        }
+                      }
+                    ],
+                    "never": [
+                      {
+                        "not": {
+                          "matches": "null-check"
+                        }
+                      }
+                    ]
+                  },
+                  "default": {
+                    "$option": "option",
+                    "cases": {
+                      "allow-null": [
+                        {
+                          "not": {
+                            "matches": "null-check"
+                          }
+                        }
+                      ]
+                    },
+                    "default": []
+                  },
+                  "spread": true
+                },
+                {
+                  "matches": "fixable"
+                }
+              ]
+            }
+          },
+          "when": {
+            "option": {
+              "option": {
+                "in": [
+                  null,
+                  "always",
+                  "allow-null"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "eqeqeq",
+        "message": "Expected '$OP=' and instead saw '$OP'.",
+        "fix": "$OP=",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "eqeqeq"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "loose",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "regex": "^(?:==|!=)$",
+            "pattern": "$$OP",
+            "inside": {
+              "kind": "binary_expression",
+              "stopBy": "neighbor",
+              "all": [
+                {
+                  "$option": "null",
+                  "cases": {
+                    "ignore": [
+                      {
+                        "not": {
+                          "matches": "null-check"
+                        }
+                      }
+                    ],
+                    "never": [
+                      {
+                        "not": {
+                          "matches": "null-check"
+                        }
+                      }
+                    ]
+                  },
+                  "default": {
+                    "$option": "option",
+                    "cases": {
+                      "allow-null": [
+                        {
+                          "not": {
+                            "matches": "null-check"
+                          }
+                        }
+                      ],
+                      "smart": [
+                        {
+                          "not": {
+                            "matches": "null-check"
+                          }
+                        }
+                      ]
+                    },
+                    "default": []
+                  },
+                  "spread": true
+                },
+                {
+                  "not": {
+                    "matches": "fixable"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "eqeqeq",
+        "message": "Expected '$OP=' and instead saw '$OP'.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "eqeqeq"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "fix-seq",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "regex": "^===$",
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "r2"
+            }
+          },
+          "when": {
+            "option": {
+              "null": "never"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "eqeqeq",
+        "message": "Expected '==' and instead saw '==='.",
+        "fix": "==",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "eqeqeq"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "seq",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "regex": "^===$",
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "r1"
+            }
+          },
+          "when": {
+            "option": {
+              "null": "never"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "eqeqeq",
+        "message": "Expected '==' and instead saw '==='.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "eqeqeq"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "fix-sne",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "regex": "^!==$",
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "r2"
+            }
+          },
+          "when": {
+            "option": {
+              "null": "never"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "eqeqeq",
+        "message": "Expected '!=' and instead saw '!=='.",
+        "fix": "!=",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "eqeqeq"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "sne",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "regex": "^!==$",
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "r1"
+            }
+          },
+          "when": {
+            "option": {
+              "null": "never"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "eqeqeq",
+        "message": "Expected '!=' and instead saw '!=='.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "eqeqeq"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

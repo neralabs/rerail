@@ -5,12 +5,14 @@ import { describe, expect, it } from "vitest";
 import type { AdapterDelivery } from "../src/adapter-contract.js";
 import { ingestKernelEvent, startKernelService } from "../src/kernel-service.js";
 import { testEmbedder } from "./hook-fixtures.js";
+import { startTestRepository } from "./support/started-repository.js";
 
 
 describe("resident kernel session concurrency", () => {
   it("does not let one opening agent session block another", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
     const socketPath = join(root, "kernel.sock");
+    startTestRepository(root, join(root, "rerail.sqlite"));
     const blockedOpened = Promise.withResolvers<void>();
     const gate = Promise.withResolvers<void>();
     const service = await startKernelService({
@@ -32,7 +34,7 @@ describe("resident kernel session concurrency", () => {
         evaluateGeneratedEdits: async (_sessionId, batch) => ({
           revision: batch.revision,
           disposition: "continue" as const,
-          findings: [],
+          violations: [],
           failures: [],
         }),
         close: async () => undefined,

@@ -14,7 +14,7 @@ export interface CosineRuleSourceOptions {
 /** What the project database says about cosine rules: the enabled rows, and every id it holds at all. */
 export interface DatabaseCosineRules {
   enabled: readonly CosineRule[];
-  /** Ids of every `cosine` row, disabled ones included: a file rule with one of these ids never shows through. */
+  /** Ids of every `conversation` row, disabled ones included: a JSON-file rule with one of these ids never shows through. */
   ids: ReadonlySet<string>;
 }
 

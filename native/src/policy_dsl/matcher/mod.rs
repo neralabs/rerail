@@ -2,20 +2,23 @@ mod anchors;
 mod arguments;
 mod binding;
 mod binds;
+mod call;
 mod captures;
 mod collate;
 mod compare;
 mod count;
 mod each;
 mod exported;
-pub(super) mod facts;
 mod format_args;
 mod layout;
+mod memo;
 mod nth_child;
 mod parse;
 mod polarity;
 mod relation;
+mod required_text;
 mod resolve;
+mod run;
 mod semantic;
 #[cfg(test)]
 mod three_valued_tests;
@@ -23,32 +26,35 @@ mod transform;
 mod util;
 mod value;
 
-#[cfg(test)]
 use super::budget;
 use crate::policy_dsl::language::GrammarDialect;
 pub(super) use anchors::{AnchorPlan, FileAnchorIndex, Selection};
 pub(super) use arguments::{Arguments, SlotKind};
-#[cfg(test)]
 use ast_grep_core::matcher::Matcher;
 use ast_grep_core::matcher::{KindMatcher, Pattern};
-#[cfg(test)]
 use ast_grep_core::matcher::{MatcherExt, NodeMatch};
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
 use ast_grep_core::{Doc, Node};
 pub(super) use binding::BindingTest;
 pub(super) use binds::{BindingCount, BindingFilter, Binds, Redefines, ScopeName};
 pub(super) use captures::{Capture, CaptureAnalysis, collect_variables, parse_exported};
-pub(super) use compare::{Collation, CompareOp, CompareText, Comparison, SemanticText};
+pub(super) use compare::{Collation, CompareOp, CompareText, Comparison, EqClass, SemanticText};
 pub(super) use count::Count;
 pub(crate) use each::binding_range;
 pub(crate) use exported::{WITNESS_NODE, export_text, exported_span, is_span_variable};
 pub(crate) use format_args::{FormatArgs, Style};
 pub(crate) use layout::{Gap, Layout, LineCount, Neighbour};
+pub(super) use memo::with_file as with_file_memo;
 pub(super) use nth_child::{NthChild, Position as NthPosition, parse_position};
+#[cfg(test)]
+pub(crate) use nth_child::{named_sibling_visits, reset_named_sibling_visits};
 pub(crate) use parse::{HostTest, ParseTest};
 pub(crate) use polarity::calls_positive_only;
 use regex::Regex;
-pub(super) use relation::{FieldRelation, StopBy, stop_rule};
+pub(super) use relation::{FieldRelation, Related, StopBy, stop_rule};
+#[cfg(test)]
+pub(super) use relation::{set_answers_off, set_same_key_off};
+pub(super) use required_text::RequiredText;
 #[cfg(test)]
 pub(super) use resolve::TABLE_BUILDS;
 pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved};
@@ -56,10 +62,11 @@ pub(crate) use resolve::{
     calls_tables, file_eslint_directives, file_lines, file_noqa, file_phpcs, file_phpstan,
     file_psalm, table_reading,
 };
+pub(super) use run::{Stopped, enumerate, node_at, run_check};
+#[cfg(test)]
+pub(crate) use run::{reset_roots_matched, roots_matched};
 pub(super) use semantic::Semantic;
-#[cfg(test)]
 use std::borrow::Cow;
-#[cfg(test)]
 use std::collections::BTreeSet;
 use std::sync::Arc;
 pub(super) use transform::{Separator, Source, StringCase, Trans, Transform};
@@ -69,7 +76,8 @@ pub(crate) use transform::{
     line_table_constructions, note_line_table_construction, reset_line_table_constructions,
 };
 pub(super) use util::{
-    CallArgs, MAX_UTIL_INSTANCES, UtilCall, UtilLimit, UtilRef, UtilTable, UtilitySummary,
+    CallArgs, MAX_UTIL_INSTANCES, UtilCall, UtilLimit, UtilOrigin, UtilRef, UtilTable,
+    UtilitySummary,
 };
 use util::{
     MAX_UTIL_DEPTH, MAX_UTIL_STACK_BYTES, UTIL_DEPTH, UTIL_EXCEEDED, UTIL_STACK_BASE,
@@ -83,6 +91,9 @@ pub(super) struct GrammarMatcher {
     pub(super) language: GrammarDialect,
     pub(super) matcher: AstMatcher,
     pub(super) anchors: Arc<anchors::AnchorPlan>,
+    /// What a file must contain for the matcher to match in it (`RequiredText`); `None` where
+    /// nothing is required or the matcher can be unknown, which a file without a match still reports.
+    pub(super) text: Option<Arc<RequiredText>>,
     /// Whether witnesses outside syntax-error regions stay sound; see `sound_under_errors`.
     pub(super) sound_under_errors: bool,
     /// Keeps the query's utility rules alive (`AstMatcher::Util` holds only a weak reference)
@@ -97,18 +108,22 @@ pub(super) struct GrammarMatcher {
     pub(super) three_valued: bool,
     /// The query's `transform`, applied to each match after its rule and constraints.
     pub(super) transform: Option<Arc<Transform>>,
-    /// The index of this matcher's compiled statement in its policy's statement table
-    /// (`query::PolicyStatements`), which the policy compiler builds and evaluation is given.
-    pub(super) statement: usize,
 }
 
-/// Whole-root matching: production runs compiled statements (plan step 9); these entry points
-/// remain the test reference the statements are checked against.
-#[cfg(test)]
+/// Whole-root matching: production matches each candidate root within a check `begin_check` set
+/// up (`match_rule`); `match_root` sets one up per root, for tests.
 impl GrammarMatcher {
+    /// This matcher's rule (with its constraints) at one root of the check `begin_check` set up:
+    /// the root's match. A root whose verdict is unknown does not match.
+    fn match_rule<'tree, D: Doc>(&self, node: Node<'tree, D>) -> Option<NodeMatch<'tree, D>> {
+        UNKNOWN.set(false);
+        self.matcher.match_node(node)
+    }
+
     /// Matches one root. Each utility evaluation spends one step of `work`, the caller's remaining
     /// utility budget for this file; like a traversal it is bounded by `maxVisitedNodes`. A root
     /// whose verdict is unknown is not a match.
+    #[cfg(test)]
     pub(super) fn match_root<'tree, D: Doc>(
         &self,
         node: Node<'tree, D>,
@@ -145,6 +160,28 @@ pub(super) struct Constrained {
     pub(super) constraints: Vec<(String, AstMatcher)>,
 }
 
+impl Constrained {
+    #[inline(never)]
+    fn match_node<'tree, D: Doc>(
+        &self,
+        node: Node<'tree, D>,
+        env: &mut Cow<MetaVarEnv<'tree, D>>,
+    ) -> Option<Node<'tree, D>> {
+        let mut trial = Cow::Borrowed(env.as_ref());
+        self.rule.match_node_with_env(node.clone(), &mut trial)?;
+        for (name, constraint) in &self.constraints {
+            let Some(captured) = trial.get_match(name).cloned() else {
+                continue;
+            };
+            constraint.match_node_with_env(captured, &mut trial)?;
+        }
+        if let Cow::Owned(bound) = trial {
+            *env = Cow::Owned(bound);
+        }
+        Some(node)
+    }
+}
+
 #[derive(Clone)]
 pub(super) enum AstMatcher {
     Pattern(Pattern),
@@ -153,10 +190,10 @@ pub(super) enum AstMatcher {
     All(Vec<AstMatcher>),
     Any(Vec<AstMatcher>),
     Not(Box<AstMatcher>),
-    Inside(Box<AstMatcher>, StopBy),
-    Has(Box<AstMatcher>, StopBy),
-    Precedes(Box<AstMatcher>, StopBy),
-    Follows(Box<AstMatcher>, StopBy),
+    Inside(Box<Related>, StopBy),
+    Has(Box<Related>, StopBy),
+    Precedes(Box<Related>, StopBy),
+    Follows(Box<Related>, StopBy),
     /// `inside` or `has` with a `field`: the relation's path enters through that field.
     Field(Box<FieldRelation>),
     /// `nthChild`: the node's position among its parent's named children.
@@ -179,9 +216,7 @@ pub(super) enum AstMatcher {
     TestUnknown(Regex),
 }
 
-/// The matcher: the test reference compiled statements are checked against. Production runs
-/// every rule as a statement (`query`), and Rerail's predicates through `facts`.
-#[cfg(test)]
+/// The matcher: production matches every AST rule with it (`run_check`).
 impl Matcher for AstMatcher {
     fn match_node_with_env<'tree, D: Doc>(
         &self,
@@ -196,166 +231,38 @@ impl Matcher for AstMatcher {
             Self::Kind(kind) => kind.match_node_with_env(node, env),
             // RegexMatcher uses exactly this engine and node-text operation.
             Self::Regex(regex) => regex.is_match(&node.text()).then_some(node),
-            // Composites and relations follow ast-grep-config 0.45.3: one environment threads
-            // through every sub-rule, is committed only when the whole composite matches, and a
-            // relation binds from the first related node that matches (no backtracking). Verdicts
-            // are three-valued (`UNKNOWN`): `all` (a rule object's keys too) is false when a term
-            // is false, whatever order its terms run in. Past an unknown term the later terms
-            // still run and a false one decides, but a term that mentions a capture an unknown
-            // term would have bound cannot be read without it: it stays open, and what it binds is
-            // withheld from the terms after it as well.
-            Self::All(matchers) => {
-                let mut trial = Cow::Borrowed(env.as_ref());
-                let mut unknown = false;
-                let mut withheld: Option<BTreeSet<String>> = None;
-                let mut captures = CaptureAnalysis::default();
-                for matcher in matchers {
-                    if let Some(names) = withheld.as_mut()
-                        && !captures.mentions(matcher).is_disjoint(names)
-                    {
-                        names.extend(captures.binds(matcher));
-                        continue;
-                    }
-                    if matcher
-                        .match_node_with_env(node.clone(), &mut trial)
-                        .is_none()
-                    {
-                        if THREE_VALUED.get() && UNKNOWN.get() {
-                            UNKNOWN.set(false);
-                            unknown = true;
-                            if !matcher.binds_nothing() {
-                                withheld
-                                    .get_or_insert_default()
-                                    .extend(captures.binds(matcher));
-                            }
-                            continue;
-                        }
-                        return None;
-                    }
-                }
-                if unknown {
-                    UNKNOWN.set(true);
-                    return None;
-                }
-                if let Cow::Owned(bound) = trial {
-                    *env = Cow::Owned(bound);
-                }
-                Some(node)
-            }
-            // Each branch starts from the bindings so far; only the matching branch's commit. The
-            // verdict is unknown when no branch matches and some branch was unknown. A branch whose
-            // verdict is unknown and that may bind ends the search unknown, as a strict relation
-            // search does: a later branch must not substitute its captures for the ones it would
-            // have bound. An unknown branch that binds nothing lets later branches decide.
-            Self::Any(matchers) => {
-                let three = THREE_VALUED.get();
-                let saved = three && UNKNOWN.replace(false);
-                let mut unknown = false;
-                for matcher in matchers {
-                    let mut trial = Cow::Borrowed(env.as_ref());
-                    if matcher
-                        .match_node_with_env(node.clone(), &mut trial)
-                        .is_some()
-                        && !(each::active() && each::excluded(&trial))
-                    {
-                        if three {
-                            UNKNOWN.set(saved);
-                        }
-                        if let Cow::Owned(bound) = trial {
-                            *env = Cow::Owned(bound);
-                        }
-                        return Some(node);
-                    }
-                    if three && UNKNOWN.replace(false) {
-                        unknown = true;
-                        if may_bind(matcher) {
-                            break;
-                        }
-                    }
-                }
-                if three {
-                    UNKNOWN.set(saved || unknown);
-                }
-                None
-            }
-            // Reads the bindings so far but never contributes any. The negation of an unknown
-            // verdict is unknown: it fails, and stays unknown.
-            Self::Not(matcher) => {
-                let three = THREE_VALUED.get();
-                let saved = three && UNKNOWN.replace(false);
-                let mut probe = Cow::Borrowed(env.as_ref());
-                let matched = each::suspended(|| {
-                    matcher
-                        .match_node_with_env(node.clone(), &mut probe)
-                        .is_some()
-                });
-                if matched {
-                    if three {
-                        UNKNOWN.set(saved);
-                    }
-                    None
-                } else if three && UNKNOWN.replace(saved) {
-                    UNKNOWN.set(true);
-                    None
-                } else {
-                    Some(node)
-                }
-            }
+            Self::All(matchers) => Self::match_all(matchers, node, env),
+            Self::Any(matchers) => Self::match_any(matchers, node, env),
+            Self::Not(matcher) => Self::match_not(matcher, node, env),
             Self::Inside(matcher, stop) => stop
-                .find(|| node.parent(), || node.ancestors(), matcher, env)
-                .map(|_| node),
+                .reaches(&node, || node.parent(), || node.ancestors(), matcher, env)
+                .then_some(node),
             // Every child, named or anonymous. With a stop rule, pre-order like `end`, but a
             // descendant the stop rule matches is tested and not entered (ast-grep-config `Has`,
             // `relational_rule.rs:185`).
-            Self::Has(matcher, stop) => relation::has(&node, matcher, stop, env).map(|_| node),
+            Self::Has(matcher, stop) => relation::has(&node, matcher, stop, env).then_some(node),
             // Siblings only, named or anonymous: `neighbor` is the adjacent sibling, `end` every
             // sibling in that direction. `next_all`/`prev_all` are ast-grep's own sibling walks.
-            Self::Precedes(matcher, stop) => stop
-                .find(|| node.next(), || node.next_all(), matcher, env)
-                .map(|_| node),
+            Self::Precedes(matcher, stop) => {
+                stop.find_sibling(&node, true, matcher, env).then_some(node)
+            }
             Self::Follows(matcher, stop) => stop
-                .find(|| node.prev(), || node.prev_all(), matcher, env)
-                .map(|_| node),
+                .find_sibling(&node, false, matcher, env)
+                .then_some(node),
             Self::Field(relation) => relation.find(&node, env).map(|_| node),
-            Self::Util(util) => {
-                if UTIL_EXCEEDED.get().is_some() {
-                    return None;
-                }
-                let depth = UTIL_DEPTH.get();
-                let base = UTIL_STACK_BASE.get();
-                let stack = if base == 0 {
-                    0
-                } else {
-                    base.abs_diff(stack_address())
-                };
-                if depth >= MAX_UTIL_DEPTH || stack > MAX_UTIL_STACK_BYTES {
-                    UTIL_EXCEEDED.set(Some(UtilLimit::Depth));
-                    return None;
-                }
+            Self::Util(util) => memo::util(util, node, env, |node, env| {
+                let level = enter_util_level().ok()?;
                 if !spend_util_step() {
+                    leave_util_level(level);
                     return None;
                 }
-                UTIL_DEPTH.set(depth + 1);
                 let matched = util
                     .with_target(|rule| rule.match_node_with_env(node, env))
                     .flatten();
-                UTIL_DEPTH.set(depth);
+                leave_util_level(level);
                 matched
-            }
-            Self::Constrained(core) => {
-                let mut trial = Cow::Borrowed(env.as_ref());
-                core.rule.match_node_with_env(node.clone(), &mut trial)?;
-                for (name, constraint) in &core.constraints {
-                    let Some(captured) = trial.get_match(name).cloned() else {
-                        continue;
-                    };
-                    constraint.match_node_with_env(captured, &mut trial)?;
-                }
-                if let Cow::Owned(bound) = trial {
-                    *env = Cow::Owned(bound);
-                }
-                Some(node)
-            }
+            }),
+            Self::Constrained(core) => core.match_node(node, env),
             Self::Semantic(semantic) => semantic.match_node(node, env),
             Self::Compare(comparison) => match comparison.holds(env) {
                 Some(true) => Some(node),
@@ -376,6 +283,136 @@ impl Matcher for AstMatcher {
                     Some(node)
                 }
             }
+        }
+    }
+}
+
+// The composites, out of line: a debug build gives every arm of `match_node_with_env` its own stack
+// slots, and every level of utility recursion runs through several of its frames.
+impl AstMatcher {
+    // Composites and relations follow ast-grep-config 0.45.3: one environment threads through every
+    // sub-rule, is committed only when the whole composite matches, and a relation binds from the
+    // first related node that matches (no backtracking). Verdicts are three-valued (`UNKNOWN`):
+    // `all` (a rule object's keys too) is false when a term is false, whatever order its terms run
+    // in. Past an unknown term the later terms still run and a false one decides, but a term that
+    // mentions a capture an unknown term would have bound cannot be read without it: it stays
+    // open, and what it binds is withheld from the terms after it as well.
+    #[inline(never)]
+    fn match_all<'tree, D: Doc>(
+        matchers: &[AstMatcher],
+        node: Node<'tree, D>,
+        env: &mut Cow<MetaVarEnv<'tree, D>>,
+    ) -> Option<Node<'tree, D>> {
+        let mut trial = Cow::Borrowed(env.as_ref());
+        let mut unknown = false;
+        let mut withheld: Option<BTreeSet<String>> = None;
+        // Read only past an unknown term: most `all`s never build one.
+        let mut captures: Option<Box<CaptureAnalysis>> = None;
+        for matcher in matchers {
+            if let Some(names) = withheld.as_mut()
+                && !captures
+                    .get_or_insert_default()
+                    .mentions(matcher)
+                    .is_disjoint(names)
+            {
+                names.extend(captures.get_or_insert_default().binds(matcher));
+                continue;
+            }
+            if matcher
+                .match_node_with_env(node.clone(), &mut trial)
+                .is_none()
+            {
+                if THREE_VALUED.get() && UNKNOWN.get() {
+                    UNKNOWN.set(false);
+                    unknown = true;
+                    if !matcher.binds_nothing() {
+                        withheld
+                            .get_or_insert_default()
+                            .extend(captures.get_or_insert_default().binds(matcher));
+                    }
+                    continue;
+                }
+                return None;
+            }
+        }
+        if unknown {
+            UNKNOWN.set(true);
+            return None;
+        }
+        if let Cow::Owned(bound) = trial {
+            *env = Cow::Owned(bound);
+        }
+        Some(node)
+    }
+
+    // Each branch starts from the bindings so far; only the matching branch's commit. The verdict
+    // is unknown when no branch matches and some branch was unknown. A branch whose verdict is
+    // unknown and that may bind ends the search unknown, as a strict relation search does: a later
+    // branch must not substitute its captures for the ones it would have bound. An unknown branch
+    // that binds nothing lets later branches decide.
+    #[inline(never)]
+    fn match_any<'tree, D: Doc>(
+        matchers: &[AstMatcher],
+        node: Node<'tree, D>,
+        env: &mut Cow<MetaVarEnv<'tree, D>>,
+    ) -> Option<Node<'tree, D>> {
+        let three = THREE_VALUED.get();
+        let saved = three && UNKNOWN.replace(false);
+        let mut unknown = false;
+        for matcher in matchers {
+            let mut trial = Cow::Borrowed(env.as_ref());
+            if matcher
+                .match_node_with_env(node.clone(), &mut trial)
+                .is_some()
+                && !(each::active() && each::excluded(&trial))
+            {
+                if three {
+                    UNKNOWN.set(saved);
+                }
+                if let Cow::Owned(bound) = trial {
+                    *env = Cow::Owned(bound);
+                }
+                return Some(node);
+            }
+            if three && UNKNOWN.replace(false) {
+                unknown = true;
+                if relation::may_bind(matcher) {
+                    break;
+                }
+            }
+        }
+        if three {
+            UNKNOWN.set(saved || unknown);
+        }
+        None
+    }
+
+    // Reads the bindings so far but never contributes any. The negation of an unknown verdict is
+    // unknown: it fails, and stays unknown.
+    #[inline(never)]
+    fn match_not<'tree, D: Doc>(
+        matcher: &AstMatcher,
+        node: Node<'tree, D>,
+        env: &mut Cow<MetaVarEnv<'tree, D>>,
+    ) -> Option<Node<'tree, D>> {
+        let three = THREE_VALUED.get();
+        let saved = three && UNKNOWN.replace(false);
+        let mut probe = Cow::Borrowed(env.as_ref());
+        let matched = each::suspended(|| {
+            matcher
+                .match_node_with_env(node.clone(), &mut probe)
+                .is_some()
+        });
+        if matched {
+            if three {
+                UNKNOWN.set(saved);
+            }
+            None
+        } else if three && UNKNOWN.replace(saved) {
+            UNKNOWN.set(true);
+            None
+        } else {
+            Some(node)
         }
     }
 }
@@ -408,7 +445,6 @@ impl AstMatcher {
 
     /// The Rerail extensions, out of line: a debug build gives every arm of `match_node_with_env`
     /// its own stack slots, and utilities recurse through that frame.
-    #[cfg(test)]
     #[inline(never)]
     fn match_extension<'tree, D: Doc>(
         &self,
@@ -418,8 +454,8 @@ impl AstMatcher {
         match self {
             Self::Count(count) => each::suspended(|| count.holds(&node, env)).then_some(node),
             Self::NthChild(nth) => nth.match_node(node, env),
-            Self::Call(call) => {
-                let called = facts::call(call, env, MetaVarEnv::new(), |frame| {
+            Self::Call(call) => memo::call(call, node, env, |node, env| {
+                let called = call::call(call, env, MetaVarEnv::new(), |frame| {
                     let mut frame = Cow::Owned(frame);
                     let matched = call
                         .util
@@ -442,7 +478,7 @@ impl AstMatcher {
                         None
                     }
                 }
-            }
+            }),
             _ => None,
         }
     }
@@ -611,9 +647,14 @@ fn unify_capture<'tree, 'name, D: Doc>(
     Some(())
 }
 
+thread_local! {
+    /// The deepest `UTIL_DEPTH` reached since `swap_util_peak` last reset it.
+    static UTIL_PEAK: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 /// Enters one level of utility recursion (`matches` or a parameterized call) within the depth and
 /// stack limits the matcher applies: the level to restore on leaving, or the limit hit.
-pub(super) fn enter_util_level() -> Result<u32, UtilLimit> {
+fn enter_util_level() -> Result<u32, UtilLimit> {
     if let Some(limit) = UTIL_EXCEEDED.get() {
         return Err(limit);
     }
@@ -623,12 +664,28 @@ pub(super) fn enter_util_level() -> Result<u32, UtilLimit> {
         return Err(UtilLimit::Depth);
     }
     UTIL_DEPTH.set(depth + 1);
+    UTIL_PEAK.set(UTIL_PEAK.get().max(depth + 1));
     Ok(depth)
 }
 
 /// Leaves a level `enter_util_level` entered.
-pub(super) fn leave_util_level(depth: u32) {
+fn leave_util_level(depth: u32) {
     UTIL_DEPTH.set(depth);
+}
+
+/// The utility levels this thread is inside.
+fn util_level() -> u32 {
+    UTIL_DEPTH.get()
+}
+
+/// Sets the deepest utility level reached to `peak`, returning what it was.
+fn swap_util_peak(peak: u32) -> u32 {
+    UTIL_PEAK.replace(peak)
+}
+
+/// Whether `levels` more utility levels fit under the depth limit from here.
+fn util_levels_fit(levels: u32) -> bool {
+    UTIL_DEPTH.get() + levels <= MAX_UTIL_DEPTH
 }
 
 /// Spends one step of the file's utility and count budget (`maxVisitedNodes`); false once spent.
@@ -644,24 +701,44 @@ pub(super) fn spend_util_step() -> bool {
     true
 }
 
-/// Remaining utility/count budget for a query-engine memoization replay.
-pub(super) fn utility_steps_left() -> usize {
+/// Spends `steps` of the budget at once, as that many `spend_util_step` calls would: false (with
+/// the budget spent) where it runs out.
+fn spend_util_steps(steps: usize) -> bool {
+    if steps == 0 {
+        return true;
+    }
+    if UTIL_EXCEEDED.get().is_some() {
+        return false;
+    }
+    match UTIL_STEPS_LEFT.get().checked_sub(steps) {
+        Some(left) => {
+            UTIL_STEPS_LEFT.set(left);
+            true
+        }
+        None => {
+            UTIL_STEPS_LEFT.set(0);
+            UTIL_EXCEEDED.set(Some(UtilLimit::Work));
+            false
+        }
+    }
+}
+
+/// Remaining utility/count budget for a memoization replay.
+fn utility_steps_left() -> usize {
     UTIL_STEPS_LEFT.get()
 }
 
-/// A predicate's verdict at one node, for the query engine: it composes terms in SQL and tests
-/// only Rerail's predicates without sub-rules by their own code (`facts::test_predicate`).
-pub(super) enum Verdict<'tree, D: Doc> {
-    Match(MetaVarEnv<'tree, D>),
-    NoMatch,
-    Unknown,
+/// Whether a term of the check in progress hit a utility limit: its verdicts since are not the
+/// matcher's, so nothing may remember them.
+fn util_limit_hit() -> bool {
+    UTIL_EXCEEDED.get().is_some()
 }
 
 /// Sets up this thread to evaluate `matcher`'s check on one file, with `work` left of its
-/// `maxVisitedNodes` budget, as `GrammarMatcher::match_root` does for each root. Verdicts travel
-/// explicitly (`Verdict`; a predicate is told whether its check is three-valued); the Unknown flag
-/// is set up for the sub-rules semantic predicates match themselves.
+/// `maxVisitedNodes` budget, as `GrammarMatcher::match_root` does for each root, and the Unknown
+/// flag for the sub-rules semantic predicates match themselves.
 pub(super) fn begin_check(matcher: &GrammarMatcher, work: usize) {
+    CHECKS_BEGUN.set(CHECKS_BEGUN.get() + 1);
     UTIL_DEPTH.set(0);
     UTIL_EXCEEDED.set(None);
     UTIL_STACK_BASE.set(stack_address());
@@ -671,32 +748,75 @@ pub(super) fn begin_check(matcher: &GrammarMatcher, work: usize) {
     resolve::CURRENT_CHECK.set(matcher as *const GrammarMatcher as usize);
 }
 
+thread_local! {
+    static CHECKS_BEGUN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many checks this thread has begun (`begin_check`): a check begun within a computation
+/// (a `calls` seed's query) resets the budget and levels it reads, so what the computation spent
+/// or reached is not its own.
+fn checks_begun() -> u64 {
+    CHECKS_BEGUN.get()
+}
+
+thread_local! {
+    static FILL_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Runs `fill`, which fills a cache later evaluations read for free (a file's scope table and
+/// usage, a parent's counted siblings), counting the steps it spends apart
+/// (`fill_steps`): a memoized verdict whose computation filled one replays only the rest, which
+/// is what computing it again would spend.
+fn filling<T>(fill: impl FnOnce() -> T) -> T {
+    let (steps, fills) = (UTIL_STEPS_LEFT.get(), FILL_STEPS.get());
+    let result = fill();
+    // Fills within this one are part of it.
+    FILL_STEPS.set(fills + steps.saturating_sub(UTIL_STEPS_LEFT.get()));
+    result
+}
+
+/// Counts `steps` a cache fill spent directly (`filling`).
+fn filled(steps: usize) {
+    FILL_STEPS.set(FILL_STEPS.get() + steps);
+}
+
+/// Steps cache fills have spent on this thread (`filling`).
+fn fill_steps() -> usize {
+    FILL_STEPS.get()
+}
+
+thread_local! {
+    static CHECK_STATE_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Notes that the check in progress read state kept for it alone: a cache keyed by one of its
+/// terms (`nthChild`'s counted siblings, a same-key walk's classes) or a file table charged to
+/// each check once (scopes, usage, PHP names). What a computation spends then depends on the
+/// check, so its verdict is that check's alone (`memo`).
+fn read_check_state() {
+    CHECK_STATE_READS.set(CHECK_STATE_READS.get() + 1);
+}
+
+/// How many reads of a check's own state this thread has noted (`read_check_state`).
+fn check_state_reads() -> u64 {
+    CHECK_STATE_READS.get()
+}
+
 /// Ends `begin_check`: the work left, and the limit a term hit, if any.
 pub(super) fn end_check() -> (usize, Option<UtilLimit>) {
     UTIL_STACK_BASE.set(0);
     (UTIL_STEPS_LEFT.replace(usize::MAX), UTIL_EXCEEDED.take())
 }
 
-/// Whether matching `term` never adds a binding (see `AstMatcher::binds_nothing`).
-pub(super) fn binds_nothing(term: &AstMatcher) -> bool {
-    term.binds_nothing()
-}
-
-/// Whether a relation's rule can bind a capture, which makes its search strict past an unknown
-/// candidate (see `relation::Search`).
-pub(super) fn may_bind(term: &AstMatcher) -> bool {
-    relation::may_bind(term)
-}
-
 /// Whether recursion from `begin_check` has used more stack than utilities may
 /// (`MAX_UTIL_STACK_BYTES`), as the matcher checks before each utility.
-pub(super) fn util_stack_exceeded() -> bool {
+fn util_stack_exceeded() -> bool {
     let base = UTIL_STACK_BASE.get();
     base != 0 && base.abs_diff(stack_address()) > MAX_UTIL_STACK_BYTES
 }
 
-/// A `finding.each` enumeration at one root, for the query engine (`each::Enumeration`): while it
-/// lives, relations and `any` pass over candidates binding the capture to a recorded range.
+/// A `finding.each` enumeration at one root (`each::Enumeration`): while it lives, relations
+/// and `any` pass over candidates binding the capture to a recorded range.
 pub(super) struct EachScope(each::Enumeration);
 
 impl EachScope {
@@ -705,12 +825,7 @@ impl EachScope {
     }
 
     /// Records a match's binding of `name`; false where it binds nothing new.
-    pub(super) fn record<D: Doc>(&self, env: &MetaVarEnv<'_, D>, name: &str) -> bool {
+    fn record<D: Doc>(&self, env: &MetaVarEnv<'_, D>, name: &str) -> bool {
         self.0.record(each::binding_range(env, name))
     }
-}
-
-/// Whether an enumeration is excluding and `env` binds its capture to a recorded range.
-pub(super) fn each_excluded<D: Doc>(env: &MetaVarEnv<'_, D>) -> bool {
-    each::active() && each::excluded(env)
 }

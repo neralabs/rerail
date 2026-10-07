@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-irregular-whitespace",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-irregular-whitespace` rule with its default options (https://palantir.github.io/tslint/rules/no-irregular-whitespace/). Disallows irregular whitespace within a file, including strings and comments.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "irregular-whitespace",
       "forbid": {
@@ -33,10 +34,9 @@
           "pattern": "[\\x{000b}\\x{000c}\\x{0085}\\x{feff}\\x{00a0}\\x{1680}\\x{180e}\\x{2000}-\\x{200b}\\x{202f}\\x{205f}\\x{3000}\\x{2028}\\x{2029}]+"
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_IRREGULAR_WHITESPACE",
-        "severity": "error",
         "message": "Irregular whitespace not allowed"
       }
     }

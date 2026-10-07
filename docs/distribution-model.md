@@ -164,7 +164,7 @@ The device generates an Ed25519 key pair. Its private key and returned device cr
 
 `rerail profile status`, `rerail --profile <name> profile select`, and `rerail --profile <name> profile remove` inspect, select, and remove profiles. Removing a profile deletes its public activation state and its operating-system credential-store entry.
 
-Harness configuration invokes only the stable local launcher:
+Harness configuration invokes only the stable local `rerail` launcher:
 
 ```json
 {

@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:import-blacklist",
   "revision": 1,
+  "mode": "steer",
   "description": "Disallows importing blacklisted modules/exports. TSLint's default blacklist is empty (an empty doc does not compile), so this doc ports the fixture's options: rxjs, lodash[pullAll,pull], dummy[default], /.*\\.temp$/, /.*\\.tmp$/.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "whole-module-rxjs",
       "forbid": {
@@ -65,10 +66,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "IMPORT_BLACKLIST",
-        "severity": "error",
         "message": "Importing this module is blacklisted. Try importing a submodule instead."
       }
     },
@@ -187,10 +187,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "IMPORT_BLACKLIST",
-        "severity": "error",
         "message": "Some named exports from this module are blacklisted for importing (or re-exporting). Import/re-export only the specific values you want, instead of the whole module."
       }
     },
@@ -281,10 +280,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "IMPORT_BLACKLIST",
-        "severity": "error",
         "message": "The export \"pull\"/\"pullAll\" is blacklisted."
       }
     },
@@ -382,10 +380,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "IMPORT_BLACKLIST",
-        "severity": "error",
         "message": "Importing (or re-exporting) the default export is blacklisted."
       }
     },
@@ -444,10 +441,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "IMPORT_BLACKLIST",
-        "severity": "error",
         "message": "This import is blacklisted by /.*\\.temp$/"
       }
     },
@@ -506,10 +502,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "IMPORT_BLACKLIST",
-        "severity": "error",
         "message": "This import is blacklisted by /.*\\.tmp$/"
       }
     }

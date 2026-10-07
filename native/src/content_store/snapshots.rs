@@ -5,11 +5,10 @@ use super::rows::{hash_params, intern_hash, intern_path, intern_string, validate
 use super::{
     ContentStore, GitTree, HashKey, MAX_PUBLICATION_BATCH, STRING_PATH_COMPONENT,
     SnapshotFilePublication, SnapshotId, SourceId, StoreError, StoreResult, StoredFile, TapeId,
-    WorkspaceId, WorkspaceRegistration,
+    WorkspaceId, WorkspaceRegistration, compress,
 };
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 use std::collections::{BTreeSet, HashSet};
-use std::io::Cursor;
 #[cfg(test)]
 use std::sync::atomic::Ordering;
 #[cfg(test)]
@@ -403,13 +402,10 @@ impl ContentStore {
         for publication in publications {
             validate_relative_path(publication.path)?;
             validate_tape_payload(publication.tape)?;
-            let source_frame =
-                zstd::stream::encode_all(Cursor::new(publication.source), self.compression_level)?;
+            let source_frame = compress(publication.source, self.compression_level)?;
             let tape_frame = publication
                 .tape
-                .map(|payload| {
-                    zstd::stream::encode_all(Cursor::new(payload.bytes), self.compression_level)
-                })
+                .map(|payload| compress(payload.bytes, self.compression_level))
                 .transpose()?;
             prepared.push((publication, source_frame, tape_frame));
         }

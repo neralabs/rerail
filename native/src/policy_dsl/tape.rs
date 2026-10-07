@@ -28,7 +28,6 @@ const ERROR_SYMBOL: u16 = u16::MAX;
 
 #[cfg(test)]
 thread_local! {
-    static ANCHOR_SIBLINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The largest table capacity `TapeImage::from_bytes` reserved on this thread since the last
     /// `take_table_reservation`.
     static TABLE_RESERVATION: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -45,28 +44,16 @@ pub(super) fn take_table_reservation() -> usize {
     TABLE_RESERVATION.replace(0)
 }
 
-/// Siblings `walk_anchor` inspected on this thread since the last reset.
-#[cfg(test)]
-pub(super) fn anchor_siblings() -> usize {
-    ANCHOR_SIBLINGS.get()
-}
-
-#[cfg(test)]
-pub(super) fn reset_anchor_siblings() {
-    ANCHOR_SIBLINGS.set(0);
-}
-
-#[cfg(test)]
-fn count_anchor_sibling() {
-    ANCHOR_SIBLINGS.set(ANCHOR_SIBLINGS.get() + 1);
-}
-
 /// Deterministic grammar-wide codes: kind code is the dialect's kind id, field code its field id
 /// (zero means no field), both as `GrammarDialect::kinds` numbers them; a Blade tape also holds
 /// the PHP its template embeds (`blade::view`), its codes following Blade's.
 pub(super) struct Grammar {
     lang: GrammarDialect,
     kinds: KindCatalog,
+    /// Each kind code's name and whether it is named, read once: Tree-sitter answers a name
+    /// by measuring and validating its C string on every call, and `kind` is the matcher's
+    /// most frequent question.
+    named: Vec<(Option<&'static str>, bool)>,
 }
 
 impl Grammar {
@@ -75,7 +62,28 @@ impl Grammar {
         if kinds.kind_count() > KIND_LIMIT || kinds.field_count() >= FIELD_LIMIT {
             return Err("grammar exceeds rec6 kind/field code width".into());
         }
-        Ok(Arc::new(Self { lang, kinds }))
+        let named = (0..kinds.kind_count())
+            .map(|code| {
+                let code = code as u16;
+                (kinds.kind_name(code), kinds.kind_is_named(code))
+            })
+            .collect();
+        Ok(Arc::new(Self { lang, kinds, named }))
+    }
+
+    fn kind_name(&self, code: u16) -> Option<&'static str> {
+        match self.named.get(usize::from(code)) {
+            Some((name, _)) => *name,
+            // ERROR's code lies past the grammar's symbols.
+            None => self.kinds.kind_name(code),
+        }
+    }
+
+    fn kind_is_named(&self, code: u16) -> bool {
+        match self.named.get(usize::from(code)) {
+            Some((_, named)) => *named,
+            None => self.kinds.kind_is_named(code),
+        }
     }
 }
 
@@ -318,95 +326,146 @@ fn encode_tree(
     view: Option<&crate::policy_dsl::blade::view::View>,
     budget: &impl Fn() -> bool,
 ) -> Result<(), String> {
-    let mut work = vec![(root, parent, 0u16)];
-    let mut children = Vec::new();
-    while let Some((node, parent, field)) = work.pop() {
-        if nodes.len().is_multiple_of(256) {
+    // Per kind id, the grammar's name for it and whether it is named, read once: a node whose
+    // own name or namedness differs is a contextual alias.
+    let mut catalog: Vec<Option<(Option<&str>, bool)>> = vec![None; language.node_kind_count()];
+    // One cursor walks the tree in preorder. `parent` is the tape index of the node the cursor's
+    // node is a child of; `above` holds the same for each node the cursor descended through.
+    let mut cursor = root.walk();
+    let mut parent = parent;
+    let mut above: Vec<Option<u32>> = Vec::new();
+    let mut visited = 0usize;
+    loop {
+        // Every 256 nodes, omitted ones included.
+        if visited.is_multiple_of(256) {
             checked(budget)?;
         }
-        if view.is_some_and(|view| view.omitted(node)) {
+        visited += 1;
+        let node = cursor.node();
+        let index = if view.is_some_and(|view| view.omitted(node)) {
+            None
+        } else {
+            // The cursor's root is `root` itself, which has no field.
+            let field = cursor.field_id().map_or(0, |id| id.get());
+            Some(encode_node(
+                nodes,
+                node,
+                parent,
+                field,
+                language,
+                offset,
+                view,
+                &mut catalog,
+            )?)
+        };
+        if let Some(index) = index
+            && cursor.goto_first_child()
+        {
+            above.push(parent);
+            parent = Some(index);
             continue;
         }
-        let index = u32::try_from(nodes.len()).map_err(|_| "rec6 node count overflow")?;
-        let kind = usize::from(node.kind_id());
-        let error = node.is_error();
-        if usize::from(field) >= FIELD_LIMIT {
-            return Err(format!(
-                "grammar field id {field} exceeds tape limit {FIELD_LIMIT}"
-            ));
-        }
-        let code = node.kind_id().wrapping_add(offset);
-        if error {
-            if node.kind_id() != ERROR_SYMBOL || node.is_missing() {
-                return Err("unsupported error or missing grammar symbol".into());
+        // The next sibling, of this node or of its nearest ancestor that has one.
+        loop {
+            let Some(grandparent) = above.last().copied() else {
+                return Ok(());
+            };
+            if cursor.goto_next_sibling() {
+                break;
             }
-        } else if kind >= language.node_kind_count() {
-            return Err(format!(
-                "grammar symbol {kind} is not in the semantic catalog"
-            ));
-        } else if usize::from(code) >= KIND_LIMIT {
-            return Err(format!(
-                "grammar symbol {code} exceeds tape limit {KIND_LIMIT}"
-            ));
-        } else if code == ERROR_CODE {
-            return Err("grammar symbol conflicts with the reserved tape error code".into());
-        } else if node.is_missing() && !node.byte_range().is_empty() {
-            return Err("missing grammar symbol has a non-empty source span".into());
-        }
-        let span = match view {
-            Some(view) => {
-                let span = view.span(node);
-                // A placeholder's anchor or a recovered node may reach past its parent's span.
-                let (low, high) = parent.map_or((span.start, span.end), |parent| {
-                    let parent = &nodes[parent as usize];
-                    let start = parent.start as usize;
-                    (start, start + parent.length as usize)
-                });
-                let start = span.start.clamp(low, high);
-                start..span.end.clamp(start, high)
-            }
-            None => node.byte_range(),
-        };
-        let start = u32::try_from(span.start).map_err(|_| "node span overflow")?;
-        let end = u32::try_from(span.end).map_err(|_| "node span overflow")?;
-        let length = end.checked_sub(start).ok_or("inverted node span")?;
-        nodes.push(Pending {
-            kf: if error { ERROR_CODE } else { code } | (field << 10),
-            parent,
-            start,
-            length,
-            size: 1,
-            extra: node.is_extra(),
-            error,
-            missing: node.is_missing(),
-            kind_alias: (!error
-                && (language.node_kind_for_id(node.kind_id()) != Some(node.kind())
-                    || language.node_kind_is_named(node.kind_id()) != node.is_named()))
-            .then(|| (node.kind().to_owned(), node.is_named())),
-        });
-        let mut cursor = node.walk();
-        children.clear();
-        if cursor.goto_first_child() {
-            let mut child_count = 0usize;
-            loop {
-                if child_count.is_multiple_of(256) {
-                    checked(budget)?;
-                }
-                child_count += 1;
-                children.push((cursor.node(), cursor.field_id().map_or(0, |id| id.get())));
-                if !cursor.goto_next_sibling() {
-                    break;
-                }
-            }
-        }
-        for (offset, (child, field)) in children.drain(..).rev().enumerate() {
-            if offset % 256 == 0 {
-                checked(budget)?;
-            }
-            work.push((child, Some(index), field));
+            cursor.goto_parent();
+            above.pop();
+            parent = grandparent;
         }
     }
-    Ok(())
+}
+
+/// Appends `node` under `parent` as the child in `field`; its tape index.
+#[allow(clippy::too_many_arguments)]
+fn encode_node<'l>(
+    nodes: &mut Vec<Pending>,
+    node: TsNode<'_>,
+    parent: Option<u32>,
+    field: u16,
+    language: &'l Language,
+    offset: u16,
+    view: Option<&crate::policy_dsl::blade::view::View>,
+    catalog: &mut [Option<(Option<&'l str>, bool)>],
+) -> Result<u32, String> {
+    let index = u32::try_from(nodes.len()).map_err(|_| "rec6 node count overflow")?;
+    let kind = usize::from(node.kind_id());
+    let error = node.is_error();
+    if usize::from(field) >= FIELD_LIMIT {
+        return Err(format!(
+            "grammar field id {field} exceeds tape limit {FIELD_LIMIT}"
+        ));
+    }
+    let code = node.kind_id().wrapping_add(offset);
+    if error {
+        if node.kind_id() != ERROR_SYMBOL || node.is_missing() {
+            return Err("unsupported error or missing grammar symbol".into());
+        }
+    } else if kind >= language.node_kind_count() {
+        return Err(format!(
+            "grammar symbol {kind} is not in the semantic catalog"
+        ));
+    } else if usize::from(code) >= KIND_LIMIT {
+        return Err(format!(
+            "grammar symbol {code} exceeds tape limit {KIND_LIMIT}"
+        ));
+    } else if code == ERROR_CODE {
+        return Err("grammar symbol conflicts with the reserved tape error code".into());
+    } else if node.is_missing() && !node.byte_range().is_empty() {
+        return Err("missing grammar symbol has a non-empty source span".into());
+    }
+    let span = match view {
+        Some(view) => {
+            let span = view.span(node);
+            // A placeholder's anchor or a recovered node may reach past its parent's span.
+            let (low, high) = parent.map_or((span.start, span.end), |parent| {
+                let parent = &nodes[parent as usize];
+                let start = parent.start as usize;
+                (start, start + parent.length as usize)
+            });
+            let start = span.start.clamp(low, high);
+            start..span.end.clamp(start, high)
+        }
+        None => node.byte_range(),
+    };
+    let start = u32::try_from(span.start).map_err(|_| "node span overflow")?;
+    let end = u32::try_from(span.end).map_err(|_| "node span overflow")?;
+    let length = end.checked_sub(start).ok_or("inverted node span")?;
+    let kind_alias = if error {
+        None
+    } else {
+        let (name, named) = *catalog[kind].get_or_insert_with(|| {
+            (
+                language.node_kind_for_id(node.kind_id()),
+                language.node_kind_is_named(node.kind_id()),
+            )
+        });
+        // SAFETY: `node` is a live node of a tree in `language`, whose kind names are static
+        // NUL-terminated strings.
+        let own = unsafe { tree_sitter::ffi::ts_node_type(node.into_raw()) };
+        // The same string when the same pointer; otherwise compared as Tree-sitter's `kind` would.
+        let same_name = name.is_some_and(|name| {
+            std::ptr::eq(name.as_ptr(), own.cast())
+                || name.as_bytes() == unsafe { std::ffi::CStr::from_ptr(own) }.to_bytes()
+        });
+        (!same_name || named != node.is_named()).then(|| (node.kind().to_owned(), node.is_named()))
+    };
+    nodes.push(Pending {
+        kf: if error { ERROR_CODE } else { code } | (field << 10),
+        parent,
+        start,
+        length,
+        size: 1,
+        extra: node.is_extra(),
+        error,
+        missing: node.is_missing(),
+        kind_alias,
+    });
+    Ok(index)
 }
 
 impl TapeImage {
@@ -806,8 +865,29 @@ pub(super) struct TapeDoc {
     grammar: Arc<Grammar>,
     data: Arc<Vec<Rec>>,
     lines: Arc<LineTable>,
+    points: Arc<Points>,
     kind_aliases: Arc<Vec<(String, bool)>>,
     kind_overrides: Arc<Vec<(u32, u16)>>,
+}
+
+/// A node's row and column, as tree-sitter's `TSPoint` counts them: only `\n` ends a row. The
+/// evaluator's line table follows the linter a port mirrors (a lone `\r` ends a Ruff line), so
+/// positions keep their own table, built on first use: findings place spans with the line table,
+/// and nothing but parity with the native tree reads a tape node's position.
+struct Points {
+    source: Arc<String>,
+    rows: std::sync::OnceLock<LineTable>,
+}
+
+impl Points {
+    fn point(&self, byte: u32) -> Position {
+        let byte = byte as usize;
+        let (row, column) = self
+            .rows
+            .get_or_init(|| LineTable::tree_sitter(&self.source))
+            .point(byte);
+        Position::new(row, column, byte)
+    }
 }
 
 impl TapeDoc {
@@ -1032,6 +1112,10 @@ impl TapeDoc {
         }
         checked(budget)?;
         Ok(Self {
+            points: Arc::new(Points {
+                source: Arc::clone(&source),
+                rows: std::sync::OnceLock::new(),
+            }),
             source,
             grammar,
             data: Arc::new(nodes),
@@ -1080,6 +1164,7 @@ impl TapeDoc {
         self.data[node as usize].kind
     }
 
+    #[cfg(test)]
     fn kind_alias(&self, node: u32) -> Option<&(String, bool)> {
         self.kind_overrides
             .binary_search_by_key(&node, |&(index, _)| index)
@@ -1087,21 +1172,20 @@ impl TapeDoc {
             .map(|slot| &self.kind_aliases[self.kind_overrides[slot].1 as usize])
     }
 
+    #[cfg(test)]
     fn node_is_named(&self, node: u32) -> bool {
         self.kind_alias(node).map_or_else(
-            || {
-                self.grammar
-                    .kinds
-                    .kind_is_named(self.data[node as usize].kind)
-            },
+            || self.grammar.kind_is_named(self.data[node as usize].kind),
             |alias| alias.1,
         )
     }
 
+    #[cfg(test)]
     pub(super) fn transducer_field(&self, node: u32) -> u16 {
         self.data[node as usize].field
     }
 
+    #[cfg(test)]
     pub(super) fn transducer_flags(&self, node: u32) -> u8 {
         let rec = &self.data[node as usize];
         u8::from(self.node_is_named(node))
@@ -1115,11 +1199,13 @@ impl TapeDoc {
         rec.start as usize..rec.end as usize
     }
 
+    #[cfg(test)]
     pub(super) fn transducer_parent(&self, node: u32) -> Option<u32> {
         let parent = self.data[node as usize].parent;
         (parent != NONE).then_some(parent)
     }
 
+    #[cfg(test)]
     pub(super) fn transducer_children(&self, node: u32) -> impl Iterator<Item = u32> + '_ {
         let mut next = self.data[node as usize].first;
         std::iter::from_fn(move || {
@@ -1137,6 +1223,7 @@ impl TapeDoc {
         node + 1..node + rec.size
     }
 
+    #[cfg(test)]
     pub(super) fn transducer_next_sibling(&self, node: u32, named: bool) -> Option<u32> {
         let mut next = self.data[node as usize].next;
         while next != NONE {
@@ -1146,12 +1233,6 @@ impl TapeDoc {
             next = self.data[next as usize].next;
         }
         None
-    }
-
-    /// The structurally adjacent previous sibling, named or anonymous.
-    pub(super) fn transducer_prev_sibling(&self, node: u32) -> Option<u32> {
-        let prev = self.data[node as usize].prev;
-        (prev != NONE).then_some(prev)
     }
 
     /// The whole source, for the Metal backend's concatenated buffer.
@@ -1165,12 +1246,8 @@ impl TapeDoc {
         &self.source[self.transducer_span(node)]
     }
 
-    pub(super) fn source_text(&self) -> &str {
-        &self.source
-    }
-
-    /// The node at a preorder ordinal. The query engine's rows carry ordinals; this turns one back
-    /// into the node ast-grep matches on, `root.adopt(doc.node(ordinal))`.
+    /// The node at a preorder ordinal: `root.adopt(doc.node(ordinal))` is the node ast-grep
+    /// matches on.
     pub(super) fn node(&self, ordinal: u32) -> TapeNode<'_> {
         self.root_node().at(ordinal)
     }
@@ -1193,7 +1270,7 @@ impl TapeDoc {
 pub(super) struct TapeNode<'a> {
     nodes: &'a [Rec],
     grammar: &'a Grammar,
-    lines: &'a LineTable,
+    points: &'a Points,
     kind_aliases: &'a [(String, bool)],
     kind_overrides: &'a [(u32, u16)],
     index: u32,
@@ -1236,11 +1313,7 @@ impl<'a> TapeNode<'a> {
             return container.children().find(|child| child.rec().end > start);
         }
         let start = self.rec().start;
-        let ends_after = |node: &Self| {
-            #[cfg(test)]
-            count_anchor_sibling();
-            node.rec().end > start
-        };
+        let ends_after = |node: &Self| node.rec().end > start;
         let mut anchor = match self.parent() {
             Some(_) => *self,
             None => self.children().next()?,
@@ -1345,7 +1418,6 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         Cow::Borrowed(self.kind_alias().map_or_else(
             || {
                 self.grammar
-                    .kinds
                     .kind_name(self.rec().kind)
                     .expect("validated grammar symbol")
             },
@@ -1362,16 +1434,14 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         self.rec().start as usize..self.rec().end as usize
     }
     fn start_pos(&self) -> Position {
-        let (row, column) = self.lines.point(self.rec().start as usize);
-        Position::new(row, column, self.rec().start as usize)
+        self.points.point(self.rec().start)
     }
     fn end_pos(&self) -> Position {
-        let (row, column) = self.lines.point(self.rec().end as usize);
-        Position::new(row, column, self.rec().end as usize)
+        self.points.point(self.rec().end)
     }
     fn is_named(&self) -> bool {
         self.kind_alias().map_or_else(
-            || self.grammar.kinds.kind_is_named(self.rec().kind),
+            || self.grammar.kind_is_named(self.rec().kind),
             |alias| alias.1,
         )
     }
@@ -1422,7 +1492,7 @@ impl Doc for TapeDoc {
         TapeNode {
             nodes: &self.data,
             grammar: &self.grammar,
-            lines: &self.lines,
+            points: &self.points,
             kind_aliases: &self.kind_aliases,
             kind_overrides: &self.kind_overrides,
             index: 0,

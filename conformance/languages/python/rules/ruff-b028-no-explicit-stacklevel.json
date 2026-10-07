@@ -1,0 +1,177 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "python-conformance:ruff-b028-no-explicit-stacklevel",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B028 (no-explicit-stacklevel): a call to `warnings.warn` with no `stacklevel` (keyword or third positional argument: find_argument_value, through `arguments` in syntactic mode), no non-empty `skip_file_prefixes`, and no `*`/`**` unpacking. The callee resolves with `resolves` (imports and shadowing as Ruff's semantic model sees them). Reported on the callee, inside any parentheses. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/B028.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "no-explicit-stacklevel",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "warnings-warn": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "warnings.warn"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "warnings-warn"
+                  }
+                }
+              ]
+            },
+            "warn-args": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call"
+                  },
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "argument_list",
+                        "not": {
+                          "any": [
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "keyword_argument",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "kind": "identifier",
+                                      "regex": "^(skip_file_prefixes)$",
+                                      "precedes": {
+                                        "stopBy": "neighbor",
+                                        "regex": "^=$"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "follows": {
+                                        "stopBy": "neighbor",
+                                        "regex": "^=$"
+                                      },
+                                      "not": {
+                                        "kind": "tuple",
+                                        "regex": "^\\(\\s*\\)$"
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "any": [
+                                  {
+                                    "kind": "list_splat"
+                                  },
+                                  {
+                                    "kind": "dictionary_splat"
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "kind": "generator_expression"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "warn-args"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "attribute"
+              },
+              {
+                "kind": "identifier"
+              }
+            ],
+            "all": [
+              {
+                "matches": "warnings-warn"
+              },
+              {
+                "matches": "warn-args"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "kind": "call"
+                  },
+                  "kind": "call",
+                  "arguments": {
+                    "signature": [
+                      "message",
+                      "category",
+                      "stacklevel"
+                    ],
+                    "absent": [
+                      "stacklevel"
+                    ],
+                    "mode": "syntactic"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B028",
+        "message": "No explicit `stacklevel` keyword argument found",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B028"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

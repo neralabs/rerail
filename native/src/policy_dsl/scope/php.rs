@@ -23,7 +23,8 @@ use super::php_names::{self, PhpNames, Resolved};
 use super::{Binding, BuildError, Builder, Form, NodeRef, ScopeKind, Site, VALUE};
 use crate::policy_dsl::value::{Context as Decoding, php as php_value};
 use ast_grep_core::{Doc, Node};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use foldhash::{HashMap, HashMapExt};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 mod blade;
@@ -75,8 +76,20 @@ pub(crate) struct Read {
     pub(crate) quiet: Quiet,
     /// A superglobal (`$_GET`, `$GLOBALS`, ...), which every scope sees.
     pub(crate) superglobal: bool,
-    /// The base of a subscript assignment (`$a[] = 1`): it changes the value rather than reads it.
-    pub(crate) modify: bool,
+    /// A read that changes the value rather than reads it for another use: the binding the
+    /// change makes carries its use back to the bindings this read reaches.
+    pub(crate) modify: Option<Modify>,
+}
+
+/// How a read changes its variable's value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Modify {
+    /// The base of a subscript assignment (`$a[] = 1`, `$a[k] .= v;`).
+    Element,
+    /// A compound assignment or increment whose value is discarded (`$a .= v;`, `$i++;`): as
+    /// Psalm reads it, a value only such an update of the variable reads is used only if the
+    /// updated value is.
+    Update,
 }
 
 /// What reaches a binding where it is made: the bindings of its variable some path reaches the
@@ -123,8 +136,15 @@ pub(crate) struct Flow {
     /// Bindings of a variable that is a reference (a by-reference parameter or `use`, `global`,
     /// `static`, `&$x`, a by-reference `foreach` value): what they assign may be read elsewhere.
     pub(crate) aliased: BTreeSet<BindingKey>,
-    /// Each binding a subscript assignment makes, with the bindings of the value it changed: a
-    /// read of the new one reads what they assigned too.
+    /// Bindings some path carries to a `goto`: its label, where the flow knows nothing, may read
+    /// them.
+    pub(crate) jumped: BTreeSet<BindingKey>,
+    /// Bindings some path carries to an `unset` of their variable, which ends their value's life
+    /// there: `$x = new D(); unset($x); echo 'after';` runs `D::__destruct` before the echo, so
+    /// the unset may be the binding's use (Psalm 6.19.1 counts it as one).
+    pub(crate) unset: BTreeSet<BindingKey>,
+    /// Each binding a subscript assignment or a self-update makes, with the bindings of the value
+    /// it changed: a read of the new one reads what they assigned too.
     pub(crate) modifies: BTreeMap<BindingKey, Vec<BindingKey>>,
     /// What reaches each binding where it is made, by the start of its name node.
     before: HashMap<u32, Reach>,
@@ -396,6 +416,33 @@ fn variable<D: Doc>(node: &Node<'_, D>) -> Option<String> {
     (node.kind() == "variable_name").then(|| node.text().to_string())
 }
 
+/// The starts of the reads of `name` whose value `value` only computes with (arithmetic, bitwise
+/// and string operators, parentheses): in `$a = $a + 1`, what the right side reads of `$a` only
+/// makes the new `$a`, as Psalm 6.19.1's variable-use graph links it (`BinaryOpAnalyzer::addDataFlow`).
+fn self_reads<D: Doc>(value: &Node<'_, D>, name: &str) -> Vec<usize> {
+    const COMPUTING: &[&str] = &[
+        "+", "-", "*", "/", "%", "**", ".", "&", "|", "^", "<<", ">>",
+    ];
+    match value.kind().as_ref() {
+        "variable_name" if value.text() == name => vec![value.range().start],
+        "parenthesized_expression" => named(value)
+            .flat_map(|inner| self_reads(&inner, name))
+            .collect(),
+        "binary_expression"
+            if value
+                .field("operator")
+                .is_some_and(|operator| COMPUTING.contains(&operator.text().as_ref())) =>
+        {
+            ["left", "right"]
+                .into_iter()
+                .filter_map(|field| value.field(field))
+                .flat_map(|operand| self_reads(&operand, name))
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
 struct Visitor<'b, 'd> {
     builder: &'b mut Builder<'d>,
     /// Every binding the flow made: its scope, name, index among the scope's bindings of it, and
@@ -523,8 +570,10 @@ impl Visitor<'_, '_> {
             (_, Outer::Keep) => found.map_or(LOCAL, |var| var.outer),
         };
         *self.flow.outer.entry(start as u32).or_default() |= bits;
-        // A variable that is a reference stays one when assigned.
-        let aliased = aliased || found.is_some_and(|var| var.aliased && !var.defs.is_empty());
+        // A variable that is a reference stays one when assigned, also one a by-reference `use`
+        // or `=&` made from nothing: `$f = function () use (&$x) { echo $x; }; $x = 1; $f();`
+        // prints `1`.
+        let aliased = aliased || found.is_some_and(|var| var.aliased);
         if aliased {
             let (scope, name, index, _) = &self.bindings[id as usize];
             self.flow.aliased.insert((*scope, name.clone(), *index));
@@ -568,6 +617,15 @@ impl Visitor<'_, '_> {
         }
     }
 
+    /// Records the bindings that reach `var` where it becomes a reference (`&$x`, a closure's
+    /// by-reference `use`) as aliased: what they assigned may be read through the other name.
+    fn alias_reaching(flow: &mut Flow, bindings: &[(u32, Box<str>, usize, u32)], var: &Var) {
+        for def in &var.defs {
+            let (scope, name, index, _) = &bindings[*def as usize];
+            flow.aliased.insert((*scope, name.clone(), *index));
+        }
+    }
+
     /// Records a read of the variable `node` names under `state`.
     fn read<D: Doc>(&mut self, node: &Node<'_, D>, state: &Flowing, quiet: Quiet) {
         let Some(name) = variable(node) else {
@@ -588,7 +646,7 @@ impl Visitor<'_, '_> {
                 aliased: true,
                 quiet,
                 superglobal,
-                modify: false,
+                modify: None,
             },
             None => Read {
                 name: name.as_str().into(),
@@ -599,7 +657,7 @@ impl Visitor<'_, '_> {
                 aliased: false,
                 quiet,
                 superglobal,
-                modify: false,
+                modify: None,
             },
             Some(state) => {
                 let var = state.vars.get(name.as_str()).cloned();
@@ -613,7 +671,7 @@ impl Visitor<'_, '_> {
                         (*scope, *index)
                     })
                     .collect();
-                let defined = self.definedness(&var, state, this);
+                let defined = self.definedness(&name, &var, state, this);
                 Read {
                     name: name.as_str().into(),
                     node: at,
@@ -623,18 +681,20 @@ impl Visitor<'_, '_> {
                     aliased: var.aliased,
                     quiet,
                     superglobal,
-                    modify: false,
+                    modify: None,
                 }
             }
         };
         self.flow.reads.insert(range.start, read);
     }
 
-    /// Whether `var` (`$this` where `this`) is defined at a read in `state`. A variable no path
-    /// of the file's top level defines may come from an including file; in a Blade template's
-    /// top level one some path leaves unset may still come from the view's data, so either is
-    /// unknown there, never undefined or maybe.
-    fn definedness(&self, var: &Var, state: &State, this: bool) -> Defined {
+    /// Whether `var`, the variable `name` (`$this` where `this`), is defined at a read in `state`.
+    /// A variable no path of the file's top level defines may come from an including file; in a
+    /// Blade template's top level one some path leaves unset may still come from the view's data,
+    /// so either is unknown there, never undefined or maybe. PHP's HTTP stream wrapper defines
+    /// `$http_response_header` in the scope of a builtin call that opens a URL
+    /// (`file_get_contents`, `fopen`, `file`, `copy`, ...), which this flow does not model.
+    fn definedness(&self, name: &str, var: &Var, state: &State, this: bool) -> Defined {
         if var.unknown || (var.undefined && state.dynamic) {
             Defined::Unknown
         } else if this && var.defs.is_empty() {
@@ -647,6 +707,7 @@ impl Visitor<'_, '_> {
             Defined::Yes
         } else {
             match self.context {
+                _ if var.defs.is_empty() && name == "$http_response_header" => Defined::Unknown,
                 Context::Top if var.defs.is_empty() || self.blade => Defined::Unknown,
                 Context::Function { .. } if var.defs.is_empty() => Defined::No,
                 _ => Defined::Maybe,
@@ -765,8 +826,13 @@ impl Visitor<'_, '_> {
                         Some(name) => {
                             self.builder.reference(child.range(), VALUE);
                             self.mention(&child);
-                            if let Some(state) = &mut state {
-                                state.vars.remove(name.as_str());
+                            if let Some(state) = &mut state
+                                && let Some(var) = state.vars.remove(name.as_str())
+                            {
+                                for def in &var.defs {
+                                    let (scope, name, index, _) = &self.bindings[*def as usize];
+                                    self.flow.unset.insert((*scope, name.clone(), *index));
+                                }
                             }
                         }
                         None => state = self.unset_base(&child, state)?,
@@ -809,8 +875,18 @@ impl Visitor<'_, '_> {
                 Ok(state)
             }
             // A label may be reached from any `goto`, after anything it ran: nothing is known
-            // after it.
-            "goto_statement" => Ok(None),
+            // after it, so what reaches the `goto` may be read there.
+            "goto_statement" => {
+                if let Some(state) = &state {
+                    for var in state.vars.values() {
+                        for def in &var.defs {
+                            let (scope, name, index, _) = &self.bindings[*def as usize];
+                            self.flow.jumped.insert((*scope, name.clone(), *index));
+                        }
+                    }
+                }
+                Ok(None)
+            }
             "named_label_statement" => {
                 let mut state = state.or_else(|| Some(State::default()));
                 Self::arbitrary(&mut state);
@@ -1039,38 +1115,51 @@ impl Visitor<'_, '_> {
     }
 
     fn switch_statement<D: Doc>(&mut self, node: &Node<'_, D>, state: Flowing) -> Visit {
-        let mut state = match node.field("condition") {
+        let state = match node.field("condition") {
             Some(condition) => self.expression(&condition, state)?,
             None => state,
         };
-        let after_condition = state.clone();
-        self.frames.push(Frame::default());
-        let mut fall: Flowing = None;
-        let mut has_default = false;
-        if let Some(block) = node.field("body") {
-            for case in named(&block) {
-                let mut entry = after_condition.clone();
-                if case.kind() == "case_statement" {
-                    if let Some(value) = case.field("value") {
-                        entry = self.expression(&value, entry)?;
-                    }
-                } else {
-                    has_default = true;
-                }
-                let entry = join(entry, fall.take());
-                let statements: Vec<_> = named(&case)
-                    .filter(|child| {
-                        case.field("value")
-                            .is_none_or(|value| value.range() != child.range())
+        // PHP compares the cases in order until one matches, so a case is entered with every
+        // earlier case's value evaluated, and `default` (wherever it is written) and the exit
+        // without a match with all of them.
+        let cases: Vec<_> = node
+            .field("body")
+            .map(|block| {
+                named(&block)
+                    .filter(|case| {
+                        matches!(case.kind().as_ref(), "case_statement" | "default_statement")
                     })
-                    .collect();
-                fall = self.statements(statements.into_iter(), entry)?;
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut unmatched = state;
+        let mut entries = Vec::with_capacity(cases.len());
+        for case in &cases {
+            match case.field("value") {
+                Some(value) if case.kind() == "case_statement" => {
+                    unmatched = self.expression(&value, unmatched)?;
+                    entries.push(Some(unmatched.clone()));
+                }
+                _ => entries.push(None),
             }
         }
+        self.frames.push(Frame::default());
+        let mut fall: Flowing = None;
+        let has_default = cases.iter().any(|case| case.kind() == "default_statement");
+        for (case, entry) in cases.iter().zip(entries) {
+            let entry = join(entry.unwrap_or_else(|| unmatched.clone()), fall.take());
+            let statements: Vec<_> = named(case)
+                .filter(|child| {
+                    case.field("value")
+                        .is_none_or(|value| value.range() != child.range())
+                })
+                .collect();
+            fall = self.statements(statements.into_iter(), entry)?;
+        }
         let frame = self.frames.pop().unwrap_or_default();
-        state = join(join(fall, frame.breaks), frame.continues);
+        let mut state = join(join(fall, frame.breaks), frame.continues);
         if !has_default {
-            state = join(state, after_condition);
+            state = join(state, unmatched);
         }
         Ok(state)
     }
@@ -1115,6 +1204,7 @@ impl Visitor<'_, '_> {
             self.throws.push(None);
         }
         let mut out = end;
+
         for clause in named(node) {
             if clause.kind() != "catch_clause" {
                 continue;
@@ -1147,6 +1237,7 @@ impl Visitor<'_, '_> {
         // `break`, `continue` and `return` goes, and on a throw, which it passes on (its
         // statements may throw). Each way is visited apart, then all of them at once, last, so
         // its reads are what any way reaches them with.
+        let throwing = thrown.is_some();
         let mut every = thrown;
         join_into(&mut every, out.clone());
         let after = match out {
@@ -1175,7 +1266,11 @@ impl Visitor<'_, '_> {
             join_into(&mut self.returns, ran);
         }
         if every.is_some() {
-            self.statement(&body, every)?;
+            let ran = self.statement(&body, every)?;
+            // After a throw it passes the exception on, to an enclosing `try`'s catches.
+            if throwing {
+                self.may_throw(&ran);
+            }
         }
         Ok(after)
     }
@@ -1378,6 +1473,8 @@ impl Visitor<'_, '_> {
                         let var = state.vars.entry(name.into()).or_insert_with(Var::undefined);
                         var.unknown |= var.undefined;
                         var.aliased = true;
+                        // What reaches `$b` may be read through the reference.
+                        Self::alias_reaching(&mut self.flow, &self.bindings, var);
                     }
                 } else {
                     state = self.expression(&right, state)?;
@@ -1387,7 +1484,13 @@ impl Visitor<'_, '_> {
                 } else {
                     Outer::Keep
                 };
-                self.target(&left, node, Some(&right), reference, outer, state)
+                let carried = match variable(&left) {
+                    Some(name) if !reference && Self::discarded(node) => self_reads(&right, &name),
+                    _ => Vec::new(),
+                };
+                state = self.target(&left, node, Some(&right), reference, outer, state)?;
+                self.carry(&left, &carried);
+                Ok(state)
             }
             "augmented_assignment_expression" => {
                 let (Some(left), Some(right)) = (node.field("left"), node.field("right")) else {
@@ -1399,16 +1502,26 @@ impl Visitor<'_, '_> {
                 if coalesce {
                     // `$a ??= v` assigns only where `$a` is null or undefined; either way `$a` is
                     // defined after it.
+                    // `$a[k] ??= v` reads `$a[k]` before it may assign it; its base is bound anew
+                    // once, there.
                     let before = match variable(&left) {
                         Some(_) => {
                             self.read(&left, &state, Quiet::Silent);
                             state
                         }
-                        None => self.target_base(&left, state)?,
+                        None => {
+                            let state = self.target_base(&left, state)?;
+                            self.read_element(&left);
+                            state
+                        }
                     };
                     let assigned = self.expression(&right, before.clone())?;
-                    let assigned =
-                        self.target(&left, node, Some(&right), false, Outer::Keep, assigned)?;
+                    let assigned = match variable(&left) {
+                        Some(_) => {
+                            self.target(&left, node, Some(&right), false, Outer::Keep, assigned)?
+                        }
+                        None => assigned,
+                    };
                     let mut after = join(assigned, before);
                     if let (Some(name), Some(after)) = (variable(&left), &mut after)
                         && let Some(var) = after.vars.get_mut(name.as_str())
@@ -1417,12 +1530,21 @@ impl Visitor<'_, '_> {
                     }
                     return Ok(after);
                 }
+                // A discarded update (`$a .= v;`, `$a[k] .= v;`) changes the variable: its old
+                // value is used where the new one is. Otherwise its value is read.
+                let discarded = Self::discarded(node);
+                let previous = Self::defs(&state, &left);
                 match variable(&left) {
                     Some(_) => self.read(&left, &state, Quiet::No),
-                    None => state = self.target_base(&left, state)?,
+                    None => {
+                        state = self.target_base(&left, state)?;
+                        if !discarded {
+                            self.read_element(&left);
+                        }
+                    }
                 }
                 state = self.expression(&right, state)?;
-                if variable(&left).is_some() {
+                if let Some(name) = variable(&left) {
                     self.bind(
                         &left,
                         Form::Augmented,
@@ -1432,6 +1554,11 @@ impl Visitor<'_, '_> {
                         false,
                         Outer::Keep,
                     );
+                    if discarded {
+                        self.changed(&left, previous, Modify::Update);
+                        // `$a .= $a . 'x';` reads `$a` on its right only to make the new `$a`.
+                        self.carry(&left, &self_reads(&right, &name));
+                    }
                 }
                 Ok(state)
             }
@@ -1439,8 +1566,10 @@ impl Visitor<'_, '_> {
                 let Some(argument) = node.field("argument") else {
                     return self.expressions(named(node), state);
                 };
+                let discarded = Self::discarded(node);
                 match variable(&argument) {
                     Some(_) => {
+                        let previous = Self::defs(&state, &argument);
                         self.read(&argument, &state, Quiet::No);
                         self.bind(
                             &argument,
@@ -1451,9 +1580,18 @@ impl Visitor<'_, '_> {
                             false,
                             Outer::Keep,
                         );
+                        if discarded {
+                            self.changed(&argument, previous, Modify::Update);
+                        }
                         Ok(state)
                     }
-                    None => self.target_base(&argument, state),
+                    None => {
+                        let state = self.target_base(&argument, state)?;
+                        if !discarded {
+                            self.read_element(&argument);
+                        }
+                        Ok(state)
+                    }
                 }
             }
             "binary_expression" => {
@@ -1515,10 +1653,10 @@ impl Visitor<'_, '_> {
                 Ok(out)
             }
             "function_call_expression" => self.call(node, state),
-            "member_call_expression"
-            | "nullsafe_member_call_expression"
-            | "scoped_call_expression"
-            | "object_creation_expression" => {
+            "member_call_expression" | "nullsafe_member_call_expression" => {
+                self.method_call_chain(node, state)
+            }
+            "scoped_call_expression" | "object_creation_expression" => {
                 for child in named(node) {
                     if child.kind() != "arguments" {
                         state = self.expression(&child, state)?;
@@ -1559,6 +1697,20 @@ impl Visitor<'_, '_> {
                 Ok(state)
             }
             "encapsed_string" | "heredoc" | "heredoc_body" | "string" | "nowdoc" => {
+                // tree-sitter-php 0.24.2 reads a heredoc's text after an `<?php` in it as PHP (a
+                // `/* ... */` there becomes a comment, hiding the `$x` PHP interpolates in it):
+                // a heredoc with a part no heredoc has may read any variable.
+                if node.kind() == "heredoc"
+                    && node.children().any(|part| {
+                        part.is_named()
+                            && !matches!(
+                                part.kind().as_ref(),
+                                "heredoc_start" | "heredoc_body" | "heredoc_end"
+                            )
+                    })
+                {
+                    self.flow.reads_all.insert(self.scope);
+                }
                 self.expressions(named(node), state)
             }
             _ => self.expressions(named(node), state),
@@ -1589,6 +1741,36 @@ impl Visitor<'_, '_> {
             }
             _ => self.expression(node, state),
         }
+    }
+
+    /// A chain of method calls (`$a->b(x)->c(y)`, a fluent builder): PHP evaluates the innermost
+    /// object, then each call's name and arguments and runs it, from the inside out. The chain
+    /// is walked in a loop, so a long one costs a visited node per call but no recursion.
+    fn method_call_chain<D: Doc>(&mut self, node: &Node<'_, D>, mut state: Flowing) -> Visit {
+        let mut chain = vec![node.clone()];
+        while let Some(object) = chain.last().and_then(|call| call.field("object"))
+            && matches!(
+                object.kind().as_ref(),
+                "member_call_expression" | "nullsafe_member_call_expression"
+            )
+        {
+            chain.push(object);
+        }
+        for (index, call) in chain.iter().rev().enumerate() {
+            if index > 0 {
+                self.builder.enter()?;
+                self.builder.leave();
+            }
+            let object = call.field("object").map(|object| object.range());
+            for child in named(call) {
+                let evaluated = index > 0 && object.as_ref() == Some(&child.range());
+                if child.kind() != "arguments" && !evaluated {
+                    state = self.expression(&child, state)?;
+                }
+            }
+            state = self.arguments(call, None, state)?;
+        }
+        Ok(state)
     }
 
     fn call<D: Doc>(&mut self, node: &Node<'_, D>, mut state: Flowing) -> Visit {
@@ -1625,10 +1807,9 @@ impl Visitor<'_, '_> {
                 }
                 Ok(state)
             }
-            Some("get_defined_vars") | Some("func_get_args") => {
-                if builtin.as_deref() == Some("get_defined_vars") {
-                    self.flow.reads_all.insert(self.scope);
-                }
+            // `func_get_args()` reads the parameters' current values.
+            Some("get_defined_vars") | Some("func_get_args") | Some("func_get_arg") => {
+                self.flow.reads_all.insert(self.scope);
                 self.arguments(node, None, state)
             }
             Some("extract") => {
@@ -1636,7 +1817,8 @@ impl Visitor<'_, '_> {
                 Self::dynamic(&mut state);
                 Ok(state)
             }
-            // The code `eval` runs in this scope may read, define and unset any variable.
+            // The code `eval` runs in this scope may read, define and unset any variable (`php -r
+            // 'function f() { $x = 1; eval("echo \$x;"); } f();'` prints `1`).
             Some("eval") => {
                 state = self.arguments(node, None, state)?;
                 self.flow.reads_all.insert(self.scope);
@@ -1670,7 +1852,8 @@ impl Visitor<'_, '_> {
     /// A call's arguments: `callee` holds a known callee's parameter names, in order, and the
     /// positions of those it takes by reference (a variadic one as `-1 - p`); `None` where the
     /// callee is not known, so a variable argument may be taken by reference and so defined or
-    /// changed.
+    /// changed. The callee then runs, and may throw with every argument evaluated: a closure
+    /// argument's by-reference `use` is already shared, a by-reference argument already bound.
     fn arguments<D: Doc>(
         &mut self,
         node: &Node<'_, D>,
@@ -1681,6 +1864,7 @@ impl Visitor<'_, '_> {
             .field("arguments")
             .or_else(|| named(node).find(|child| child.kind() == "arguments"))
         else {
+            self.may_throw(&state);
             return Ok(state);
         };
         let mut position = 0usize;
@@ -1740,6 +1924,7 @@ impl Visitor<'_, '_> {
                 var.aliased = true;
             }
         }
+        self.may_throw(&state);
         Ok(state)
     }
 
@@ -1782,11 +1967,11 @@ impl Visitor<'_, '_> {
                             (*scope, *index)
                         })
                         .collect(),
-                    defined: self.definedness(&var, state, false),
+                    defined: self.definedness(name, &var, state, false),
                     aliased: var.aliased,
                     quiet: Quiet::No,
                     superglobal: false,
-                    modify: false,
+                    modify: None,
                 }
             }
             None => Read {
@@ -1798,7 +1983,7 @@ impl Visitor<'_, '_> {
                 aliased: false,
                 quiet: Quiet::No,
                 superglobal: false,
-                modify: false,
+                modify: None,
             },
         };
         self.flow.reads.insert(range.start, read);
@@ -1874,6 +2059,40 @@ impl Visitor<'_, '_> {
         }
     }
 
+    /// A discarded `$a = $a + v` (or the right side of `$a .= $a . v`) reads `$a` (at `reads`)
+    /// only to make the binding at `target`: those reads change the value rather than use it, and
+    /// whatever reads the new binding reads what they read (the chain `changed` records). Psalm
+    /// 6.19.1 reports `$a = 5; $a = $a + 1;` both unused: its variable-use graph reaches no use
+    /// from either.
+    fn carry<D: Doc>(&mut self, target: &Node<'_, D>, reads: &[usize]) {
+        if reads.is_empty() {
+            return;
+        }
+        let Some(&id) = self.sites.get(&(target.range().start, target.range().end)) else {
+            return;
+        };
+        let (scope, name, index, _) = self.bindings[id as usize].clone();
+        let mut previous = Vec::new();
+        for start in reads {
+            let Some(read) = self.flow.reads.get_mut(start) else {
+                continue;
+            };
+            read.modify = Some(Modify::Update);
+            for &(read_scope, read_index) in read.bindings.iter() {
+                let key = (read_scope, read.name.clone(), read_index);
+                if (read_scope, read_index) != (scope, index) && !previous.contains(&key) {
+                    previous.push(key);
+                }
+            }
+        }
+        let chain = self.flow.modifies.entry((scope, name, index)).or_default();
+        for key in previous {
+            if !chain.contains(&key) {
+                chain.push(key);
+            }
+        }
+    }
+
     /// `$a[k] = v`, `$a[] = v`, `$o->p = v`: the base is read (a subscript base silently, as PHP
     /// creates an undefined array) and a subscripted variable is bound anew, since its value
     /// changes.
@@ -1893,17 +2112,7 @@ impl Visitor<'_, '_> {
                 // PHP creates an undefined array silently; the variable's value changes, so it is
                 // bound anew, and whatever reads the new binding reads what it was made from.
                 self.read(base, &state, Quiet::Silent);
-                if let Some(read) = self.flow.reads.get_mut(&base.range().start) {
-                    read.modify = true;
-                }
-                let previous: Vec<u32> = match (&state, variable(base)) {
-                    (Some(state), Some(name)) => state
-                        .vars
-                        .get(name.as_str())
-                        .map(|var| var.defs.iter().copied().collect())
-                        .unwrap_or_default(),
-                    _ => Vec::new(),
-                };
+                let previous = Self::defs(&state, base);
                 self.bind(
                     base,
                     Form::Assignment,
@@ -1913,21 +2122,79 @@ impl Visitor<'_, '_> {
                     false,
                     Outer::Keep,
                 );
-                if let Some(id) = self.sites.get(&(base.range().start, base.range().end)) {
-                    let (scope, name, index, _) = self.bindings[*id as usize].clone();
-                    let previous = previous
-                        .into_iter()
-                        .filter(|previous| previous != id)
-                        .map(|previous| {
-                            let (scope, name, index, _) = &self.bindings[previous as usize];
-                            (*scope, name.clone(), *index)
-                        })
-                        .collect();
-                    self.flow.modifies.insert((scope, name, index), previous);
-                }
+                self.changed(base, previous, Modify::Element);
                 Ok(state)
             }
             _ => self.expression(node, state),
+        }
+    }
+
+    /// The bindings of the variable `node` names that reach it under `state`.
+    fn defs<D: Doc>(state: &Flowing, node: &Node<'_, D>) -> Vec<u32> {
+        match (state, variable(node)) {
+            (Some(state), Some(name)) => state
+                .vars
+                .get(name.as_str())
+                .map(|var| var.defs.iter().copied().collect())
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Marks the read of the variable `node` names as a change of its value (`modify`) and
+    /// records the binding made at `node` as made from `previous`: a read of the new binding
+    /// reads what they assigned too.
+    fn changed<D: Doc>(&mut self, node: &Node<'_, D>, previous: Vec<u32>, modify: Modify) {
+        if let Some(read) = self.flow.reads.get_mut(&node.range().start) {
+            read.modify = Some(modify);
+        }
+        if let Some(id) = self.sites.get(&(node.range().start, node.range().end)) {
+            let (scope, name, index, _) = self.bindings[*id as usize].clone();
+            let previous: Vec<BindingKey> = previous
+                .into_iter()
+                .filter(|previous| previous != id)
+                .map(|previous| {
+                    let (scope, name, index, _) = &self.bindings[previous as usize];
+                    (*scope, name.clone(), *index)
+                })
+                .collect();
+            // A loop's body, or `$a[k] ??= v`, reaches the site more than once: keep every
+            // binding each visit changed.
+            let chain = self.flow.modifies.entry((scope, name, index)).or_default();
+            for key in previous {
+                if !chain.contains(&key) {
+                    chain.push(key);
+                }
+            }
+        }
+    }
+
+    /// Whether an assignment's or increment's value is discarded: it stands as a statement or as
+    /// a `for` clause.
+    fn discarded<D: Doc>(node: &Node<'_, D>) -> bool {
+        node.parent().is_some_and(|parent| {
+            matches!(
+                parent.kind().as_ref(),
+                "expression_statement" | "for_statement" | "sequence_expression"
+            )
+        })
+    }
+
+    /// `$a[k] .= v`, `$a[k]++`, `$a[k] ??= v` read the element they change: the subscripted
+    /// variable's read (`target_base`) uses its value, rather than only changing it.
+    fn read_element<D: Doc>(&mut self, node: &Node<'_, D>) {
+        if node.kind() != "subscript_expression" {
+            return;
+        }
+        let mut base = node.clone();
+        while base.kind() == "subscript_expression" {
+            let Some(inner) = named(&base).next() else {
+                return;
+            };
+            base = inner;
+        }
+        if let Some(read) = self.flow.reads.get_mut(&base.range().start) {
+            read.modify = None;
         }
     }
 
@@ -2258,18 +2525,19 @@ impl Visitor<'_, '_> {
                 match part.kind().as_ref() {
                     "by_ref" => {
                         if let Some(inner) = named(&part).next() {
-                            // The closure's variable is a reference to this one: what reaches
-                            // here may be read or changed through it.
+                            // The closure's variable is a reference to this one: what it holds
+                            // now is what the closure reads when it runs (silently: `&` creates
+                            // an undefined one), and what reaches here may be read or changed
+                            // through it.
+                            self.read(&inner, state, Quiet::Silent);
                             self.mention(&inner);
                             if let (Some(name), Some(state)) = (variable(&inner), state.as_mut()) {
                                 let var =
                                     state.vars.entry(name.into()).or_insert_with(Var::undefined);
-                                for def in &var.defs {
-                                    let (scope, name, index, _) = &self.bindings[*def as usize];
-                                    self.flow.aliased.insert((*scope, name.clone(), *index));
-                                }
                                 var.undefined = false;
                                 var.aliased = true;
+                                // The closure may read what reaches here through its variable.
+                                Self::alias_reaching(&mut self.flow, &self.bindings, var);
                             }
                         }
                     }

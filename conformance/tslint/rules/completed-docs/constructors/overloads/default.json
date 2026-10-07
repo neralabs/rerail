@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:completed-docs",
   "revision": 1,
+  "mode": "steer",
   "description": "public/private constructors; docs on any overload count.",
   "scope": { "include": ["**/*"], "exclude": [] },
-  "checks": [
+  "clauses": [
     {
       "id": "constructors",
       "forbid": {
@@ -42,10 +43,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for constructors."
       }
     }

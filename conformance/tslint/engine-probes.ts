@@ -178,9 +178,10 @@ function document(probe: EngineProbe): string {
     format: "rerail.policy/v1",
     id: `probe:${probe.id}`,
     revision: 1,
+    mode: "steer",
     description: probe.claim,
     scope: { include: ["**/*"], exclude: [] },
-    checks: [{ id: "probe", forbid: probe.forbid, finding: { anchor: "witness.span", code: "PROBE", severity: "error", message: "probe" } }],
+    clauses: [{ id: "probe", forbid: probe.forbid, violation: { anchor: "witness.span", code: "PROBE", message: "probe" } }],
   });
 }
 
@@ -202,10 +203,10 @@ export async function runEngineProbes(): Promise<EngineProbeResult[]> {
       const path = probe.path ?? "probe.ts";
       const payload = JSON.stringify({ revision: 1, files: [{ path, language: "typescript", source: probe.source }], removed: [] });
       const { evaluation } = JSON.parse(await applyToWorkspace(workspace, payload)) as {
-        evaluation: { findings: Array<{ span?: { startByte: number; endByte: number } }>; failures: Array<{ code: string; message: string }> };
+        evaluation: { violations: Array<{ span?: { startByte: number; endByte: number } }>; failures: Array<{ code: string; message: string }> };
       };
       const bytes = Buffer.from(probe.source, "utf8");
-      const observed = evaluation.findings.map(finding =>
+      const observed = evaluation.violations.map(finding =>
         finding.span === undefined ? "<no span>" : `${bytes.subarray(finding.span.startByte, finding.span.endByte).toString("utf8")}@${finding.span.startByte}`,
       );
       const texts = observed.map(entry => entry.replace(/@\d+$/, ""));
@@ -213,7 +214,7 @@ export async function runEngineProbes(): Promise<EngineProbeResult[]> {
       const deviates =
         probe.expected === null ||
         (probe.id === "path-regex-span-as-content"
-          ? evaluation.findings.some(finding => finding.span !== undefined && finding.span.startByte !== 0)
+          ? evaluation.violations.some(finding => finding.span !== undefined && finding.span.startByte !== 0)
           : [...texts].sort(compareDeterministicStrings).join("\u0000") !== [...expected].sort(compareDeterministicStrings).join("\u0000"));
       results.push({ ...probe, observed, compileError: undefined, failures: evaluation.failures.map(failure => `${failure.code}: ${failure.message}`), deviates });
     } finally {

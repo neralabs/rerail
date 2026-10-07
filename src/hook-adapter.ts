@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Writable } from "node:stream";
 import type { AdapterDelivery, RerailHost } from "./adapter-contract.js";
+import { RULE_MODES, steers } from "./rule-mode.js";
 
 export type HookInput = Record<string, unknown>;
 export type HookOutput = Record<string, unknown>;
@@ -32,7 +33,7 @@ export function bindSteeringReceipt(output: HookOutput, record: ReceiptRecorder)
 }
 
 function carriesText(delivery: AdapterDelivery): boolean {
-  return delivery.requested !== "observe" && delivery.content.trim() !== "";
+  return steers(delivery.requested) && delivery.content.trim() !== "";
 }
 
 export function deliveryText(deliveries: readonly AdapterDelivery[]): string | undefined {
@@ -69,7 +70,9 @@ export async function readPending(path: string): Promise<AdapterDelivery[]> {
         if (value === null || typeof value !== "object") return false;
         const delivery = value as Partial<AdapterDelivery>;
         return typeof delivery.sessionId === "string"
-          && typeof delivery.requested === "string"
+          && delivery.requested !== undefined
+          && RULE_MODES.includes(delivery.requested)
+          && steers(delivery.requested)
           && typeof delivery.mechanism === "string"
           && typeof delivery.content === "string";
       })
@@ -115,21 +118,10 @@ export async function routeDeliveries(
   deliveries: readonly AdapterDelivery[],
   contextEvents: EventTable,
 ): Promise<AdapterDelivery[]> {
-  const carries = (requested: AdapterDelivery["requested"]): boolean => {
-    if (requested === "steer") return contextEvents[hook] === true;
-    if (requested === "followUp") return hook === "Stop";
-    if (requested === "nextTurn") return hook === "UserPromptSubmit";
-    return false;
-  };
-  const now: AdapterDelivery[] = [];
-  const later: AdapterDelivery[] = [];
-  for (const delivery of await readPending(path)) (carries(delivery.requested) ? now : later).push(delivery);
-  for (const delivery of deliveries) {
-    if (delivery.requested === "observe") continue;
-    (delivery.requested !== "nextTurn" && carries(delivery.requested) ? now : later).push(delivery);
-  }
-  await replacePending(path, later);
-  return now;
+  const steering = [...await readPending(path), ...deliveries.filter(delivery => steers(delivery.requested))];
+  const carried = contextEvents[hook] === true;
+  await replacePending(path, carried ? [] : steering);
+  return carried ? steering : [];
 }
 
 interface LockOwner {

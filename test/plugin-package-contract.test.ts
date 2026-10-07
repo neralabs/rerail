@@ -20,7 +20,7 @@ const PackageSchema = z.object({
   version: z.string(),
   files: z.array(z.string()),
   scripts: z.record(z.string(), z.string()),
-  bin: z.object({ rerail: z.literal("dist/cli.js") }),
+  bin: z.object({ rerail: z.literal("dist/cli.js") }).strict(),
   exports: z.object({
     ".": z.object({
       types: z.literal("./dist/index.d.ts"),

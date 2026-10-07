@@ -50,7 +50,7 @@ export function claudeHookEvents(input: ClaudeHookInput): readonly AdapterEvent[
   if (hook === "PreToolUse") {
     const toolUseId = requiredText(input, "tool_use_id");
     return [{
-      kind: "tool-call",
+      kind: "call",
       eventId: `${sessionId}:tool-call:${toolUseId}`,
       toolCallId: toolUseId,
       sessionId,
@@ -63,7 +63,7 @@ export function claudeHookEvents(input: ClaudeHookInput): readonly AdapterEvent[
     const toolUseId = requiredText(input, "tool_use_id");
     const failed = hook === "PostToolUseFailure";
     return [{
-      kind: "tool-result",
+      kind: "result",
       eventId: `${sessionId}:tool-result:${toolUseId}`,
       toolCallId: toolUseId,
       sessionId,

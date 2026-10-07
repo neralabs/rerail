@@ -238,7 +238,7 @@ export class DevNativeServer {
       ...(options.maxInputTokens === undefined ? {} : { maxInputTokens: options.maxInputTokens }),
       ...(options.maxRules === undefined ? {} : { maxRules: options.maxRules }),
     });
-    const loadRules = cosineRuleLoader(options, cwd, input.host === "omp" ? ".omp/cosine-rules.json" : ".pi/cosine-rules.json");
+    const loadRules = cosineRuleLoader(options, cwd, input.host === "omp" ? ".omp/conversation-rules.json" : ".pi/conversation-rules.json");
     const store = openScopedRuleCatalog(cwd, databasePath);
     const ruleSync = new LiveCosineRules(store, registry, loadRules);
     let runtime: RerailRuntime | undefined;
@@ -250,7 +250,7 @@ export class DevNativeServer {
       semantic = new NativeSemanticRuntime({ modelPath, sourceId: input.host === "omp" ? "omp:message" : "pi:message" });
       runtime = new RerailRuntime({
         storageRoot, modelPath, databasePath, workspaceRoot: cwd, repositoryContext: store.context(),
-        autostart: false,
+        autostart: false, startGate: true,
         beforeSessionPublish: async () => {
           await this.#close(input.sessionId);
           if (existing !== undefined) {
@@ -276,6 +276,9 @@ export class DevNativeServer {
         appendEntry: (customType, data) => attached.appendEntries.push({ customType, data }),
       });
       attached.pendingDeliveries.push(...await runtime.ingest({ kind: "session-start", eventId: `session-start:${session.sessionId}:${randomUUID()}`, session }));
+      // A stopped checkout drops the session start before publication, so `beforeSessionPublish` never closed
+      // the session this one replaces: close it here, or its runtime, handles and timers outlive the map entry.
+      if (this.#sessions.has(input.sessionId)) await this.#close(input.sessionId);
       this.#sessions.set(input.sessionId, attached);
       return this.#reply(attached);
     } catch (error) {
@@ -392,5 +395,5 @@ export class DevNativeServer {
 }
 
 function matchEntry(registry: CosineRuleRegistry, match: RuleMatch, sample: AdapterSample, turn: number): unknown {
-  return { ruleId: match.ruleId, kind: match.kind, similarity: match.similarity, threshold: match.threshold, operator: match.operator, tokenCount: match.tokenCount, source: sample.source, boundary: sample.boundary, delivery: match.action.delivery, turn, modelFingerprint: registry.fingerprint() };
+  return { ruleId: match.ruleId, kind: match.kind, similarity: match.similarity, threshold: match.threshold, operator: match.operator, tokenCount: match.tokenCount, source: sample.source, boundary: sample.boundary, mode: match.mode, turn, modelFingerprint: registry.fingerprint() };
 }

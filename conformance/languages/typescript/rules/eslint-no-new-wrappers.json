@@ -1,0 +1,79 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-no-new-wrappers",
+  "revision": 1,
+  "mode": "steer",
+  "description": "ESLint 10.11.0 no-new-wrappers, default options. Port of ESLint's `no-new-wrappers` rule (https://eslint.org/docs/latest/rules/no-new-wrappers). Flags `new` of the global String, Number or Boolean (resolved with `resolves`).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "new-wrapper",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {},
+          "rule": {
+            "kind": "new_expression",
+            "has": {
+              "matches": "callee"
+            }
+          },
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "all": [
+                    {
+                      "kind": "identifier",
+                      "resolves": {
+                        "global": [
+                          "String",
+                          "Number",
+                          "Boolean"
+                        ],
+                        "directives": "eslint"
+                      }
+                    },
+                    {
+                      "pattern": "$FN"
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "callee"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-new-wrappers",
+        "message": "Do not use $FN as a constructor.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-new-wrappers"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

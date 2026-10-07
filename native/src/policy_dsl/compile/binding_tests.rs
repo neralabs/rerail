@@ -11,7 +11,7 @@ fn compile(language: &str, ast: Value) -> Result<CompiledPolicyDsl> {
     ast["language"] = json!(language);
     compile_document_with(
         check_document(
-            json!({ "id": "ast-match", "forbid": { "ast": ast }, "finding": finding() }),
+            json!({ "id": "ast-match", "forbid": { "ast": ast }, "violation": finding() }),
         ),
         &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
     )
@@ -29,7 +29,7 @@ fn typescript(ast: Value) -> CompiledPolicyDsl {
 fn found(result: &Value, source: &str) -> Vec<String> {
     assert_eq!(result["failures"], json!([]), "{result}");
     let lines = matched_texts(result, source);
-    result["findings"]
+    result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -416,14 +416,14 @@ fn destructured_value_false_gives_destructured_names_no_value() {
             "python",
             json!({ "rule": { "kind": "identifier", "resolves": { "binding": { "destructuredValue": false } } } }),
         )),
-        "/checks/0/forbid/ast/rule/resolves/binding/destructuredValue: destructured values are TypeScript's; a Python unpacked name keeps its element"
+        "/clauses/0/forbid/ast/rule/resolves/binding/destructuredValue: destructured values are TypeScript's; a Python unpacked name keeps its element"
     );
     assert_eq!(
         rejection(compile(
             "typescript",
             json!({ "rule": { "kind": "identifier", "resolves": { "binding": { "destructuredValue": 0 } } } }),
         )),
-        "/checks/0/forbid/ast/rule/resolves/binding/destructuredValue must be a boolean"
+        "/clauses/0/forbid/ast/rule/resolves/binding/destructuredValue must be a boolean"
     );
 }
 
@@ -450,7 +450,7 @@ fn binding_rules_are_source_incomplete_in_files_with_syntax_errors() {
         let rule = python(ast);
         assert!(!grammar_matchers(&rule)[0].sound_under_errors);
         let result = evaluate_file(&rule, "python", "a.py", "x = 1\nx\ndef (:\n");
-        assert_eq!(result["findings"], json!([]), "{result}");
+        assert_eq!(result["violations"], json!([]), "{result}");
         assert_eq!(
             result["failures"][0]["code"], "source-incomplete",
             "{result}"
@@ -472,7 +472,7 @@ fn binding_recursion_spends_the_step_budget() {
                 { "kind": "identifier", "resolves": { "binding": { "value": { "matches": "alias" } } } },
             ] } },
         } },
-        "finding": finding(),
+        "violation": finding(),
     }));
     let chain = |length: usize, calls: usize| {
         let mut source = "const n0 = JSON;\n".to_owned();
@@ -484,7 +484,7 @@ fn binding_recursion_spends_the_step_budget() {
         }
         source
     };
-    let failure = |limit: UtilLimit| json!([{ "checkId": "ast-match", "code": "budget-exceeded", "message": limit.message(), "path": "a.ts" }]);
+    let failure = |limit: UtilLimit| json!([{ "clauseId": "ast-match", "code": "budget-exceeded", "message": limit.message(), "path": "a.ts" }]);
     let rule = compile_document_with(
         document.clone(),
         &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
@@ -515,23 +515,23 @@ fn binding_objects_are_checked() {
     };
     assert_eq!(
         reject(json!({ "binding": { "values": {} } })),
-        "unknown field `values` at /checks/0/forbid/ast/rule/resolves/binding"
+        "unknown field `values` at /clauses/0/forbid/ast/rule/resolves/binding"
     );
     assert_eq!(
         reject(json!({ "binding": [] })),
-        "/checks/0/forbid/ast/rule/resolves/binding must be an object"
+        "/clauses/0/forbid/ast/rule/resolves/binding must be an object"
     );
     assert_eq!(
         reject(json!({ "binding": {}, "global": ["x"] })),
-        "/checks/0/forbid/ast/rule/resolves/global: `binding` asks about the name's own file-local binding; write other `resolves` terms in a resolves of their own"
+        "/clauses/0/forbid/ast/rule/resolves/global: `binding` asks about the name's own file-local binding; write other `resolves` terms in a resolves of their own"
     );
     assert_eq!(
         reject(json!({ "binding": { "value": { "kinds": "integer" } } })),
-        "unknown field `kinds` at /checks/0/forbid/ast/rule/resolves/binding/value"
+        "unknown field `kinds` at /clauses/0/forbid/ast/rule/resolves/binding/value"
     );
     let reason = reject(json!({ "binding": { "value": { "kind": "no_such_kind" } } }));
     assert!(
-        reason.starts_with("/checks/0/forbid/ast/rule/resolves/binding/value/kind: "),
+        reason.starts_with("/clauses/0/forbid/ast/rule/resolves/binding/value/kind: "),
         "{reason}"
     );
     // Constraints may name captures only a binding's sub-rule binds.
@@ -816,15 +816,15 @@ fn binding_flags_are_checked() {
     };
     assert_eq!(
         reject("python", json!({ "binding": { "only": 1 } })),
-        "/checks/0/forbid/ast/rule/resolves/binding/only must be a boolean"
+        "/clauses/0/forbid/ast/rule/resolves/binding/only must be a boolean"
     );
     assert_eq!(
         reject("python", json!({ "binding": { "stopAtGlobal": "yes" } })),
-        "/checks/0/forbid/ast/rule/resolves/binding/stopAtGlobal must be a boolean"
+        "/clauses/0/forbid/ast/rule/resolves/binding/stopAtGlobal must be a boolean"
     );
     assert_eq!(
         reject("typescript", json!({ "binding": { "stopAtGlobal": true } })),
-        "/checks/0/forbid/ast/rule/resolves/binding/stopAtGlobal: `global` statements are Python's; TypeScript has none"
+        "/clauses/0/forbid/ast/rule/resolves/binding/stopAtGlobal: `global` statements are Python's; TypeScript has none"
     );
 }
 
@@ -1052,7 +1052,7 @@ def f(p):
 /// `seenBefore` as it does alone, and an unpacked Python name keeps its element.
 #[test]
 fn destructured_value_meets_before_local_and_seen_before() {
-    let message = "/checks/0/forbid/ast/rule/resolves/binding/destructuredValue: destructured values are TypeScript's; a Python unpacked name keeps its element";
+    let message = "/clauses/0/forbid/ast/rule/resolves/binding/destructuredValue: destructured values are TypeScript's; a Python unpacked name keeps its element";
     for (key, scope) in [
         (
             "beforeLocal",

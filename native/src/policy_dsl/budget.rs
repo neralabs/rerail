@@ -1,23 +1,56 @@
-//! The per-file match budget: a file evaluation's deadline. `MatchBudget::start` installs it on
-//! the evaluating thread, where the matcher and anchor index poll it; a query batch registered
-//! there carries the same deadline, which its SQLite progress handler and its terminals (on
-//! whatever thread runs them) poll. Every poll reads one shared `MatchDeadline`.
+//! The per-file match budget. `MatchBudget::work` (or `until`) installs it on the evaluating
+//! thread, where the matcher, the anchor index, regex scans and cross-file checks poll it. Every
+//! poll reads one shared `MatchDeadline`.
+//!
+//! A file's and a global check's budget is work, not time: each poll spends one unit of a fixed
+//! allowance, and every poll site polls once per bounded amount of work (every 1,024 matcher
+//! calls, every 256 nodes of a walk or posting build, every 1,024 cross-file rows, once per regex
+//! match), so whether an evaluation runs out depends on its input alone, not on the machine's
+//! load. Only the inline fast path, whose miss falls back to a background evaluation, keeps a
+//! wall-clock deadline.
 
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-/// Matcher calls between two reads of the clock; a deadline is noticed at most this many calls late.
-const BUDGET_CHECK_INTERVAL: u32 = 64;
+/// Matcher calls between two polls; a budget is noticed spent at most this many calls late.
+/// `FILE_WORK_BUDGET` is calibrated at this interval.
+const BUDGET_CHECK_INTERVAL: u32 = 1024;
 
 thread_local! {
     static MATCH_BUDGET: RefCell<Option<MatchDeadline>> = const { RefCell::new(None) };
 }
 
 thread_local! {
-    /// Matcher calls until the next clock read.
+    /// Matcher calls until the next poll; reset when a budget starts, so an evaluation polls at
+    /// the same calls whatever the thread evaluated before.
     static BUDGET_COUNTDOWN: Cell<u32> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests turn off, on their own thread, the shortcuts that only skip work (the anchor-set
+    /// shortcuts), to check they change no result.
+    static SHORTCUTS_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Compiles and evaluates on this thread without the work-skipping shortcuts while `off`.
+#[cfg(test)]
+pub(super) fn set_shortcuts_off(off: bool) {
+    SHORTCUTS_OFF.set(off);
+}
+
+/// Whether the work-skipping shortcuts run: always, outside tests.
+pub(super) fn shortcuts_on() -> bool {
+    #[cfg(test)]
+    {
+        !SHORTCUTS_OFF.get()
+    }
+    #[cfg(not(test))]
+    {
+        true
+    }
 }
 
 /// Whether this thread's budget is exhausted (never, without one). Callers that poll in a loop
@@ -31,9 +64,8 @@ pub(super) fn matcher_budget_exhausted() -> bool {
     })
 }
 
-/// Whether some poll found this thread's budget exhausted; never reads the clock. What decides,
-/// after work ends, whether it was cut short: work that finished unpolled is complete, however
-/// late it finished.
+/// Whether some poll found this thread's budget exhausted; never polls. What decides, after work
+/// ends, whether it was cut short: work that finished unpolled is complete.
 pub(super) fn matcher_budget_observed() -> bool {
     MATCH_BUDGET.with(|budget| {
         budget
@@ -43,42 +75,51 @@ pub(super) fn matcher_budget_observed() -> bool {
     })
 }
 
-/// The deadline of this thread's budget, for work that polls it elsewhere.
-pub(super) fn current_deadline() -> Option<MatchDeadline> {
-    MATCH_BUDGET.with(|budget| budget.borrow().clone())
-}
-
-/// Passes this thread's deadline without polling it: what a last step that runs past the deadline
-/// and never polls leaves behind.
+/// Spends this thread's budget without polling it: what a last step that runs past the budget and
+/// never polls leaves behind.
 #[cfg(test)]
 pub(super) fn pass_deadline_unpolled() {
     MATCH_BUDGET.with(|budget| {
         if let Some(deadline) = budget.borrow_mut().as_mut() {
-            deadline.deadline = Instant::now();
+            deadline.limit = match deadline.limit {
+                Limit::Work(_) => Limit::Work(0),
+                Limit::Until(_) => Limit::Until(Instant::now()),
+            };
         }
     });
 }
 
-/// `matcher_budget_exhausted` for matcher entry points: reads the clock every
-/// `BUDGET_CHECK_INTERVAL` calls, so a deadline is noticed at most that many calls late.
+/// `matcher_budget_exhausted` for matcher entry points: polls every `BUDGET_CHECK_INTERVAL`
+/// calls, so a spent budget is noticed at most that many calls late.
 pub(super) fn matcher_call_budget_exhausted() -> bool {
-    if matcher_budget_observed() {
-        return true;
-    }
     let countdown = BUDGET_COUNTDOWN.get();
     if countdown > 0 {
         BUDGET_COUNTDOWN.set(countdown - 1);
         return false;
     }
+    if matcher_budget_exhausted() {
+        return true;
+    }
     BUDGET_COUNTDOWN.set(BUDGET_CHECK_INTERVAL);
-    matcher_budget_exhausted()
+    false
 }
 
-/// One file evaluation's deadline, shared by every clone: once a poll finds it passed (or the
-/// workspace closed), it stays exhausted for all of them.
+/// What a budget allows.
+#[derive(Clone, Copy)]
+enum Limit {
+    /// Polls: each spends one unit of this many.
+    Work(u64),
+    /// A wall-clock deadline.
+    Until(Instant),
+}
+
+/// One evaluation's budget, shared by every clone: once a poll finds it spent (or the workspace
+/// closed), it stays exhausted for all of them.
 #[derive(Clone)]
 pub(super) struct MatchDeadline {
-    deadline: Instant,
+    limit: Limit,
+    /// Units the polls spent, shared by every clone.
+    work: Arc<AtomicU64>,
     closed: Arc<AtomicBool>,
     spent: Arc<AtomicBool>,
     /// Writes of `spent`, shared by every clone.
@@ -87,9 +128,10 @@ pub(super) struct MatchDeadline {
 }
 
 impl MatchDeadline {
-    fn start(closed: &Arc<AtomicBool>, duration: Duration) -> Self {
+    fn new(closed: &Arc<AtomicBool>, limit: Limit) -> Self {
         Self {
-            deadline: Instant::now() + duration,
+            limit,
+            work: Arc::default(),
             closed: Arc::clone(closed),
             spent: Arc::new(AtomicBool::new(false)),
             #[cfg(test)]
@@ -97,12 +139,18 @@ impl MatchDeadline {
         }
     }
 
-    /// Reads the clock unless exhaustion was already observed, and records it when it is.
+    /// Spends a unit of work (or reads the clock) unless exhaustion was already observed, and
+    /// records exhaustion when it is.
     pub(super) fn exhausted(&self) -> bool {
         if self.observed() {
             return true;
         }
-        if !self.closed.load(Ordering::Relaxed) && Instant::now() < self.deadline {
+        let open = !self.closed.load(Ordering::Relaxed)
+            && match self.limit {
+                Limit::Work(limit) => self.work.fetch_add(1, Ordering::Relaxed) < limit,
+                Limit::Until(deadline) => Instant::now() < deadline,
+            };
+        if open {
             return false;
         }
         self.spent.store(true, Ordering::Relaxed);
@@ -111,7 +159,7 @@ impl MatchDeadline {
         true
     }
 
-    /// Whether some poll found the deadline exhausted; never reads the clock.
+    /// Whether some poll found the budget exhausted; never polls.
     pub(super) fn observed(&self) -> bool {
         self.spent.load(Ordering::Relaxed)
     }
@@ -121,35 +169,45 @@ pub(super) struct MatchBudget {
     deadline: MatchDeadline,
 }
 impl MatchBudget {
-    pub(super) fn start(closed: &Arc<AtomicBool>, duration: Duration) -> Self {
-        let deadline = MatchDeadline::start(closed, duration);
+    /// A budget of `units` polls: the same work runs out at the same poll, on any machine and load.
+    pub(super) fn work(closed: &Arc<AtomicBool>, units: u64) -> Self {
+        Self::install(MatchDeadline::new(closed, Limit::Work(units)))
+    }
+
+    /// A wall-clock budget, for a fast path whose miss only falls back.
+    pub(super) fn until(closed: &Arc<AtomicBool>, duration: Duration) -> Self {
+        Self::install(MatchDeadline::new(
+            closed,
+            Limit::Until(Instant::now() + duration),
+        ))
+    }
+
+    fn install(deadline: MatchDeadline) -> Self {
         MATCH_BUDGET.with(|budget| *budget.borrow_mut() = Some(deadline.clone()));
-        #[cfg(test)]
         BUDGET_COUNTDOWN.set(0);
         Self { deadline }
     }
 
-    /// Whether a poll on any thread found the deadline exhausted: an evaluation that finished
-    /// without one is complete, however late it finished.
+    /// Whether a poll found the budget exhausted: an evaluation that finished without one is
+    /// complete.
     pub(super) fn observed(&self) -> bool {
         self.deadline.observed()
     }
 
     #[cfg(test)]
-    pub(super) fn deadline(&self) -> MatchDeadline {
-        self.deadline.clone()
+    /// Units the polls have spent so far.
+    pub(super) fn spent(&self) -> u64 {
+        self.deadline.work.load(Ordering::Relaxed)
     }
 
     #[cfg(test)]
     pub(super) fn expired_for_test() -> Self {
-        Self::start(&Arc::new(AtomicBool::new(false)), Duration::ZERO)
+        Self::work(&Arc::new(AtomicBool::new(false)), 0)
     }
 }
 impl Drop for MatchBudget {
     fn drop(&mut self) {
         MATCH_BUDGET.with(|budget| *budget.borrow_mut() = None);
-        #[cfg(test)]
-        BUDGET_COUNTDOWN.set(0);
     }
 }
 
@@ -160,7 +218,10 @@ mod tests {
     #[test]
     fn a_deadline_records_spent_only_when_it_becomes_exhausted() {
         let closed = Arc::new(AtomicBool::new(false));
-        let deadline = MatchDeadline::start(&closed, Duration::from_secs(3_600));
+        let deadline = MatchDeadline::new(
+            &closed,
+            Limit::Until(Instant::now() + Duration::from_secs(3_600)),
+        );
         let worker = deadline.clone();
         for _ in 0..3 {
             assert!(!deadline.exhausted());
@@ -181,5 +242,22 @@ mod tests {
             1,
             "exhaustion is recorded once, when it is first observed"
         );
+    }
+
+    #[test]
+    fn a_work_budget_runs_out_at_the_same_poll_across_clones_however_long_it_takes() {
+        let closed = Arc::new(AtomicBool::new(false));
+        let budget = MatchDeadline::new(&closed, Limit::Work(5));
+        let terminal = budget.clone();
+        for poll in 0..5 {
+            let polled = if poll % 2 == 0 { &budget } else { &terminal };
+            assert!(!polled.exhausted(), "poll {poll} is within the budget");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(
+            terminal.exhausted(),
+            "the sixth poll, on either clone, spends past it"
+        );
+        assert!(budget.observed() && budget.exhausted());
     }
 }

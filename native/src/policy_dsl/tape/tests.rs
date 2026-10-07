@@ -232,6 +232,83 @@ fn valid_native_root_ranges_survive_taping() {
     }
 }
 
+/// A tape node's position is tree-sitter's point: only `\n` ends a row. A lone `\r`, which ends a
+/// Ruff, PHP and ESLint line, and U+2028 and U+2029, which end an ESLint line, stay inside it; the
+/// evaluator's line table, which places findings, still ends lines at them.
+#[test]
+fn positions_count_only_line_feeds_in_every_dialect() {
+    for (lang, source) in [
+        (
+            GrammarDialect::Python,
+            "x = 1\ry = '\u{2028}'\r\nz = 2  # c\u{2029}\n\rw = 3\r",
+        ),
+        (
+            GrammarDialect::TypeScript,
+            "let x = 1;\rlet y = '\u{2028}';\r\nlet z = 2; // c\u{2029}\n\rw;\r",
+        ),
+        (
+            GrammarDialect::Tsx,
+            "let x = <a>\r</a>;\rlet y = '\u{2028}';\r\n// c\u{2029}\n\rw;\r",
+        ),
+        (
+            GrammarDialect::JavaScript,
+            "let x = 1;\rlet y = '\u{2028}';\r\nlet z = 2; // c\u{2029}\n\rw;\r",
+        ),
+        (
+            GrammarDialect::Php,
+            "<?php\r$x = 1;\r$y = '\u{2028}';\r\n$z = 2; // c\u{2029}\n\r$w;\r",
+        ),
+        (
+            GrammarDialect::Blade,
+            "<p>{{ $x }}</p>\r@if($y)\u{2028}\r\n{{ $z }}\u{2029}\n\r@endif\r",
+        ),
+    ] {
+        let (native, tape, _, _) = fixture(source, lang);
+        let tree_sitter_point = |byte: usize| {
+            let before = &source.as_bytes()[..byte];
+            let row = before.iter().filter(|&&b| b == b'\n').count();
+            let start = before
+                .iter()
+                .rposition(|&b| b == b'\n')
+                .map_or(0, |at| at + 1);
+            (row, byte - start)
+        };
+        let restored = AstGrep::doc(tape.clone());
+        for node in restored.root().dfs() {
+            for (position, byte) in [
+                (node.start_pos(), node.range().start),
+                (node.end_pos(), node.range().end),
+            ] {
+                assert_eq!(
+                    position.byte_point(),
+                    tree_sitter_point(byte),
+                    "{lang:?} {} at {byte}",
+                    node.kind()
+                );
+            }
+        }
+        // A Blade tape appends its embedded PHP view's nodes, which the native template lacks;
+        // `corpus_parity` compares those against the native view.
+        if lang != GrammarDialect::Blade {
+            let native = AstGrep::doc(native);
+            let native_nodes = native.root().dfs().collect::<Vec<_>>();
+            let tape_nodes = restored.root().dfs().collect::<Vec<_>>();
+            assert_eq!(native_nodes.len(), tape_nodes.len(), "{lang:?}");
+            for (a, b) in native_nodes.iter().zip(&tape_nodes) {
+                assert_eq!(
+                    (a.range(), a.start_pos(), a.end_pos()),
+                    (b.range(), b.start_pos(), b.end_pos()),
+                    "{lang:?}"
+                );
+            }
+        }
+        // Findings keep the linter's lines: each lone `\r` before `y` ends one.
+        let y = source.find('y').unwrap();
+        let lone_returns = source[..y].matches('\r').count();
+        assert_eq!(tape.line_table().point(y).0, lone_returns, "{lang:?}");
+    }
+}
+
 #[test]
 fn direct_field_ids_and_navigation_match_native() {
     use ast_grep_core::source::SgNode;
@@ -483,16 +560,6 @@ fn punctuation_fields_ancestors_and_unicode_positions_match_native() {
         let start = source.find('é').unwrap();
         assert_eq!(tape.line_table().point(start), (0, start));
         assert_eq!(tape.line_table().point(source.len()), (1, 0));
-        let start_span = source.find('é').unwrap();
-        assert_eq!(
-            tape.line_table()
-                .span_json(start_span, start_span + 'é'.len_utf8()),
-            super::super::eval::span_json(
-                tape.line_table(),
-                start_span,
-                start_span + 'é'.len_utf8(),
-            )
-        );
     }
 }
 
@@ -1076,4 +1143,55 @@ fn restore_rejects_overwide_spans_and_non_utf8_or_parent_ranges() {
         TapeDoc::restore(Arc::new(source.to_owned()), grammar, &broken, &|| false).is_err(),
         "child span escapes shortened parent but remains within source"
     );
+}
+
+/// Every node, looked up from every node of its tree, is the node a lookup from the root finds:
+/// `find_near` starts below the root only where siblings never overlap, so it agrees with `find`
+/// on native and taped trees alike, through wrappers of the same range and syntax errors.
+#[test]
+fn a_lookup_from_a_nearby_node_finds_what_a_lookup_from_the_root_finds() {
+    use crate::policy_dsl::value::NodeRef;
+
+    fn agree<D: Doc>(doc: D, label: &str) {
+        let root = AstGrep::doc(doc);
+        let nodes = root.root().dfs().collect::<Vec<_>>();
+        for target in &nodes {
+            let reference = NodeRef::of(target);
+            let expected = reference.find(root.root()).map(|node| node.node_id());
+            let at = (target.kind(), target.range());
+            if !target.range().is_empty() {
+                assert!(expected.is_some(), "{label}: {at:?}");
+            }
+            for near in &nodes {
+                let found = reference
+                    .find_near(root.root(), near)
+                    .map(|node| node.node_id());
+                assert_eq!(found, expected, "{label}: {at:?} from {:?}", near.range());
+            }
+        }
+    }
+
+    let sources = [
+        (
+            GrammarDialect::Php,
+            "<?php\nclass A {\n  function f($x) { $y = [1, $x]; return fn() => $y[0]; }\n  function g() { $z = $this->f(2); echo \"a{$z}b\"; }\n}\nif (! function_exists('e')) { function e($v) { return h($v); } }\n",
+        ),
+        (
+            GrammarDialect::Php,
+            "<?php\nfunction f( { $a = ; }\n$b = 1;\n",
+        ),
+        (
+            GrammarDialect::Python,
+            "def f(x):\n    y = (x, [1])\n    return g(y)\n\nclass C:\n    z = f(1)\n",
+        ),
+        (
+            GrammarDialect::TypeScript,
+            "const a = { b: [1, 2] };\nfunction f(x: number) { return a.b[x] ?? g(x); }\n",
+        ),
+    ];
+    for (lang, source) in sources {
+        let (native, tape, _, _) = fixture(source, lang);
+        agree(native, &format!("{lang:?} native"));
+        agree(tape, &format!("{lang:?} tape"));
+    }
 }

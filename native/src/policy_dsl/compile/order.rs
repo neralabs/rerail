@@ -157,7 +157,7 @@ mod tests {
 
     fn compile_python_rule(rule: Value) -> napi::Result<crate::policy_dsl::CompiledPolicyDsl> {
         compile_document_with(
-            check_document(json!({ "id": "ast-match", "finding": finding(),
+            check_document(json!({ "id": "ast-match", "violation": finding(),
                                    "forbid": { "ast": { "language": "python", "rule": rule } } })),
             &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
         )
@@ -295,7 +295,7 @@ mod tests {
         ] });
         assert_eq!(
             rejection(compile_typescript_rule(unordered)),
-            "/checks/0/forbid/ast/rule/all/0 reads `$V`, which only /checks/0/forbid/ast/rule/all/1 binds, after it: \
+            "/clauses/0/forbid/ast/rule/all/0 reads `$V`, which only /clauses/0/forbid/ast/rule/all/1 binds, after it: \
              an `all` runs its items in the order written; move all/1 before all/0"
         );
         let cycle = json!({
@@ -305,7 +305,7 @@ mod tests {
         });
         assert_eq!(
             rejection(compile_typescript_rule(cycle)),
-            "/checks/0/forbid/ast/rule: /checks/0/forbid/ast/rule/has reads `$A`, which /checks/0/forbid/ast/rule/binds binds, and /checks/0/forbid/ast/rule/binds reads `$B`, which /checks/0/forbid/ast/rule/has binds; no order binds both first. Bind one of them in an earlier term (a pattern, or an `all` whose first item binds it)"
+            "/clauses/0/forbid/ast/rule: /clauses/0/forbid/ast/rule/has reads `$A`, which /clauses/0/forbid/ast/rule/binds binds, and /clauses/0/forbid/ast/rule/binds reads `$B`, which /clauses/0/forbid/ast/rule/has binds; no order binds both first. Bind one of them in an earlier term (a pattern, or an `all` whose first item binds it)"
         );
     }
 
@@ -346,7 +346,7 @@ mod tests {
         });
         assert_eq!(
             rejection(compile_typescript_rule(rule)),
-            "/checks/0/forbid/ast/rule: /checks/0/forbid/ast/rule/has reads `$B`, which /checks/0/forbid/ast/rule/precedes binds, and /checks/0/forbid/ast/rule/precedes reads `$A`, which /checks/0/forbid/ast/rule/has binds; no order binds both first. Bind one of them in an earlier term (a pattern, or an `all` whose first item binds it)"
+            "/clauses/0/forbid/ast/rule: /clauses/0/forbid/ast/rule/has reads `$B`, which /clauses/0/forbid/ast/rule/precedes binds, and /clauses/0/forbid/ast/rule/precedes reads `$A`, which /clauses/0/forbid/ast/rule/has binds; no order binds both first. Bind one of them in an earlier term (a pattern, or an `all` whose first item binds it)"
         );
     }
 
@@ -366,7 +366,7 @@ mod tests {
                 "kind": "call_expression",
                 "all": [compare, binders[0], binders[1]],
             }))),
-            "/checks/0/forbid/ast/rule/all/0 reads `$F`, which only /checks/0/forbid/ast/rule/all/1 binds, after it: \
+            "/clauses/0/forbid/ast/rule/all/0 reads `$F`, which only /clauses/0/forbid/ast/rule/all/1 binds, after it: \
              an `all` runs its items in the order written; move all/1 before all/0"
         );
         // An earlier item binds it: a later item rebinding it is an equality test, no dependency.
@@ -380,7 +380,7 @@ mod tests {
                 "kind": "call_expression",
                 "all": [{ "not": { "has": { "field": "arguments", "has": { "pattern": "$A" } } } }, binders[1]],
             }))),
-            "/checks/0/forbid/ast/rule/all/0 reads `$A`, which only /checks/0/forbid/ast/rule/all/1 binds, after it: \
+            "/clauses/0/forbid/ast/rule/all/0 reads `$A`, which only /clauses/0/forbid/ast/rule/all/1 binds, after it: \
              an `all` runs its items in the order written; move all/1 before all/0"
         );
         // A sibling key binding it too runs before the `all`, which reads it before binding it
@@ -403,7 +403,7 @@ mod tests {
                 "rule": { "kind": "expression_statement", "has": { "matches": "call" } },
                 "utils": { "call": { "kind": "call_expression", "all": [compare, binders[0], binders[1]] } },
             }))),
-            "/checks/0/forbid/ast/utils/call/all/0 reads `$F`, which only /checks/0/forbid/ast/utils/call/all/1 binds, after it: \
+            "/clauses/0/forbid/ast/utils/call/all/0 reads `$F`, which only /clauses/0/forbid/ast/utils/call/all/1 binds, after it: \
              an `all` runs its items in the order written; move all/1 before all/0"
         );
         // Bound outside those items too (a caller, an enclosing rule, a parameter a caller passes),
@@ -589,7 +589,7 @@ mod tests {
     fn a_negation_reading_what_a_utility_binds_runs_after_the_matches_term() {
         let python = |ast: Value, source: &str| {
             let compiled = compile_document_with(
-                check_document(json!({ "id": "ast-match", "finding": finding(),
+                check_document(json!({ "id": "ast-match", "violation": finding(),
                                        "forbid": { "ast": ast } })),
                 &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
             );
@@ -632,7 +632,7 @@ mod tests {
         });
         let reason = rejection(compile_document_with(
             check_document(
-                json!({ "id": "ast-match", "finding": finding(), "forbid": { "ast": {
+                json!({ "id": "ast-match", "violation": finding(), "forbid": { "ast": {
                 "language": "python", "rule": cycle,
                 "utils": { "binds-b": { "has": { "pattern": "$B", "not": { "has": { "stopBy": "end", "pattern": "$A" } } } } },
             } } }),

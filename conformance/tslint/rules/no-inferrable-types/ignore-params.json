@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-inferrable-types",
   "revision": 1,
+  "mode": "steer",
   "description": "Option ignore-params.",
   "scope": { "include": ["**/*"], "exclude": [] },
-  "checks": [
+  "clauses": [
     {
       "id": "inferrable-type",
       "forbid": {
@@ -65,10 +66,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_INFERRABLE_TYPES",
-        "severity": "error",
         "message": "Type $T trivially inferred from a $T literal, remove type annotation"
       }
     }

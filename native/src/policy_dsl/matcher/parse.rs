@@ -3,37 +3,28 @@
 //! own environment; captures its rule binds are exported to the host as span captures.
 
 use super::AstMatcher;
-#[cfg(test)]
 use super::each;
 use super::each::HostMap;
-#[cfg(test)]
 use super::each::HostRanges;
-#[cfg(test)]
 use super::exported::export;
 use super::exported::{exported_span, exported_text, is_span_variable};
-use super::facts::{Facts, Target};
-#[cfg(test)]
 use super::resolve::SubTables;
 use super::resolve::{
     file_table, memoize_parse, memoize_value_parse, memoized_parse, memoized_value_parse,
 };
-#[cfg(test)]
 use super::util::UNKNOWN;
 use super::util::{UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
 use crate::policy_dsl::budget;
 use crate::policy_dsl::language::GrammarDialect;
-#[cfg(test)]
 use crate::policy_dsl::literal::SubDoc;
 use crate::policy_dsl::literal::{self, Grammar, LiteralHost, Parsed};
 use crate::policy_dsl::scope::Reading;
 use crate::policy_dsl::value::Value;
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
-#[cfg(test)]
 use ast_grep_core::{AstGrep, Matcher};
 use ast_grep_core::{Doc, Node};
-#[cfg(test)]
+
 use std::borrow::Cow;
-#[cfg(test)]
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::ops::Range;
@@ -65,28 +56,28 @@ pub(crate) struct HostTest {
 }
 
 /// A parsed tree's captures as the host reads them: name, text, host range.
-#[cfg(test)]
 type Exports = [(String, String, Range<usize>)];
 
 /// The host a `host` rule runs against: a matcher of the innermost `parse` being matched, which runs
 /// a host rule on its node with the tree's captures, and the tree it holds.
-#[cfg(test)]
 struct Hook {
     run: *const (dyn Fn(&AstMatcher, &Exports) -> bool + 'static),
     tree: Arc<literal::SubTree>,
 }
 
-#[cfg(test)]
 thread_local! {
     /// The `parse` terms being matched whose rules hold `host`, innermost last.
     static HOOKS: RefCell<Vec<Hook>> = const { RefCell::new(Vec::new()) };
 }
 
+/// Whether a `parse` holding `host` rules is being matched (`HOOKS`), which verdicts then read.
+pub(super) fn hosting() -> bool {
+    HOOKS.with_borrow(|hooks| !hooks.is_empty())
+}
+
 /// A `parse`'s host while its tree's rule is matched; dropping it restores the enclosing one.
-#[cfg(test)]
 struct Hosted;
 
-#[cfg(test)]
 impl Hosted {
     fn enter<'f>(
         run: &'f (dyn Fn(&AstMatcher, &Exports) -> bool + 'f),
@@ -106,14 +97,12 @@ impl Hosted {
     }
 }
 
-#[cfg(test)]
 impl Drop for Hosted {
     fn drop(&mut self) {
         HOOKS.with_borrow_mut(|hooks| hooks.pop());
     }
 }
 
-#[cfg(test)]
 impl HostTest {
     pub(super) fn match_node<'t, D: Doc>(
         &self,
@@ -163,37 +152,6 @@ pub(super) fn host_exports<D: Doc>(
     exports
 }
 
-/// The query engine's view of `parse` (`facts::slot`): the gate, whose row carries the parsed
-/// literal (and, for a string type definition, the file table its names are read in).
-impl ParseTest {
-    pub(super) fn facts<'t, D: Doc>(&self, node: Node<'t, D>, facts: &mut Facts<'t, D>) {
-        if !self.host_kinds.contains(&node.kind_id()) {
-            return;
-        }
-        if self.grammar == Grammar::Annotation {
-            let Some(table) = file_table(&node, GrammarDialect::Python, self.reading) else {
-                return;
-            };
-            let Some(annotation) = table.annotation_at(&node.range()) else {
-                return;
-            };
-            let tree = Arc::clone(&annotation.tree);
-            facts.gate(1, Target::Tree(tree, Some(table)));
-            return;
-        }
-        match parsed_tree(&node, self.grammar) {
-            None | Some(Parsed::NotString) => {}
-            Some(Parsed::Unknown) => {
-                facts.gate(-1, Target::None);
-            }
-            Some(Parsed::Tree(tree)) => {
-                facts.gate(1, Target::Tree(tree, None));
-            }
-        }
-    }
-}
-
-#[cfg(test)]
 impl ParseTest {
     pub(super) fn match_node<'t, D: Doc>(
         &self,

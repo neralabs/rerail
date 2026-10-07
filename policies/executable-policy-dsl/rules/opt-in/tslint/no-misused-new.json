@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-misused-new",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-misused-new` rule with its default options (https://palantir.github.io/tslint/rules/no-misused-new/). Warns on `constructor` signatures in interfaces/type literals, on `new(): Self` construct signatures in interfaces, and on body-less `new(): Self` methods in classes, Self being the declaring type's name (bound from the return type).",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "interface-new-returns-self",
       "forbid": {
@@ -69,10 +70,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_MISUSED_NEW",
-        "severity": "error",
         "message": "Interfaces cannot be constructed, only classes. Did you mean `declare class`?"
       }
     },
@@ -106,10 +106,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_MISUSED_NEW",
-        "severity": "error",
         "message": "Interfaces cannot be constructed, only classes. Did you mean `declare class`?"
       }
     },
@@ -190,10 +189,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_MISUSED_NEW",
-        "severity": "error",
         "message": "`new` in a class is a method named \"new\". Did you mean `constructor`?"
       }
     }

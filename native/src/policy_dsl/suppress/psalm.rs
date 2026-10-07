@@ -163,6 +163,12 @@ impl PsalmIndex {
                     .any(|issue| (suppress_all && issue == "all") || names.contains(issue))
         })
     }
+
+    /// Whether the file holds no tag Psalm would apply.
+    #[cfg(test)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.directives.is_empty()
+    }
 }
 
 /// A file's class-likes and traits outside every function-like: Psalm analyses the class-likes

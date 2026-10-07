@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-submodule-imports",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-submodule-imports` rule with its default options (https://palantir.github.io/tslint/rules/no-submodule-imports/). Disallows importing any submodule of a non-relative package (default: empty whitelist).",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "submodule-import",
       "forbid": {
@@ -80,10 +81,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_SUBMODULE_IMPORTS",
-        "severity": "error",
         "message": "Submodule import paths from this package are disallowed; import from the root instead"
       }
     }

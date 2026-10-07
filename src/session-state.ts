@@ -22,9 +22,20 @@ function entryData(entry: SessionEntryLike): Record<string, unknown> | undefined
   return data as Record<string, unknown>;
 }
 
+/** A persisted rule that no longer parses is skipped with a notice, so it cannot block session restore. */
+export function restorableRule(value: unknown, path: string): CosineRule | undefined {
+  try {
+    return parseCosineRule(value, path);
+  } catch (error) {
+    process.stderr.write(`rerail: skipped unreadable rule mutation: ${error instanceof Error ? error.message : String(error)}\n`);
+    return undefined;
+  }
+}
+
 function replayMutation(registry: CosineRuleRegistry, data: Record<string, unknown>): void {
   if (data.operation === "upsert") {
-    registry.upsert(parseCosineRule(data.rule, "session mutation rule"), { replace: data.replace === true });
+    const rule = restorableRule(data.rule, "session mutation rule");
+    if (rule !== undefined) registry.upsert(rule, { replace: data.replace === true });
   } else if (data.operation === "remove" && Array.isArray(data.ids)) {
     registry.remove(data.ids.filter((id): id is string => typeof id === "string"));
   }

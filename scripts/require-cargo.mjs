@@ -2,6 +2,6 @@
 import { spawnSync } from "node:child_process";
 
 if (spawnSync("cargo", ["--version"], { stdio: "ignore" }).error !== undefined) { // NOSONAR - this preflight exists to check cargo is on PATH
-  console.error('cargo not found on PATH; run `export PATH="$HOME/.cargo/bin:$PATH"` (or `just rerail-native` to install Rust)');
+  console.error('cargo not found on PATH; run `export PATH="$HOME/.cargo/bin:$PATH"`, or install Rust from https://rustup.rs');
   process.exit(1);
 }

@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:strict-comparisons",
   "revision": 1,
+  "mode": "steer",
   "description": "Syntactic approximation: checks comparisons whose operands are both literals (number, string, boolean, null, undefined, object/array).",
   "scope": { "include": ["**/*"], "exclude": [] },
-  "checks": [
+  "clauses": [
     {
       "id": "literal-comparison",
       "forbid": {
@@ -84,10 +85,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "STRICT_COMPARISONS",
-        "severity": "error",
         "message": "Cannot compare these operand types with this comparator."
       }
     }

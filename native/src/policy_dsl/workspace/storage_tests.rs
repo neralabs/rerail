@@ -4,9 +4,7 @@
 use super::api::{ON_STORAGE_ATTACHED, PolicyDslWorkspace, StorageAttachment, WorkspaceApplyTask};
 use super::storage::storage_context_in;
 use super::tests::{WORKSPACE_TEST_SLOT, git};
-use crate::content_store::{
-    AFTER_GIT_TREE_TRANSACTION, CLOCK_OFFSET, ContentStore, MAX_COLLECTION_BATCH, STORE_FILE_NAME,
-};
+use crate::content_store::{AFTER_GIT_TREE_TRANSACTION, CLOCK_OFFSET, MAX_COLLECTION_BATCH};
 use crate::policy_dsl::{CompiledPolicyDsl, PolicyDslRuntime};
 use napi::Task;
 use serde_json::{Value, json};
@@ -107,10 +105,11 @@ fn needle_policy() -> CompiledPolicyDsl {
     });
     let policy = json!({
         "format": "rerail.policy/v1", "id": "storage-needle", "revision": 1,
+        "mode": "steer",
         "scope": { "include": ["**/*.py"], "exclude": [] },
-        "checks": [{
-            "id": "needle", "finding": { "anchor": "witness.span", "code": "NEEDLE",
-                "message": "found needle", "severity": "error" },
+        "clauses": [{
+            "id": "needle", "violation": { "anchor": "witness.span", "code": "NEEDLE",
+                "message": "found needle" },
             "forbid": { "regex": { "pattern": "NEEDLE", "source": "file.content" } }
         }]
     });
@@ -131,7 +130,7 @@ fn apply_source(workspace: &PolicyDslWorkspace, revision: u32, source: &str) -> 
         request_direct: None,
     };
     let result: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
-    result["evaluation"]["findings"]
+    result["evaluation"]["violations"]
         .as_array()
         .unwrap()
         .iter()
@@ -231,52 +230,6 @@ fn closing_while_storage_attaches_releases_the_attached_storage() {
     assert!(
         workspace.state.lock().unwrap().storage.is_none(),
         "a close that lands while the attach holds the workspace leaves no storage registration behind"
-    );
-}
-
-/// The previous release stamped its machine-wide store at floor 16 and refuses any store above
-/// its floor, so the store the managed build names in that directory must never be that file.
-#[test]
-fn default_storage_leaves_an_older_binary_store_on_its_floor() {
-    let _slot = test_slot();
-    let repository = Repository::new("older-binary-store");
-    let home = repository.store("home");
-    let older = home.join(".cache/nera/rerail/content-v2.sqlite");
-    std::fs::create_dir_all(older.parent().unwrap()).unwrap();
-    drop(ContentStore::open(&older).unwrap());
-    {
-        let connection = rusqlite::Connection::open(&older).unwrap();
-        // Floor 16's git_trees held only the id and the hash.
-        let added = connection
-            .prepare("SELECT name FROM pragma_table_info('git_trees') WHERE cid > 1")
-            .unwrap()
-            .query_map([], |row| row.get::<_, String>(0))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        for column in added {
-            connection
-                .execute_batch(&format!("ALTER TABLE git_trees DROP COLUMN {column}"))
-                .unwrap();
-        }
-        connection
-            .execute_batch(
-                "UPDATE store_schema_revision SET revision=16 WHERE singleton=1;
-                 PRAGMA user_version=16;",
-            )
-            .unwrap();
-    }
-
-    let managed = home.join(".cache/nera/rerail").join(STORE_FILE_NAME);
-    let attached = storage_context_in(&repository.root(), managed);
-    assert!(attached.is_ok(), "{:?}", attached.err());
-    let floor: i64 = rusqlite::Connection::open(&older)
-        .unwrap()
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .unwrap();
-    assert_eq!(
-        floor, 16,
-        "attaching the default store raised the older binary's store above the floor it accepts"
     );
 }
 

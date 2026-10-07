@@ -1,4 +1,7 @@
 use super::*;
+use crate::policy_dsl::CompiledPolicyDsl;
+use crate::policy_dsl::matcher::GrammarMatcher;
+use crate::policy_dsl::model::{CheckKind, Query};
 use crate::policy_dsl::tape::{Grammar, TapeDoc, TapeImage};
 use crate::policy_dsl::test_support::{compiled, grammar_matchers};
 use ast_grep_core::matcher::MatcherExt;
@@ -110,6 +113,28 @@ fn compare(source: &str, language: GrammarDialect, rules: &[Value]) {
 }
 
 fn compare_parsed(source: &str, language: GrammarDialect, rules: &[Value], damaged: bool) {
+    let matchers: Vec<_> = rules
+        .iter()
+        .map(|rule| {
+            let matcher = compile_rule(rule, language, "test/rule", &mut Vec::new()).unwrap();
+            (rule.to_string(), matcher)
+        })
+        .collect();
+    let matchers: Vec<_> = matchers
+        .iter()
+        .map(|(rule, matcher)| (rule.as_str(), matcher))
+        .collect();
+    compare_matchers(source, language, &matchers, damaged);
+}
+
+/// Each matcher (named for its failures) selects the same nodes from the anchor index of the
+/// native tree and of the restored tape as a full walk does.
+fn compare_matchers(
+    source: &str,
+    language: GrammarDialect,
+    matchers: &[(&str, &AstMatcher)],
+    damaged: bool,
+) {
     let native = StrDoc::new(source, language);
     assert_eq!(
         native.tree.root_node().has_error(),
@@ -122,14 +147,13 @@ fn compare_parsed(source: &str, language: GrammarDialect, rules: &[Value], damag
     let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
     assert_eq!(native.root().dfs().count(), image.node_count());
-    for rule in rules {
-        let matcher = compile_rule(rule, language, "test/rule", &mut Vec::new()).unwrap();
-        let plan = AnchorPlan::compile(&matcher);
-        let expected = actual(&native, &matcher);
+    for &(rule, matcher) in matchers {
+        let plan = AnchorPlan::compile(matcher);
+        let expected = actual(&native, matcher);
         let (native_found, _, native_visited, native_complete, _) =
-            selected(&native, &matcher, &plan, usize::MAX, || false);
+            selected(&native, matcher, &plan, usize::MAX, || false);
         let (tape_found, _, tape_visited, tape_complete, _) =
-            selected(&tape, &matcher, &plan, usize::MAX, || false);
+            selected(&tape, matcher, &plan, usize::MAX, || false);
         assert!(native_complete && tape_complete, "{language:?} {rule}");
         assert_eq!(
             native_visited,
@@ -143,7 +167,7 @@ fn compare_parsed(source: &str, language: GrammarDialect, rules: &[Value], damag
         );
         assert_eq!(tape_found, expected, "tape selection {language:?} {rule}");
         assert_eq!(
-            actual(&tape, &matcher),
+            actual(&tape, matcher),
             expected,
             "unchanged matcher {language:?} {rule}"
         );
@@ -163,7 +187,7 @@ fn damaged_trees_select_identically_on_native_and_restored_tape() {
         json!({"kind": "statement_block", "has": {"kind": "debugger_statement"}}),
     ];
     for source in [
-        "const m = importOriginal<typeof import(\"./api\")>();\nconsole.log(m);\n",
+        "const m = importOriginal(1 load(\"./api\"));\nconsole.log(m);\n",
         "debugger;\nfunction f( {\n  debugger;\n",
         "function f() {\n  debugger;\n  x = 1;\n",
     ] {
@@ -413,47 +437,78 @@ fn string_comments_unicode_prefixes_long_residue_and_python_variadics() {
     );
 }
 
+/// Every AST query of the shipped catalog (the opt-in packs) and of the Python conformance pack,
+/// compiled with its utilities, constraints and its document's definitions, selects the same nodes on the native tree and on
+/// the restored tape.
 #[test]
 fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
-    fn collect(value: &Value, rules: &mut Vec<(String, Value)>) {
+    fn collect(value: &Value, queries: &mut Vec<Value>) {
         match value {
             Value::Object(object) => {
                 for (key, child) in object {
                     if key == "ast" {
-                        let language = child["language"].as_str().expect("AST query language");
-                        rules.push((language.to_owned(), child["rule"].clone()));
+                        queries.push(child.clone());
                     } else {
-                        collect(child, rules);
+                        collect(child, queries);
                     }
                 }
             }
             Value::Array(items) => {
                 for item in items {
-                    collect(item, rules);
+                    collect(item, queries);
                 }
             }
             _ => {}
         }
     }
-
-    let catalog = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../policies/executable-policy-dsl/rules");
-    let mut rules = Vec::new();
-    for entry in std::fs::read_dir(catalog).unwrap() {
-        let path = entry.unwrap().path();
-        if path.extension().is_none_or(|ext| ext != "json") {
-            continue;
-        }
-        let document: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-        collect(&document["checks"], &mut rules);
+    /// The query's matchers: the first AST check's.
+    fn ast_matchers(compiled: &CompiledPolicyDsl) -> &[GrammarMatcher] {
+        compiled
+            .inner
+            .checks
+            .iter()
+            .find_map(|check| match &check.kind {
+                CheckKind::Forbid(Query::Ast { matchers, .. }) => Some(matchers.as_slice()),
+                _ => None,
+            })
+            .expect("an AST check")
     }
-    assert_eq!(rules.len(), 38, "pinned catalog query inventory");
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut pending = vec![
+        root.join("policies/executable-policy-dsl/rules"),
+        root.join("conformance/languages/python/rules"),
+    ];
+    // Each query with its document's `define` clauses, which declare the options and utilities
+    // it may use.
+    let mut queries: Vec<(Value, Vec<Value>)> = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "json") {
+                let document: Value =
+                    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+                let clauses = document["clauses"].as_array().expect("clauses");
+                let defines: Vec<_> = clauses
+                    .iter()
+                    .filter(|clause| clause.get("define").is_some())
+                    .cloned()
+                    .collect();
+                let mut found = Vec::new();
+                collect(&document["clauses"], &mut found);
+                queries.extend(found.into_iter().map(|query| (query, defines.clone())));
+            }
+        }
+    }
+    assert_eq!(queries.len(), 119, "pinned catalog query inventory");
     // Every catalog grammar needs a fixture here; an unknown language fails rather than being skipped.
     let fixtures = [
         (
             "python",
             GrammarDialect::Python,
-            "from data_layer import AbstractData\nclass Example:\n    def run(self, txn):\n        value = txn.execute('select * from users')\n        return sorted(value)\n",
+            "from data_layer import AbstractData\nclass Example:\n    def run(self, txn):\n        value = txn.execute('select * from users')\n        assert value != None\n        return sorted(value)\n",
         ),
         (
             "typescript",
@@ -461,27 +516,57 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             "function run(db: any, id: string): string {\n  const rows = db.query(\"select * from users where id = \" + id);\n  return rows as any;\n}\n",
         ),
     ];
-    for (language, _) in &rules {
+    for (query, _) in &queries {
+        let language = query["language"].as_str().expect("AST query language");
         assert!(
-            fixtures.iter().any(|(name, ..)| name == language),
+            fixtures.iter().any(|(name, ..)| *name == language),
             "catalog AST language {language} has no restored-tape fixture"
         );
     }
     for (name, language, source) in fixtures {
-        let language_rules: Vec<_> = rules
+        let compiled: Vec<_> = queries
             .iter()
-            .filter(|(rule_language, _)| rule_language == name)
-            .map(|(_, rule)| rule.clone())
+            .filter(|(query, _)| query["language"] == name)
+            .map(|(query, defines)| {
+                let mut clauses = defines.clone();
+                clauses.push(json!({
+                    "id": "ast-match",
+                    "forbid": { "ast": query },
+                    "violation": { "anchor": "witness.span", "code": "AST_MATCH", "message": "match" },
+                }));
+                let document = json!({
+                    "format": "rerail.policy/v1",
+                    "id": "catalog-query",
+                    "revision": 1,
+                    "mode": "block",
+                    "clauses": clauses,
+                });
+                let compiled = crate::policy_dsl::PolicyDslRuntime::compile(
+                    document.to_string(),
+                    "json".to_owned(),
+                    crate::policy_dsl::test_support::CAPABILITIES.to_owned(),
+                )
+                .unwrap_or_else(|error| panic!("{query}: {}", error.reason));
+                (query.to_string(), compiled)
+            })
+            .collect();
+        let matchers: Vec<_> = compiled
+            .iter()
+            .flat_map(|(query, compiled)| {
+                ast_matchers(compiled)
+                    .iter()
+                    .filter(|grammar| grammar.language == language)
+                    .map(move |grammar| (query.as_str(), &grammar.matcher))
+            })
             .collect();
         let root = AstGrep::doc(StrDoc::new(source, language));
         assert!(
-            language_rules.iter().any(|rule| {
-                let matcher = compile_rule(rule, language, "test/rule", &mut Vec::new()).unwrap();
-                !actual(&root, &matcher).is_empty()
-            }),
+            matchers
+                .iter()
+                .any(|(_, matcher)| !actual(&root, matcher).is_empty()),
             "the {name} catalog fixture must exercise at least one positive rule"
         );
-        compare(source, language, &language_rules);
+        compare_matchers(source, language, &matchers, false);
     }
 }
 
@@ -1091,6 +1176,75 @@ fn utility_plans_reached_from_disjoint_scopes_test_only_those_scopes() {
         assert!(
             utility_visits <= inline_visits,
             "utility {utility} tested {utility_visits} roots; inline {inline_visits}"
+        );
+    }
+}
+
+/// A relation selects its inner rule among the nodes it relates to the scope's roots (their
+/// siblings, parents or children), and a root-kind test of a narrow scope reads the scope, not
+/// the kinds' postings: the budget units a selection spends do not grow with code no root is near.
+/// The shapes are the TypeScript pack's (no-this-alias, no-self-compare, eqeqeq), which spent most
+/// of a large file's work budget reading every node of it once per relation.
+#[test]
+fn relation_selections_spend_units_on_the_related_nodes_only() {
+    use crate::policy_dsl::budget::MatchBudget;
+    use std::sync::atomic::AtomicBool;
+    let rules = [
+        json!({ "kind": "variable_declarator", "has": {
+            "stopBy": "neighbor", "kind": "identifier", "precedes": { "stopBy": "end", "regex": "^=$" },
+        } }),
+        json!({ "kind": "binary_expression", "has": {
+            "stopBy": "neighbor", "regex": "^===$", "follows": { "stopBy": "end", "not": { "kind": "comment" } },
+        } }),
+        json!({ "regex": "^==$", "inside": { "stopBy": "neighbor", "kind": "binary_expression" } }),
+        json!({ "kind": "variable_declarator", "has": {
+            "stopBy": "neighbor", "any": [{ "kind": "identifier" }, { "kind": "number" }],
+        } }),
+    ];
+    let source = |filler: usize| {
+        let mut source = (0..20)
+            .map(|n| format!("const s{n} = this;\nif (a{n} === b{n} || c{n} == 1) {{}}\n"))
+            .collect::<String>();
+        // Identifiers, `=` tokens and comments, but no declarator or binary expression.
+        for n in 0..filler {
+            source.push_str(&format!("x{n}.y = f(a{n}, b{n}.c, [d{n}]); // n\n"));
+        }
+        source
+    };
+    for rule in &rules {
+        let matcher = compile_rule(
+            rule,
+            GrammarDialect::TypeScript,
+            "test/rule",
+            &mut Vec::new(),
+        )
+        .unwrap();
+        let plan = AnchorPlan::compile(&matcher);
+        let units = |filler: usize| {
+            let source = source(filler);
+            let native = AstGrep::doc(StrDoc::new(&source, GrammarDialect::TypeScript));
+            let index = FileAnchorIndex::build(&native, &[&plan], usize::MAX, || false);
+            let budget = MatchBudget::work(&Arc::new(AtomicBool::new(false)), u64::MAX);
+            let selection = index.select(&plan);
+            let spent = budget.spent();
+            drop(budget);
+            let found = match &selection {
+                Selection::All => panic!("{rule}: a complete index selects roots"),
+                Selection::Roots(roots) => roots
+                    .iter()
+                    .filter_map(|&ordinal| matched(index.node(ordinal), &matcher))
+                    .collect::<Vec<_>>(),
+            };
+            assert_eq!(found, actual(&native, &matcher), "{rule}: sound selection");
+            assert_eq!(found.len(), 20, "{rule}");
+            (spent, index.len())
+        };
+        let (small, small_nodes) = units(500);
+        let (large, large_nodes) = units(8_000);
+        assert!(large_nodes > 10 * small_nodes, "{rule}");
+        assert!(
+            large <= small + 2,
+            "{rule}: {small} units with {small_nodes} nodes, {large} with {large_nodes}"
         );
     }
 }

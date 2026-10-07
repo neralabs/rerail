@@ -23,7 +23,7 @@ fn ranges(key: &str, rule: Value, source: &str) -> Vec<(u64, u64)> {
     let document = check_document(json!({
         "id": "port",
         "forbid": { "ast": ast },
-        "finding": { "anchor": "witness.span", "code": "PORT", "message": "port", "severity": "error" },
+        "violation": { "anchor": "witness.span", "code": "PORT", "message": "port" },
     }));
     let compiled = compile_document_with(
         document,
@@ -37,7 +37,7 @@ fn ranges(key: &str, rule: Value, source: &str) -> Vec<(u64, u64)> {
     };
     let result = evaluate_file(&compiled, "python", path, source);
     assert_eq!(result["failures"], json!([]), "{result}");
-    let mut ranges = result["findings"]
+    let mut ranges = result["violations"]
         .as_array()
         .expect("findings")
         .iter()

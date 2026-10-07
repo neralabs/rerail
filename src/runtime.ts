@@ -23,12 +23,14 @@ import { bootstrapPolicyDslCatalog, type PolicyDslCatalog } from "./policy-dsl-c
 import { loadBundledRules } from "./rule-bootstrap.js";
 import { defaultRerailDatabasePath } from "./database.js";
 import { resolveRepositoryContext, ScopedRuleCatalog, type RepositoryContext } from "./scoped-rule-catalog.js";
+import { effectiveRepositoryStartState, RepositoryStartWatch } from "./repository-start.js";
 import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "./semantic-primitives.js";
 import { CosineRuleRegistry, type RuleMatch } from "./registry.js";
 import { LiveCosineRules } from "./cosine-rule-sync.js";
-import { parseCosineRule, parseSampleSource, SAMPLE_BOUNDARIES } from "./rule-schema.js";
+import { parseSampleSource, SAMPLE_BOUNDARIES } from "./rule-schema.js";
 import { cosineRuleLoader } from "./rule-sources.js";
-import type { RuleMutation } from "./session-state.js";
+import { RULE_MODES } from "./rule-mode.js";
+import { restorableRule, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
 import { SqliteTranscriptStore } from "./transcript-store.js";
 import type {
@@ -86,11 +88,11 @@ function policyScanVerdict(runIds: readonly string[], runs: readonly (PolicyRunR
   if (unavailable >= 0) return { status: "failed", error: `Policy run ${runIds[unavailable]} was not recorded` };
   const completed = runs as PolicyRunRecord[];
   const interrupted = completed.find(run => run.status === "interrupted");
-  if (interrupted !== undefined) return { status: "interrupted", error: `Policy run ${interrupted.runId} was interrupted` };
+  if (interrupted !== undefined) return { status: "interrupted", error: `Policy run ${interrupted.auditId} was interrupted` };
   const failed = completed.find(run => run.status !== "completed");
   if (failed !== undefined) {
     const details = failed.failures.map(failure => failure.message).filter(Boolean).join("; ");
-    return { status: "failed", error: details || `Policy run ${failed.runId} ended ${failed.status}` };
+    return { status: "failed", error: details || `Policy run ${failed.auditId} ended ${failed.status}` };
   }
   return { status: "completed", error: null };
 }
@@ -147,8 +149,8 @@ const LedgerEntrySchema = z.union([
     type: z.literal("delivery"),
     delivery: z.object({
       sessionId: z.string(),
-      requested: z.enum(["observe", "steer", "followUp", "nextTurn"]),
-      mechanism: z.enum(["observe", "native-queue", "additional-context", "continuation", "deferred-context"]),
+      requested: z.enum(RULE_MODES),
+      mechanism: z.enum(["observe", "native-queue", "additional-context", "deferred-context"]),
       content: z.string(),
       // Ledger entries written before re-rail attribution carry no rule ids.
       ruleIds: z.array(z.string()).default([]),
@@ -357,6 +359,31 @@ function sessionDirectory(root: string, sessionId: string): string {
   return join(root, createHash("sha256").update(sessionId).digest("hex"));
 }
 
+/** Replays a session ledger into its registry and returns the turn the session had reached. */
+function replayLedger(registry: CosineRuleRegistry, ledger: readonly LedgerEntry[]): number {
+  let turn = 0;
+  for (const entry of ledger) {
+    if (entry.type === "rule-mutation") {
+      applyRuleMutation(registry, entry.mutation);
+    } else if (entry.type === "rule-match") {
+      registry.restoreDelivery(entry.ruleId, entry.turn);
+      turn = Math.max(turn, entry.turn);
+    } else if (entry.type === "turn") {
+      turn += 1;
+    }
+  }
+  return turn;
+}
+
+function applyRuleMutation(registry: CosineRuleRegistry, mutation: RuleMutation): void {
+  if (mutation.operation === "remove") {
+    registry.remove(mutation.ids);
+    return;
+  }
+  const rule = restorableRule(mutation.rule, "persisted rule");
+  if (rule !== undefined) registry.upsert(rule, { replace: mutation.replace });
+}
+
 function publicProjection(projection: SemanticProjection): unknown {
   return {
     projectionId: projection.id,
@@ -374,6 +401,11 @@ function publicProjection(projection: SemanticProjection): unknown {
 
 export interface RerailRuntimeOptions {
   autostart?: boolean;
+  /**
+   * Resident runtimes (daemon-owned OMP/Pi sessions, the event stream, Pi in-process) outlive a stop
+   * issued elsewhere; with this set they drop every event while Rerail is stopped in the repository.
+   */
+  startGate?: boolean;
   storageRoot: string;
   embedder?: SemanticEmbedder;
   modelPath?: string;
@@ -427,6 +459,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #autostart: boolean;
   readonly #ingestLanes = new SessionLanes();
   readonly #sourceObservations: SourceObservationCache = new Map();
+  readonly #startWatch: RepositoryStartWatch | undefined;
 
   constructor(options: RerailRuntimeOptions) {
     this.#storageRoot = options.storageRoot;
@@ -450,13 +483,16 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     let controls: SqliteScanControlStore | undefined;
     let ruleCatalog: ScopedRuleCatalog | undefined;
     let policyCatalog: PolicyDslCatalog | undefined;
+    let startWatch: RepositoryStartWatch | undefined;
     try {
       const catalog = ScopedRuleCatalog.open(
         databasePath,
         options.repositoryContext ?? resolveRepositoryContext(workspaceRoot),
       );
       ruleCatalog = catalog;
-      catalog.seed(loadBundledRules());
+      // Bundled rules arrive only where Rerail is started; `rerail start` seeds a new repository.
+      if (effectiveRepositoryStartState(catalog.path, catalog.context()) === "started") catalog.seed(loadBundledRules());
+      startWatch = options.startGate === true ? new RepositoryStartWatch(catalog.path, catalog.context()) : undefined;
       policyCatalog = bootstrapPolicyDslCatalog({
         databasePath: catalog.path, store: catalog,
         onRefresh: () => { for (const sessionId of this.#sessions.keys()) this.recordRuleCoverage(sessionId); },
@@ -470,10 +506,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       this.#transcripts = transcripts;
       this.#executions = executions;
       this.#controls = controls;
+      this.#startWatch = startWatch;
     } catch (error) {
       transcripts?.close();
       executions?.close();
       controls?.close();
+      startWatch?.close();
       if (policyCatalog !== undefined) policyCatalog.close();
       else ruleCatalog?.close();
       throw error;
@@ -484,9 +522,21 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#controlTimer.unref?.();
   }
 
+  /** Stopped repositories record and steer nothing, even in sessions that attached before the stop. */
+  #stopped(): boolean {
+    return this.#startWatch !== undefined && !this.#startWatch.started();
+  }
+
   ingest(event: AdapterEvent): Promise<readonly AdapterDelivery[]> {
     const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
+    if (this.#stopped() && event.kind !== "session-end") return Promise.resolve([]);
     return this.#ingestLanes.run(sessionId, async () => {
+      // Checked again in the lane: an event accepted while started can run after a stop committed elsewhere.
+      if (this.#stopped()) {
+        // A session that attached while started still ends, releasing its policy bridge and polling; nothing is recorded.
+        if (event.kind === "session-end" && this.#sessions.has(sessionId)) await this.closeSession(sessionId);
+        return [];
+      }
       const sourceSignature = this.#sessions.get(sessionId)?.ruleSync?.sourceSignature;
       const deliveries = await this.#ingest(event);
       if (event.kind !== "assistant-delta" || event.final
@@ -512,7 +562,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#schedulePolicyControls(state.descriptor.sessionId);
     state.ruleSync?.refresh();
     state.policyBridge?.refreshPolicies();
-    if (event.kind === "tool-call") {
+    if (event.kind === "call") {
       const id = event.toolCallId;
       const preimages = await state.policyBridge?.begin(id, event.toolName, event.input);
       await this.#append(state, {
@@ -522,7 +572,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       state.pendingPolicyCalls.push({ id, toolName: event.toolName });
     }
     await this.#router(descriptor.host).ingest(event);
-    if (event.kind === "tool-result") {
+    if (event.kind === "result") {
       const index = state.pendingPolicyCalls.findIndex((call) => call.id === event.toolCallId);
       if (index >= 0) {
         const [call] = state.pendingPolicyCalls.splice(index, 1);
@@ -550,7 +600,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    */
   async collectDeliveries(sessionId: string): Promise<AdapterDelivery[]> {
     const state = this.#sessions.get(sessionId);
-    return state === undefined ? [] : this.#collectPolicyDeliveries(state);
+    return state === undefined || this.#stopped() ? [] : this.#collectPolicyDeliveries(state);
   }
 
   async #collectPolicyDeliveries(state: RuntimeSessionState): Promise<AdapterDelivery[]> {
@@ -681,8 +731,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       this.#transcripts.recordRuleCoverage(state.descriptor, {
         repositoryId: this.#ruleCatalog.context().repositoryId,
         activeRuleCount: (state.registry?.count ?? 0) + this.#policyCatalog.status.ruleCount,
-        cosineRuleSignature: state.ruleSync?.sourceSignature ?? "",
-        policyRuleSignature: this.#policyCatalog.status.sourceSignature,
+        conversationRuleSignature: state.ruleSync?.sourceSignature ?? "",
+        fileRuleSignature: this.#policyCatalog.status.sourceSignature,
       });
     } catch (error) {
       console.error("rerail rule coverage:", error);
@@ -697,6 +747,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#transcripts.close();
     this.#transcriptsClosed = true;
     this.#policyCatalog.close();
+    this.#startWatch?.close();
   }
 
   async openSession(session: AdapterSession): Promise<HostRuntimeSessionState> {
@@ -953,8 +1004,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       this.#nativeSession?.onMatch(match, sample, state.turn);
       const delivery: AdapterDelivery = {
         sessionId: sample.sessionId,
-        requested: match.action.delivery,
-        mechanism: ADAPTER_CAPABILITIES[state.descriptor.host].delivery[match.action.delivery],
+        requested: match.mode,
+        mechanism: ADAPTER_CAPABILITIES[state.descriptor.host].delivery[match.mode],
         content: match.action.content,
         // Cosine matches are not policy steering, so they carry no policy rule ids.
         ruleIds: [],
@@ -1043,13 +1094,14 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const index = state.backgroundDeliveries.indexOf(pending);
     if (index < 0) return undefined;
     state.backgroundDeliveries.splice(index, 1);
-    if (!this.#currentPolicyResult(state, pending)) return undefined;
+    if (!this.#currentPolicyResult(state, pending) || this.#stopped()) return undefined;
     try {
       await this.persistDelivery(pending.delivery);
     } catch (error) {
       process.stderr.write(`rerail: could not record policy delivery: ${error instanceof Error ? error.message : String(error)}\n`);
     }
-    if (!this.#currentPolicyResult(state, pending)) return undefined;
+    // A stop committed elsewhere while the ledger was written withholds the result.
+    if (!this.#currentPolicyResult(state, pending) || this.#stopped()) return undefined;
     if (!native) return pending.delivery;
     try {
       await this.#deliverBackground!(pending.delivery);
@@ -1095,26 +1147,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       return { registry, turn: 0, ruleSync: undefined };
     }
     const directory = RULE_DIRECTORIES[session.host] ?? ".codex";
-    const ruleSync = new LiveCosineRules(this.#ruleCatalog, registry, cosineRuleLoader({}, session.cwd, join(directory, "cosine-rules.json")));
+    const ruleSync = new LiveCosineRules(this.#ruleCatalog, registry, cosineRuleLoader({}, session.cwd, join(directory, "conversation-rules.json")));
     ruleSync.prime();
-    let turn = 0;
-    for (const entry of ledger) {
-      if (entry.type === "rule-mutation") {
-        if (entry.mutation.operation === "upsert") {
-          registry.upsert(parseCosineRule(entry.mutation.rule, "persisted rule"), { replace: entry.mutation.replace });
-        } else {
-          registry.remove(entry.mutation.ids);
-        }
-      } else if (entry.type === "rule-match") {
-        registry.restoreDelivery(entry.ruleId, entry.turn);
-        turn = Math.max(turn, entry.turn);
-      } else if (entry.type === "turn") {
-        turn += 1;
-      }
-    }
     return {
       registry,
-      turn,
+      turn: replayLedger(registry, ledger),
       ruleSync,
     };
   }

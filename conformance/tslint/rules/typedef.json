@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:typedef",
   "revision": 1,
+  "mode": "steer",
   "description": "Requires type definitions. TSLint's default (no options) checks nothing; an empty checks list does not compile, so this doc holds one check that cannot match. Per-option variants live in typedef/.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "no-options",
       "forbid": {
@@ -27,10 +28,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TYPEDEF",
-        "severity": "error",
         "message": "typedef with no options checks nothing"
       }
     }

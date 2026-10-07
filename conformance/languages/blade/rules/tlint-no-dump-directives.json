@@ -1,0 +1,39 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tlint-no-dump-directives",
+  "revision": 1,
+  "mode": "steer",
+  "description": "tlint 9.7.0 NoDumpDirectives: a @dd or @dump directive.",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "rule": {
+            "any": [
+              {
+                "kind": "directive"
+              },
+              {
+                "kind": "directive_start"
+              }
+            ],
+            "regex": "^@(dd|dump)$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "NoDumpDirectives",
+        "message": "Do not use the @dump or @dd directives."
+      }
+    }
+  ]
+}

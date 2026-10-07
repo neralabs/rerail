@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-unnecessary-class",
   "revision": 1,
+  "mode": "steer",
   "description": "no-unnecessary-class with allow-empty-class.",
   "scope": {"include": ["**/*"], "exclude": []},
-  "checks": [
+  "clauses": [
     {
       "id": "constructor-only",
       "forbid": {
@@ -72,10 +73,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.KW",
         "code": "NO_UNNECESSARY_CLASS_CONSTRUCTOR_ONLY",
-        "severity": "error",
         "message": "Every member of this class is a constructor. Use functions instead."
       }
     },
@@ -145,10 +145,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.KW",
         "code": "NO_UNNECESSARY_CLASS_STATIC_ONLY",
-        "severity": "error",
         "message": "Every member of this class is static. Use namespaces or plain objects instead."
       }
     }

@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:invalid-void",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `invalid-void` rule with its default options (https://palantir.github.io/tslint/rules/invalid-void/). Disallows void outside of return types and generic type arguments (TSLint default: allow-generics true).",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "invalid-void",
       "forbid": {
@@ -146,10 +147,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "INVALID_VOID",
-        "severity": "error",
         "message": "void is only valid as a return type or generic type variable"
       }
     }

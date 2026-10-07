@@ -1,0 +1,91 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-no-render-return-value",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-react 7.37.5 react/no-render-return-value (latest React): a `ReactDOM.render(...)` call whose value is used: its parent (parentheses aside) is a declarator, a property, a return, an arrow body or an assignment.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "kind": "member_expression",
+              "all": [
+                {
+                  "has": {
+                    "field": "object",
+                    "kind": "identifier",
+                    "regex": "^ReactDOM$"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "property",
+                    "regex": "^render$"
+                  }
+                }
+              ]
+            },
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "any": [
+                {
+                  "kind": "variable_declarator"
+                },
+                {
+                  "kind": "pair"
+                },
+                {
+                  "kind": "return_statement"
+                },
+                {
+                  "kind": "arrow_function"
+                },
+                {
+                  "kind": "assignment_expression"
+                },
+                {
+                  "kind": "augmented_assignment_expression"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-render-return-value",
+        "message": "Do not depend on the return value from ReactDOM.render",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-render-return-value"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

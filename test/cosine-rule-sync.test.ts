@@ -19,10 +19,11 @@ afterEach(async () => {
 function rule(id: string, reference: string, overrides: Partial<CosineRule> = {}): CosineRule {
   return {
     id,
+    mode: "steer",
     reference,
     match: { operator: "gte", threshold: 0.99 },
     sample: { source: "assistant-text", boundary: "message", minimumTokens: 1 },
-    action: { delivery: "steer", content: `Remember: ${id}` },
+    action: { content: `Remember: ${id}` },
     repeat: { mode: "always" },
     ...overrides,
   };
@@ -45,25 +46,25 @@ describe("LiveCosineRules", () => {
     const { root, databasePath } = await project();
     await mkdir(join(root, ".omp"), { recursive: true });
     await writeFile(
-      join(root, ".omp", "cosine-rules.json"),
+      join(root, ".omp", "conversation-rules.json"),
       JSON.stringify({
         version: 1,
         rules: [
-          rule("shared", "Guest checkout remains available.", { action: { delivery: "steer", content: "from file" } }),
-          rule("later", "Refunds are issued within seven days.", { action: { delivery: "steer", content: "from file" } }),
+          rule("shared", "Guest checkout remains available.", { action: { content: "from file" } }),
+          rule("later", "Refunds are issued within seven days.", { action: { content: "from file" } }),
         ],
       }),
     );
     const daemon = new SqliteRuleStore(databasePath);
-    daemon.upsertCosine(rule("shared", "Guest checkout remains available.", { action: { delivery: "steer", content: "from database" } }), { now: 1_000 });
+    daemon.upsertCosine(rule("shared", "Guest checkout remains available.", { action: { content: "from database" } }), { now: 1_000 });
 
     const registry = new CosineRuleRegistry({ modelPath: resolve("model") });
-    const sync = new LiveCosineRules(new SqliteRuleStore(databasePath), registry, cosineRuleLoader({}, root, ".omp/cosine-rules.json"));
+    const sync = new LiveCosineRules(new SqliteRuleStore(databasePath), registry, cosineRuleLoader({}, root, ".omp/conversation-rules.json"));
     try {
       sync.prime();
       expect(registry.match({ source: "assistant-text", boundary: "message", text: "Guest checkout remains available." })[0]?.action.content).toBe("from database");
 
-      // A rule the session added through the cosine_rules tool is not the sync's to manage.
+      // A rule the session added through the conversation_rules tool is not the sync's to manage.
       registry.upsert(rule("session:only", "Sessions add their own rules."));
       expect(sync.refresh()).toBe(false);
 
@@ -119,7 +120,7 @@ describe("LiveCosineRules", () => {
       expect(sync.refresh()).toBe(true);
       expect(matched(registry, "Guest checkout remains available.", 9)).toEqual([]);
 
-      daemon.upsertCosine(rule("db:once", "Guest checkout remains available.", { repeat: { mode: "once" }, action: { delivery: "steer", content: "edited" } }), { now: 4_000 });
+      daemon.upsertCosine(rule("db:once", "Guest checkout remains available.", { repeat: { mode: "once" }, action: { content: "edited" } }), { now: 4_000 });
       expect(sync.refresh()).toBe(true);
       expect(matched(registry, "Guest checkout remains available.", 10)).toEqual([]);
       // ...but the edit itself did land.
@@ -146,7 +147,7 @@ describe("LiveCosineRules", () => {
     try {
       sync.prime();
       editor.upsertCosine(
-        rule("shared", "Guest checkout remains available.", { action: { delivery: "steer", content: "edited elsewhere" } }),
+        rule("shared", "Guest checkout remains available.", { action: { content: "edited elsewhere" } }),
         { applicability: "project", now: 2_000 },
       );
       expect(sync.refresh()).toBe(true);

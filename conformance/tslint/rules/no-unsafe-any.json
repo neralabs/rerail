@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-unsafe-any",
   "revision": 1,
+  "mode": "steer",
   "description": "Syntactic fragment only: flags member access / calls on JSON.parse(...), whose declared return type is `any`. General any-tracking needs the type checker (explicit `as any` casts are allowed by TSLint).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "syntactic-any-use",
       "forbid": {
@@ -30,10 +31,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_UNSAFE_ANY",
-        "severity": "error",
         "message": "Unsafe use of expression of type 'any'."
       }
     }

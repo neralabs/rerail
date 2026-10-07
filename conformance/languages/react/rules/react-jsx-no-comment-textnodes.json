@@ -1,0 +1,52 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-jsx-no-comment-textnodes",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-react 7.37.5 react/jsx-no-comment-textnodes: JSX text with a line that starts (after whitespace) with `//` or `/*`.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "jsx_text",
+            "regex": "(?m)^\\s*/[/*]",
+            "not": {
+              "follows": {
+                "stopBy": "neighbor",
+                "kind": "html_character_reference"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/jsx-no-comment-textnodes",
+        "message": "Comments inside children section of tag should be placed inside braces",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/jsx-no-comment-textnodes"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

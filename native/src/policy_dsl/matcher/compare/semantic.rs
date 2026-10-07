@@ -99,6 +99,33 @@ fn blade_spelled<D: Doc>(family: Family, left: &Node<'_, D>, right: &Node<'_, D>
     }
 }
 
+/// What `holds` reads of one bound node under `key` or `name`: `None` where its verdict is
+/// unknown whatever the other side (no reading, or a node Blade rewrote), `Some(None)` where the
+/// node has no key or name, which equals none.
+pub(super) fn name<D: Doc>(
+    comparison: &Comparison,
+    text: SemanticText,
+    node: &Node<'_, D>,
+) -> Option<Option<Vec<u16>>> {
+    let reading = comparison.reading.as_ref()?;
+    let family = Family::of(reading.language);
+    if !blade_spelled(family, node, node) {
+        return None;
+    }
+    Some(match (text, family) {
+        (SemanticText::Key, Family::Ecma) => key::static_property_name(node),
+        (SemanticText::Key, Family::Php | Family::Blade) => {
+            let mut read = |node: &Node<'_, D>| reading.value(node).as_ref().clone();
+            php_compare::key_name(node, &mut read).flatten()
+        }
+        (SemanticText::Name, _) => node_name(family, node),
+        (SemanticText::Key, Family::Python) => {
+            unreachable!("`key` is refused for this language when the policy compiles")
+        }
+        _ => unreachable!("`name` reads `key` and `name` only"),
+    })
+}
+
 /// Two bound captures compared under a semantic mode.
 pub(super) fn holds<D: Doc>(
     comparison: &Comparison,
@@ -114,26 +141,10 @@ pub(super) fn holds<D: Doc>(
     }
     match text {
         SemanticText::Key | SemanticText::Name => {
-            let (left, right) = if text == SemanticText::Key {
-                let mut read = |node: &Node<'_, D>| reading.value(node).as_ref().clone();
-                match family {
-                    Family::Ecma => (
-                        key::static_property_name(left),
-                        key::static_property_name(right),
-                    ),
-                    // A key whose value is not known has no static name.
-                    Family::Php | Family::Blade => (
-                        php_compare::key_name(left, &mut read).flatten(),
-                        php_compare::key_name(right, &mut read).flatten(),
-                    ),
-                    Family::Python => {
-                        unreachable!("`key` is refused for this language when the policy compiles")
-                    }
-                }
-            } else {
-                (node_name(family, left), node_name(family, right))
-            };
-            match (left, right) {
+            match (
+                name(comparison, text, left)?,
+                name(comparison, text, right)?,
+            ) {
                 (Some(left), Some(right)) => {
                     Some(comparison.op.test(comparison.units_order(&left, &right)))
                 }

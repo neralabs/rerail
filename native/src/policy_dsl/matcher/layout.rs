@@ -291,7 +291,7 @@ mod tests {
 
     fn python(rule: Value) -> crate::policy_dsl::CompiledPolicyDsl {
         compile_document_with(
-            check_document(json!({ "id": "c", "finding": finding(),
+            check_document(json!({ "id": "c", "violation": finding(),
                 "forbid": { "ast": { "language": "python", "rule": rule } } })),
             &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
         )

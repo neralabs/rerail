@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-invalid-template-strings",
   "revision": 1,
+  "mode": "steer",
   "description": "Warns on ${...} interpolation syntax inside ordinary (non-template) string literals.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "interpolation-in-string",
       "forbid": {
@@ -33,10 +34,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.INTERPOLATION",
         "code": "NO_INVALID_TEMPLATE_STRINGS",
-        "severity": "error",
         "message": "Interpolation will only work for template strings: $INTERPOLATION"
       }
     }

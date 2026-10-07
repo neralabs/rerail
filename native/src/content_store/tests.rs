@@ -4,7 +4,7 @@ use super::reclamation::{
     EXECUTED_COLLECT_SQL, STORE_ABSOLUTE_LIMIT, STORE_HARD_LIMIT, STORE_SOFT_LIMIT, capacity_state,
 };
 use super::rows::hash_params;
-use super::schema::{SCHEMA_V1, SCHEMA_VERSION, STORE_REVISION};
+use super::schema::SCHEMA_VERSION;
 use super::*;
 use rusqlite::limits::Limit;
 use rusqlite::params;
@@ -453,100 +453,6 @@ fn source_and_tape_objects_deduplicate_and_round_trip() {
 }
 
 #[test]
-fn migrates_schema_one_to_schema_two() {
-    let path = temporary_database("migration-v1-v2");
-    let connection = Connection::open(&path).unwrap();
-    connection.execute_batch(SCHEMA_V1).unwrap();
-    connection.pragma_update(None, "user_version", 1).unwrap();
-    drop(connection);
-
-    let store = ContentStore::open(&path).unwrap();
-    let connection = store.connection.lock().unwrap();
-    let version: i64 = connection
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .unwrap();
-    assert_eq!(version, SCHEMA_VERSION);
-    for table in [
-        "candidate_catalogs",
-        "candidate_checks",
-        "local_check_results",
-        "context_check_results",
-        "completed_directory_reuse",
-        "store_schema_revision",
-        "search_index_sets",
-        "search_kind_fts",
-    ] {
-        let found: bool = connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?1)",
-                [table],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(found, "missing migrated table {table}");
-    }
-}
-#[test]
-fn schema_twelve_store_migrates_directory_reuse_and_additive_revision() {
-    let path = temporary_database("migration-floor-v12");
-    let store = ContentStore::open(&path).unwrap();
-    drop(store);
-    downgrade_to_floor_sixteen(&path);
-    let connection = Connection::open(&path).unwrap();
-    connection
-        .execute_batch(
-            "DROP TABLE context_check_results;
-                 DROP TABLE completed_directory_reuse;
-                 DROP TABLE store_schema_revision;
-                 ALTER TABLE search_index_sets DROP COLUMN has_errors;
-                 CREATE VIRTUAL TABLE search_kind_instances USING fts5vocab(search_kind_fts, 'instance');
-                 PRAGMA user_version=12;",
-        )
-        .unwrap();
-    drop(connection);
-
-    let store = ContentStore::open(&path).unwrap();
-    let connection = store.connection.lock().unwrap();
-    let version: i64 = connection
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .unwrap();
-    let revision: i64 = connection
-        .query_row(
-            "SELECT revision FROM store_schema_revision WHERE singleton=1",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(version, SCHEMA_VERSION);
-    assert_eq!(revision, STORE_REVISION);
-}
-
-#[test]
-fn recorded_store_revision_is_not_downgraded() {
-    let (path, store) = store("revision-not-downgraded");
-    drop(store);
-    let connection = Connection::open(&path).unwrap();
-    connection
-        .execute(
-            "UPDATE store_schema_revision SET revision=?1 WHERE singleton=1",
-            [STORE_REVISION + 1],
-        )
-        .unwrap();
-    drop(connection);
-
-    let store = ContentStore::open(&path).unwrap();
-    let connection = store.connection.lock().unwrap();
-    let revision: i64 = connection
-        .query_row(
-            "SELECT revision FROM store_schema_revision WHERE singleton=1",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(revision, STORE_REVISION + 1);
-}
-
-#[test]
 fn newer_compatibility_floor_is_refused() {
     let (path, store) = store("newer-floor-refused");
     drop(store);
@@ -744,7 +650,7 @@ fn local_results_publish_across_sqlite_variable_limit_chunks() {
         .connection
         .lock()
         .unwrap()
-        .set_limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER, 100)
+        .set_limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER, 40)
         .unwrap();
     let snapshot = store
         .put_snapshot(
@@ -766,7 +672,7 @@ fn local_results_publish_across_sqlite_variable_limit_chunks() {
                     policy: HashKey::sha256(format!("policy-{index}").as_bytes()),
                     check: format!("check-{index}"),
                 },
-                context: HashKey::sha256(b"bulk-context"),
+                context: HashKey::sha256(format!("bulk-context-{}", index % 2).as_bytes()),
                 raw_length: bytes.len(),
                 frame: zstd::stream::encode_all(Cursor::new(bytes), 3).unwrap(),
             }
@@ -784,12 +690,31 @@ fn local_results_publish_across_sqlite_variable_limit_chunks() {
         candidates_current: false,
     };
     let stored = store.publish_overlay_file(workspace, publication).unwrap();
-    let restored = store
-        .local_check_results(stored.source, HashKey::sha256(b"bulk-context"), catalog)
-        .unwrap();
-    assert_eq!(restored.len(), results.len());
-    assert!(restored.iter().any(|result| result.bytes == b"result-0"));
-    assert!(restored.iter().any(|result| result.bytes == b"result-11"));
+    // Six results a statement at 40 variables: two statements, each naming both contexts.
+    for context in 0..2 {
+        let mut restored = store
+            .local_check_results(
+                stored.source,
+                HashKey::sha256(format!("bulk-context-{context}").as_bytes()),
+                catalog,
+            )
+            .unwrap()
+            .into_iter()
+            .map(|result| (result.candidate.check, result.bytes))
+            .collect::<Vec<_>>();
+        restored.sort();
+        let mut expected = (0..12)
+            .filter(|index| index % 2 == context)
+            .map(|index| {
+                (
+                    format!("check-{index}"),
+                    format!("result-{index}").into_bytes(),
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort();
+        assert_eq!(restored, expected, "context {context}");
+    }
 }
 
 #[test]
@@ -1955,46 +1880,6 @@ fn schema_object_exists(connection: &Connection, kind: &str, name: &str) -> bool
         .unwrap()
 }
 
-/// Rewrites a store into the layout the floor-16 binary wrote: index-only floor 16, both retired
-/// FTS search families with their delete trigger, and Git trees without a completeness marker or
-/// entry count.
-fn downgrade_to_floor_sixteen(path: &std::path::Path) {
-    let connection = Connection::open(path).unwrap();
-    for column in ["complete", "entry_count"] {
-        let present: bool = connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('git_trees') WHERE name=?1)",
-                [column],
-                |row| row.get(0),
-            )
-            .unwrap();
-        if present {
-            connection
-                .execute_batch(&format!("ALTER TABLE git_trees DROP COLUMN {column}"))
-                .unwrap();
-        }
-    }
-    connection
-        .execute_batch(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS search_value_fts USING fts5(
-                 token, content='', contentless_delete=1, detail=none, tokenize='ascii'
-             );
-             CREATE VIRTUAL TABLE IF NOT EXISTS search_text_fts USING fts5(
-                 token, content='', contentless_delete=1, detail=none,
-                 tokenize='unicode61 remove_diacritics 0'
-             );
-             DROP TRIGGER IF EXISTS delete_tape_search_index;
-             CREATE TRIGGER delete_tape_search_index BEFORE DELETE ON tape_objects BEGIN
-                 DELETE FROM search_kind_fts WHERE rowid=OLD.tape_id;
-                 DELETE FROM search_value_fts WHERE rowid=OLD.tape_id;
-                 DELETE FROM search_text_fts WHERE rowid=OLD.tape_id;
-             END;
-             UPDATE store_schema_revision SET revision=16 WHERE singleton=1;
-             PRAGMA user_version=16;",
-        )
-        .unwrap();
-}
-
 #[test]
 fn collection_deletes_unreachable_git_trees_whole() {
     let (_path, store) = store("collect-whole-tree");
@@ -2034,114 +1919,28 @@ fn snapshots_require_a_published_root_tree() {
     assert!(store.put_snapshot(root, 1, grammar, 1).is_ok());
 }
 
+/// Every open applies the idempotent schema, so an additive change (an index) reaches a store
+/// without raising its floor.
 #[test]
-fn upgrade_republishes_git_trees_whose_completeness_is_unproven() {
-    let (path, store) = store("legacy-partial-tree");
-    let tree = three_hundred_entry_tree(46);
-    store
-        .put_git_trees_bulk(std::slice::from_ref(&tree))
-        .unwrap();
-    let snapshot = store
-        .put_snapshot(tree.id, 1, HashKey::sha256(b"grammar"), 1)
-        .unwrap();
-    store
-        .open_workspace(
-            "/legacy-partial-tree",
-            "repo",
-            "owner",
-            snapshot,
-            1,
-            i64::MAX,
-        )
-        .unwrap();
-    drop(store);
-    downgrade_to_floor_sixteen(&path);
-    // The floor-16 collector deleted unreachable tree entries 256 at a time and kept the tree row.
-    Connection::open(&path)
-        .unwrap()
-        .execute(
-            "DELETE FROM git_tree_entries WHERE (tree_id,name_string_id) IN (\
-             SELECT tree_id,name_string_id FROM git_tree_entries \
-             ORDER BY tree_id,name_string_id LIMIT 256)",
-            [],
-        )
-        .unwrap();
-
-    let store = ContentStore::open(&path).unwrap();
-    let floor: i64 = store
-        .connection
-        .lock()
-        .unwrap()
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .unwrap();
-    assert_eq!(floor, SCHEMA_VERSION);
-    store
-        .put_git_trees_bulk(std::slice::from_ref(&tree))
-        .unwrap();
-    assert_eq!(git_tree_entry_count(&store), 300);
-}
-
-#[test]
-fn upgrade_drops_retired_search_families() {
-    let (path, store) = store("retired-search-families");
-    drop(store);
-    downgrade_to_floor_sixteen(&path);
-    let store = ContentStore::open(&path).unwrap();
-    let source = store.put_source(b"retired families", &[]).unwrap();
-    store.put_tape(source, 1, 1, 1, b"tape").unwrap();
-    for _ in 0..3 {
-        store.collect(1, 100).unwrap();
-    }
-    let connection = store.connection.lock().unwrap();
-    let tapes: i64 = connection
-        .query_row("SELECT count(*) FROM tape_objects", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(tapes, 0);
-    for family in ["search_value_fts", "search_text_fts"] {
-        assert!(
-            !schema_object_exists(&connection, "table", family),
-            "retired search family {family} survived the upgrade"
-        );
-    }
-}
-
-#[test]
-fn index_revisions_apply_without_raising_the_floor() {
+fn reopening_restores_missing_indexes_without_raising_the_floor() {
     let (path, store) = store("index-revision");
     drop(store);
     let connection = Connection::open(&path).unwrap();
-    let floor: i64 = connection
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .unwrap();
     connection
         .execute_batch(
-            "DROP INDEX IF EXISTS snapshot_files_by_path;
-             DROP INDEX IF EXISTS tape_objects_by_hash;
-             DROP INDEX IF EXISTS workspaces_by_snapshot;",
-        )
-        .unwrap();
-    connection
-        .execute(
-            "UPDATE store_schema_revision SET revision=?1 WHERE singleton=1",
-            [STORE_REVISION - 1],
+            "DROP INDEX snapshot_files_by_path;
+             DROP INDEX tape_objects_by_hash;
+             DROP INDEX workspaces_by_snapshot;",
         )
         .unwrap();
     drop(connection);
 
     let store = ContentStore::open(&path).unwrap();
     let connection = store.connection.lock().unwrap();
-    let reopened_floor: i64 = connection
+    let floor: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    let revision: i64 = connection
-        .query_row(
-            "SELECT revision FROM store_schema_revision WHERE singleton=1",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(reopened_floor, floor);
-    assert_eq!(revision, STORE_REVISION);
+    assert_eq!(floor, SCHEMA_VERSION);
     for index in [
         "snapshot_files_by_path",
         "tape_objects_by_hash",
@@ -2149,7 +1948,7 @@ fn index_revisions_apply_without_raising_the_floor() {
     ] {
         assert!(
             schema_object_exists(&connection, "index", index),
-            "revision upgrade did not create {index}"
+            "reopening did not create {index}"
         );
     }
 }

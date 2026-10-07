@@ -1,0 +1,62 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "python-conformance:ruff-b011-assert-false",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B011 (assert-false): an `assert` statement whose test is the literal `False` (Ruff's `is_const_false`; parentheses transparent), reported on the literal. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/B011.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "assert-false",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "assert-test": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^assert$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "assert_statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "assert-test"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "false",
+            "matches": "assert-test"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B011",
+        "message": "Do not `assert False` (`python -O` removes these calls), raise `AssertionError()`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B011"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

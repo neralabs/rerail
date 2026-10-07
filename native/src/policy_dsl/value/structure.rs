@@ -14,6 +14,7 @@
 
 use super::Context;
 use super::python::{Piece, Prefix, decode_body, prefix};
+use crate::policy_dsl::identifier::python_name;
 use ast_grep_core::{Doc, Node};
 
 /// Which of Ruff's equalities a comparison applies.
@@ -29,7 +30,8 @@ pub(crate) enum Equality {
 pub(crate) enum Tok {
     Open(String),
     Close,
-    /// A named leaf (an identifier, a keyword argument's name): its kind and text.
+    /// A named leaf (an identifier, NFKC-normalized as Ruff's AST holds it; a keyword argument's
+    /// name): its kind and text.
     Leaf(String, String),
     /// An anonymous token (an operator, a keyword): its kind.
     Token(String),
@@ -196,7 +198,13 @@ fn plain_node<D: Doc>(
         .filter(|child| !trivia(child))
         .collect::<Vec<_>>();
     if children.is_empty() {
-        out.push(Tok::Leaf(kind.into_owned(), node.text().into_owned()));
+        let text = node.text();
+        let text = if kind == "identifier" {
+            python_name(text)
+        } else {
+            text
+        };
+        out.push(Tok::Leaf(kind.into_owned(), text.into_owned()));
         return Some(());
     }
     out.push(Tok::Open(kind.into_owned()));

@@ -126,6 +126,15 @@ impl PhpcsIndex {
             }
         }
     }
+
+    /// Whether the file holds no annotation either version would apply.
+    #[cfg(test)]
+    pub(crate) fn is_empty(&self) -> bool {
+        !self.four.file
+            && !self.three.file
+            && self.four.lines.is_empty()
+            && self.three.lines.is_empty()
+    }
 }
 
 /// `if ($ignoring !== null && isset($this->ignoredLines[$line]) === false)`.
@@ -913,6 +922,25 @@ mod tests {
                 assert_eq!(ours, reports(file, "kept"), "{name} {key}");
             }
         }
+    }
+
+    /// A comment whose line holds code ending in a multibyte character five bytes before it (as
+    /// in laravel's tests/Validation/ValidationEmailRuleTest.php, `#[TestWith(['пример@пример.рф'])]
+    /// // Cyrillic domain`, where reading the file panicked): PHP_CodeSniffer 4.0.4 reports only
+    /// line 3 of this file under suppress/phpcs/ruleset.xml.
+    #[test]
+    fn phpcs_annotations_after_multibyte_code_on_their_line() {
+        let source = "<?php\nsizeof(['рф']); // phpcs:ignore\nsizeof(['рф']); // other\n";
+        let root = GrammarDialect::Php.ast_grep(source);
+        let lines = LineTable::new(source, Terminators::Newlines);
+        let index = PhpcsIndex::read(&root.root(), source, &lines);
+        let code = ["Generic.PHP.ForbiddenFunctions.FoundWithAlternative".to_owned()];
+        let ignored = |line: &str| {
+            let at = source.find(line).expect("line");
+            index.suppresses(&code, PhpcsVersion::Four, at, &lines)
+        };
+        assert!(ignored("sizeof(['рф']); // phpcs:ignore"));
+        assert!(!ignored("sizeof(['рф']); // other"));
     }
 
     #[test]

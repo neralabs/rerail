@@ -25,7 +25,7 @@ interface CatalogSource {
 
 export interface PolicyDslCatalogStatus {
   capabilitiesPath: string;
-  /** The authoritative catalog the enabled `policy` rows are compiled from. */
+  /** The authoritative catalog the enabled `file` rows are compiled from. */
   databasePath: string;
   ruleCount: number;
   /** Digest of the compiled set: capabilities plus every policy's id and source digest. */
@@ -88,8 +88,8 @@ function catalogSource(
 }
 
 function loadCatalogSource(store: SqliteRuleStore | ScopedRuleCatalog, capabilitiesJson: string): CatalogSource {
-  const storedPolicies = store.list({ kind: "policy", enabled: true }).flatMap(stored =>
-    stored.kind === "policy" ? [stored] : []);
+  const storedPolicies = store.list({ kind: "file", enabled: true }).flatMap(stored =>
+    stored.kind === "file" ? [stored] : []);
   const seen = new Set<string>();
   const orderedPolicies = storedPolicies.toSorted((left, right) => compareIds(left.rule.id, right.rule.id));
   const sourced = orderedPolicies.map(stored => {
@@ -109,15 +109,13 @@ function loadCatalogSource(store: SqliteRuleStore | ScopedRuleCatalog, capabilit
       revision: stored.revision,
       payloadHash: "payloadHash" in stored
         ? stored.payloadHash
-        : ruleDocumentDigest({ kind: "policy", rule: stored.rule }),
+        : ruleDocumentDigest({ kind: "file", rule: stored.rule }),
       applicability,
       ...("origin" in stored && stored.origin.kind === "project" ? { projectId: stored.origin.projectId } : {}),
-      origin: "catalogOrigin" in stored ? stored.catalogOrigin : "local" as const,
-      syncState: "syncState" in stored ? stored.syncState : "local-only" as const,
-      ...("upstreamRuleId" in stored && stored.upstreamRuleId !== null ? { upstreamRuleId: stored.upstreamRuleId } : {}),
+      origin: "catalogOrigin" in stored ? stored.catalogOrigin : "user" as const,
     };
   });
-  return catalogSource(sourced, provenance, store.quarantined().filter(entry => entry.kind === "policy"), capabilitiesJson);
+  return catalogSource(sourced, provenance, store.quarantined().filter(entry => entry.kind === "file"), capabilitiesJson);
 }
 
 function compilePolicy(policy: SourcedPolicy, capabilitiesJson: string): NativeCompiledPolicyDsl {
@@ -149,7 +147,7 @@ export interface PolicyDslCatalog {
 }
 
 /**
- * The enabled `policy` rows of the project database, compiled into resident
+ * The enabled `file` rows of the project database, compiled into resident
  * Rust executables. The database is the only source: a row toggled, edited,
  * or deleted by the daemon, the UI, or raw SQL is picked up by the next
  * `refresh()`. Compiled executables are keyed by source digest so an
@@ -168,7 +166,7 @@ class LiveRuleCatalog implements PolicyDslCatalog {
   constructor(store: SqliteRuleStore | ScopedRuleCatalog, capabilitiesPath: string, capabilitiesJson: string, readonly onRefresh?: () => void) {
     this.#store = store;
     this.#capabilitiesJson = capabilitiesJson;
-    const sourceSignature = "ruleSignature" in store ? store.ruleSignature("policy") : String(store.dataVersion());
+    const sourceSignature = "ruleSignature" in store ? store.ruleSignature("file") : String(store.dataVersion());
     const source = loadCatalogSource(store, capabilitiesJson);
     const applied = this.#apply(source);
     this.status = { capabilitiesPath, databasePath: store.path, ruleCount: applied.policies.length, version: applied.catalogDigest, sourceSignature };
@@ -213,7 +211,7 @@ class LiveRuleCatalog implements PolicyDslCatalog {
 
   refresh(): boolean {
     this.#assertOpen();
-    const sourceSignature = "ruleSignature" in this.#store ? this.#store.ruleSignature("policy") : String(this.#store.dataVersion());
+    const sourceSignature = "ruleSignature" in this.#store ? this.#store.ruleSignature("file") : String(this.#store.dataVersion());
     if (sourceSignature === this.status.sourceSignature) return false;
     const source = loadCatalogSource(this.#store, this.#capabilitiesJson);
     const applied = this.#apply(source);
@@ -251,7 +249,7 @@ class LiveRuleCatalog implements PolicyDslCatalog {
         const origin = source.provenance[index]!;
         const quarantinedPolicy = {
           ruleId: policy.policyId,
-          kind: "policy" as const,
+          kind: "file" as const,
           owner: origin.applicability === "global" ? "global" : `project:${origin.projectId ?? "unknown"}`,
           reason: error instanceof Error ? error.message : String(error),
         };

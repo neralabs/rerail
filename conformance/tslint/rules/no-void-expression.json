@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-void-expression",
   "revision": 1,
+  "mode": "steer",
   "description": "Syntactic approximation: flags calls known to return void (console.*) used as a value (not an expression statement, ternary branch, or &&/|| operand chain thereof).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "void-expression",
       "forbid": {
@@ -96,10 +97,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_VOID_EXPRESSION",
-        "severity": "error",
         "message": "Expression has type `void`. Put it on its own line as a statement."
       }
     }

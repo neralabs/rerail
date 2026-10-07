@@ -279,7 +279,7 @@ mod tests {
             assert_eq!(
                 reason,
                 format!(
-                    "/checks/0/forbid/ast/utils/{cycle}: utility rule `{cycle}` has a cyclic dependency in its `matches` sub-rule"
+                    "/clauses/0/forbid/ast/utils/{cycle}: utility rule `{cycle}` has a cyclic dependency in its `matches` sub-rule"
                 )
             );
         }
@@ -297,31 +297,31 @@ mod tests {
             rejection(compile_typescript_ast(
                 json!({ "rule": { "kind": "number", "not": { "matches": "missing" } } })
             )),
-            "/checks/0/forbid/ast/rule/not/matches: utility rule `missing` is not defined in this query's utils or a define of its language"
+            "/clauses/0/forbid/ast/rule/not/matches: utility rule `missing` is not defined in this query's utils or a define of its language"
         );
         assert_eq!(
             rejection(compile_typescript_ast(json!({
                 "rule": { "matches": { "wrap": { "INNER": { "kind": "number" } } } },
                 "utils": { "wrap": { "kind": "number" } },
             }))),
-            "/checks/0/forbid/ast/rule/matches: utility rule `wrap` takes no parameters; name it (\"matches\": \"wrap\")"
+            "/clauses/0/forbid/ast/rule/matches: utility rule `wrap` takes no parameters; name it (\"matches\": \"wrap\")"
         );
         assert_eq!(
             rejection(compile_typescript_ast(json!({ "rule": { "matches": 3 } }))),
-            "/checks/0/forbid/ast/rule/matches must be the id of a utility rule"
+            "/clauses/0/forbid/ast/rule/matches must be the id of a utility rule"
         );
         assert_eq!(
             rejection(compile_typescript_ast(
                 json!({ "rule": { "kind": "number" }, "utils": { "a(b)": { "kind": "number" } } })
             )),
-            "/checks/0/forbid/ast/utils: invalid utility rule id `a(b)`"
+            "/clauses/0/forbid/ast/utils: invalid utility rule id `a(b)`"
         );
         // Unused utilities are still validated, as upstream compiles every one.
         assert_eq!(
             rejection(compile_typescript_ast(
                 json!({ "rule": { "kind": "number" }, "utils": { "a": { "stopBy": "end" } } })
             )),
-            "unknown field `stopBy` at /checks/0/forbid/ast/utils/a"
+            "unknown field `stopBy` at /clauses/0/forbid/ast/utils/a"
         );
     }
 
@@ -331,13 +331,13 @@ mod tests {
             rejection(compile_typescript_ast(
                 json!({ "rule": { "pattern": "$F()" }, "constraints": { "G": { "kind": "identifier" } } })
             )),
-            "/checks/0/forbid/ast/constraints/G: metavariable `$G` is not defined by the rule, its utils, or its constraints"
+            "/clauses/0/forbid/ast/constraints/G: metavariable `$G` is not defined by the rule, its utils, or its constraints"
         );
         assert_eq!(
             rejection(compile_typescript_ast(
                 json!({ "rule": { "pattern": "f($$$ARGS)" }, "constraints": { "ARGS": { "kind": "number" } } })
             )),
-            "/checks/0/forbid/ast/constraints/ARGS: `$$$ARGS` captures a node list; constraints apply to single-node captures only"
+            "/clauses/0/forbid/ast/constraints/ARGS: `$$$ARGS` captures a node list; constraints apply to single-node captures only"
         );
         // Defined by a utility or by another constraint, even under `not`, is defined.
         compiled(json!({
@@ -366,14 +366,14 @@ mod tests {
                 "rule": { "kind": "number" },
                 "utils": { "bad": { "kind": "no_such_kind" } },
             }))),
-            "/checks/0/forbid/ast/utils/bad/kind: Kind `no_such_kind` is invalid. (typescript, tsx, javascript grammars)"
+            "/clauses/0/forbid/ast/utils/bad/kind: Kind `no_such_kind` is invalid. (typescript, tsx, javascript grammars)"
         );
         assert_eq!(
             rejection(compile_typescript_ast(json!({
                 "rule": { "pattern": "$F()" },
                 "constraints": { "F": { "kind": "no_such_kind" } },
             }))),
-            "/checks/0/forbid/ast/constraints/F/kind: Kind `no_such_kind` is invalid. (typescript, tsx, javascript grammars)"
+            "/clauses/0/forbid/ast/constraints/F/kind: Kind `no_such_kind` is invalid. (typescript, tsx, javascript grammars)"
         );
     }
 }

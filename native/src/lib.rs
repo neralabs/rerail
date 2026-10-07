@@ -25,14 +25,61 @@ union JemallocConf {
     character: &'static std::ffi::c_char,
 }
 
+// Freed pages stay for a second so an apply reuses them instead of mapping new ones (immediate
+// decay cost a tenth of the data-layer benchmark's CPU in mmap/munmap); every apply purges them
+// when it ends and again once its response is freed (`purge_allocator_pages`), so nothing dirty
+// is kept at rest.
 #[allow(non_upper_case_globals)]
 #[unsafe(export_name = "_rjem_malloc_conf")]
 pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
     JemallocConf {
-        byte: &b"dirty_decay_ms:0,muzzy_decay_ms:0\0"[0],
+        byte: &b"dirty_decay_ms:1000,muzzy_decay_ms:0\0"[0],
     }
     .character
 });
+
+/// Tree-sitter allocates through jemalloc, as Rust does: a parse allocates many small subtrees,
+/// which the system allocator served at 10% of the parse. Installed when the addon loads, before
+/// any Tree-sitter call; like Tree-sitter's own allocator, these abort when allocation fails.
+#[napi_derive::module_init]
+fn install_tree_sitter_allocator() {
+    use std::ffi::c_void;
+    unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
+        // SAFETY: jemalloc's malloc accepts any size.
+        allocated(unsafe { tikv_jemalloc_sys::malloc(size) }, size)
+    }
+    unsafe extern "C" fn calloc(count: usize, size: usize) -> *mut c_void {
+        // SAFETY: jemalloc's calloc accepts any count and size, and fails on overflow.
+        allocated(
+            unsafe { tikv_jemalloc_sys::calloc(count, size) },
+            count.saturating_mul(size),
+        )
+    }
+    unsafe extern "C" fn realloc(pointer: *mut c_void, size: usize) -> *mut c_void {
+        // SAFETY: Tree-sitter passes null or a pointer these functions returned.
+        allocated(unsafe { tikv_jemalloc_sys::realloc(pointer, size) }, size)
+    }
+    unsafe extern "C" fn free(pointer: *mut c_void) {
+        // SAFETY: Tree-sitter passes null or a pointer these functions returned.
+        unsafe { tikv_jemalloc_sys::free(pointer) }
+    }
+    fn allocated(pointer: *mut c_void, size: usize) -> *mut c_void {
+        if pointer.is_null() && size > 0 {
+            std::process::abort();
+        }
+        pointer
+    }
+    // SAFETY: the four functions are jemalloc's, return no null for a nonzero size, and are
+    // installed while the addon loads, before any Tree-sitter object exists.
+    unsafe {
+        tree_sitter::set_allocator(Some(tree_sitter::Allocator {
+            malloc,
+            calloc,
+            realloc,
+            free,
+        }));
+    }
+}
 
 pub(crate) const WORKER_THREADS: usize = 4;
 pub(crate) static WORK_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
@@ -100,20 +147,10 @@ pub fn process_session_id(pid: i32) -> Result<Option<i32>> {
     }
 }
 
-/// Process-global native allocator and SQLite memory counters for benchmark attribution.
+/// Process-global native allocator counters for benchmark attribution. SQLite keeps no memory
+/// statistics (`SQLITE_DEFAULT_MEMSTATUS=0`, `.cargo/config.toml`), so it reports none.
 #[napi]
 pub fn native_memory_profile() -> String {
-    let mut sqlite_current = 0_i64;
-    let mut sqlite_highwater = 0_i64;
-    // SAFETY: SQLite owns the global accounting slots and writes the supplied valid pointers.
-    let sqlite_status = unsafe {
-        rusqlite::ffi::sqlite3_status64(
-            rusqlite::ffi::SQLITE_STATUS_MEMORY_USED,
-            &mut sqlite_current,
-            &mut sqlite_highwater,
-            0,
-        )
-    };
     let allocator = {
         let _ = tikv_jemalloc_ctl::epoch::advance();
         serde_json::json!({
@@ -126,11 +163,6 @@ pub fn native_memory_profile() -> String {
     };
     serde_json::json!({
         "allocator": allocator,
-        "sqlite": {
-            "memoryUsedBytes": sqlite_current,
-            "memoryHighwaterBytes": sqlite_highwater,
-            "status": sqlite_status,
-        },
         "workerPool": {
             "threads": WORKER_THREADS,
         },
@@ -143,10 +175,24 @@ pub(crate) fn release_allocator_memory() {
     // SAFETY: SQLite owns its global allocator; the maximum request asks every connection to
     // release reclaimable page-cache memory.
     unsafe { rusqlite::ffi::sqlite3_release_memory(i32::MAX) };
-    // The static configuration uses zero decay where background threads are unavailable.
+    // Background threads, where available, decay pages between applies too.
     let _ = tikv_jemalloc_ctl::background_thread::write(true);
-    // SAFETY: arena.4096 is jemalloc's all-arenas selector; purge takes no value.
-    let _ = unsafe { tikv_jemalloc_ctl::raw::write(b"arena.4096.purge\0", ()) };
+    purge_allocator_pages();
+}
+
+/// Return every arena's freed pages to the system.
+pub(crate) fn purge_allocator_pages() {
+    // SAFETY: arena.4096 is jemalloc's all-arenas selector; purge reads and writes no value, so
+    // jemalloc requires null value pointers (`raw::write` passes a non-null one and is refused).
+    unsafe {
+        tikv_jemalloc_sys::mallctl(
+            c"arena.4096.purge".as_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+        );
+    }
 }
 
 #[napi]
@@ -331,5 +377,36 @@ impl CosineKernel {
     #[napi]
     pub fn match_text(&self, sample: NativeSample) -> Result<Vec<NativeMatch>> {
         self.rules.match_sample(&self.encoder, sample)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tikv_jemalloc_ctl::{epoch, raw};
+    use tikv_jemalloc_sys::{MALLOCX_ARENA, MALLOCX_TCACHE_NONE, dallocx, mallocx};
+
+    #[test]
+    fn purge_returns_freed_pages() {
+        // An arena of its own, so no other thread's frees move its dirty page count.
+        let arena = unsafe { raw::read::<u32>(b"arenas.create\0") }.unwrap();
+        let dirty = || {
+            epoch::advance().unwrap();
+            let key = format!("stats.arenas.{arena}.pdirty\0");
+            unsafe { raw::read::<usize>(key.as_bytes()) }.unwrap()
+        };
+        let flags = MALLOCX_ARENA(arena as usize) | MALLOCX_TCACHE_NONE;
+        let size = 4 << 20;
+        unsafe {
+            let block = mallocx(size, flags).cast::<u8>();
+            assert!(!block.is_null());
+            std::ptr::write_bytes(block, 1, size);
+            dallocx(block.cast(), flags);
+        }
+        assert!(
+            dirty() > 0,
+            "the freed block's pages are dirty until purged"
+        );
+        super::purge_allocator_pages();
+        assert_eq!(dirty(), 0);
     }
 }

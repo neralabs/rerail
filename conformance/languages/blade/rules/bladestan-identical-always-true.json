@@ -1,0 +1,63 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bladestan-identical-always-true",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Bladestan 0.11.7 identical.alwaysTrue (PHPStan 2.2.16 StrictComparisonOfDifferentTypesRule over the compiled template): a `===` comparison PHP's constant evaluation (variables followed through their one reaching binding) finds always true; not the condition of the last @elseif of a chain with no @else, which PHPStan leaves unreported (reportAlwaysTrueInLastCondition: false).",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "rule": {
+            "kind": "binary_expression",
+            "has": {
+              "field": "operator",
+              "regex": "^===$"
+            },
+            "value": {
+              "eq": true,
+              "follow": true
+            },
+            "not": {
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "parenthesized_expression",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "else_if_clause",
+                  "field": "condition",
+                  "not": {
+                    "precedes": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "kind": "else_if_clause"
+                        },
+                        {
+                          "kind": "else_clause"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "identical.alwaysTrue",
+        "message": "Strict comparison using === will always evaluate to true."
+      }
+    }
+  ]
+}

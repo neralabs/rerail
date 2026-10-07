@@ -19,15 +19,15 @@ const capabilities = JSON.stringify({
 });
 
 type File = { path: string; language: "python" | "typescript"; source: string; module?: string | string[] };
-type Finding = { id: string; checkId: string; message: string; path?: string; span?: { startByte: number; endByte: number; startLine: number; startColumn: number; endLine: number; endColumn: number }; captures: Record<string, Array<{ startByte: number; endByte: number }> > };
-type Result = { status: "completed" | "failed"; findings: Finding[]; failures: Array<{ code: string; checkId: string; path?: string }> };
+type Finding = { id: string; clauseId: string; message: string; path?: string; span?: { startByte: number; endByte: number; startLine: number; startColumn: number; endLine: number; endColumn: number }; captures: Record<string, Array<{ startByte: number; endByte: number }> > };
+type Result = { status: "completed" | "failed"; violations: Finding[]; failures: Array<{ code: string; clauseId: string; path?: string }> };
 
 function document(checks: unknown[], extra: Record<string, unknown> = {}) {
-  return JSON.stringify({ format: "rerail.policy/v1", id: "semantic-acceptance", revision: 1, scope: { include: ["**/*"], exclude: [] }, checks, ...extra });
+  return JSON.stringify({ format: "rerail.policy/v1", id: "semantic-acceptance", revision: 1, mode: "steer", scope: { include: ["**/*"], exclude: [] }, clauses: checks, ...extra });
 }
 function check(id: string, rule: Record<string, unknown>, language: "python" | "typescript" = "python", extra: Record<string, unknown> = {}, query: Record<string, unknown> = {}) {
   const { capture: _capture, ...hostRule } = rule;
-  return { id, forbid: { ast: { language, rule: hostRule, ...query } }, finding: { anchor: "witness.span", code: id, severity: "error", message: id }, ...extra };
+  return { id, forbid: { ast: { language, rule: hostRule, ...query } }, violation: { anchor: "witness.span", code: id, message: id }, ...extra };
 }
 function compile(checks: unknown[], extra: Record<string, unknown> = {}) {
   return loadNativeBinding().PolicyDslRuntime!.compile(document(checks, extra), "json", capabilities);
@@ -50,10 +50,10 @@ async function indexRepository(native: NativePolicyDslWorkspace): Promise<number
     if (chunk.done) return chunk.revision;
   }
 }
-function texts(result: Result, source: string) { return result.findings.map(item => source.slice(item.span!.startByte, item.span!.endByte)); }
-/** Each finding as `checkId text`, sorted: what each check reported, whatever the output order. */
+function texts(result: Result, source: string) { return result.violations.map(item => source.slice(item.span!.startByte, item.span!.endByte)); }
+/** Each finding as `clauseId text`, sorted: what each check reported, whatever the output order. */
 function reported(result: Result, files: readonly File[]) {
-  return result.findings.map(item => `${item.checkId} ${files.find(file => file.path === item.path)!.source.slice(item.span!.startByte, item.span!.endByte)}`).sort();
+  return result.violations.map(item => `${item.clauseId} ${files.find(file => file.path === item.path)!.source.slice(item.span!.startByte, item.span!.endByte)}`).sort();
 }
 function specOrReference<T>(bug: string, spec: T, legacy: T): T { return USING_REFERENCE_ADDON && REFERENCE_BUGS[bug] === true ? legacy : spec; }
 
@@ -78,8 +78,8 @@ describe("semantic acceptance", () => {
       const source = "alert(value);\n";
       const configured = check("configured", { kind: "identifier", resolves: { global: ["alert"] }, capture: "X" }, "typescript");
       const absent = check("absent", { kind: "identifier", resolves: { global: ["alert"] }, capture: "X" }, "typescript");
-      expect(evaluate(compile([configured]), [{ path: "a.ts", language: "typescript", source }]).findings).toHaveLength(1);
-      expect(evaluate(compile([absent]), [{ path: "a.ts", language: "typescript", source }]).findings).toHaveLength(1);
+      expect(evaluate(compile([configured]), [{ path: "a.ts", language: "typescript", source }]).violations).toHaveLength(1);
+      expect(evaluate(compile([absent]), [{ path: "a.ts", language: "typescript", source }]).violations).toHaveLength(1);
     });
   });
 
@@ -88,7 +88,7 @@ describe("semantic acceptance", () => {
       const source = "let value = 1; if (flag) value = 2; consume(value);\n";
       const result = evaluate(compile([check("value", { pattern: "consume($X)" }, "typescript")]), [{ path: "a.ts", language: "typescript", source }]);
       expect(result.status).toBe("completed");
-      expect(result.findings).toHaveLength(1);
+      expect(result.violations).toHaveLength(1);
     });
   });
 
@@ -97,7 +97,7 @@ describe("semantic acceptance", () => {
       const source = "unknown_value;\n";
       const result = evaluate(compile([check("unknown", { kind: "expression_statement", has: { kind: "identifier", regex: "^unknown_value$", not: { value: { eq: 1 } } } }, "typescript")]), [{ path: "a.ts", language: "typescript", source }]);
       expect(result.status).toBe("completed");
-      expect(result.findings).toHaveLength(0);
+      expect(result.violations).toHaveLength(0);
     });
   });
 
@@ -105,7 +105,7 @@ describe("semantic acceptance", () => {
     it("keeps an independent false conjunction false without leaking captures", () => {
       const source = "consume(value);\n";
       const result = evaluate(compile([check("transaction", { all: [{ pattern: "consume($X)" }, { kind: "class" }], capture: "X" }, "typescript")]), [{ path: "a.ts", language: "typescript", source }]);
-      expect(result.findings).toEqual([]);
+      expect(result.violations).toEqual([]);
     });
   });
 
@@ -122,11 +122,11 @@ describe("semantic acceptance", () => {
         const compiled = compile([{
           id: "pair",
           forbid: { ast: { language: "typescript", rule: { kind: "call_expression", matches: { pair: mapping } }, utils: { pair: { params, rule: { pattern: "$P($Q)" } } } } },
-          finding: { anchor: "capture.X", code: "pair", severity: "error", message: "$X" },
+          violation: { anchor: "capture.X", code: "pair", message: "$X" },
         }]);
         const result = evaluate(compiled, files);
         // `f(g)` returns conflicting outputs, so the call fails without binding `$X`; `h(h)`'s agree.
-        expect(result.findings.map(item => [item.span!.startByte, item.message]), params.join()).toEqual([[6, "h"]]);
+        expect(result.violations.map(item => [item.span!.startByte, item.message]), params.join()).toEqual([[6, "h"]]);
         expect(result.failures).toEqual([]);
       }
     });
@@ -141,10 +141,10 @@ describe("semantic acceptance", () => {
 
   describe("A09 numeric option canonicalization", () => {
     const optionDocument = (config: Record<string, unknown>) => ({
-      format: "rerail.policy/v1", id: "numeric-option", revision: 1, scope: { include: ["**/*"], exclude: [] },
-      checks: [
+      format: "rerail.policy/v1", id: "numeric-option", revision: 1, mode: "steer", scope: { include: ["**/*"], exclude: [] },
+      clauses: [
         { id: "options", define: { options: { level: { type: "number", default: 0 } }, config } },
-        { id: "selected", forbid: { ast: { language: "typescript", rule: { $option: "level", cases: { "1": { kind: "number" } }, default: { kind: "string" } } } }, finding: { anchor: "witness.span", code: "selected", severity: "error", message: "selected" } },
+        { id: "selected", forbid: { ast: { language: "typescript", rule: { $option: "level", cases: { "1": { kind: "number" } }, default: { kind: "string" } } } }, violation: { anchor: "witness.span", code: "selected", message: "selected" } },
       ],
     });
     /** The document as raw JSON text with the configured `level` spelled exactly as given. */
@@ -172,7 +172,7 @@ describe("semantic acceptance", () => {
     it("returns host byte and line/column spans for multibyte CRLF source", () => {
       const source = "value = 'é\\n'\r\n";
       const result = evaluate(compile([check("literal", { kind: "string", capture: "X" })]), [{ path: "a.py", language: "python", source }]);
-      const span = result.findings[0]!.span!;
+      const span = result.violations[0]!.span!;
       expect(Buffer.from(source).subarray(span.startByte, span.endByte).toString("utf8")).toBe("'é\\n'");
       expect(span.startLine).toBe(0);
     });
@@ -181,16 +181,16 @@ describe("semantic acceptance", () => {
   describe("A12 each binding enumeration", () => {
     it("reports each reachable selected capture once", () => {
       const source = "f(a); f(b);\n";
-      const result = evaluate(compile([check("each", { pattern: "f($X)", capture: "X" }, "typescript", { finding: { anchor: "capture.X", code: "each", severity: "error", message: "each $X", each: "X" } })]), [{ path: "a.ts", language: "typescript", source }]);
+      const result = evaluate(compile([check("each", { pattern: "f($X)", capture: "X" }, "typescript", { violation: { anchor: "capture.X", code: "each", message: "each $X", each: "X" } })]), [{ path: "a.ts", language: "typescript", source }]);
       expect(texts(result, source)).toEqual(specOrReference("B2", ["a", "b"], ["a", "b"]));
-      expect(new Set(result.findings.map(item => item.id)).size).toBe(2);
+      expect(new Set(result.violations.map(item => item.id)).size).toBe(2);
     });
   });
 
   describe("A13 suppression and enumeration", () => {
     it("does not treat a suppression comment as a policy result unless suppression is opted in", () => {
       const source = "// eslint-disable-next-line\nf(a);\nf(b);\n";
-      const result = evaluate(compile([check("suppression", { pattern: "f($X)", capture: "X" }, "typescript", { finding: { anchor: "capture.X", code: "suppression", severity: "error", message: "s $X", each: "X" } })]), [{ path: "a.ts", language: "typescript", source }]);
+      const result = evaluate(compile([check("suppression", { pattern: "f($X)", capture: "X" }, "typescript", { violation: { anchor: "capture.X", code: "suppression", message: "s $X", each: "X" } })]), [{ path: "a.ts", language: "typescript", source }]);
       expect(texts(result, source)).toEqual(["a", "b"]);
     });
   });
@@ -198,7 +198,7 @@ describe("semantic acceptance", () => {
   describe("A14 witness allowance", () => {
     it("returns an explicit bounded outcome rather than silently truncating", () => {
       const limited = JSON.stringify({ ...JSON.parse(capabilities), limits: { ...JSON.parse(capabilities).limits, maxWitnesses: 1 } });
-      const compiled = loadNativeBinding().PolicyDslRuntime!.compile(document([check("limit", { pattern: "f($X)", capture: "X" }, "typescript", { finding: { anchor: "capture.X", code: "limit", severity: "error", message: "$X", each: "X" } })]), "json", limited);
+      const compiled = loadNativeBinding().PolicyDslRuntime!.compile(document([check("limit", { pattern: "f($X)", capture: "X" }, "typescript", { violation: { anchor: "capture.X", code: "limit", message: "$X", each: "X" } })]), "json", limited);
       const result = evaluate(compiled, [{ path: "a.ts", language: "typescript", source: "f(a); f(b);" }]);
       expect(result.failures.map(item => item.code)).toContain("budget-exceeded");
     });
@@ -207,7 +207,7 @@ describe("semantic acceptance", () => {
   describe("A15 resource bounds", () => {
     it("fails a too-small deterministic visit budget instead of converting it through negation", () => {
       const limited = JSON.stringify({ ...JSON.parse(capabilities), limits: { ...JSON.parse(capabilities).limits, maxVisitedNodes: 1 } });
-      const compiled = loadNativeBinding().PolicyDslRuntime!.compile(document([{ ...check("budget", { not: { kind: "identifier" } }), finding: { anchor: "witness.span", code: "budget", severity: "error", message: "budget" } }]), "json", limited);
+      const compiled = loadNativeBinding().PolicyDslRuntime!.compile(document([{ ...check("budget", { not: { kind: "identifier" } }), violation: { anchor: "witness.span", code: "budget", message: "budget" } }]), "json", limited);
       expect(evaluate(compiled, [{ path: "a.py", language: "python", source: "a = b + c\n" }]).failures.map(item => item.code)).toContain(specOrReference("B6", "budget-exceeded", "source-incomplete"));
     });
   });
@@ -243,17 +243,17 @@ describe("semantic acceptance", () => {
     ]);
     const unpackaged = ["loose loose/x.py", "loose pkg/helper.py", "loose pkg/mod.py"];
     const packaged = ["loose loose/x.py", "packaged pkg/__init__.py", "packaged pkg/helper.py", "packaged pkg/mod.py"];
-    const located = (findings: readonly Finding[]) => findings.map(item => `${item.checkId} ${item.path}`).sort();
+    const located = (findings: readonly Finding[]) => findings.map(item => `${item.clauseId} ${item.path}`).sort();
     /** The unchanged loose sibling's finding identity, which no marker change may disturb. */
     const siblingId = (findings: readonly Finding[]) => findings.find(item => item.path === "loose/x.py")?.id;
     async function apply(native: NativePolicyDslWorkspace, revision: number, changed: File[], removed: string[]) {
-      return (JSON.parse(await native.applyAsync(JSON.stringify({ revision, files: changed, removed }))) as { evaluation: Result }).evaluation.findings;
+      return (JSON.parse(await native.applyAsync(JSON.stringify({ revision, files: changed, removed }))) as { evaluation: Result }).evaluation.violations;
     }
     async function allPages(native: NativePolicyDslWorkspace) {
       const findings: Finding[] = [];
       for (let cursor = 0, done = false; !done;) {
-        const page = JSON.parse(await native.resultPageAsync(cursor, 1 << 20)) as { cursor: number; done: boolean; findings: Finding[] };
-        findings.push(...page.findings);
+        const page = JSON.parse(await native.resultPageAsync(cursor, 1 << 20)) as { cursor: number; done: boolean; violations: Finding[] };
+        findings.push(...page.violations);
         ({ cursor, done } = page);
       }
       return findings;
@@ -324,7 +324,7 @@ describe("semantic acceptance", () => {
         second.addPolicy(compile([check("fresh", { regex: "2" })]));
         const revision = await indexRepository(second);
         const result = JSON.parse(await second.applyAsync(JSON.stringify({ revision: revision + 1, files: [], removed: [] }))).evaluation as Result;
-        expect(result.findings.some((finding) => finding.path === "pkg/a.py")).toBe(true);
+        expect(result.violations.some((finding) => finding.path === "pkg/a.py")).toBe(true);
       } finally {
         first.close();
         second.close();
@@ -341,7 +341,7 @@ describe("semantic acceptance", () => {
         native.addPolicy(compiled);
         await native.applyAsync(JSON.stringify({ revision: 1, files: [{ path: "a.py", language: "python", source: "x = 1\n" }], removed: [] }));
         const moved = JSON.parse(await native.applyAsync(JSON.stringify({ revision: 2, files: [{ path: "pkg/a.py", language: "python", source: "y = 1\n" }], removed: ["a.py"] }))).evaluation as Result;
-        expect(moved.findings.every(item => item.path === "pkg/a.py")).toBe(true);
+        expect(moved.violations.every(item => item.path === "pkg/a.py")).toBe(true);
       } finally { native.close(); }
     });
   });
@@ -351,7 +351,7 @@ describe("semantic acceptance", () => {
       const source = "f(a);\n"; const compiled = compile([check("agreement", { pattern: "f($X)", capture: "X" }, "typescript")]);
       const full = evaluate(compiled, [{ path: "a.ts", language: "typescript", source }]);
       const indexed = await workspace(compiled, 1, [{ path: "a.ts", language: "typescript", source }]);
-      expect({ findings: indexed.findings, failures: indexed.failures }).toEqual({ findings: full.findings, failures: full.failures });
+      expect({ violations: indexed.violations, failures: indexed.failures }).toEqual({ violations: full.violations, failures: full.failures });
     });
   });
 
@@ -372,7 +372,7 @@ describe("semantic acceptance", () => {
             select: { ast: { language: "typescript", rule: { pattern: "g($Y)" } } },
           },
         },
-        finding: { anchor: "witness.span", code: "gate", severity: "error", message: "gate" },
+        violation: { anchor: "witness.span", code: "gate", message: "gate" },
       }]);
       expect(texts(evaluate(compiled, [{ path: "a.ts", language: "typescript", source }]), source)).toEqual(["g(b)"]);
     });
@@ -387,7 +387,7 @@ describe("semantic acceptance", () => {
           exists: { ast: { language: "typescript", rule: { pattern: "enable()" } } },
           select: { ast: { language: "typescript", rule: { kind: "call_expression", regex: "^report\\((?<ITEM>\\w+)\\)$" } } },
         } },
-        finding: { anchor: "witness.span", code: "gate", severity: "error", message: "$ITEM", each: "ITEM" },
+        violation: { anchor: "witness.span", code: "gate", message: "$ITEM", each: "ITEM" },
       }]);
       const files = [{ path: "a.ts", language: "typescript" as const, source }];
       expect(texts(evaluate(compiled, files), source)).toEqual(["report(alpha)"]);
@@ -425,15 +425,15 @@ describe("semantic acceptance", () => {
           group_by: ["symbol.group"],
           count: { lte: 1 },
         },
-        finding: { anchor: "witness.span", code: "groups", severity: "error", message: "groups" },
+        violation: { anchor: "witness.span", code: "groups", message: "groups" },
       }]);
       const compiled = loadNativeBinding().PolicyDslRuntime!.compile(policy, "json", capabilities);
       const files = ["alpha", "alpha", "beta", "beta"].map((group, index) => ({
         path: `${index}.py`, language: "python", source: `symbol(${group})\n`,
       }));
       const snapshot = (inputs: typeof files) => ({ format: "rerail.repository-snapshot/v1", revision: 1, files: inputs });
-      const first = (JSON.parse(compiled.evaluate(JSON.stringify(snapshot(files)), "diagnostic")) as Result).findings.map(item => item.id);
-      const reversed = (JSON.parse(compiled.evaluate(JSON.stringify(snapshot([...files].reverse())), "diagnostic")) as Result).findings.map(item => item.id);
+      const first = (JSON.parse(compiled.evaluate(JSON.stringify(snapshot(files)), "diagnostic")) as Result).violations.map(item => item.id);
+      const reversed = (JSON.parse(compiled.evaluate(JSON.stringify(snapshot([...files].reverse())), "diagnostic")) as Result).violations.map(item => item.id);
       expect(new Set(first).size).toBe(2);
       expect(reversed.toSorted()).toEqual(first.toSorted());
     });
@@ -451,14 +451,14 @@ describe("semantic acceptance", () => {
           } },
           count: { lte: 0 },
         },
-        finding: { anchor: "witness.span", code: "evidence-span", severity: "error", message: "evidence-span" },
+        violation: { anchor: "witness.span", code: "evidence-span", message: "evidence-span" },
       }]);
       const compiled = loadNativeBinding().PolicyDslRuntime!.compile(policy, "json", capabilities);
       const result = JSON.parse(compiled.evaluate(JSON.stringify({
         format: "rerail.repository-snapshot/v1", revision: 1,
         files: [{ path: "a.py", language: "python", source: "symbol(alpha)\n" }],
       }), "diagnostic")) as Result;
-      expect(result.findings[0]!.span).toMatchObject({ startByte: 0, startLine: 0, startColumn: 0 });
+      expect(result.violations[0]!.span).toMatchObject({ startByte: 0, startLine: 0, startColumn: 0 });
     });
   });
 
@@ -472,7 +472,7 @@ describe("semantic acceptance", () => {
           rule: { pattern: "$X($$$ARGS)", matches: { report: { P: "$X" } } },
           utils: { report: { params: ["P"], rule: { regex: "^report\\((?<ITEM>\\w+)\\)$" } } },
         } },
-        finding: { anchor: "witness.span", code: "called-group", severity: "error", message: "$ITEM", each: "ITEM" },
+        violation: { anchor: "witness.span", code: "called-group", message: "$ITEM", each: "ITEM" },
       }]);
       if (USING_REFERENCE_ADDON) {
         expect(create).toThrow(/`\$ITEM` names no capture/);
@@ -485,14 +485,14 @@ describe("semantic acceptance", () => {
 
   describe("A21 finding identity lifecycle", () => {
     it("keeps unchanged finding identities stable across an unrelated edit", async () => {
-      const compiled = compile([check("identity", { pattern: "f($X)", capture: "X" }, "typescript", { finding: { anchor: "capture.X", code: "identity", severity: "error", message: "$X", each: "X" } })]);
+      const compiled = compile([check("identity", { pattern: "f($X)", capture: "X" }, "typescript", { violation: { anchor: "capture.X", code: "identity", message: "$X", each: "X" } })]);
       const native = new (loadNativeBinding().PolicyDslWorkspace!)();
       try {
         native.addPolicy(compiled);
         const one = JSON.parse(await native.applyAsync(JSON.stringify({ revision: 1, files: [{ path: "a.ts", language: "typescript", source: "f(a); f(b);" }], removed: [] }))).evaluation as Result;
         const two = JSON.parse(await native.applyAsync(JSON.stringify({ revision: 2, files: [{ path: "unrelated.py", language: "python", source: "x = 1" }], removed: [] }))).evaluation as Result;
-        expect(new Set(one.findings.map(item => item.id)).size).toBe(2);
-        expect(two.findings.filter(item => item.path === "a.ts").map(item => item.id).sort()).toEqual(one.findings.map(item => item.id).sort());
+        expect(new Set(one.violations.map(item => item.id)).size).toBe(2);
+        expect(two.violations.filter(item => item.path === "a.ts").map(item => item.id).sort()).toEqual(one.violations.map(item => item.id).sort());
       } finally { native.close(); }
     });
   });
@@ -502,7 +502,7 @@ describe("semantic acceptance", () => {
       const parsed = compile([check("parsed", { kind: "string", parse: { grammar: "annotation", kind: "identifier" } })]);
       const later = compile([check("later", { kind: "identifier", capture: "X" })]);
       expect(evaluate(parsed, [{ path: "a.py", language: "python", source: "x: 'Thing'\n" }]).status).toBe("completed");
-      expect(evaluate(later, [{ path: "b.py", language: "python", source: "after = 1\n" }]).findings).not.toHaveLength(0);
+      expect(evaluate(later, [{ path: "b.py", language: "python", source: "after = 1\n" }]).violations).not.toHaveLength(0);
     });
   });
   describe("A23 line model agreement", () => {
@@ -517,13 +517,13 @@ describe("semantic acceptance", () => {
             transform: { LINE: { line: { source: "$VALUE" } } },
           },
         },
-        finding: { anchor: "capture.VALUE", code: "line-model", severity: "error", message: "line $LINE" },
+        violation: { anchor: "capture.VALUE", code: "line-model", message: "line $LINE" },
       }]);
       const files = [{ path: "a.ts", language: "typescript" as const, source }];
       for (const result of [evaluate(compiled, files), await workspace(compiled, 1, files)]) {
-        expect(result.findings).toHaveLength(1);
-        expect(result.findings[0]!.span!.startLine).toBe(2);
-        expect(result.findings[0]!.message).toBe("line 3");
+        expect(result.violations).toHaveLength(1);
+        expect(result.violations[0]!.span!.startLine).toBe(2);
+        expect(result.violations[0]!.message).toBe("line 3");
       }
     });
   });

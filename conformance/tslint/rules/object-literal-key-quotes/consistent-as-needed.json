@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:object-literal-key-quotes",
   "revision": 1,
+  "mode": "steer",
   "description": "Quote all property names if any needs quotes, otherwise none (consistent-as-needed).",
   "scope": { "include": ["**/*"], "exclude": [] },
-  "checks": [
+  "clauses": [
     {
       "id": "missing",
       "forbid": {
@@ -49,10 +50,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "OBJECT_LITERAL_KEY_QUOTES",
-        "severity": "error",
         "message": "Unquoted property found."
       }
     },
@@ -101,10 +101,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "OBJECT_LITERAL_KEY_QUOTES",
-        "severity": "error",
         "message": "Unnecessarily quoted property found."
       }
     }

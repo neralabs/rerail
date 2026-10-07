@@ -22,6 +22,7 @@ import type {
   PolicyDslScope,
   PolicyDslValue,
 } from "./executable-policy.js";
+import { RULE_MODES } from "./rule-mode.js";
 import type {
   PolicyDslArguments,
   PolicyDslAstWhen,
@@ -65,7 +66,7 @@ export type { PolicyAstLanguage };
  * compiles and evaluates. The TypeScript types in `executable-policy.ts` are
  * the contract; every schema here is declared against them so a drift between
  * the two is a compile error. This is the shape the `rules` table stores for
- * `kind = 'policy'` rows; every top-level field maps to a column (`schema.ts`).
+ * `kind = 'file'` rows; every top-level field maps to a column (`schema.ts`).
  *
  * ast-grep patterns and fact relations are checked structurally only; the
  * kernel remains the authority on whether a pattern parses for its grammar, a
@@ -76,8 +77,6 @@ export type { PolicyAstLanguage };
 
 export const POLICY_FORMAT = "rerail.policy/v1" as const;
 
-export const POLICY_SEVERITIES = ["error", "warning", "advisory"] as const;
-export type PolicySeverity = (typeof POLICY_SEVERITIES)[number];
 export const POLICY_REGEX_SOURCES = ["file.content", "file.path"] as const;
 export type PolicyRegexSource = (typeof POLICY_REGEX_SOURCES)[number];
 export const POLICY_CHECK_FORMS = ["forbid", "require_each", "budget", "llm", "define"] as const;
@@ -134,7 +133,6 @@ export const policyOptionDeclarationSchema = z
 export const policyFindingSchema = z
   .object({
     code: nonEmptyString,
-    severity: z.enum(POLICY_SEVERITIES),
     anchor: z.string().regex(POLICY_FINDING_ANCHOR_PATTERN, "Anchor must be witness.span, witness.start, witness.end, file.start, or capture.<NAME>."),
     message: nonEmptyString,
     fix: z
@@ -152,7 +150,7 @@ export const policyFindingSchema = z
     suppress: policySuppressSchema.optional(),
     variables: z
       .record(z.string(), policyValueSchema)
-      .refine(variables => Object.keys(variables).length === 0, "Finding variables are not supported yet.")
+      .refine(variables => Object.keys(variables).length === 0, "Violation variables are not supported yet.")
       .optional(),
   })
   .strict() as unknown as z.ZodType<PolicyDslFindingSpec>;
@@ -1699,19 +1697,19 @@ function regexGroupNames(pattern: string): Set<string> {
   return new Set([...pattern.matchAll(/\(\?P?<([A-Za-z_][A-Za-z0-9_]*)>/g)].map(match => match[1]!));
 }
 
-/** The query whose witnesses a forbid check reports: `select_when` reports its `select` side. */
+/** The query whose witnesses a forbid clause reports: `select_when` reports its `select` side. */
 function emittingQuery(query: PolicyDslQuery): PolicyDslQuery {
   return "select_when" in query && query.select_when !== undefined ? emittingQuery(query.select_when.select) : query;
 }
 
-const FIX_NEEDS_SOURCE_TEXT = "Only forbid checks over an ast or file.content regex query can suggest a fix.";
+const FIX_NEEDS_SOURCE_TEXT = "Only forbid clauses over an ast or file.content regex query can suggest a fix.";
 
 type FindingIssue = (path: string, message: string) => void;
 
 /** Anchors and fixes the emitting query's matches cannot carry: no query, a fact, or a file.path regex. */
-function checkFindingSource(query: PolicyDslQuery | undefined, finding: PolicyDslReportingCheck["finding"], issue: FindingIssue): void {
+function checkFindingSource(query: PolicyDslQuery | undefined, finding: PolicyDslReportingCheck["violation"], issue: FindingIssue): void {
   if (query === undefined) {
-    if (finding.anchor !== "witness.span") issue("anchor", "require_each, budget, and llm findings support only witness.span.");
+    if (finding.anchor !== "witness.span") issue("anchor", "require_each, budget, and llm violations support only witness.span.");
     if (finding.fix !== undefined) issue("fix", FIX_NEEDS_SOURCE_TEXT);
     return;
   }
@@ -1722,8 +1720,8 @@ function checkFindingSource(query: PolicyDslQuery | undefined, finding: PolicyDs
   }
 }
 
-/** A non-ast finding's anchor and message may name only the regex's named groups. */
-function checkFindingCaptures(query: PolicyDslQuery | undefined, finding: PolicyDslReportingCheck["finding"], issue: FindingIssue): void {
+/** A non-ast violation's anchor and message may name only the regex's named groups. */
+function checkFindingCaptures(query: PolicyDslQuery | undefined, finding: PolicyDslReportingCheck["violation"], issue: FindingIssue): void {
   const regex = query !== undefined && "regex" in query ? query.regex : undefined;
   const groups = regex === undefined ? new Set<string>() : regexGroupNames(regex.pattern);
   const capture = /^capture\.(\w+)$/.exec(finding.anchor)?.[1];
@@ -1733,10 +1731,10 @@ function checkFindingCaptures(query: PolicyDslQuery | undefined, finding: Policy
   }
 }
 
-/** Which directive comments a finding's suppress may name: the query's language's, and only for an ast query. */
-function checkFindingSuppress(ast: PolicyDslAstQuery["ast"] | undefined, finding: PolicyDslReportingCheck["finding"], issue: FindingIssue): void {
+/** Which directive comments a violation's suppress may name: the query's language's, and only for an ast query. */
+function checkFindingSuppress(ast: PolicyDslAstQuery["ast"] | undefined, finding: PolicyDslReportingCheck["violation"], issue: FindingIssue): void {
   if (finding.suppress === undefined) return;
-  if (ast === undefined) return issue("suppress", "suppress removes an ast query's findings.");
+  if (ast === undefined) return issue("suppress", "suppress removes an ast query's violations.");
   const suppressions = policyLanguageSuppressions(ast.language);
   const refusals: ReadonlyArray<readonly [PolicySuppression, string]> = [
     ["eslint", "eslint-disable comments are ESLint's"],
@@ -1750,13 +1748,13 @@ function checkFindingSuppress(ast: PolicyDslAstQuery["ast"] | undefined, finding
 }
 
 /**
- * The finding checks the kernel makes against the emitting query that need no grammar: fact-based
- * findings carry no source span or captures, and only ast and file.content regex matches are text a
+ * The violation checks the kernel makes against the emitting query that need no grammar: fact-based
+ * violations carry no source span or captures, and only ast and file.content regex matches are text a
  * fix can replace. Captures of an ast query are left to the kernel.
  */
 function checkFindingAgainstQuery(check: PolicyDslReportingCheck, context: z.RefinementCtx): void {
-  const { finding } = check;
-  const issue: FindingIssue = (path, message) => context.addIssue({ code: "custom", path: ["finding", path], message });
+  const { violation: finding } = check;
+  const issue: FindingIssue = (path, message) => context.addIssue({ code: "custom", path: ["violation", path], message });
   const query = check.forbid === undefined ? undefined : emittingQuery(check.forbid);
   checkFindingSource(query, finding, issue);
   const ast = query !== undefined && "ast" in query ? query.ast : undefined;
@@ -1791,7 +1789,7 @@ export const policyDefineSchema = z
 export const policyCheckSchema = z
   .object({
     id: nonEmptyString,
-    finding: policyFindingSchema.optional(),
+    violation: policyFindingSchema.optional(),
     forbid: policyQuerySchema.optional(),
     require_each: z.object({ subject: policyRelationSchema, evidence: policyRelationSchema }).strict().optional(),
     budget: z
@@ -1808,15 +1806,15 @@ export const policyCheckSchema = z
   .strict()
   .refine(
     check => POLICY_CHECK_FORMS.filter(form => check[form] !== undefined).length === 1,
-    `A check must contain exactly one constraint form: ${POLICY_CHECK_FORMS.join(", ")}.`,
+    `A clause must contain exactly one constraint form: ${POLICY_CHECK_FORMS.join(", ")}.`,
   )
   .superRefine((check, context) => {
     if (check.define !== undefined) {
-      if (check.finding !== undefined) {
-        context.addIssue({ code: "custom", path: ["finding"], message: "A define check reports nothing, so it has no finding." });
+      if (check.violation !== undefined) {
+        context.addIssue({ code: "custom", path: ["violation"], message: "A define clause reports nothing, so it has no violation." });
       }
-    } else if (check.finding === undefined) {
-      context.addIssue({ code: "custom", path: ["finding"], message: "finding is required." });
+    } else if (check.violation === undefined) {
+      context.addIssue({ code: "custom", path: ["violation"], message: "violation is required." });
     } else {
       checkFindingAgainstQuery(check as unknown as PolicyDslReportingCheck, context);
     }
@@ -1859,14 +1857,14 @@ type SharedUtilities = Map<string, Map<string, PolicyDslUtility>>;
 /** Each language's define utilities, reporting an id a second define of the language repeats. */
 function sharedUtilities(rule: PolicyDslDocument, context: z.RefinementCtx): SharedUtilities {
   const shared: SharedUtilities = new Map();
-  for (const [index, check] of rule.checks.entries()) {
+  for (const [index, check] of rule.clauses.entries()) {
     const define = check.define;
     if (define?.language === undefined) continue;
     const known = shared.get(define.language) ?? new Map<string, PolicyDslUtility>();
     shared.set(define.language, known);
     for (const [id, util] of Object.entries(define.utils ?? {})) {
       if (known.has(id)) {
-        context.addIssue({ code: "custom", path: ["checks", index, "define", "utils", id], message: `Utility rule ${id} is already defined by another define of ${define.language}.` });
+        context.addIssue({ code: "custom", path: ["clauses", index, "define", "utils", id], message: `Utility rule ${id} is already defined by another define of ${define.language}.` });
       }
       known.set(id, util);
     }
@@ -1924,22 +1922,22 @@ function checkAstQueryUtilities(ast: PolicyDslAstQuery["ast"], astPath: (string 
 }
 
 /**
- * The cross-references between checks: a define's utilities are visible to every ast query of its
+ * The cross-references between clauses: a define's utilities are visible to every ast query of its
  * language, so whether `matches` names a utility, and passes the parameters it takes, is a question
  * of the document.
  */
 function checkDocumentUtilities(rule: PolicyDslDocument, context: z.RefinementCtx): void {
   const shared = sharedUtilities(rule, context);
-  for (const [index, check] of rule.checks.entries()) {
+  for (const [index, check] of rule.clauses.entries()) {
     const define = check.define;
     if (define?.language !== undefined) {
       const known = shared.get(define.language)!;
       const calls: UtilityCall[] = [];
-      utilityCalls(define.utils, ["checks", index, "define", "utils"], calls);
+      utilityCalls(define.utils, ["clauses", index, "define", "utils"], calls);
       for (const call of calls) checkUtilityCall(call, known.get(call.id), context);
     }
     if (check.forbid === undefined) continue;
-    for (const [ast, astPath] of astQueries(check.forbid, ["checks", index, "forbid"])) checkAstQueryUtilities(ast, astPath, shared, context);
+    for (const [ast, astPath] of astQueries(check.forbid, ["clauses", index, "forbid"])) checkAstQueryUtilities(ast, astPath, shared, context);
   }
 }
 
@@ -1966,9 +1964,9 @@ function checkWhenOptions(rule: PolicyDslDocument, context: z.RefinementCtx): vo
   } catch {
     return;
   }
-  for (const [index, check] of rule.checks.entries()) {
+  for (const [index, check] of rule.clauses.entries()) {
     if (check.forbid === undefined) continue;
-    for (const [ast, astPath] of astQueries(check.forbid, ["checks", index, "forbid"])) {
+    for (const [ast, astPath] of astQueries(check.forbid, ["clauses", index, "forbid"])) {
       for (const [name, condition] of Object.entries(ast.when?.option ?? {})) checkWhenOption(values, name, condition, [...astPath, "when", "option", name], context);
     }
   }
@@ -1980,21 +1978,22 @@ export const policyResolvedRuleSchema = z
     format: z.literal(POLICY_FORMAT),
     id: nonEmptyString,
     revision: z.number().int().positive(),
+    mode: z.enum(RULE_MODES),
     description: z.string().optional(),
     scope: policyScopeSchema.optional(),
-    checks: z.array(policyCheckSchema).min(1),
+    clauses: z.array(policyCheckSchema).min(1),
   })
   .strict()
   .superRefine((rule, context) => {
     const ids = new Set<string>();
-    for (const [index, check] of rule.checks.entries()) {
+    for (const [index, check] of rule.clauses.entries()) {
       if (ids.has(check.id)) {
-        context.addIssue({ code: "custom", path: ["checks", index, "id"], message: `Duplicate check id: ${check.id}.` });
+        context.addIssue({ code: "custom", path: ["clauses", index, "id"], message: `Duplicate clause id: ${check.id}.` });
       }
       ids.add(check.id);
     }
-    if (rule.checks.every(check => check.define !== undefined)) {
-      context.addIssue({ code: "custom", path: ["checks"], message: "checks must hold a check besides define: a define reports nothing." });
+    if (rule.clauses.every(check => check.define !== undefined)) {
+      context.addIssue({ code: "custom", path: ["clauses"], message: "clauses must hold a clause besides define: a define reports nothing." });
     }
     checkDocumentUtilities(rule as unknown as PolicyDslDocument, context);
     checkWhenOptions(rule as unknown as PolicyDslDocument, context);

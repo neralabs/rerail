@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:one-variable-per-declaration",
   "revision": 1,
+  "mode": "steer",
   "description": "Disallows multiple variable definitions in the same declaration statement (ignore-for-loop).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "statement",
       "forbid": {
@@ -56,10 +57,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "ONE_VARIABLE_PER_DECLARATION",
-        "severity": "error",
         "message": "Multiple variable declarations in the same statement are forbidden"
       }
     },
@@ -104,10 +104,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "ONE_VARIABLE_PER_DECLARATION",
-        "severity": "error",
         "message": "Multiple variable declarations in the same statement are forbidden"
       }
     }

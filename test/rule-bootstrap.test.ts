@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -26,20 +26,21 @@ async function temporaryDatabase(): Promise<string> {
 
 function policy(id: string, revision = 1, message = "No print"): PolicyRule {
   return policyRuleSchema.parse({
-    checks: [
+    clauses: [
       {
         id: `${id}:check`,
-        finding: { anchor: "witness.span", code: "FORBIDDEN_PRINT", message, severity: "error" },
+        violation: { anchor: "witness.span", code: "FORBIDDEN_PRINT", message },
         forbid: { regex: { pattern: "\\bprint\\(", source: "file.content" } },
       },
     ],
     format: "rerail.policy/v1",
     id,
     revision,
+    mode: "block",
   });
 }
 
-const bundled = (...rules: PolicyRule[]): RuleDocument[] => rules.map(rule => ({ kind: "policy", rule }));
+const bundled = (...rules: PolicyRule[]): RuleDocument[] => rules.map(rule => ({ kind: "file", rule }));
 
 describe("SqliteRuleStore.seed", () => {
   it("inserts new bundled rules with their digest and leaves them alone on the next run", async () => {
@@ -63,7 +64,7 @@ describe("SqliteRuleStore.seed", () => {
     const upstream = bundled(policy("bundled:a", 2, "Print is forbidden"), policy("bundled:b", 2, "Print is forbidden"));
     expect(store.seed(upstream, 3_000)).toEqual({ inserted: 0, refreshed: 1, kept: 1 });
     const edited = store.get("bundled:a");
-    expect(edited?.kind === "policy" && edited.rule.checks[0]?.finding?.message).toBe("Use the logger");
+    expect(edited?.kind === "file" && edited.rule.clauses[0]?.violation?.message).toBe("Use the logger");
     expect(edited?.revision).toBe(1);
     const refreshed = store.get("bundled:b");
     expect(refreshed?.revision).toBe(2);
@@ -74,10 +75,10 @@ describe("SqliteRuleStore.seed", () => {
 
   it("inserts an opt-in document disabled, and neither a refresh nor a re-seed changes its enabled state", async () => {
     const store = new SqliteRuleStore(await temporaryDatabase());
-    const optIn = (rule: PolicyRule): BundledRuleDocument => ({ kind: "policy", rule, enabledByDefault: false });
+    const optIn = (rule: PolicyRule): BundledRuleDocument => ({ kind: "file", rule, enabledByDefault: false });
 
     expect(store.seed([optIn(policy("pack:a")), optIn(policy("pack:b"))], 1_000)).toEqual({ inserted: 2, refreshed: 0, kept: 0 });
-    expect(store.get("pack:a")).toMatchObject({ enabled: false, sourceDigest: ruleDocumentDigest({ kind: "policy", rule: policy("pack:a") }) });
+    expect(store.get("pack:a")).toMatchObject({ enabled: false, sourceDigest: ruleDocumentDigest({ kind: "file", rule: policy("pack:a") }) });
     expect(store.policyRules()).toEqual([]);
     store.setEnabled({ ids: ["pack:b"] }, true, 1_500);
 
@@ -97,26 +98,18 @@ describe("SqliteRuleStore.seed", () => {
   });
 });
 
-/** A sanity floor, not the exact count: bundled-rules.test.ts checks every document against its fixtures. */
+/** A sanity floor, not the exact count. */
 const MINIMUM_BUNDLED_RULES = 10;
 
 describe("bundled rules", () => {
-  it("defaults to the bundled documents, which all parse, carry unique ids, and are grouped by a nera-<group> prefix", () => {
+  it("ships only the opt-in TSLint pack: every document parses as a file rule with a unique tslint:<rule> id, disabled by default", () => {
     const documents = loadBundledRules();
-    const defaults = documents.filter(document => document.enabledByDefault !== false);
-    expect(defaults.length).toBeGreaterThan(MINIMUM_BUNDLED_RULES);
+    expect(documents.length).toBeGreaterThan(MINIMUM_BUNDLED_RULES);
     expect(new Set(documents.map(document => document.rule.id)).size).toBe(documents.length);
-    expect(documents.every(document => document.kind === "policy")).toBe(true);
-    expect(defaults.every(document => /^nera-[a-z-]+:[a-z0-9-]+$/u.test(document.rule.id))).toBe(true);
-  });
-
-  it("loads the opt-in pack after the defaults, marked disabled by default and namespaced tslint:<rule>", () => {
-    const documents = loadBundledRules();
-    const optIn = documents.filter(document => document.enabledByDefault === false);
-    expect(optIn.length).toBeGreaterThan(0);
-    expect(optIn.every(document => /^tslint:[a-z0-9-]+$/u.test(document.rule.id))).toBe(true);
-    expect(optIn.map(document => document.rule.id)).not.toContain("tslint:file-header");
-    expect(documents.slice(documents.length - optIn.length)).toEqual(optIn);
+    expect(documents.every(document => document.kind === "file")).toBe(true);
+    expect(documents.every(document => document.enabledByDefault === false)).toBe(true);
+    expect(documents.every(document => /^tslint:[a-z0-9-]+$/u.test(document.rule.id))).toBe(true);
+    expect(documents.map(document => document.rule.id)).not.toContain("tslint:file-header");
   });
 
   it("reads opt-in packs from opt-in/<pack>/ by pack then file name, ignores non-JSON files in a pack, and rejects a file outside a pack or a duplicate id", async () => {
@@ -126,13 +119,13 @@ describe("bundled rules", () => {
       await mkdir(dirname(join(root, path)), { recursive: true });
       await writeFile(join(root, path), JSON.stringify(policy(id)));
     };
-    await write("default.json", "nera-core:default");
+    await write("default.json", "example:default");
     await write("opt-in/zeta/a.json", "zeta:a");
     await write("opt-in/alpha/b.json", "alpha:b");
     await write("opt-in/alpha/a.json", "alpha:a");
     await writeFile(join(root, "opt-in", "alpha", "README.md"), "# alpha pack\n");
     expect(loadBundledRules(root).map(document => [document.rule.id, document.enabledByDefault])).toEqual([
-      ["nera-core:default", undefined],
+      ["example:default", undefined],
       ["alpha:a", false],
       ["alpha:b", false],
       ["zeta:a", false],
@@ -151,14 +144,14 @@ describe("bundled rules", () => {
     temporaryDirectories.push(root);
     await mkdir(join(root, "opt-in", "tslint"), { recursive: true });
     await mkdir(join(root, "opt-in", ".hidden-pack"), { recursive: true });
-    await writeFile(join(root, "default.json"), JSON.stringify(policy("nera-core:default")));
+    await writeFile(join(root, "default.json"), JSON.stringify(policy("example:default")));
     await writeFile(join(root, "opt-in", "tslint", "a.json"), JSON.stringify(policy("tslint:a")));
     await writeFile(join(root, "opt-in", "tslint", "README.md"), "# tslint pack\n");
     await writeFile(join(root, "opt-in", ".hidden-pack", "x.json"), JSON.stringify(policy("hidden:x")));
     await writeFile(join(root, "opt-in", ".DS_Store"), "\u0000\u0001binary");
     await writeFile(join(root, "opt-in", "README.md"), "# opt-in packs\n");
     expect(loadBundledRules(root).map(document => [document.rule.id, document.enabledByDefault])).toEqual([
-      ["nera-core:default", undefined],
+      ["example:default", undefined],
       ["tslint:a", false],
     ]);
   });
@@ -170,8 +163,8 @@ describe("database schema", () => {
     openRerailDatabase(path).$client.close();
     const stamped = new Database(path, { readonly: true });
     expect(stamped.pragma("user_version", { simple: true })).toBe(RERAIL_SCHEMA_VERSION);
-    expect(stamped.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'policy_run_result_pages'").get()).toEqual({
-      name: "policy_run_result_pages",
+    expect(stamped.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audit_result_pages'").get()).toEqual({
+      name: "audit_result_pages",
     });
     stamped.close();
   });

@@ -30,7 +30,7 @@ function createHarness() {
   return { entries, tool };
 }
 
-describe("Pi cosine_rules tool", () => {
+describe("Pi conversation_rules tool", () => {
   it("persists an idempotent deduplicated removal mutation", async () => {
     const harness = createHarness();
 

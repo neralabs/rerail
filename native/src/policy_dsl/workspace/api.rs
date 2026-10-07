@@ -3,7 +3,7 @@
 
 use super::crossfile::{ConsumerRefresh, CrossFileScheduler};
 use super::documents;
-use super::evaluate::{Job, JobContext, evaluate_file, run_jobs, sql_plans};
+use super::evaluate::{Job, JobContext, evaluate_file, run_jobs};
 use super::global::{compile_query_plan, compile_relation_producer, evaluate_global};
 use super::index::{RepositoryIndexOptions, WorkspaceIndexTask, reusable_directories};
 use super::ingest::{
@@ -14,15 +14,17 @@ use super::ingest::{
 use super::memory::record_workspace_residency;
 use super::memory::workspace_memory_profile;
 use super::persisted::{candidate_catalog, persist_files};
-use super::results::{profile_result, serialize_result, serialize_result_page};
+use super::results::{
+    ResultText, profile_result, replace_global_changes, serialize_result, serialize_result_page,
+};
 use super::storage::{attach_storage, unix_seconds};
-use super::{CandidateSets, FILE_TIME_BUDGET, WorkspaceState, check_closed};
+use super::{CandidateSets, FILE_WORK_BUDGET, WorkspaceState, check_closed};
 use crate::content_store::WorkspaceCompletion;
+use crate::policy_dsl::CompiledPolicyDsl;
 use crate::policy_dsl::budget::MatchBudget;
 use crate::policy_dsl::eval::{evaluation_json, overflow_evaluation};
 use crate::policy_dsl::json::{invalid, json_error};
 use crate::policy_dsl::model::{CheckKind, Evaluation, Metrics, PolicyScope, Snapshot};
-use crate::policy_dsl::{CompiledPolicyDsl, query};
 #[cfg(feature = "policy-profile")]
 use crate::policy_dsl::{matcher::GrammarMatcher, model::Query, profile};
 use crate::release_allocator_memory;
@@ -185,7 +187,6 @@ impl PolicyDslWorkspace {
         }
         CrossFileScheduler::register(&mut state, index, Arc::make_mut(&mut resident))?;
         state.policies.push(resident);
-        state.sql_plans = None;
         if let Err(error) = check_closed(&self.closed) {
             *self
                 .scopes
@@ -243,7 +244,8 @@ impl PolicyDslWorkspace {
             state.result_page_index = None;
             state.revision = request.revision;
             let replaced = BTreeSet::from([file.path.clone()]);
-            return serialize_result(&state, Metrics::default(), false, &replaced).map(Some);
+            return serialize_result(&state, Metrics::default(), false, &replaced, false)
+                .map(|result| Some(result.text));
         }
         let WorkspaceState {
             policies,
@@ -258,13 +260,18 @@ impl PolicyDslWorkspace {
         let result = (|| {
             // Own staging inside this scope so every early return drops it before reclamation.
             let mut staged = staged;
-            let budget = MatchBudget::start(&self.closed, INLINE_TIME_BUDGET);
-            let sql = sql_plans(&mut state);
+            let budget = MatchBudget::until(&self.closed, INLINE_TIME_BUDGET);
             let WorkspaceState {
                 policies, grammars, ..
             } = &mut *state;
-            let metrics =
-                evaluate_file(&mut staged, policies, grammars, &self.closed, &sql, &budget)?;
+            let metrics = evaluate_file(
+                &mut staged,
+                policies,
+                grammars,
+                &self.closed,
+                &budget,
+                &mut None,
+            )?;
             if budget.observed() {
                 return Ok(None);
             }
@@ -277,8 +284,9 @@ impl PolicyDslWorkspace {
             let profile = metrics.clone();
             let serialization_started = Instant::now();
             let replaced = BTreeSet::from([path]);
-            let result = serialize_result(&state, metrics, false, &replaced)?;
-            profile_result(result, &profile, serialization_started.elapsed()).map(Some)
+            let result = serialize_result(&state, metrics, false, &replaced, false)?;
+            profile_result(result, &profile, serialization_started.elapsed())
+                .map(|result| Some(result.text))
         })();
         if candidates_changed {
             reclaim_candidate_sets(&mut state.candidate_sets);
@@ -423,7 +431,8 @@ impl PolicyDslWorkspace {
             .state
             .try_lock()
             .map_err(|_| invalid("policy workspace is evaluating"))?;
-        // Cross-file checks read the evidence index, which eviction keeps.
+        // Cross-file checks read the evidence index and the call graph, which eviction keeps: they
+        // are summaries of the files, and an edit after eviction updates the graph in place.
         if state.storage.is_none() || state.files.values().any(|file| file.stored.is_none()) {
             return Ok(false);
         }
@@ -443,7 +452,6 @@ impl PolicyDslWorkspace {
             state.evicted_inputs.insert(input.path.clone(), input);
         }
         state.files.retain(|_, file| file.transient_failure);
-        CrossFileScheduler::evict(&mut state);
         state.documents.clear();
         state.candidate_sets = CandidateSets::new();
         state.grammars.clear();
@@ -453,7 +461,6 @@ impl PolicyDslWorkspace {
                 .release_memory()
                 .map_err(|error| invalid(error.to_string()))?;
         }
-        query::release_connections();
         release_allocator_memory();
         Ok(true)
     }
@@ -510,7 +517,6 @@ fn clear_if_unlocked(mutex: &Mutex<WorkspaceState>) {
         if let Some(storage) = storage {
             let _ = storage.store.release_memory();
         }
-        query::release_connections();
         release_allocator_memory();
     };
     match mutex.try_lock() {
@@ -654,34 +660,51 @@ pub(super) fn cpu_slot() -> &'static Mutex<()> {
     &SLOT
 }
 impl Task for WorkspaceApplyTask {
-    type Output = String;
-    type JsValue = String;
-    fn compute(&mut self) -> Result<String> {
+    type Output = ResultText;
+    type JsValue = ResultText;
+    fn compute(&mut self) -> Result<ResultText> {
         let _slot = cpu_slot()
             .try_lock()
             .map_err(|_| invalid("RERAIL_POLICY_BUSY"))?;
         self.apply_with_slot()
     }
-    fn resolve(&mut self, _env: Env, output: String) -> Result<String> {
+    fn resolve(&mut self, _env: Env, output: ResultText) -> Result<ResultText> {
         check_closed(&self.closed)?;
         Ok(output)
+    }
+    /// The response is in JavaScript and freed by now: purges its pages, which outlive the apply's
+    /// own purge.
+    fn finally(self, _env: Env) -> Result<()> {
+        drop(self);
+        crate::purge_allocator_pages();
+        Ok(())
     }
 }
 
 impl WorkspaceApplyTask {
     /// The apply itself, for a caller that already holds `cpu_slot`.
-    pub(super) fn apply_with_slot(&mut self) -> Result<String> {
+    pub(super) fn apply_with_slot(&mut self) -> Result<ResultText> {
         check_closed(&self.closed)?;
+        // Declared first, so it purges after everything else the apply holds is freed. The request
+        // payload leaves the task and is freed once decoded; the response is purged in `finally`.
+        let _purge = PurgeAfterApply;
         #[cfg(feature = "policy-profile")]
         let cpu_started = profile::thread_cpu_ns();
         let request = match self.request_direct.take() {
             Some(request) => request,
-            None => match &self.request_buffer {
-                Some(buffer) if self.request_json.is_empty() => decode_buffer_request(buffer)?,
-                None => serde_json::from_str(&self.request_json).map_err(json_error)?,
-                Some(_) => return Err(invalid("workspace request encoding is invalid")),
-            },
+            None => {
+                let json = std::mem::take(&mut self.request_json);
+                match self.request_buffer.take() {
+                    Some(buffer) if json.is_empty() => decode_buffer_request(&buffer)?,
+                    None => serde_json::from_str(&json).map_err(json_error)?,
+                    Some(_) => return Err(invalid("workspace request encoding is invalid")),
+                }
+            }
         };
+        // The encoded request (a copy of every source it sends) is not read again: it is
+        // released before the evaluation, not with the task.
+        drop(std::mem::take(&mut self.request_json));
+        drop(self.request_buffer.take());
         #[cfg(feature = "policy-profile")]
         let _profile = profile::ApplyProfile::start(request.revision, cpu_started);
         let guard = match self.state.lock() {
@@ -725,13 +748,11 @@ impl WorkspaceApplyTask {
             }
         }
         let policies = state.policies.clone();
-        let sql = sql_plans(&mut state);
         let storage = state.storage.clone();
         let producer_batch =
             CrossFileScheduler::prepare(&mut state, &mut jobs, &policies, deferred);
         let context = JobContext {
             policies: &policies,
-            sql: &sql,
             storage: storage.as_ref(),
             closed: &self.closed,
             summarize: CrossFileScheduler::summarizes(&producer_batch),
@@ -832,6 +853,8 @@ impl WorkspaceApplyTask {
         metrics.storage_write_nanoseconds = storage_write_started.elapsed().as_nanos() as u64;
         #[cfg(feature = "policy-profile")]
         drop(_storage_write_timer);
+        // A global check's answer changes in files the apply did not touch: they are replaced too.
+        let mut complete = false;
         if !deferred && !state.dirty_globals.is_empty() {
             let snapshot = Snapshot {
                 revision: state.revision,
@@ -840,7 +863,7 @@ impl WorkspaceApplyTask {
             let dirty = std::mem::take(&mut state.dirty_globals);
             for index in dirty {
                 check_closed(&self.closed)?;
-                let budget = MatchBudget::start(&self.closed, FILE_TIME_BUDGET);
+                let budget = MatchBudget::work(&self.closed, FILE_WORK_BUDGET);
                 let mut evaluation = evaluate_global(&state, index, &snapshot)?;
                 #[cfg(test)]
                 super::pass_deadline_at_test_phase("global-done");
@@ -850,7 +873,12 @@ impl WorkspaceApplyTask {
                         overflow_evaluation("runtime", "global evaluation time budget exceeded");
                 }
                 metrics.visited_nodes += evaluation.metrics.visited_nodes;
-                state.global_results.insert(index, evaluation);
+                let previous = state.global_results.insert(index, evaluation);
+                complete |= !replace_global_changes(
+                    previous.as_ref(),
+                    &state.global_results[&index],
+                    &mut replaced,
+                )?;
             }
         }
         check_closed(&self.closed)?;
@@ -862,13 +890,26 @@ impl WorkspaceApplyTask {
             let output = serde_json::to_string(&json!({ "revision": state.revision,
                 "evaluation": evaluation_json(Evaluation { metrics, ..Evaluation::default() }, None, &[], &[]) })).map_err(json_error)?;
             check_closed(&self.closed)?;
-            return profile_result(output, &profile, serialization_started.elapsed());
+            return profile_result(
+                ResultText::of(output),
+                &profile,
+                serialization_started.elapsed(),
+            );
         }
         let profile = metrics.clone();
         let serialization_started = Instant::now();
-        let output = serialize_result(&state, metrics, deferred, &replaced)?;
+        let output = serialize_result(&state, metrics, deferred, &replaced, complete)?;
         check_closed(&self.closed)?;
         profile_result(output, &profile, serialization_started.elapsed())
+    }
+}
+
+/// Returns the allocator's freed pages once an apply has dropped its memory (`lib.rs`).
+struct PurgeAfterApply;
+
+impl Drop for PurgeAfterApply {
+    fn drop(&mut self) {
+        crate::purge_allocator_pages();
     }
 }
 

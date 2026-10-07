@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:prefer-conditional-expression",
   "revision": 1,
+  "mode": "steer",
   "description": "prefer-conditional-expression, check-else-if: an if/else or else-if chain of any length (recursive utils) whose every branch, through single-statement blocks, is one `$X = <one-line value>` to the same $X; an if in the else chain of a flagged if is not flagged again.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "conditional-assignment",
       "forbid": {
@@ -165,10 +166,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.IF",
         "code": "PREFER_CONDITIONAL_EXPRESSION",
-        "severity": "error",
         "message": "Use a conditional expression instead of assigning to '$X' in multiple places."
       }
     }

@@ -1,0 +1,284 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-no-direct-mutation-state",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-react 7.37.5 react/no-direct-mutation-state: an assignment or update whose target is a member chain rooted at `this.state`, inside a class component (nearest class extends Component / PureComponent / React.Component / React.PureComponent) or a function that is a property of the object passed to createReactClass; in a class constructor only when inside a call. Reported at `this`. Function components (Components.detect's stateless detection) are not modelled.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "member_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "object",
+                  "kind": "this"
+                }
+              },
+              {
+                "has": {
+                  "field": "property",
+                  "regex": "^state$"
+                }
+              },
+              {
+                "matches": "mutated-chain"
+              },
+              {
+                "any": [
+                  {
+                    "matches": "in-es6-component"
+                  },
+                  {
+                    "matches": "in-es5-component"
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "all": [
+                    {
+                      "matches": "in-es6-component"
+                    },
+                    {
+                      "matches": "in-constructor"
+                    },
+                    {
+                      "not": {
+                        "matches": "in-constructor-call"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": {
+            "mutated-chain": {
+              "any": [
+                {
+                  "inside": {
+                    "field": "left",
+                    "any": [
+                      {
+                        "kind": "assignment_expression"
+                      },
+                      {
+                        "kind": "augmented_assignment_expression"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "update_expression"
+                  }
+                },
+                {
+                  "inside": {
+                    "field": "object",
+                    "any": [
+                      {
+                        "kind": "member_expression"
+                      },
+                      {
+                        "kind": "subscript_expression"
+                      }
+                    ],
+                    "matches": "mutated-chain"
+                  }
+                }
+              ]
+            },
+            "class-node": {
+              "any": [
+                {
+                  "kind": "class_declaration"
+                },
+                {
+                  "kind": "class"
+                },
+                {
+                  "kind": "abstract_class_declaration"
+                }
+              ]
+            },
+            "component-superclass": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:Pure)?Component$"
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^React$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "regex": "^(?:Pure)?Component$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "es6-component": {
+              "matches": "class-node",
+              "has": {
+                "kind": "class_heritage",
+                "any": [
+                  {
+                    "has": {
+                      "matches": "component-superclass"
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "extends_clause",
+                      "has": {
+                        "field": "value",
+                        "matches": "component-superclass"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "in-es6-component": {
+              "inside": {
+                "stopBy": {
+                  "matches": "class-node"
+                },
+                "matches": "es6-component"
+              }
+            },
+            "in-constructor": {
+              "inside": {
+                "stopBy": {
+                  "matches": "class-node"
+                },
+                "kind": "method_definition",
+                "has": {
+                  "field": "name",
+                  "regex": "^constructor$"
+                }
+              }
+            },
+            "in-constructor-call": {
+              "inside": {
+                "stopBy": {
+                  "kind": "method_definition"
+                },
+                "kind": "call_expression"
+              }
+            },
+            "create-class-object": {
+              "kind": "object",
+              "inside": {
+                "kind": "arguments",
+                "inside": {
+                  "kind": "call_expression",
+                  "has": {
+                    "field": "function",
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^createReactClass$"
+                      },
+                      {
+                        "kind": "member_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "object",
+                              "kind": "identifier",
+                              "regex": "^React$"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "property",
+                              "regex": "^createReactClass$"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "in-es5-component": {
+              "inside": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "any": [
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "generator_function"
+                      }
+                    ],
+                    "inside": {
+                      "kind": "pair",
+                      "inside": {
+                        "matches": "create-class-object"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "method_definition",
+                    "inside": {
+                      "matches": "create-class-object"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-direct-mutation-state",
+        "message": "Do not mutate state directly. Use setState().",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-direct-mutation-state"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-reference",
   "revision": 1,
+  "mode": "steer",
   "description": "Disallows `/// <reference path=>` imports; anchored on the path value.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "reference-path",
       "forbid": {
@@ -18,10 +19,9 @@
           "pattern": "(?m)^[ \\t]*///[ \\t]*<reference[ \\t]+path[ \\t]*=[ \\t]*\"(?<PATH>[^\"\\n]*)\""
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.PATH",
         "code": "NO_REFERENCE",
-        "severity": "error",
         "message": "<reference> is not allowed, use imports"
       }
     }

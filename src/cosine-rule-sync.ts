@@ -29,7 +29,7 @@ export class LiveCosineRules {
 
   /** The session-start load: replace the registry's rules with the merged set. */
   prime(): void {
-    const sourceSignature = "ruleSignature" in this.#store ? this.#store.ruleSignature("cosine") : String(this.#store.dataVersion());
+    const sourceSignature = "ruleSignature" in this.#store ? this.#store.ruleSignature("conversation") : String(this.#store.dataVersion());
     const database = this.#read();
     const merged = this.#load(database);
     this.#registry.replace(merged);
@@ -40,7 +40,7 @@ export class LiveCosineRules {
 
   /** Apply what changed in the database since the last look. Returns whether the registry changed. */
   refresh(): boolean {
-    const sourceSignature = "ruleSignature" in this.#store ? this.#store.ruleSignature("cosine") : String(this.#store.dataVersion());
+    const sourceSignature = "ruleSignature" in this.#store ? this.#store.ruleSignature("conversation") : String(this.#store.dataVersion());
     if (sourceSignature === this.sourceSignature) return false;
     const database = this.#read();
 
@@ -69,7 +69,7 @@ export class LiveCosineRules {
   }
 
   #read(): DatabaseCosineRules {
-    const rules = this.#store.list({ kind: "cosine" }).flatMap(stored => stored.kind === "cosine" ? [stored] : []);
+    const rules = this.#store.list({ kind: "conversation" }).flatMap(stored => stored.kind === "conversation" ? [stored] : []);
     return { enabled: rules.filter(stored => stored.enabled).map(stored => stored.rule), ids: new Set(rules.map(stored => stored.rule.id)) };
   }
 }

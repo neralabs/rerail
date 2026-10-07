@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:interface-over-type-literal",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `interface-over-type-literal` rule with its default options (https://palantir.github.io/tslint/rules/interface-over-type-literal/). Prefer an interface over a type alias of an object type literal.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "interface-over-type-literal",
       "forbid": {
@@ -71,10 +72,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "INTERFACE_OVER_TYPE_LITERAL",
-        "severity": "error",
         "message": "Use an interface instead of a type literal."
       }
     }

@@ -2,7 +2,21 @@
 
 use crate::policy_dsl::language::Family;
 use crate::policy_dsl::language::GrammarDialect;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+
+/// A diagnostic span: the byte offsets of its start and end, and their 0-based lines and byte
+/// columns. It serializes as the JSON object of those six fields, its fields declared in key
+/// order so a direct serialization writes the bytes the object's would.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Span {
+    pub(crate) end_byte: usize,
+    pub(crate) end_column: usize,
+    pub(crate) end_line: usize,
+    pub(crate) start_byte: usize,
+    pub(crate) start_column: usize,
+    pub(crate) start_line: usize,
+}
 
 /// The line terminators of a linter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -70,6 +84,23 @@ impl LineTable {
         Self { starts, ends }
     }
 
+    /// Tree-sitter's rows (`TSPoint`): only `\n` ends one. A lone `\r`, U+2028 and U+2029 stay
+    /// inside a row, where the linters' lines end at them.
+    pub(crate) fn tree_sitter(source: &str) -> Self {
+        let mut starts = vec![0];
+        let mut ends = Vec::new();
+        for (at, _) in source
+            .bytes()
+            .enumerate()
+            .filter(|&(_, byte)| byte == b'\n')
+        {
+            ends.push(at);
+            starts.push(at + 1);
+        }
+        ends.push(source.len());
+        Self { starts, ends }
+    }
+
     /// The 0-based line holding `byte`; a terminator's bytes belong to the line they end.
     pub(crate) fn line(&self, byte: usize) -> usize {
         self.starts.partition_point(|start| *start <= byte) - 1
@@ -82,17 +113,17 @@ impl LineTable {
     }
 
     /// The diagnostic span at two byte offsets.
-    pub(crate) fn span_json(&self, start: usize, end: usize) -> Value {
+    pub(crate) fn span(&self, start: usize, end: usize) -> Span {
         let (start_line, start_column) = self.point(start);
         let (end_line, end_column) = self.point(end);
-        json!({
-            "startByte": start,
-            "endByte": end,
-            "startLine": start_line,
-            "startColumn": start_column,
-            "endLine": end_line,
-            "endColumn": end_column,
-        })
+        Span {
+            end_byte: end,
+            end_column,
+            end_line,
+            start_byte: start,
+            start_column,
+            start_line,
+        }
     }
 
     #[cfg(feature = "policy-profile")]

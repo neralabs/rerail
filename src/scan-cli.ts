@@ -46,7 +46,7 @@ function scanScope(value: string | undefined): "repository" | "git-diff" | undef
 function mode(value: string | undefined, option: string): Mode | undefined {
   if (value === undefined) return undefined;
   const parsed = policySettingsSchema.shape.mode.safeParse(value);
-  if (!parsed.success) throw new Error(`${option} must be log or resteer`);
+  if (!parsed.success) throw new Error(`${option} must be log or steer`);
   return parsed.data;
 }
 
@@ -89,7 +89,7 @@ function parseCommon(args: readonly string[]): ParsedCommon {
 /** The Rerail home's daemon serves every session recorded in its database, whichever repository ran it. */
 async function targetDaemon(options: ScanCliOptions): Promise<URL> {
   const daemon = await findRunningDaemon(options.home);
-  if (daemon === undefined) throw new Error("Rerail is not running. Start it with rerail start.");
+  if (daemon === undefined) throw new Error("Rerail is not running. Start it with rerail daemon start.");
   return new URL(daemon.state.url);
 }
 
@@ -112,7 +112,7 @@ function print(options: ScanCliOptions, json: boolean, value: unknown, text: str
 }
 
 function describeScan(scan: ScanRequest): string {
-  const result = scan.runIds.length === 0 ? "no policy runs yet" : `runs: ${scan.runIds.join(", ")}`;
+  const result = scan.auditIds.length === 0 ? "no policy runs yet" : `runs: ${scan.auditIds.join(", ")}`;
   const error = scan.error === null ? "" : `: ${scan.error}`;
   return `Scan ${scan.id}: ${scan.status} (${scan.scope}/${scan.mode}; ${result})${error}`;
 }
@@ -120,8 +120,8 @@ function describeScan(scan: ScanRequest): string {
 async function waitForScan(base: URL, sessionId: string, id: string): Promise<ScanRequest> {
   const deadline = Date.now() + WAIT_TIMEOUT_MS;
   for (;;) {
-    const { scans } = await api<{ scans: ScanRequest[] }>(base, `/api/sessions/${encodeURIComponent(sessionId)}/scans`, "GET");
-    const scan = scans.find(item => item.id === id);
+    const { auditRequests } = await api<{ auditRequests: ScanRequest[] }>(base, `/api/sessions/${encodeURIComponent(sessionId)}/audit-requests`, "GET");
+    const scan = auditRequests.find(item => item.id === id);
     if (scan === undefined) throw new Error(`Scan ${id} disappeared before it could be observed`);
     if (!["queued", "running"].includes(scan.status)) return scan;
     if (Date.now() >= deadline) return scan;
@@ -143,8 +143,8 @@ async function runSettingsCommand(
     ...(selectedMode === undefined ? {} : { mode: selectedMode }),
   };
   const controls = Object.keys(patch).length === 0
-    ? await api<PolicyControls>(base, `/api/sessions/${session}/policy-settings`, "GET")
-    : await api<PolicyControls>(base, `/api/sessions/${session}/policy-settings`, "PATCH", patch);
+    ? await api<PolicyControls>(base, `/api/sessions/${session}/audit-settings`, "GET")
+    : await api<PolicyControls>(base, `/api/sessions/${session}/audit-settings`, "PATCH", patch);
   const status = controls.active ? controls.delivery : "inactive";
   print(options, parsed.common.json, controls, `Ongoing settings for ${controls.workspaceRoot}: ${controls.settings.scope}/${controls.settings.mode} (${status})`);
   return 0;
@@ -160,7 +160,7 @@ async function runExplicitScanCommand(
   if (parsed.paths.length > 0) throw new Error("--paths is not supported; use --scope repository or --scope git-diff");
   const selectedScope = scanScope(parsed.values.get("--scope"));
   const input = selectedScope === undefined ? {} : { scope: selectedScope };
-  const created = await api<ScanRequest>(base, `/api/sessions/${session}/scans`, "POST", input);
+  const created = await api<ScanRequest>(base, `/api/sessions/${session}/audit-requests`, "POST", input);
   const result = parsed.flags.has("--wait") ? await waitForScan(base, parsed.common.sessionId, created.id) : created;
   print(options, parsed.common.json, result, describeScan(result));
   if (parsed.flags.has("--wait") && (result.status === "queued" || result.status === "running")) return 2;

@@ -16,7 +16,7 @@ fn starts(language: &str, ast: Value, anchor: &str, source: &str) -> Vec<u64> {
     let document = check_document(json!({
         "id": "port",
         "forbid": { "ast": ast },
-        "finding": { "anchor": anchor, "code": "PORT", "message": "port", "severity": "error" },
+        "violation": { "anchor": anchor, "code": "PORT", "message": "port" },
     }));
     let compiled = compile_document_with(
         document,
@@ -30,7 +30,7 @@ fn starts(language: &str, ast: Value, anchor: &str, source: &str) -> Vec<u64> {
     };
     let result = evaluate_file(&compiled, language, path, source);
     assert_eq!(result["failures"], json!([]), "{result}");
-    let mut starts = result["findings"]
+    let mut starts = result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -325,7 +325,7 @@ fn no_duplicate_imports_compares_trimmed_modules() {
     let document = check_document(json!({
         "id": "port",
         "forbid": { "ast": ast },
-        "finding": { "anchor": "witness.span", "code": "PORT", "message": "'$MT' import is duplicated.", "severity": "error" },
+        "violation": { "anchor": "witness.span", "code": "PORT", "message": "'$MT' import is duplicated." },
     }));
     let compiled = compile_document_with(
         document,
@@ -333,7 +333,7 @@ fn no_duplicate_imports_compares_trimmed_modules() {
     )
     .unwrap_or_else(|error| panic!("{}", error.reason));
     let result = evaluate_file(&compiled, "typescript", "fixture.ts", source);
-    let messages = result["findings"]
+    let messages = result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -490,4 +490,47 @@ fn no_dupe_keys_through_key_nodes() {
         starts("typescript", ast, "witness.span", source),
         expected(fixture)
     );
+}
+
+/// no-dupe-keys as the TypeScript conformance pack ports it (`no_dupe_keys_ast`): each property
+/// counts the earlier properties of its key, reading only the siblings of that key
+/// (`Related::same_key_siblings`). It reports what the walk over every earlier sibling reports:
+/// where ESLint does (a parenthesized computed key at its parentheses, which ESTree has none of),
+/// and on getters and setters, `__proto__`, keys without a static name and the same key written as
+/// an identifier, a string, a number or a computed literal.
+#[test]
+fn no_dupe_keys_port_reads_only_siblings_of_the_same_key() {
+    let reports = |source: &str| {
+        crate::policy_dsl::matcher::set_same_key_off(true);
+        let full = starts("typescript", no_dupe_keys_ast(), "capture.K", source);
+        crate::policy_dsl::matcher::set_same_key_off(false);
+        let same_key = starts("typescript", no_dupe_keys_ast(), "capture.K", source);
+        assert_eq!(same_key, full, "{source}");
+        same_key
+    };
+    let source = oracle!("ecma/value/eslint/no-dupe-keys.ts");
+    let eslint = expected("no-dupe-keys.ts")
+        .into_iter()
+        .map(|start| start - u64::from(source.as_bytes()[start as usize - 1] == b'('))
+        .collect::<Vec<_>>();
+    assert_eq!(reports(source), eslint);
+    let source = "const p = { get a() { return 1 }, set a(v) {}, get a() { return 2 }, a: 1, set a(v) {} };\n\
+        const q = { __proto__: null, '__proto__': 1, ['__proto__']: 2, ...r, [s]: 1, [s]: 2, ['__proto__']: 3 };\n\
+        const n = { 1: 1, x: { 1: 2 }, '1': 3, [`1`]: 4, 0x1: 5, y, \"y\": 6, [\"y\"]: 7, z() {}, ['z']: 8 };\n";
+    let at =
+        |needle: &str, nth: usize| source.match_indices(needle).nth(nth).expect(needle).0 as u64;
+    let mut reported = vec![
+        at("get a", 1) + 4,
+        at("a: 1", 0),
+        at("set a", 1) + 4,
+        at("'__proto__'", 2),
+        at("'1'", 0),
+        at("`1`", 0),
+        at("0x1", 0),
+        at("\"y\"", 0),
+        at("\"y\"", 1),
+        at("'z'", 0),
+    ];
+    reported.sort_unstable();
+    assert_eq!(reports(source), reported);
 }

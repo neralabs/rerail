@@ -6,6 +6,7 @@ import type { CosineRule } from "../src/rule-schema.js";
 function rule(overrides: Partial<CosineRule> = {}): CosineRule {
   return {
     id: "checkout",
+    mode: "steer",
     reference: "Guest checkout remains available.",
     match: { operator: "gte", threshold: 0.99 },
     sample: {
@@ -13,7 +14,7 @@ function rule(overrides: Partial<CosineRule> = {}): CosineRule {
       boundary: "message",
       minimumTokens: 1,
     },
-    action: { delivery: "steer", content: "Check checkout requirements." },
+    action: { content: "Check checkout requirements." },
     repeat: { mode: "always" },
     ...overrides,
   };
@@ -34,7 +35,8 @@ describe("CosineRuleRegistry", () => {
       expect.objectContaining({
         ruleId: "checkout",
         similarity: 1,
-        action: { delivery: "steer", content: "Check checkout requirements." },
+        mode: "steer",
+        action: { content: "Check checkout requirements." },
       }),
     ]);
   });

@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:object-literal-key-quotes",
   "revision": 1,
+  "mode": "steer",
   "description": "Property names in object literals must always be quoted (TSLint default option: always).",
   "scope": { "include": ["**/*"], "exclude": [] },
-  "checks": [
+  "clauses": [
     {
       "id": "always",
       "forbid": {
@@ -31,10 +32,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "OBJECT_LITERAL_KEY_QUOTES",
-        "severity": "error",
         "message": "Unquoted property found."
       }
     }

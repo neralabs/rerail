@@ -49,11 +49,11 @@ async function loadActivity(since, target) {
 }
 
 async function loadFindings(since) {
-  const body = await fetchFresh(`/api/findings?since=${since}&limit=${FINDINGS_PAGE}&offset=0`, "findings");
+  const body = await fetchFresh(`/api/violations?since=${since}&limit=${FINDINGS_PAGE}&offset=0`, "findings");
   if (body === undefined) { data.findingsSince = since; return false; }
   // Keep pages the user asked for beyond the first, but only if they still belong to this range.
   const tail = data.findings.length > FINDINGS_PAGE && data.findingsSince === since ? data.findings.slice(FINDINGS_PAGE) : [];
-  data.findings = body.findings.concat(tail.filter(f => !body.findings.some(g => g.runId === f.runId && g.id === f.id)));
+  data.findings = body.violations.concat(tail.filter(f => !body.violations.some(g => g.auditId === f.auditId && g.id === f.id)));
   data.findingsTotal = body.total;
   data.findingsSince = since;
   return true;
@@ -64,11 +64,11 @@ export async function loadMoreFindings() {
   const since = sinceFor();
   const offset = data.findings.length;
   if (offset >= data.findingsTotal) return false;
-  const { body } = await get(`/api/findings?since=${since}&limit=${FINDINGS_PAGE}&offset=${offset}`);
+  const { body } = await get(`/api/violations?since=${since}&limit=${FINDINGS_PAGE}&offset=${offset}`);
   if (data.findingsSince !== since) return false;
-  data.findings = data.findings.concat(body.findings);
+  data.findings = data.findings.concat(body.violations);
   data.findingsTotal = body.total;
-  return body.findings.length > 0;
+  return body.violations.length > 0;
 }
 
 async function loadSessions() {

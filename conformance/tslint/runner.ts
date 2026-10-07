@@ -50,15 +50,15 @@ export interface RuleAnnotation {
 const spanSchema = z.object({ startByte: z.number().int().nonnegative(), endByte: z.number().int().nonnegative() });
 const workspaceResultSchema = z.object({
   evaluation: z.object({
-    findings: z.array(
+    violations: z.array(
       z.object({
-        checkId: z.string(),
+        clauseId: z.string(),
         path: z.string().optional(),
         span: spanSchema.optional(),
         fix: z.object({ span: spanSchema, text: z.string() }).optional(),
       }),
     ),
-    failures: z.array(z.object({ checkId: z.string(), code: z.string(), message: z.string(), path: z.string().optional() })),
+    failures: z.array(z.object({ clauseId: z.string(), code: z.string(), message: z.string(), path: z.string().optional() })),
   }),
 });
 
@@ -67,7 +67,7 @@ export interface ActualFinding {
   startCol: number;
   endLine: number;
   endCol: number;
-  checkId: string;
+  clauseId: string;
 }
 
 export interface FileResult {
@@ -89,10 +89,10 @@ export interface FileResult {
   missed: ExpectedFailure[];
   extra: ActualFinding[];
   endMismatches: Array<{ expected: ExpectedFailure; actual: ActualFinding }>;
-  engineFailures: Array<{ checkId: string; code: string; message: string }>;
-  /** `source-partial` message: the file has syntax errors and AST checks ran only outside them. Not an engine failure. */
+  engineFailures: Array<{ clauseId: string; code: string; message: string }>;
+  /** `source-partial` message: the file has syntax errors and AST clauses ran only outside them. Not an engine failure. */
   partial?: string | undefined;
-  /** Only for ports that declare `finding.fix`, on fixtures that have a TSLint `.fix` file. */
+  /** Only for ports that declare `violation.fix`, on fixtures that have a TSLint `.fix` file. */
   fix?: FixCheck;
   /** `--rename-identifiers` only: renamer problems for this file (parse changed, names left unrenamed). */
   renameIssues?: string[];
@@ -169,7 +169,7 @@ export interface RuleResult {
   documentBytes: number;
   size: PortSize;
   repaired: RepairedScore | undefined;
-  /** `.fix` files whose text the port's emitted fixes reproduce, when the port declares `finding.fix`. */
+  /** `.fix` files whose text the port's emitted fixes reproduce, when the port declares `violation.fix`. */
   fixes: { files: number; matched: number } | undefined;
   results: FileResult[];
   variantInfo: Array<Pick<Variant, "id" | "config" | "otherRules" | "typeChecked">>;
@@ -285,20 +285,20 @@ async function evaluateFixture(compiled: NativeCompiledPolicyDsl, file: FixtureF
     const ms = performance.now() - started;
     const { evaluation } = workspaceResultSchema.parse(JSON.parse(raw));
     const bytes = Buffer.from(source, "utf8");
-    const findings = evaluation.findings.flatMap(finding => {
+    const findings = evaluation.violations.flatMap(finding => {
       if (finding.span === undefined || (finding.path !== undefined && finding.path !== file.path)) return [];
       const start = positionAt(bytes, finding.span.startByte);
       const end = positionAt(bytes, finding.span.endByte);
-      return [{ startLine: start.line, startCol: start.col, endLine: end.line, endCol: end.col, checkId: finding.checkId }];
+      return [{ startLine: start.line, startCol: start.col, endLine: end.line, endCol: end.col, clauseId: finding.clauseId }];
     });
-    const fixes = evaluation.findings.flatMap(finding =>
+    const fixes = evaluation.violations.flatMap(finding =>
       finding.fix === undefined || (finding.path !== undefined && finding.path !== file.path)
         ? []
         : [{ startByte: finding.fix.span.startByte, endByte: finding.fix.span.endByte, text: finding.fix.text }],
     );
     const failures = evaluation.failures
       .filter(failure => !INFORMATIONAL_FAILURE_CODES.has(failure.code))
-      .map(({ checkId, code, message }) => ({ checkId, code, message }));
+      .map(({ clauseId, code, message }) => ({ clauseId, code, message }));
     const partial = evaluation.failures.find(failure => INFORMATIONAL_FAILURE_CODES.has(failure.code))?.message;
     return { findings, fixes, failures, partial, ms };
   } finally {
@@ -337,10 +337,10 @@ function compare(expected: ExpectedFailure[], actual: ActualFinding[]): Pick<Fil
   return { truePositives, endAgreements, missed, extra, endMismatches };
 }
 
-/** Whether any check of a port document declares `finding.fix`. */
+/** Whether any clause of a port document declares `violation.fix`. */
 function declaresFix(path: string): boolean {
-  const document = z.object({ checks: z.array(z.object({ finding: z.object({ fix: z.string().optional() }).passthrough() }).passthrough()) }).passthrough();
-  return document.parse(JSON.parse(readFileSync(path, "utf8"))).checks.some(check => check.finding.fix !== undefined);
+  const document = z.object({ clauses: z.array(z.object({ violation: z.object({ fix: z.string().optional() }).passthrough() }).passthrough()) }).passthrough();
+  return document.parse(JSON.parse(readFileSync(path, "utf8"))).clauses.some(check => check.violation.fix !== undefined);
 }
 
 function median(values: number[]): number {

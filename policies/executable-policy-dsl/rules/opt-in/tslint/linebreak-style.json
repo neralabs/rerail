@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:linebreak-style",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `linebreak-style` rule with its default options (https://palantir.github.io/tslint/rules/linebreak-style/). Enforces LF line endings (TSLint default).",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "crlf-line",
       "forbid": {
@@ -33,10 +34,9 @@
           "pattern": "(?m)^[^\\r\\n]*\\r\\n"
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "LINEBREAK_STYLE",
-        "severity": "error",
         "message": "Expected linebreak to be 'LF'"
       }
     }

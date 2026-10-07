@@ -1,10 +1,12 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { dirname, join, resolve } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery } from "../src/adapter-contract.js";
 import type { PolicySteeringDelivery } from "../src/executable-policy.js";
 import { RerailRuntime } from "../src/runtime.js";
+import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
 import { SqliteTranscriptStore } from "../src/transcript-store.js";
 
 const directories: string[] = [];
@@ -90,7 +92,7 @@ describe("Rerail session startup", () => {
           },
           acceptsPath: () => true,
           evaluateGeneratedEdits: async (_sessionId, batch) => ({
-            revision: batch.revision, disposition: "continue", findings: [], failures: [],
+            revision: batch.revision, disposition: "continue", violations: [], failures: [],
           }),
           close: async () => undefined,
         };
@@ -107,6 +109,106 @@ describe("Rerail session startup", () => {
       })).toBe("discarded");
       expect(deliveries).toEqual([
         expect.objectContaining({ sessionId: session.sessionId, content: "Observation 2" }),
+      ]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+});
+
+describe("Rerail session restore", () => {
+  it("skips a ledger rule mutation that no longer parses and replays the rest", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-session-restore-"));
+    directories.push(root);
+    const storageRoot = join(root, "sessions");
+    const session = { host: "claude-code" as const, sessionId: "restored", cwd: root };
+    const rule = {
+      id: "restored-rule", mode: "block", reference: "Guest checkout remains available.",
+      match: { operator: "gte", threshold: 0.99 },
+      sample: { source: "assistant-text", boundary: "message" },
+      action: { content: "Check checkout." },
+    };
+    const { mode: _mode, ...modeless } = rule;
+    const ledgerPath = join(storageRoot, createHash("sha256").update(session.sessionId).digest("hex"), "events.jsonl");
+    await mkdir(dirname(ledgerPath), { recursive: true });
+    await writeFile(ledgerPath, [
+      { operation: "upsert", rule: { ...modeless, id: "stale-rule", action: { delivery: "followUp", content: "Old." } }, replace: false },
+      { operation: "upsert", rule, replace: false },
+    ].map(mutation => `${JSON.stringify({ type: "rule-mutation", mutation })}\n`).join(""));
+    const runtime = new RerailRuntime({
+      autostart: false,
+      workspaceRoot: root,
+      storageRoot,
+      modelPath: resolve("model"),
+      databasePath: join(root, "rerail.sqlite"),
+      createPolicyEvaluator: () => ({
+        openWorkspace: async () => undefined,
+        acceptsPath: () => false,
+        evaluateGeneratedEdits: async (_sessionId, batch) => ({
+          revision: batch.revision, disposition: "continue", violations: [], failures: [],
+        }),
+        close: async () => undefined,
+      }),
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      const listed = await runtime.manageRules(session.sessionId, { action: "list" }) as { rules: Array<{ rule: { id: string } }> };
+      const ids = listed.rules.map(inspection => inspection.rule.id);
+      expect(ids).toContain("restored-rule");
+      expect(ids).not.toContain("stale-rule");
+      expect(stderr.mock.calls.map(([line]) => String(line))).toContainEqual(
+        expect.stringMatching(/^rerail: skipped unreadable rule mutation: persisted rule\.\S+ .*\n$/u),
+      );
+    } finally {
+      stderr.mockRestore();
+      await runtime.dispose();
+    }
+  });
+
+  it("layers the catalog over a hook host's conversation-rules.json: a catalog row owns its id, disabled or not", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-rule-file-overlay-"));
+    directories.push(root);
+    const databasePath = join(root, "rerail.sqlite");
+    const repositoryContext = { repositoryId: "overlay", workspaceRoot: root };
+    const rule = (id: string, content: string) => ({
+      id, mode: "steer" as const, reference: "Guest checkout remains available.",
+      match: { operator: "gte" as const, threshold: 0.99 },
+      sample: { source: "assistant-text" as const, boundary: "message" as const },
+      action: { content },
+    });
+    const rulePath = join(root, ".codex", "conversation-rules.json");
+    await mkdir(dirname(rulePath), { recursive: true });
+    await writeFile(rulePath, JSON.stringify({
+      version: 1,
+      rules: [rule("shared", "From the file."), rule("switched-off", "From the file."), rule("file-only", "From the file.")],
+    }));
+    const catalog = ScopedRuleCatalog.open(databasePath, repositoryContext);
+    catalog.upsertCosine(rule("shared", "From the database."), { now: 1_000 });
+    catalog.upsertCosine(rule("switched-off", "From the database."), { enabled: false, now: 1_000 });
+    catalog.close();
+    const runtime = new RerailRuntime({
+      autostart: false,
+      workspaceRoot: root,
+      repositoryContext,
+      storageRoot: join(root, "sessions"),
+      modelPath: resolve("model"),
+      databasePath,
+      createPolicyEvaluator: () => ({
+        openWorkspace: async () => undefined,
+        acceptsPath: () => false,
+        evaluateGeneratedEdits: async (_sessionId, batch) => ({
+          revision: batch.revision, disposition: "continue", violations: [], failures: [],
+        }),
+        close: async () => undefined,
+      }),
+    });
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "codex", sessionId: "overlay", cwd: root } });
+      const listed = await runtime.manageRules("overlay", { action: "list" }) as { rules: Array<{ rule: { id: string; action: { content: string } } }> };
+      expect(listed.rules.map(({ rule: { id, action } }) => [id, action.content])).toEqual([
+        ["file-only", "From the file."],
+        ["shared", "From the database."],
       ]);
     } finally {
       await runtime.dispose();

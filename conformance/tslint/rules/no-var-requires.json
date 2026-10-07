@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-var-requires",
   "revision": 1,
+  "mode": "steer",
   "description": "Disallows `require()` calls outside `import x = require()` at the top scope.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "require-call",
       "forbid": {
@@ -75,10 +76,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_VAR_REQUIRES",
-        "severity": "error",
         "message": "require statement not part of an import statement"
       }
     }

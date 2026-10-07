@@ -79,5 +79,6 @@ pub(super) fn compile_nth_child(
         position,
         of_rule,
         reverse,
+        capture_free: std::sync::OnceLock::new(),
     })))
 }

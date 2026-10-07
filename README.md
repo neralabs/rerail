@@ -1,6 +1,6 @@
 # Rerail
 
-Rerail is a local semantic monitor for AI-augmented engineering teams. It inspects live human, model, and tool activity outside the generative model, detects when that activity is semantically close to shared engineering context, and surfaces the relevant guidance at the moment it matters. Alongside the semantic monitor it runs an executable policy engine that checks the code an agent touches against repository rules and steers the agent with the findings.
+Rerail is a local semantic monitor for AI-augmented engineering teams. It inspects live human, model, and tool activity outside the generative model, detects when that activity is semantically close to shared engineering context, and surfaces the relevant guidance at the moment it matters. Alongside the semantic monitor it runs an executable policy engine that checks the code an agent touches against repository rules and steers the agent with the violations.
 
 Rerail does not depend on an agent remembering to search for context or call a coordination tool. Host adapters observe the interaction stream, a bundled local model evaluates configured semantic rules, and deterministic runtime policies decide when and how to deliver a match.
 
@@ -28,7 +28,7 @@ Tool input and output ┘                              │
                                       relevant rule + match evidence
                                                     │
                                                     ▼
-                                    observe, steer, or defer delivery
+                                         log, steer, or block
 ```
 
 The semantic layer answers:
@@ -95,7 +95,7 @@ Rerail currently ships the local inspection kernel and host adapters:
 - User-input, streamed assistant-text, and tool-event inspection.
 - Sentence, message, turn, and tool-call boundaries.
 - Stateful repeat policies with session replay.
-- Deterministic `observe`, `steer`, `followUp`, and `nextTurn` delivery.
+- One rule mode on every rule: `log` records, `steer` delivers guidance, and `block` steers until block enforcement lands.
 - OMP and Pi extensions.
 - Transport-neutral Claude Code, Codex, and Cursor lifecycle adapters.
 - A persistent `RERAIL-EVENTS/1` stream for out-of-process harnesses.
@@ -106,13 +106,15 @@ Repository-level semantic rules are usable now. Shared team assertions, cross-se
 
 ## How rules work
 
-A cosine rule is a standing semantic query over one event source and boundary. The reference describes the concept to detect; the action contains the context to deliver.
+A conversation rule is a standing semantic query over one event source and boundary. The reference describes the concept to detect; the action contains the context to deliver.
 
-The Rerail database (`$RERAIL_HOME/rerail.sqlite`) is the source of truth for rules. OMP and Pi load every enabled `cosine` rule effective for the session's repository at session start and re-read them before every ingested event, so a cosine rule toggled or edited in the database applies to the next sample; every runtime compiles the enabled `policy` rows into the kernel and re-reads them before each evaluation, so a policy row toggled, edited, or deleted through the daemon, the UI, or plain SQL is enforced (or not) on the next tool call; the Rust kernel only loads and evaluates what the database hands it, and nothing derived is stored. JSON files remain a secondary source for cosine rules: OMP loads `.omp/cosine-rules.json`, Pi loads `.pi/cosine-rules.json`, Claude Code loads `.claude/cosine-rules.json`, Codex loads `.codex/cosine-rules.json`, and Cursor loads `.cursor/cosine-rules.json`. Each path is resolved from the active session's working directory and ignored when absent, and a database row replaces a file rule with the same id. Live refresh when a row changes mid-session is deferred; a session picks up edits on its next start or reload.
+The Rerail database (`$RERAIL_HOME/rerail.sqlite`) is the source of truth for rules. OMP and Pi load every enabled `conversation` rule effective for the session's repository at session start and re-read them before every ingested event, so a conversation rule toggled or edited in the database applies to the next sample; every runtime compiles the enabled `file` rows into the kernel and re-reads them before each audit, so a file row toggled, edited, or deleted through the daemon, the UI, or plain SQL is enforced (or not) on the next tool call; the Rust kernel only loads and evaluates what the database hands it, and nothing derived is stored. JSON files remain a secondary source for conversation rules: OMP loads `.omp/conversation-rules.json`, Pi loads `.pi/conversation-rules.json`, Claude Code loads `.claude/conversation-rules.json`, Codex loads `.codex/conversation-rules.json`, and Cursor loads `.cursor/conversation-rules.json`. Each path is resolved from the active session's working directory and ignored when absent, and a database row replaces a file rule with the same id. Live refresh when a row changes mid-session is deferred; a session picks up edits on its next start or reload.
 
-Rule documents bundled with the package live under `policies/executable-policy-dsl/rules/`. Top-level `rules/*.json` documents are seeded enabled; opt-in packs live one folder per pack under `rules/opt-in/<pack>/*.json` and are seeded disabled. Rerail 0.1.0 ships one opt-in pack, the TSLint ports in `rules/opt-in/tslint/`. Bootstrap — run by every runtime start and `rerail start` — seeds those documents into the catalog as project rules without clobbering yours: a new id is inserted with its `source_digest`; a row whose content still equals the document it was seeded from follows the bundled document when a package update changes it; a row you edited or created is never touched, and `enabled` is never reset. `rerail rules export` dumps the global and current-project rules to `$RERAIL_HOME/rules.json` (or `--output <file>`) and `rerail rules import <file>` loads one back. `rerail update` first copies the whole database to `$RERAIL_HOME/rerail.sqlite.pre-update`; `rerail reset` never touches rules.
+Rule documents bundled with the package live under `policies/executable-policy-dsl/rules/`. Top-level `rules/*.json` documents are seeded enabled; opt-in packs live one folder per pack under `rules/opt-in/<pack>/*.json` and are seeded disabled. Rerail 0.1.0 ships one opt-in pack, the TSLint ports in `rules/opt-in/tslint/`. Bootstrap — run by every runtime start and `rerail daemon start` — seeds those documents into the catalog as project rules without clobbering yours: a new id is inserted with its `source_digest`; a row whose content still equals the document it was seeded from follows the bundled document when a package update changes it; a row you edited or created is never touched, and `enabled` is never reset. `rerail rules export` dumps the global and current-project rules to `$RERAIL_HOME/rules.json` (or `--output <file>`) and `rerail rules import <file>` loads one back. `rerail update` first copies the whole database to `$RERAIL_HOME/rerail.sqlite.pre-update`; `rerail reset` never touches rules.
 
-A policy rule is a `rerail.policy/v1` document: a path `scope` and a list of regex, AST, or relational checks the native kernel evaluates, each with the finding it reports. The [policy DSL reference](docs/policy-dsl-reference.html) documents every construct, and [Tool-call rules](docs/tool-call-rules.md) covers structural matching of tool calls. A cosine rule file looks like this:
+Rule packs (`policies/rule-packs/<id>.json`) group rules that already ship. Rerail ships one, **TSLint**: the 74 golden TSLint ports. A pack lists rules by id with a title and a group, and a match definition (file globs or `package.json` dependencies) used to explain why it fits; it adds no rule documents. A pack for a project's own conventions is added the same way: its rule documents under `policies/executable-policy-dsl/rules/` and a pack file listing them. `recommendRulePacks` matches a repository's files and manifests against every pack locally, with no model and no network, and returns each fitting pack with its rule count and the reason. Packs are not attached to repositories yet: choosing them and seeding their rules in place of the bundled rules is future work. See [Rule packs](docs/rule-packs.md).
+
+A file rule is a `rerail.policy/v1` document: a path `scope` and a list of regex, AST, or relational clauses the native kernel evaluates, each with the violation it reports. The [policy DSL reference](docs/policy-dsl-reference.html) documents every construct, and [Tool-call rules](docs/tool-call-rules.md) covers structural matching of tool calls. A conversation rule file looks like this:
 
 ```json
 {
@@ -120,6 +122,7 @@ A policy rule is a `rerail.policy/v1` document: a path `scope` and a list of reg
   "rules": [
     {
       "id": "persisted-session-events",
+      "mode": "steer",
       "reference": "Changing persisted session events, replay, or branch restoration",
       "match": {
         "operator": "gte",
@@ -131,7 +134,6 @@ A policy rule is a `rerail.policy/v1` document: a path `scope` and a list of reg
         "minimumTokens": 3
       },
       "action": {
-        "delivery": "steer",
         "content": "Preserve replay idempotency and verify restoration from an interrupted turn."
       },
       "repeat": {
@@ -142,6 +144,12 @@ A policy rule is a `rerail.policy/v1` document: a path `scope` and a list of reg
   ]
 }
 ```
+
+`mode` is required on every rule, conversation and file alike:
+
+- `log` records a match for review and never sends guidance.
+- `steer` sends the rule's guidance to the agent.
+- `block` is stored and reported as `block`; until block enforcement lands, it is delivered exactly like `steer`.
 
 `match.operator` is:
 
@@ -187,13 +195,13 @@ Rerail keeps one SQLite file per Rerail home: `$RERAIL_HOME/rerail.sqlite` (`~/.
 - `sessions` — one row per harness session (`host`, `cwd`, `repository_id`, `started_at`, `ended_at`). `repository_id` is the stable identity of the checkout's repository (shared by its linked worktrees), and it is what attributes history to a repository.
 - `events` — the append-only transcript for a session (`kind`, `observed_at`, `payload_json`, and a `payload_v8` blob when the payload is not JSON-representable).
 - `work_links` — loose associations from a session to external references (`kind` such as `git-branch`, `github-pr`, `linear-issue`; `reference`; optional `url`). No foreign key on purpose, so links can be recorded by any process before or after the session row exists.
-- `policy_runs` — policy evaluations with independent scope (`repository`, `touched-files`, `ai-output`) and mode (`resteer`, `log`), selected paths, session, source revision, timestamps, findings, and concrete execution failures. Terminal records are immutable; closing or reopening a session interrupts its unfinished runs without discarding partial results.
+- `audits` — every run of rules over a session, live or re-run, with independent scope (`repository`, `touched-files`, `ai-output`) and run mode (`steer`, `log`), selected paths, session, source revision, timestamps, violations, and concrete execution failures. Terminal records are immutable; closing or reopening a session interrupts its unfinished audits without discarding partial results.
 
-The daemon's listings — sessions, policy runs, findings, repository diagnostics, and rule activity — cover only the repository it was started in; a session addressed by its id is found whichever repository recorded it. Policy path filters (`scope.include`, `scope.exclude`, exclusions winning) narrow a repository to matching paths for all three evaluation scopes, independently of the `resteer` or `log` mode. Paths are normalized relative to the session's `cwd`.
+The daemon's listings — sessions, audits, violations, repository audits, and rule activity — cover only the repository it was started in; a session addressed by its id is found whichever repository recorded it. File-rule path filters (`scope.include`, `scope.exclude`, exclusions winning) narrow a repository to matching paths for all three audit scopes, independently of the `steer` or `log` run mode. Paths are normalized relative to the session's `cwd`.
 
-`rerail reset` deletes the current repository's session history, across all of its worktrees — ended sessions and every session's events, work links, policy runs, scan requests, and repository diagnostics — in one write transaction. Rules, other repositories' history, policy settings, and presentation preferences stay. The file is never unlinked, so a daemon or harness session holding it open is unaffected, and a still-running session keeps its row (its earlier events are gone) and carries on recording.
+`rerail reset` deletes the current repository's session history, across all of its worktrees — ended sessions and every session's events, work links, audits, audit requests, and repository audits — in one write transaction. Rules, other repositories' history, audit settings, and presentation preferences stay. The file is never unlinked, so a daemon or harness session holding it open is unaffected, and a still-running session keeps its row (its earlier events are gone) and carries on recording.
 
-`rerail seed` fills the database with throwaway mock rows — three policy rules covering `forbid` with regex, ast, and llm checks, two cosine rules (one disabled), and a session with events and two work links attributed to the current repository — so MCP and UI work has data to show. It is idempotent.
+`rerail seed` fills the database with throwaway mock rows — three file rules covering `forbid` with regex, ast, and llm clauses, two conversation rules (one disabled), and a session with events and two work links attributed to the current repository — so MCP and UI work has data to show. It is idempotent.
 
 ## Install
 
@@ -207,9 +215,9 @@ Prerequisites:
 - macOS (arm64, x64), Linux glibc (arm64, x64), or Windows MSVC (arm64, x64). The package carries prebuilt native kernels for those targets; nothing is compiled on your machine.
 - Read access to `@neralabs/rerail` on [npmjs](https://www.npmjs.com/), the only registry Rerail is published to. Until launch the package is restricted: sign in with `npm login` as a member of the `neralabs` npm organization (or put a read token in `~/.npmrc`). After launch it installs anonymously.
 
-`setup` installs the package under `~/.rerail/versions/<version>`, points `~/.rerail/current` and the launcher `~/.rerail/bin/rerail` (`rerail.cmd` on Windows) at it, registers Rerail with every coding harness it finds on the machine, and starts the daemon. Add `~/.rerail/bin` to `PATH` and restart the harnesses. Make the first run `npx @neralabs/rerail setup --dry-run` to see what it would change; `--harness <list>` limits registration. `rerail update` shells out to `npm` and uses the same `~/.npmrc`. [Installing Rerail](docs/installation.md) describes what setup writes, how to remove Rerail, and the managed-installation layout.
+`setup` installs the package under `~/.rerail/versions/<version>`, points `~/.rerail/current` and the launcher `~/.rerail/bin/rerail` (`rerail.cmd` on Windows) at it, registers Rerail with every coding harness it finds on the machine, and starts the daemon. Add `~/.rerail/bin` to `PATH` and restart the harnesses. Make the first run `npx @neralabs/rerail setup --dry-run` to see what it would change; `--harness <list>` limits registration. `rerail update` shells out to `npm` and uses the same `~/.npmrc`. `rerail install --remove` takes Rerail out of every coding agent, stops the daemon, and moves `rerail.sqlite` into a dated backup so rules and history are kept. [Installing Rerail](docs/installation.md) describes what setup writes, how to remove Rerail, and the managed-installation layout.
 
-OMP, Pi, Claude Code, and Cursor use the same checkout-control spellings: `/rerail-disable` immediately detaches the active runtime and persists a checkout-local opt-out; `/rerail-enable` resumes it. OMP and Pi register these commands natively. Claude Code and Cursor receive named command files during `rerail install`; Claude Code also receives `/rerail-ui` and `/rerail-session`, and Cursor `/rerail-ui`, prompt commands that open the Rerail page as a tab in the Orca or Cursor window before falling back to the system browser. `/rerail-settings` edits saved defaults through native selectors; `/rerail-scan` prompts for one-shot options. Maintenance commands are `/rerail-status`, `/rerail-check`, `/rerail-update`, `/rerail-rollback`, and `/rerail-reset` (with confirmation). Restart the harness process after installing or rebuilding to refresh command registration. Claude Code also retains the general `/rerail` launcher guidance at `~/.claude/commands/rerail.md`, written by `rerail install` and removed by `rerail install --remove`. Codex cannot expose an exact third-party slash-command name; run `rerail disable` or `rerail enable` in its terminal. See [Scan and settings controls](#scan-and-settings-controls) for targeting and host differences.
+Rerail is off in every repository until it is started there. OMP, Pi, Claude Code, and Cursor use the same spellings: `/rerail-start` starts Rerail in the current checkout and the worktrees that follow it (from the main checkout, every linked worktree without its own setting) and `/rerail-stop` stops them, immediately detaching the active runtime; in Codex use `rerail start` / `rerail stop`. OMP and Pi register these commands natively. Claude Code and Cursor receive named command files during `rerail install`; Claude Code also receives `/rerail-ui` and `/rerail-session`, and Cursor `/rerail-ui`, prompt commands that open the Rerail page as a tab in the Orca or Cursor window before falling back to the system browser. `/rerail-settings` edits saved defaults through native selectors; `/rerail-scan` prompts for one-shot options. Maintenance commands are `/rerail-status`, `/rerail-check`, `/rerail-update`, `/rerail-rollback`, and `/rerail-reset` (with confirmation). Restart the harness process after installing or rebuilding to refresh command registration. Claude Code also retains the general `/rerail` launcher guidance at `~/.claude/commands/rerail.md`, written by `rerail install` and removed by `rerail install --remove`. Codex cannot expose an exact third-party slash-command name; run `rerail start` or `rerail stop` in its terminal. See [Scan and settings controls](#scan-and-settings-controls) for targeting and host differences.
 
 Supported native targets:
 
@@ -278,21 +286,22 @@ To cut a release, bump `package.json` only (`npm version <version> --no-git-tag-
 
 ## Run
 
-One `rerail` install carries the rules kernel, the transcript database, and a browser view of it. `rerail start` runs them as one background daemon:
+One `rerail` install carries the rules kernel, the transcript database, and a browser view of it. `rerail daemon start` runs them as one background daemon:
 
 ```sh
-rerail start            # background daemon on http://127.0.0.1:4737/, opens nothing
-rerail start --open     # same, then opens the browser view
-rerail start --host 0.0.0.0 --allow-remote --public-host rerail.example   # bind off loopback (see below)
-rerail disable          # disable Rerail only in this checkout; leave the shared daemon running
-rerail enable           # resume Rerail in this checkout
-rerail status           # exit 0 when running or checkout-disabled, 3 when not running
-rerail ui [--print]     # prints the rules page URL and opens it; --print only prints
+rerail daemon start            # background daemon on http://127.0.0.1:4737/, opens nothing
+rerail daemon start --open     # same, then opens the browser view
+rerail daemon start --host 0.0.0.0 --allow-remote --public-host rerail.example   # bind off loopback (see below)
+rerail start                   # start Rerail in this checkout and the worktrees that follow it; the first time also sets the repository up
+rerail stop                    # stop Rerail in this checkout and the worktrees that follow it; leave the shared daemon running
+rerail state                   # prints started, stopped, or never for this checkout
+rerail status                  # whether Rerail is on here, then the daemon; exit 3 when the daemon is not running
+rerail ui [--print]            # prints the rules page URL and opens it; --print only prints
 rerail session [<host> <session-id>] [--open]   # this session's status line and page URL; --open opens it
-rerail stop             # graceful stop where supported; forced termination after 10 s
+rerail daemon stop             # graceful stop where supported; forced termination after 10 s
 ```
 
-Before spawning, `rerail start` probes the `better-sqlite3` binding under the Node that will run the daemon and rebuilds it in place when a Node upgrade has left it built for another ABI; a binding that still fails after the rebuild stops the launch with the reason, instead of the daemon crashing into `~/.rerail/daemon.log`. The same check runs when a harness session autostarts the daemon, and `rerail update` applies it to an installed version that fails validation before giving up on it.
+Before spawning, `rerail daemon start` probes the `better-sqlite3` binding under the Node that will run the daemon and rebuilds it in place when a Node upgrade has left it built for another ABI; a binding that still fails after the rebuild stops the launch with the reason, instead of the daemon crashing into `~/.rerail/daemon.log`. The same check runs when a harness session autostarts the daemon, and `rerail update` applies it to an installed version that fails validation before giving up on it.
 
 The daemon owns the resident kernel execution service and exposes the Rerail database through HTTP, OpenAPI, and MCP. It writes rules and work links, while the shared runtime records harness events in the same database. It serves:
 
@@ -304,62 +313,73 @@ The daemon owns the resident kernel execution service and exposes the Rerail dat
 
 | Operation (HTTP and MCP tool) | Route                                                                 | Purpose                                                                                                                                                                                          |
 | ----------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `rules_list`                  | `GET /api/rules?kind=&enabled=&scope=&q=&source=&boundary=&delivery=` | List or search: `q` is a case-insensitive substring over id, reference/description, and action content or check bodies; `source`, `boundary`, `delivery` filter cosine sample and action fields. |
+| `rules_list`                  | `GET /api/rules?kind=&enabled=&applicability=&q=&source=&boundary=&mode=` | List or search: `kind` is `file` or `conversation`; `q` is a case-insensitive substring over id, reference/description, and action content or clause bodies; `mode` filters any rule; `source`, `boundary` filter conversation-rule samples. |
+| `rules_activity`              | `GET /api/rules/activity?since=`                                      | What each rule caught since a time: distinct violations, sessions, last sighting, `audits` that evaluated it, and steering deliveries it drove.                                                |
 | `rules_get`                   | `GET /api/rules/{id}`                                                 | One rule.                                                                                                                                                                                        |
-| `rules_upsert`                | `PUT /api/rules/{id}`                                                 | Create or replace; body `{ kind, rule, enabled?, scope?, revision? }`, validated against the kind's schema.                                                                                      |
+| `rules_upsert`                | `PUT /api/rules/{id}`                                                 | Create or replace; body `{ kind, rule, enabled?, applicability?, revision? }`, validated against the kind's schema.                                                                              |
 | `rules_set_enabled`           | `PATCH /api/rules`                                                    | `{ enabled, ids }` or `{ enabled, filter }` (same filter fields as `rules_list`) — "disable everything about X" is one call; returns rows changed.                                               |
 | `rules_remove`                | `DELETE /api/rules/{id}`                                              | Delete one rule.                                                                                                                                                                                 |
+| `rule_packs_list`             | `GET /api/rule-packs`                                                 | Every rule pack with its rules (kind, title, group, mode, on or off, and examples where the pack has them). Read-only. Listed rules carry `packId`. |
+| `rule_packs_recommend`        | `GET /api/rule-packs/recommendations`                                 | The packs that fit this repository, each with its rule count and the reason it matched. Local; changes nothing.                                                                                 |
 | `sessions_list`               | `GET /api/sessions`                                                   | Every recorded session with its event count.                                                                                                                                                     |
 | `sessions_get`                | `GET /api/sessions/{sessionId}`                                       | One session summary.                                                                                                                                                                             |
 | `session_events`              | `GET /api/sessions/{sessionId}/events?after=&limit=`                  | Ordered transcript events, at most 500 per page; `nextAfter` continues the read.                                                                                                                 |
 | `work_links_list`             | `GET /api/sessions/{sessionId}/work-links`                            | External references linked to a session.                                                                                                                                                         |
 | `work_links_add`              | `PUT /api/sessions/{sessionId}/work-links`                            | `{ kind, reference, url? }`; re-linking updates the url.                                                                                                                                         |
+| `audit_settings_get`          | `GET /api/sessions/{sessionId}/audit-settings`                        | Ongoing audit defaults (`scope`, run `mode`) and the first `repositoryAudit` for the session's canonical workspace, with its `repositoryAuditRecord`.                                          |
+| `audit_settings_update`       | `PATCH /api/sessions/{sessionId}/audit-settings`                      | Update the ongoing defaults; `mode` is `steer` or `log`.                                                                                                                                         |
+| `audit_requests_create`       | `POST /api/sessions/{sessionId}/audit-requests`                       | Queue an explicit audit for one session.                                                                                                                                                         |
+| `audit_requests_list`         | `GET /api/sessions/{sessionId}/audit-requests`                        | `{ auditRequests }`: the session's explicit audit requests and the `auditIds` they produced.                                                                                                     |
+| `audits_list`                 | `GET /api/audits?auditId=&sessionId=&status=&scope=&mode=`            | `{ audits, total }`: durable audit records with their `violations` and failures; `mode` filters the run mode (`steer` or `log`).                                                                 |
+| `violations_list`             | `GET /api/violations?since=&ruleId=&limit=&offset=`                   | Individual violations newest first, each with its `ruleId`, `clauseId`, session, and `auditId`.                                                                                                  |
+| `repository_audits_list`      | `GET /api/repository-audits`                                          | One full repository audit per historically audited repository: its `repositoryAudit` and latest `audit` summary with `violationCount`.                                                          |
+| `repository_audit_entries_list` | `GET /api/repository-audits/{auditId}/entries?kind=&mode=&code=&path=&q=` | Paginated violations and failures of one repository audit; `kind` is `violation` or `failure`, `mode` is the producing rule's mode.                                                    |
 
-Every operation is defined once in `src/api/operations.ts` (id, route, zod schemas for params/query/body/output, handler). `src/api/http.ts` mounts them with Hono and emits the OpenAPI document; `src/api/mcp.ts` registers the same definitions as MCP tools, so a new operation appears in all three places with no further wiring. Validation failures return `400 { error: "invalid-request", issues }`; handler errors carry a status and a code (`rule-not-found`, `rule-id-mismatch`, `rule-conflict`). `rerail install` (and `rerail setup`) registers the endpoint with OMP by writing a `rerail` entry into `~/.omp/agent/mcp.json` (`{ "type": "http", "url": "http://127.0.0.1:4737/mcp" }`) next to the extension symlink; `--remove` takes only that entry out again. OMP lists it under `/mcp`; run `/mcp reload` if the daemon came up after the session did. A daemon started on another `--port` needs that entry edited to match. Other harnesses point at the same URL by hand.
+Every operation is defined once in `src/api/operations.ts` (id, route, zod schemas for params/query/body/output, handler). `src/api/http.ts` mounts them with Hono and emits the OpenAPI document; `src/api/mcp.ts` registers the same definitions as MCP tools, so a new operation appears in all three places with no further wiring. Validation failures return `400 { error: "invalid-request", issues }`; handler errors carry a status and a code (`rule-not-found`, `rule-id-mismatch`, `rule-conflict`, `repository-audit-not-found`). `rerail install` (and `rerail setup`) registers the endpoint with OMP by writing a `rerail` entry into `~/.omp/agent/mcp.json` (`{ "type": "http", "url": "http://127.0.0.1:4737/mcp" }`) next to the extension symlink; `--remove` takes only that entry out again. OMP lists it under `/mcp`; run `/mcp reload` if the daemon came up after the session did. A daemon started on another `--port` needs that entry edited to match. Other harnesses point at the same URL by hand.
 
 The daemon binds `127.0.0.1` by default (`--port` and `--host` override). `--host` with anything but `127.0.0.1`, `localhost`, or `::1` is refused unless `--allow-remote` is also passed: off loopback, every host on the network could read and write the daemon.
 
 Being on loopback is not by itself the write authorization. A page on another site can resolve its own name to `127.0.0.1` (DNS rebinding) and reach the socket, so every request is first checked against the `Host` header the browser sent: it must name `127.0.0.1`, `localhost`, or `[::1]` on any port (a container port mapping or reverse proxy presents a port the daemon never bound), the literal address the daemon was bound to with `--host` (an IP literal cannot arrive by rebinding, and the daemon's own state URL dials it), or a hostname given with `--public-host <name,...>`. Anything else — including the private `/kernel/*` and `/native/*` bridges, `/mcp`, `/healthz`, and the page — is answered `421 { "error": "host-not-allowed" }` before any route runs. On top of that, an `/api` write carrying an `Origin` is accepted only when that origin is one of the same hostnames on the port the request was addressed to (`403 api-origin-forbidden` otherwise); Rerail's own processes send no `Origin`. The page is served with `X-Content-Type-Options: nosniff`, and its HTML with `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`, so no other site can frame it.
 
-The daemon's pid, port, and database path live in `~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) and its output in `daemon.log` beside it. `rerail start` reuses a daemon that is already running and reports where it is; a state file left by a crash or reboot is detected and cleared. `stop`, `status`, and `ui` always run from the launcher you invoked rather than re-executing the managed version, so they keep working while an update is in flight.
+The daemon's pid, port, and database path live in `~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) and its output in `daemon.log` beside it. `rerail daemon start` reuses a daemon that is already running and reports where it is; a state file left by a crash or reboot is detected and cleared. `stop`, `status`, and `ui` always run from the launcher you invoked rather than re-executing the managed version, so they keep working while an update is in flight.
 
-`daemon.json` also records `kernelSocketPath` (a Unix socket or Windows named pipe). Hooks reuse this service by default; `RERAIL_KERNEL_SOCKET` selects an explicitly managed endpoint. `RERAIL_AUTOSTART=0` prevents automatic daemon creation and requires an existing daemon or explicit endpoint for command hooks. A daemon started before resident IPC support must be stopped with `rerail stop` and restarted before new hooks can use it; the stop command accepts the older state format.
+`daemon.json` also records `kernelSocketPath` (a Unix socket or Windows named pipe). Hooks reuse this service by default; `RERAIL_KERNEL_SOCKET` selects an explicitly managed endpoint. `RERAIL_AUTOSTART=0` prevents automatic daemon creation and requires an existing daemon or explicit endpoint for command hooks. A daemon started before resident IPC support must be stopped with `rerail daemon stop` and restarted before new hooks can use it; the stop command accepts the older state format.
 
-Native tool-call IDs correlate edits with their results, including concurrent calls to the same tool. Events are ordered in a session-specific lane: waiting on one agent's open, policy evaluation, or delivery does not hold up unrelated sessions, while events within each session remain serialized. The resident kernel keys these lanes by runtime configuration and session ID, so separate databases or workspaces do not share a lane even when session IDs coincide. Pending calls and their captured preimages survive daemon restarts. Turn checkpoints discover filesystem changes made through shells or tools without explicit edit paths. Discovery retains source fingerprints, not a repository-sized copy of source text or a baseline of violations. A `followUp` produced at `Stop` starts the next assistant cycle immediately; `nextTurn` waits for another user prompt, including on Cursor.
+Native tool-call IDs correlate edits with their results, including concurrent calls to the same tool. Events are ordered in a session-specific lane: waiting on one agent's open, audit, or delivery does not hold up unrelated sessions, while events within each session remain serialized. The resident kernel keys these lanes by runtime configuration and session ID, so separate databases or workspaces do not share a lane even when session IDs coincide. Pending calls and their captured preimages survive daemon restarts. Turn checkpoints discover filesystem changes made through shells or tools without explicit edit paths. Discovery retains source fingerprints, not a repository-sized copy of source text or a baseline of violations.
 
 OMP uses its awaited `tool_call` hook to capture pre-edit source before the tool runs and `tool_result` to submit post-edit source for background evaluation. The asynchronous `tool_execution_start` and `tool_execution_end` notifications are not execution barriers and are not used for edit correlation.
 
 ### Scan and settings controls
 
-Policy evaluation has three scopes and two independent modes:
+An audit has three scopes and two independent run modes:
 
 | Scope           | Reportable code                                                                                                            |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `repository`    | All eligible repository code, including existing violations; used for diagnostics and the initial journey.                 |
 | `touched-files` | Entire touched files, including pre-existing violations within those files.                                                |
-| `ai-output`     | Added or changed post-image lines, determined from captured pre-edit source. Untouched regions do not contribute findings. |
+| `ai-output`     | Added or changed post-image lines, determined from captured pre-edit source. Untouched regions do not contribute violations. |
 
-`resteer` records results and sends actionable findings to the agent. `log` records the same results without conversation output. There are no acknowledged findings, finding baselines, or already-seen suppression. Changing relevant source can produce the same finding again.
+The `steer` run mode records results and sends violations of `steer` and `block` rules to the agent; violations of rules in `log` mode are only recorded. The `log` run mode records the same results without conversation output. There are no acknowledged violations, violation baselines, or already-seen suppression. Changing relevant source can produce the same violation again.
 
-`RerailRuntime` accepts ongoing `policy: { scope, mode }` defaults; `NativeExecutablePolicyEnforcer` accepts the same settings directly. The first time Rerail sees a canonical workspace in local storage, it starts one independent full-repository diagnostic in `log` mode. Later sessions in that workspace start without repeating that automatic diagnostic. User-requested scans are also fixed to `log` mode and choose between the full eligible repository or the tracked, staged, and untracked files in the current Git diff.
+`RerailRuntime` accepts ongoing `policy: { scope, mode }` defaults; `NativeExecutablePolicyEnforcer` accepts the same settings directly. The first time Rerail sees a canonical workspace in local storage, it starts one independent full-repository audit in `log` mode. Later sessions in that workspace start without repeating that automatic audit. User-requested scans are also fixed to `log` mode and choose between the full eligible repository or the tracked, staged, and untracked files in the current Git diff.
 
-AI-output scope uses source diffs, not differences between old and new finding IDs. A newly created file is entirely generated output. If pre-edit source was not captured, including an existing file changed through an untracked shell write, AI-output evaluation records a scope failure rather than silently widening to the entire file. Parsing and cross-file query context may be broader than reporting scope. Source, parse, and match caches remain incremental; repository scans stream bounded source batches through a separate native workspace.
+AI-output scope uses source diffs, not differences between old and new violation IDs. A newly created file is entirely generated output. If pre-edit source was not captured, including an existing file changed through an untracked shell write, AI-output evaluation records a scope failure rather than silently widening to the entire file. Parsing and cross-file query context may be broader than reporting scope. Source, parse, and match caches remain incremental; repository scans stream bounded source batches through a separate native workspace.
 
-Results carry source revisions. Empty checkpoints do not invalidate buffered findings; changes to relevant source do. OMP and Pi support background delivery, while polling hook hosts receive buffered findings at their next event. Delivery is not a policy execution: there is no acceptance callback, acknowledgement persistence, retry chain, or exactly-once guarantee.
+Results carry source revisions. Empty checkpoints do not invalidate buffered violations; changes to relevant source do. OMP and Pi support background delivery, while polling hook hosts receive buffered violations at their next event. Delivery is not an audit: there is no acceptance callback, acknowledgement persistence, retry chain, or exactly-once guarantee.
 
-Evaluation returns findings and concrete execution failures, not an `unknown` verdict. Unreadable sources, unavailable generated ranges, missing capabilities, exhausted budgets, and evaluator errors are stored in `policy_runs`, never rendered as conversation observations. `scans_create` submits a scan for a session and `GET /api/policy-runs` exposes paginated execution records.
+An audit returns violations and concrete execution failures, not an `unknown` verdict. Unreadable sources, unavailable generated ranges, missing capabilities, exhausted budgets, and evaluator errors are stored in `audits`, never rendered as conversation observations. `audit_requests_create` submits an audit request for a session and `GET /api/audits` exposes paginated audit records.
 
-OMP and Pi expose native argument-free commands with descriptions in slash completion. Claude Code and Cursor install the same `/rerail-disable` and `/rerail-enable` names as user-level prompt commands; Claude Code also gets `/rerail-ui` and `/rerail-session`, Cursor `/rerail-ui`. Those prompt commands open the page as a tab in the Orca or Cursor window before falling back to the system browser:
+OMP and Pi expose native argument-free commands with descriptions in slash completion. Claude Code and Cursor install the same `/rerail-start` and `/rerail-stop` names as user-level prompt commands; Claude Code also gets `/rerail-ui` and `/rerail-session`, Cursor `/rerail-ui`. Those prompt commands open the page as a tab in the Orca or Cursor window before falling back to the system browser:
 
 | Command           | Interaction                                                                                                                        |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `/rerail-settings` | View saved ongoing defaults; select scope or mode to change it. Each selection saves immediately.                                  |
 | `/rerail-scan`     | Choose `repository` or `git-diff`; the scan always runs log-only.                                                                  |
-| `/rerail-disable`  | Stop recording, evaluation, steering, and daemon autostart in this checkout. The shared daemon stays available to other checkouts. |
-| `/rerail-enable`   | Remove this checkout's opt-out and attach Rerail to the current session again.                                                      |
+| `/rerail-start`   | Start Rerail in this checkout and attach it to the current session; the first time in a repository also sets it up.                |
+| `/rerail-stop`    | Stop recording, evaluation, steering, and daemon autostart in this checkout. The shared daemon stays available to others.          |
 | `/rerail-ui`       | Open the Rerail rules page in the browser (the same link the status line's rule count carries).                                     |
 | `/rerail-session`  | Open this session's Rerail page in the browser (the same link `/rerail` prints).                                                     |
-| `/rerail-status`   | Show checkout disablement, otherwise daemon and installed version status.                                                          |
+| `/rerail-status`   | Show whether Rerail is stopped here, otherwise daemon and installed version status.                                               |
 | `/rerail-check`    | Check for an update without installing it.                                                                                         |
 | `/rerail-update`   | Install a Rerail update.                                                                                                            |
 | `/rerail-rollback` | Restore the previous installed version.                                                                                            |
@@ -373,20 +393,30 @@ ignore rules. `/rerail-scan` waits up to ten seconds, then reports the latest
 request status without changing saved defaults. Both commands bind to the
 session and checkout where the dialog opened.
 
-Disablement is the presence of `<checkout>/.rerail/disabled`. It takes effect
-immediately in OMP and Pi and before the next one-shot Claude Code, Codex, or
-Cursor hook runs. It persists across harness and daemon restarts, does not
-delete history or rules, and does not stop the machine-wide daemon. From the
-disabled checkout's perspective Rerail is stopped: no events are recorded, no
-policy or cosine rules run, no guidance is delivered, and hooks do not
-autostart or contact the daemon. Run `/rerail-enable`, `rerail enable`, or remove
-the marker to resume. `/rerail-status` reports checkout disablement before
-shared-daemon state.
+Rerail is off in every repository until it is started there. Set-up and rules
+belong to the repository; on and off belong to each checkout. A linked worktree
+follows the nearest checkout of its repository that contains it and was turned
+on or off, at any depth, and otherwise the main checkout, until it is started
+or stopped itself. Starting or stopping a checkout also reaches every worktree
+that follows it: the worktrees inside it without their own setting, and, from
+the main checkout, every linked worktree without its own setting, wherever it
+is on disk. Worktrees with their own setting, and checkouts that contain this
+one, keep their state. The state is stored in `~/.rerail/rerail.sqlite`.
+`/rerail-start` (or `rerail start`) in a repository that has never been set up
+also does the first-time set-up and seeds the default rules. Stopping takes
+effect immediately in OMP and Pi and before
+the next one-shot Claude Code, Codex, or Cursor hook runs. It persists across
+coding agent and daemon restarts, does not delete history or rules, and does
+not stop the machine-wide daemon. In a stopped checkout no events are
+recorded, no file or conversation rules run, no guidance is delivered, and hooks do
+not autostart or contact the daemon. The footer in Claude Code and OMP reads
+"not on here" while a daemon is running to say so. `/rerail-status` reports
+whether Rerail is on in this checkout before the shared-daemon state.
 
-The exact `/rerail-disable` and `/rerail-enable` names are available in OMP, Pi,
+The exact `/rerail-start` and `/rerail-stop` names are available in OMP, Pi,
 Claude Code, and Cursor. Codex currently namespaces custom prompts rather than
 allowing an exact third-party slash-command name, so its equivalent is the
-terminal CLI spelling `rerail disable` / `rerail enable`.
+terminal CLI spelling `rerail start` / `rerail stop`.
 
 The terminal CLI retains `rerail scan` and `rerail settings` with flags. Outside
 the harness, select a session explicitly; Rerail never guesses the most recent:
@@ -413,14 +443,14 @@ components the same controls with one clear page per responsibility:
 log-only scan submission and results, and **Sessions** for transcript events.
 These pages use these OpenAPI operations:
 
-| Operation                   | HTTP surface                                      |
-| --------------------------- | ------------------------------------------------- |
-| Effective settings          | `GET /api/sessions/{sessionId}/policy-settings`   |
-| Save defaults               | `PATCH /api/sessions/{sessionId}/policy-settings` |
-| Request a scan              | `POST /api/sessions/{sessionId}/scans`            |
-| Inspect requests            | `GET /api/sessions/{sessionId}/scans`             |
-| Repository diagnostic index | `GET /api/repository-diagnostics`                 |
-| Filtered diagnostic entries | `GET /api/repository-diagnostics/{runId}/entries` |
+| Operation                   | HTTP surface                                       |
+| --------------------------- | -------------------------------------------------- |
+| Effective settings          | `GET /api/sessions/{sessionId}/audit-settings`     |
+| Save defaults               | `PATCH /api/sessions/{sessionId}/audit-settings`   |
+| Request an audit            | `POST /api/sessions/{sessionId}/audit-requests`    |
+| Inspect requests            | `GET /api/sessions/{sessionId}/audit-requests`     |
+| Repository audit index      | `GET /api/repository-audits`                       |
+| Filtered audit entries      | `GET /api/repository-audits/{auditId}/entries`     |
 
 **Ownership and activation.** Defaults belong to the canonical workspace
 checkout, not a conversation, a machine-wide preference, or the database's
@@ -432,12 +462,12 @@ surface does not invent an alternate project/group identity or silently promote
 checkout settings. Effective settings identify their workspace and storage
 location.
 
-The ongoing defaults are automatic `touched-files` evaluation in `resteer`
+The ongoing defaults are automatic `touched-files` audits in `steer`
 mode. Saved scope/mode changes affect subsequent automatic evaluations,
 including running sessions; they do not rewrite a running evaluation or its
 recorded results. Every repository in retained scan history receives one
 automatic full-repository, `log`-only baseline. When Rerail becomes active in a
-historical repository without that baseline, it creates the diagnostic before
+historical repository without that baseline, it creates the repository audit before
 continuing with ordinary session evaluation. That automatic baseline is never
 repeated. A later user-requested scan becomes the latest result shown on
 Diagnostics without modifying saved defaults. History filters never change
@@ -456,28 +486,32 @@ guardrail fails explicitly with one summary failure instead of continuing to
 consume host resources or flooding Diagnostics.
 
 The Diagnostics screen keeps one-shot requests and their results separate from
-ongoing settings and transcripts. A completed scan with no findings is a
-successful empty result, not a failure. Violations are findings; unreadable
-inputs and evaluator errors are execution failures. Queued/running requests are
-not completed results, and interrupted execution is not success. Request IDs
-link to execution run IDs; history retains the session, workspace, source
-revision, and evaluated rule revisions. Historical records and work cancelled
-before evaluation have no compiled-rule provenance; they are not attributed to
-today's rules. A recorded catalog with no individual revisions means it had no
-enabled policy rules. Diagnostics indexes every repository in retained session
-history and renders the latest policy findings and execution failures as
-separate accessible records. Entry type,
-severity, exact code, path substring, and free-text filters execute in the
-daemon with bounded pagination; the UI does not load or filter a full result set
-in memory.
+ongoing settings and transcripts. A completed scan with no violations is a
+successful empty result, not a failure. Unreadable inputs and evaluator errors
+are execution failures, not violations. Queued/running requests are not
+completed results, and interrupted execution is not success. Audit requests
+link to the audit IDs they produced; history retains the session, workspace,
+source revision, and evaluated rule revisions. Historical records and work
+cancelled before evaluation have no compiled-rule provenance; they are not
+attributed to today's rules. A recorded catalog with no individual revisions
+means it had no enabled file rules. Diagnostics indexes every repository in
+retained session history and renders the latest repository audit's violations
+and execution failures as separate accessible records. Entry type
+(`kind=violation|failure`), rule mode (`mode=log|steer|block`, the mode of the
+rule that produced a violation), exact code, path substring, and free-text
+filters execute in the daemon with bounded pagination; the UI does not load or
+filter a full result set in memory. The rule mode filter shares the words
+`steer` and `log` with an audit's run mode, which `mode=steer|log` filters on
+`/api/audits`.
 
 **Host capabilities.** Only the runtime owning the selected session executes
 its requests. OMP/Pi can deliver actionable results in the background. Claude
 Code, Codex, and Cursor receive buffered guidance at their next supported hook
 event; completing a scan is not proof that the host has consumed its guidance.
-`log` records results without steering; `resteer` records the same results and
-requests supported guidance delivery. Runtime failures remain diagnostics, not
-policy findings or conversation guidance. A closed or unavailable session
+`log` records results without steering; `steer` records the same results and
+requests supported guidance delivery for violations of `steer` and `block`
+rules. Runtime failures remain diagnostics, not
+violations or conversation guidance. A closed or unavailable session
 cannot be replaced by another session to make a request succeed.
 
 Cursor Read and Write hook phases can share a native tool-call ID; their normalized event identities remain distinct. When the CLI omits prompt and response hooks, Rerail incrementally reads the host-provided JSONL transcript with a durable byte cursor. Native prompt hooks remain authoritative when present. Transcript tool-use records are not converted into invented tool events.
@@ -486,7 +520,7 @@ A missing native addon does not stop the daemon: `status`, `/healthz`, and the U
 
 ## Operate
 
-The `cosine_rules` tool in OMP and Pi supports:
+The `conversation_rules` tool in OMP and Pi supports:
 
 - `add`
 - `remove`
@@ -625,13 +659,15 @@ npm run package:check     # build and dry-run the npm pack
 
 `npm run build:native` needs `cargo` on `PATH`; after a fresh rustup install, `export PATH="$HOME/.cargo/bin:$PATH"`.
 
-Everything run from a checkout (tests, benchmarks, `node dist/cli.js`) is a development build: its policy content store is `<checkout>/.rerail/content-v3.sqlite`, private to that checkout or worktree. Only the managed installation under `~/.rerail/versions/` opens the machine-wide `~/.cache/rerail/content-v3.sqlite`, so a checkout on a newer store schema cannot break the installed Rerail. `RERAIL_CONTENT_STORE_PATH` overrides the location; the test setup gives every test file its own store that way. See [Installing Rerail](docs/installation.md#after-setup).
+Everything run from a checkout (tests, benchmarks, `node dist/cli.js`) is a development build: its policy content store is `<checkout>/.rerail/content-v1.sqlite`, private to that checkout or worktree. Only the managed installation under `~/.rerail/versions/` opens the machine-wide `~/.cache/rerail/content-v1.sqlite`, so a checkout on a newer store schema cannot break the installed Rerail. `RERAIL_CONTENT_STORE_PATH` overrides the location; the test setup gives every test file its own store that way. See [Installing Rerail](docs/installation.md#after-setup).
 
 To run a checkout's build in your harnesses instead of the published package, run `node dist/cli.js install --root "$PWD"` after `npm run build`. It activates the checkout as `~/.rerail/current`, the way `setup` activates a published version, writes the launcher, and registers the harnesses; run `npx @neralabs/rerail setup` again to return to the published package.
 
 Rerail's own toolchain is Node only. OMP remains an external Bun-hosted runtime; its integration suites (`integration/omp-*.test.ts`, `integration/harness-auth.test.ts`) use Vitest to drive a real standalone OMP executable. Set `RERAIL_OMP_EXECUTABLE` to its absolute path, or provision the release pinned to the SDK dependency with `node scripts/install-omp-host.mjs` (checksum-verified; uses a private local cache and prints the executable path). CI uses the same host. `npm run test:integration:built` skips the build step when `dist/` is current.
 
 `scripts/prepare-model.py` reproduces the bundled INT8 artifact from the revision and checksums recorded in `model/manifest.json`.
+
+`npm run conformance:languages -- --pack <pack>` scores a language pack's ported linter rules (`conformance/languages/<pack>/`) through the production workspace against the upstream rule fixtures from `fixtures/` (or `RERAIL_FIXTURES_DIR`) and, with corpora checked out under `.rerail/corpora/<pack>/`, the linter's output on pinned corpora; `--write` saves the report under `.rerail/reports/`. `npm run conformance:languages:check` is the fixtures-only gate.
 
 ### Live harness smoke (macOS)
 

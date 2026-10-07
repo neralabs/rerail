@@ -18,7 +18,6 @@ import {
   type RuleApplicability,
   type RuleKind,
   type RuleOrigin,
-  type RuleSyncState,
 } from "./schema.js";
 import {
   bundledRuleBody,
@@ -117,8 +116,6 @@ export interface ScopedRuleWriteOptions {
   now?: number;
   sourceDigest?: string | null;
   origin?: RuleOrigin;
-  syncState?: RuleSyncState;
-  upstreamRuleId?: string | null;
 }
 
 export type ScopedStoredRule = RuleDocument & {
@@ -131,8 +128,6 @@ export type ScopedStoredRule = RuleDocument & {
   updatedAt: number;
   sourceDigest: string | null;
   payloadHash: string;
-  syncState: RuleSyncState;
-  upstreamRuleId: string | null;
 };
 
 export interface RuleCatalogContext extends RepositoryContext {
@@ -160,18 +155,18 @@ function matchesCommonRuleQuery(stored: ScopedStoredRule, query: ScopedRuleQuery
   if (query.applicability !== undefined && stored.applicability !== query.applicability) return false;
   if (query.kind !== undefined && stored.kind !== query.kind) return false;
   if (query.enabled !== undefined && stored.enabled !== query.enabled) return false;
+  if (query.mode !== undefined && stored.rule.mode !== query.mode) return false;
   const text = query.text?.trim().toLocaleLowerCase("en-US");
   return text === undefined || text.length === 0 || JSON.stringify(stored.rule).toLocaleLowerCase("en-US").includes(text);
 }
 
 function matchesRuleQuery(stored: ScopedStoredRule, query: ScopedRuleQuery): boolean {
   if (!matchesCommonRuleQuery(stored, query)) return false;
-  if (stored.kind !== "cosine") {
-    return query.source === undefined && query.boundary === undefined && query.delivery === undefined;
+  if (stored.kind !== "conversation") {
+    return query.source === undefined && query.boundary === undefined;
   }
   return (query.source === undefined || stored.rule.sample.source === query.source)
-    && (query.boundary === undefined || stored.rule.sample.boundary === query.boundary)
-    && (query.delivery === undefined || stored.rule.action.delivery === query.delivery);
+    && (query.boundary === undefined || stored.rule.sample.boundary === query.boundary);
 }
 /** Compact effective-set identity for passive coverage readers; no rule bodies or writes. */
 export function scopedRuleSignature(database: RerailDatabase, repositoryId: string, kind: RuleKind): string {
@@ -179,7 +174,7 @@ export function scopedRuleSignature(database: RerailDatabase, repositoryId: stri
     WITH project AS (
       SELECT project_id FROM rule_project_repositories WHERE repository_id = ${repositoryId}
     ), configured AS (
-      SELECT rule_id, kind, enabled, revision, payload_hash, owner_kind, owner_id, origin, sync_state, upstream_rule_id
+      SELECT rule_id, kind, enabled, revision, payload_hash, owner_kind, owner_id, origin
       FROM catalog_rules AS candidate
       WHERE kind = ${kind} AND (
         owner_id = (SELECT project_id FROM project)
@@ -190,7 +185,7 @@ export function scopedRuleSignature(database: RerailDatabase, repositoryId: stri
       )
       ORDER BY rule_id
     )
-    SELECT coalesce(json_group_array(json_array(rule_id, kind, enabled, revision, payload_hash, owner_kind, owner_id, origin, sync_state, upstream_rule_id)), '[]') AS signature
+    SELECT coalesce(json_group_array(json_array(rule_id, kind, enabled, revision, payload_hash, owner_kind, owner_id, origin)), '[]') AS signature
     FROM configured
   `)[0]!.signature;
 }
@@ -269,16 +264,16 @@ export class ScopedRuleCatalog {
   upsertPolicy(input: unknown, options: ScopedRuleWriteOptions = {}): ScopedStoredRule {
     const rule = policyRuleSchema.parse(input);
     assertPolicyCompiles(rule);
-    return this.#upsert({ kind: "policy", rule }, { ...options, revision: rule.revision });
+    return this.#upsert({ kind: "file", rule }, { ...options, revision: rule.revision });
   }
 
   upsertCosine(input: unknown, options: ScopedRuleWriteOptions = {}): ScopedStoredRule {
     const rule = parseCosineRule(input);
-    return this.#upsert({ kind: "cosine", rule }, options);
+    return this.#upsert({ kind: "conversation", rule }, options);
   }
 
   upsertDocument(document: RuleDocument, options: ScopedRuleWriteOptions = {}): ScopedStoredRule {
-    return document.kind === "policy"
+    return document.kind === "file"
       ? this.upsertPolicy(document.rule, options)
       : this.upsertCosine(document.rule, options);
   }
@@ -316,15 +311,15 @@ export class ScopedRuleCatalog {
   }
 
   cosineRules(): CosineRule[] {
-    return this.list({ kind: "cosine", enabled: true }).flatMap(stored => stored.kind === "cosine" ? [stored.rule] : []);
+    return this.list({ kind: "conversation", enabled: true }).flatMap(stored => stored.kind === "conversation" ? [stored.rule] : []);
   }
 
   cosineIds(): Set<string> {
-    return new Set(this.list({ kind: "cosine" }).map(stored => stored.rule.id));
+    return new Set(this.list({ kind: "conversation" }).map(stored => stored.rule.id));
   }
 
   policyRules(): PolicyRule[] {
-    return this.list({ kind: "policy", enabled: true }).flatMap(stored => stored.kind === "policy" ? [stored.rule] : []);
+    return this.list({ kind: "file", enabled: true }).flatMap(stored => stored.kind === "file" ? [stored.rule] : []);
   }
 
   setEnabled(selection: ScopedRuleSelection, enabled: boolean, now = Date.now()): number {
@@ -342,7 +337,7 @@ export class ScopedRuleCatalog {
               enabled,
               revision: read.stored.revision,
               now,
-              origin: "local",
+              origin: "user",
             });
             count += 1;
             continue;
@@ -371,7 +366,7 @@ export class ScopedRuleCatalog {
             enabled,
             revision: stored.revision,
             now,
-            origin: "local",
+            origin: "user",
           });
         } else {
           const ownerId = stored.origin.kind === "global" ? GLOBAL_OWNER : stored.origin.projectId;
@@ -423,7 +418,7 @@ export class ScopedRuleCatalog {
       const digest = ruleDocumentDigest(document);
       if (row === undefined) {
         const enabled = entry.enabledByDefault ?? true;
-        this.#upsert(document, { applicability: "project", now, sourceDigest: digest, origin: "bundled", enabled });
+        this.#upsert(document, { applicability: "project", now, sourceDigest: digest, origin: "rerail", enabled });
         report.inserted += 1;
         continue;
       }
@@ -439,7 +434,7 @@ export class ScopedRuleCatalog {
           && storedDocumentDigest(row.kind, row.document.rule) === row.sourceDigest;
       }
       if (refresh) {
-        this.#upsert(document, { applicability: "project", now, sourceDigest: digest, origin: "bundled" });
+        this.#upsert(document, { applicability: "project", now, sourceDigest: digest, origin: "rerail" });
         report.refreshed += 1;
       } else {
         report.kept += 1;
@@ -490,7 +485,7 @@ export class ScopedRuleCatalog {
 
   #upsert(document: RuleDocument, options: ScopedRuleWriteOptions): ScopedStoredRule {
     // Every catalog write lands here; the kernel compiles a session's rules all or nothing.
-    if (document.kind === "cosine") assertKernelRegexes(document.rule);
+    if (document.kind === "conversation") assertKernelRegexes(document.rule);
     const stored = this.#database.transaction(() => {
       const owner = this.#owner(options.applicability ?? "project");
       this.#database.insert(ruleCatalogIdentities).values({ ruleId: document.rule.id, kind: document.kind })
@@ -509,7 +504,7 @@ export class ScopedRuleCatalog {
       const existing = this.#ownedRow(owner.kind, owner.id, document.rule.id);
       const now = options.now ?? Date.now();
       let revision: number;
-      if (document.kind === "policy") revision = document.rule.revision;
+      if (document.kind === "file") revision = document.rule.revision;
       else if (options.revision !== undefined) revision = options.revision;
       else revision = existing === undefined ? 1 : existing.revision + 1;
       const payloadHash = ruleDocumentDigest(document);
@@ -523,9 +518,7 @@ export class ScopedRuleCatalog {
         document,
         payloadHash,
         sourceDigest: options.sourceDigest === undefined ? existing?.sourceDigest ?? null : options.sourceDigest,
-        origin: options.origin ?? "local",
-        syncState: options.syncState ?? existing?.syncState ?? "local-only",
-        upstreamRuleId: options.upstreamRuleId === undefined ? existing?.upstreamRuleId ?? null : options.upstreamRuleId,
+        origin: options.origin ?? "user",
         createdAt: existing?.createdAt ?? options.createdAt ?? now,
         updatedAt: now,
       }).onConflictDoUpdate({
@@ -537,9 +530,7 @@ export class ScopedRuleCatalog {
           document,
           payloadHash,
           sourceDigest: options.sourceDigest === undefined ? existing?.sourceDigest ?? null : options.sourceDigest,
-          origin: options.origin ?? existing?.origin ?? "local",
-          syncState: options.syncState ?? existing?.syncState ?? "local-only",
-          upstreamRuleId: options.upstreamRuleId === undefined ? existing?.upstreamRuleId ?? null : options.upstreamRuleId,
+          origin: options.origin ?? existing?.origin ?? "user",
           updatedAt: now,
         },
       }).run();
@@ -594,13 +585,13 @@ export class ScopedRuleCatalog {
       quarantined: { ruleId: row.ruleId, kind: row.kind, owner: row.ownerKind === "global" ? GLOBAL_OWNER : `project:${row.ownerId}`, reason },
     });
     let document: RuleDocument;
-    if (row.kind === "policy") {
+    if (row.kind === "file") {
       const read = readStoredPolicyRule(row.document.rule);
       if (!read.ok) return quarantine(read.reason);
-      document = { kind: "policy", rule: read.rule };
+      document = { kind: "file", rule: read.rule };
     } else {
       try {
-        document = { kind: "cosine", rule: parseCosineRule(row.document.rule) };
+        document = { kind: "conversation", rule: parseCosineRule(row.document.rule) };
       } catch (error) {
         return quarantine(error instanceof Error ? error.message : String(error));
       }
@@ -614,8 +605,6 @@ export class ScopedRuleCatalog {
       updatedAt: row.updatedAt,
       sourceDigest: row.sourceDigest,
       payloadHash: row.payloadHash,
-      syncState: row.syncState,
-      upstreamRuleId: row.upstreamRuleId,
       catalogOrigin: row.origin,
     };
     return { ok: true, stored: { ...base, ...document } };

@@ -3,8 +3,9 @@ import { openRerailDatabase, type RerailDatabase } from "./database.js";
 import { readStoredPolicyRule, reportQuarantinedRule, storedDocumentDigest, type QuarantinedRule } from "./rule-quarantine.js";
 import { assertPolicyCompiles } from "./policy-kernel-check.js";
 import { policyRuleSchema, type PolicyRule } from "./policy-schema.js";
+import { RULE_MODES, type RuleMode } from "./rule-mode.js";
 import { assertKernelRegexes } from "./rule-regexes.js";
-import { parseCosineRule, type CosineRule, type DeliveryMode, type SampleBoundary } from "./rule-schema.js";
+import { parseCosineRule, type CosineRule, type SampleBoundary } from "./rule-schema.js";
 import { RULE_KINDS, RULE_SCOPES, rules, type NewRuleRow, type RuleKind, type RuleRow, type RuleScope } from "./schema.js";
 import { ruleDocumentDigest } from "./stable-json.js";
 
@@ -19,32 +20,32 @@ interface StoredRuleBase {
 }
 
 export interface StoredPolicyRule extends StoredRuleBase {
-  kind: "policy";
+  kind: "file";
   rule: PolicyRule;
 }
 
 export interface StoredCosineRule extends StoredRuleBase {
-  kind: "cosine";
+  kind: "conversation";
   rule: CosineRule;
 }
 
 export type StoredRule = StoredPolicyRule | StoredCosineRule;
 
 /** A rule body with its kind, as bundled with the package or dumped by `rerail rules export`. */
-export type RuleDocument = { kind: "policy"; rule: PolicyRule } | { kind: "cosine"; rule: CosineRule };
+export type RuleDocument = { kind: "file"; rule: PolicyRule } | { kind: "conversation"; rule: CosineRule };
 
 /** A bundled document; `enabledByDefault: false` (opt-in packs) makes the first seed insert it disabled. */
 export type BundledRuleDocument = RuleDocument & { readonly enabledByDefault?: boolean };
 
 /** The rule body of a bundled entry, without its seeding metadata. */
 export function bundledRuleBody(document: BundledRuleDocument): RuleDocument {
-  return document.kind === "policy" ? { kind: "policy", rule: document.rule } : { kind: "cosine", rule: document.rule };
+  return document.kind === "file" ? { kind: "file", rule: document.rule } : { kind: "conversation", rule: document.rule };
 }
 
 export interface RuleWriteOptions {
   enabled?: boolean;
   scope?: RuleScope;
-  /** Cosine rules carry no revision of their own; omit to bump the stored one. Policy rules take `rule.revision`. */
+  /** Conversation rules carry no revision of their own; omit to bump the stored one. File rules take `rule.revision`. */
   revision?: number;
   now?: number;
   /** Bundled provenance; omit to keep what the row already records. */
@@ -63,14 +64,14 @@ export interface RuleQuery {
   kind?: RuleKind;
   enabled?: boolean;
   scope?: RuleScope;
-  /** Case-insensitive substring over id, reference/description, and action content or check bodies. */
+  /** Case-insensitive substring over id, reference/description, and action content or clause bodies. */
   text?: string;
-  /** Cosine `sample.source`; policy rules never match. */
+  /** Conversation `sample.source`; file rules never match. */
   source?: string;
-  /** Cosine `sample.boundary`; policy rules never match. */
+  /** Conversation `sample.boundary`; file rules never match. */
   boundary?: SampleBoundary;
-  /** Cosine `action.delivery`; policy rules never match. */
-  delivery?: DeliveryMode;
+  /** Rule mode; matches either kind. */
+  mode?: RuleMode;
 }
 
 export type RuleSelection = { ids: readonly string[] } | { filter: RuleQuery };
@@ -99,12 +100,15 @@ function ruleConditions(query: RuleQuery): SQL[] {
     conditions.push(or(
       matches(rules.id),
       matches(sql`coalesce(${rules.reference}, ${rules.description}, '')`),
-      matches(sql`coalesce(json_extract(${rules.action}, '$.content'), ${rules.checks}, '')`),
+      matches(sql`coalesce(json_extract(${rules.action}, '$.content'), ${rules.clauses}, '')`),
     )!);
   }
   if (query.source !== undefined) conditions.push(sql`json_extract(${rules.sample}, '$.source') = ${query.source}`);
   if (query.boundary !== undefined) conditions.push(sql`json_extract(${rules.sample}, '$.boundary') = ${query.boundary}`);
-  if (query.delivery !== undefined) conditions.push(sql`json_extract(${rules.action}, '$.delivery') = ${query.delivery}`);
+  if (query.mode !== undefined) {
+    if (!RULE_MODES.includes(query.mode)) throw new TypeError(`unknown rule mode ${String(query.mode)}`);
+    conditions.push(eq(rules.mode, query.mode));
+  }
   return conditions;
 }
 
@@ -112,7 +116,7 @@ const NULL_POLICY_COLUMNS = {
   format: null,
   description: null,
   policyScope: null,
-  checks: null,
+  clauses: null,
 } as const satisfies Partial<NewRuleRow>;
 
 const NULL_COSINE_COLUMNS = {
@@ -125,18 +129,20 @@ const NULL_COSINE_COLUMNS = {
 
 /** The rule body exactly as the row stores it, before validation. */
 function storedBody(row: RuleRow): unknown {
-  if (row.kind === "policy") {
+  if (row.kind === "file") {
     return {
       format: row.format,
       id: row.id,
       revision: row.revision,
+      mode: row.mode,
       ...(row.description === null ? {} : { description: row.description }),
       ...(row.policyScope === null ? {} : { scope: row.policyScope }),
-      checks: row.checks,
+      clauses: row.clauses,
     };
   }
   return {
     id: row.id,
+    mode: row.mode,
     ...(row.reference === null ? {} : { reference: row.reference }),
     match: row.match,
     sample: row.sample,
@@ -161,13 +167,13 @@ function readRuleRow(row: RuleRow): RowRead {
     sourceDigest: row.sourceDigest,
   };
   const quarantine = (reason: string): RowRead => ({ ok: false, quarantined: { ruleId: row.id, kind: row.kind, owner: row.scope, reason } });
-  if (row.kind === "policy") {
+  if (row.kind === "file") {
     const read = readStoredPolicyRule(storedBody(row));
     if (!read.ok) return quarantine(read.reason);
-    return { ok: true, stored: { ...base, kind: "policy", rule: read.rule } };
+    return { ok: true, stored: { ...base, kind: "file", rule: read.rule } };
   }
   try {
-    return { ok: true, stored: { ...base, kind: "cosine", rule: parseCosineRule(storedBody(row), `rules[${row.id}]`) } };
+    return { ok: true, stored: { ...base, kind: "conversation", rule: parseCosineRule(storedBody(row), `rules[${row.id}]`) } };
   } catch (error) {
     return quarantine(error instanceof Error ? error.message : String(error));
   }
@@ -199,13 +205,14 @@ export class SqliteRuleStore {
 
   #writePolicy(rule: PolicyRule, options: RuleWriteOptions): StoredPolicyRule {
     const existing = this.#row(rule.id);
-    if (existing !== undefined && existing.kind !== "policy") {
-      throw new Error(`rule ${rule.id} exists with kind ${existing.kind}; remove it before storing a policy rule`);
+    if (existing !== undefined && existing.kind !== "file") {
+      throw new Error(`rule ${rule.id} exists with kind ${existing.kind}; remove it before storing a file rule`);
     }
     const now = options.now ?? Date.now();
     this.#upsert({
       id: rule.id,
-      kind: "policy",
+      kind: "file",
+      mode: rule.mode,
       revision: rule.revision,
       enabled: options.enabled ?? existing?.enabled ?? true,
       scope: options.scope ?? existing?.scope ?? "repository",
@@ -215,24 +222,25 @@ export class SqliteRuleStore {
       format: rule.format,
       description: rule.description ?? null,
       policyScope: rule.scope ?? null,
-      checks: rule.checks,
+      clauses: rule.clauses,
       ...NULL_COSINE_COLUMNS,
     });
     return this.get(rule.id) as StoredPolicyRule;
   }
 
-  /** Validate and insert or replace a cosine rule. The stored revision bumps unless `options.revision` is given. */
+  /** Validate and insert or replace a conversation rule. The stored revision bumps unless `options.revision` is given. */
   upsertCosine(input: unknown, options: RuleWriteOptions = {}): StoredCosineRule {
     const rule = parseCosineRule(input);
     assertKernelRegexes(rule);
     const existing = this.#row(rule.id);
-    if (existing !== undefined && existing.kind !== "cosine") {
-      throw new Error(`rule ${rule.id} exists with kind ${existing.kind}; remove it before storing a cosine rule`);
+    if (existing !== undefined && existing.kind !== "conversation") {
+      throw new Error(`rule ${rule.id} exists with kind ${existing.kind}; remove it before storing a conversation rule`);
     }
     const now = options.now ?? Date.now();
     this.#upsert({
       id: rule.id,
-      kind: "cosine",
+      kind: "conversation",
+      mode: rule.mode,
       revision: options.revision ?? (existing === undefined ? 1 : existing.revision + 1),
       enabled: options.enabled ?? existing?.enabled ?? true,
       scope: options.scope ?? existing?.scope ?? "repository",
@@ -251,14 +259,14 @@ export class SqliteRuleStore {
 
   /** Write one document under either kind; the write options apply to whichever branch runs. */
   upsertDocument(document: RuleDocument, options: RuleWriteOptions = {}): StoredRule {
-    return document.kind === "policy"
+    return document.kind === "file"
       ? this.upsertPolicy(document.rule, options)
       : this.upsertCosine(document.rule, options);
   }
 
   /** Bundled and restored documents were validated when they were read; a restore must not fail on a kernel change. */
   #writeDocument(document: RuleDocument, options: RuleWriteOptions): StoredRule {
-    return document.kind === "policy" ? this.#writePolicy(document.rule, options) : this.upsertCosine(document.rule, options);
+    return document.kind === "file" ? this.#writePolicy(document.rule, options) : this.upsertCosine(document.rule, options);
   }
 
   /**
@@ -277,7 +285,7 @@ export class SqliteRuleStore {
         const bundled = ruleDocumentDigest(document);
         const row = this.#row(document.rule.id);
         if (row === undefined) {
-          const revision = document.kind === "cosine" ? { revision: 1 } : {};
+          const revision = document.kind === "conversation" ? { revision: 1 } : {};
           this.#writeDocument(document, { now, sourceDigest: bundled, enabled: entry.enabledByDefault ?? true, ...revision });
           report.inserted += 1;
           continue;
@@ -350,24 +358,24 @@ export class SqliteRuleStore {
     });
   }
 
-  /** Enabled cosine rules in the shape `CosineRuleRegistry.replace` accepts. */
+  /** Enabled conversation rules in the shape `CosineRuleRegistry.replace` accepts. */
   cosineRules(): CosineRule[] {
-    return this.list({ kind: "cosine", enabled: true }).flatMap(stored =>
-      stored.kind === "cosine" ? [stored.rule] : [],
+    return this.list({ kind: "conversation", enabled: true }).flatMap(stored =>
+      stored.kind === "conversation" ? [stored.rule] : [],
     );
   }
 
-  /** Ids of every `cosine` row, enabled or not: the ids the database owns. */
+  /** Ids of every `conversation` row, enabled or not: the ids the database owns. */
   cosineIds(): Set<string> {
     return new Set(
-      this.#database.select({ id: rules.id }).from(rules).where(eq(rules.kind, "cosine")).all().map(row => row.id),
+      this.#database.select({ id: rules.id }).from(rules).where(eq(rules.kind, "conversation")).all().map(row => row.id),
     );
   }
 
-  /** Enabled policy rules, validated. */
+  /** Enabled file rules, validated. */
   policyRules(): PolicyRule[] {
-    return this.list({ kind: "policy", enabled: true }).flatMap(stored =>
-      stored.kind === "policy" ? [stored.rule] : [],
+    return this.list({ kind: "file", enabled: true }).flatMap(stored =>
+      stored.kind === "file" ? [stored.rule] : [],
     );
   }
 

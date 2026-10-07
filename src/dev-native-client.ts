@@ -8,6 +8,7 @@ import { resolveRerailWorkspaceRoute, type RerailDevInstance } from "./dev-routi
 import { startDaemonForPackage } from "./daemon-control.js";
 import { isMainRerailBuild } from "./rerail-build.js";
 import { defaultRerailHome } from "./rerail-home.js";
+import { RULE_MODES } from "./rule-mode.js";
 type DevNativeInstance = Pick<RerailDevInstance, "workspaceRoot" | "url">;
 
 const POLL_INTERVAL_MS = 100;
@@ -114,7 +115,7 @@ export async function createDevNativeSession<Context>(
     });
     instance = { workspaceRoot: daemon.health.workspaceRoot, url: new URL(daemon.state.url) };
     token = daemon.state.nativeToken;
-    if (token === undefined) throw new Error("Rerail daemon lacks native session support; run rerail stop and retry.");
+    if (token === undefined) throw new Error("Rerail daemon lacks native session support; run rerail daemon stop and retry.");
   }
   const input = { ...initialization, cwd: session.cwd, rebuild };
   if (current !== undefined && host.matchesCurrent(session) && current.matches(instance, token)) {
@@ -263,7 +264,7 @@ export class DevNativeClient implements NativeSemanticToolRuntime {
       // rebuilt as often as spawning a daemon is worth, so the breaker stops rather than respawning
       // one every few seconds for the life of the session. The stream stays shut, so events keep
       // being dropped and counted; only an explicit operation reaching the daemon re-opens it.
-      process.stderr.write(`Rerail could not restart its daemon after ${outage.rebuilds} attempts; session events are dropped until it recovers: ${errorText(outage.rebuildError ?? outage.error)}. Run rerail status, or /rerail-enable to retry.\n`);
+      process.stderr.write(`Rerail could not restart its daemon after ${outage.rebuilds} attempts; session events are dropped until it recovers: ${errorText(outage.rebuildError ?? outage.error)}. Run rerail status, or /rerail-start to retry.\n`);
       return;
     }
     if (!rebuild && unrecoverable(outage.error)) return;
@@ -427,7 +428,7 @@ function unrecoverable(error: unknown): boolean {
 
 function isReply(value: unknown): value is DevNativeReply {
   if (value === null || typeof value !== "object" || Array.isArray(value)
-    || !("deliveries" in value) || !Array.isArray(value.deliveries)
+    || !("deliveries" in value) || !Array.isArray(value.deliveries) || !value.deliveries.every(hasRuleMode)
     || !("entries" in value) || !Array.isArray(value.entries)
     || !value.entries.every(hasCustomType)) {
     return false;
@@ -437,6 +438,12 @@ function isReply(value: unknown): value is DevNativeReply {
     && typeof value.resultRevisionEntry === "number"
     && value.resultRevisionEntry >= 0
     && value.resultRevisionEntry < value.entries.length;
+}
+
+/** A daemon from another protocol version names a requested kind this client would misdeliver. */
+function hasRuleMode(value: unknown): boolean {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && "requested" in value && (RULE_MODES as readonly unknown[]).includes(value.requested);
 }
 
 function hasCustomType(value: unknown): value is { customType: string; data?: unknown } {

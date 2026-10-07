@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:unnecessary-else",
   "revision": 1,
+  "mode": "steer",
   "description": "Flags the `else` of an if whose then-branch is, or ends with (one nested block deep when it is the only statement), a return/throw/break/continue, unless an if up the direct else-if chain (any length) does not end with one; with allow-else-if, `else if` is not flagged.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "unnecessary-else",
       "forbid": {
@@ -183,10 +184,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "UNNECESSARY_ELSE",
-        "severity": "error",
         "message": "The preceding `if` block ends with a `$KW` statement. This `else` is unnecessary."
       }
     }

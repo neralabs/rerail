@@ -14,14 +14,13 @@ fn compile_check(ast: Value, finding: Value) -> Result<CompiledPolicyDsl> {
         ast["language"] = json!("typescript");
     }
     compile_document_with(
-        check_document(json!({ "id": "host", "forbid": { "ast": ast }, "finding": finding })),
+        check_document(json!({ "id": "host", "forbid": { "ast": ast }, "violation": finding })),
         &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
     )
 }
 
 fn finding(each: Option<&str>) -> Value {
-    let mut finding =
-        json!({ "anchor": "capture.N", "code": "X", "message": "$N", "severity": "error" });
+    let mut finding = json!({ "anchor": "capture.N", "code": "X", "message": "$N" });
     if let Some(each) = each {
         finding["each"] = json!(each);
     }
@@ -34,7 +33,7 @@ fn names(ast: Value, each: Option<&str>, source: &str) -> Vec<String> {
         compile_check(ast, finding(each)).unwrap_or_else(|error| panic!("{}", error.reason));
     let result = evaluate_file(&compiled, "typescript", "a.ts", source);
     assert_eq!(result["failures"], json!([]), "{result}");
-    let mut names = result["findings"]
+    let mut names = result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -73,9 +72,9 @@ fn a_host_rule_tests_each_candidate_item() {
     assert_eq!(names(outer, None, "/* global a */\n"), ["a"]);
     let leaked = compile_check(
         items(json!({ "kind": "item", "capture": "N", "host": declared() })),
-        json!({ "anchor": "capture.N", "code": "X", "message": "$V", "severity": "error" }),
+        json!({ "anchor": "capture.N", "code": "X", "message": "$V" }),
     );
-    assert!(rejection(leaked).starts_with("/checks/0/finding/message: `$V` names no capture"));
+    assert!(rejection(leaked).starts_with("/clauses/0/violation/message: `$V` names no capture"));
 }
 
 #[test]
@@ -128,34 +127,34 @@ fn host_and_item_resolves_are_refused_where_they_mean_nothing() {
     let refuse = |ast: Value| rejection(compile_check(ast, finding(None)));
     assert_eq!(
         refuse(json!({ "rule": { "kind": "comment", "host": { "kind": "program" } } })),
-        "/checks/0/forbid/ast/rule/host: host tests the literal a parse holds; use it inside parse"
+        "/clauses/0/forbid/ast/rule/host: host tests the literal a parse holds; use it inside parse"
     );
     assert_eq!(
         refuse(
             json!({ "language": "python", "rule": { "kind": "string", "parse": { "grammar": "annotation",
             "kind": "identifier", "host": { "kind": "module" } } } })
         ),
-        "/checks/0/forbid/ast/rule/parse/host: `host` is not supported inside parse (annotation trees)"
+        "/clauses/0/forbid/ast/rule/parse/host: `host` is not supported inside parse (annotation trees)"
     );
     assert_eq!(
         refuse(
             json!({ "language": "python", "rule": { "kind": "call", "formatArgs": { "style": "brace",
             "string": "S", "args": "A", "missing": { "kind": "field", "host": { "kind": "module" } } } } })
         ),
-        "/checks/0/forbid/ast/rule/formatArgs/missing/host: host tests the literal a parse holds; formatArgs' fields have none"
+        "/clauses/0/forbid/ast/rule/formatArgs/missing/host: host tests the literal a parse holds; formatArgs' fields have none"
     );
     assert_eq!(
         refuse(items(
             json!({ "kind": "item", "resolves": { "unresolved": true } })
         )),
-        "/checks/0/forbid/ast/rule/parse/has/resolves/unresolved: a directive's node resolves by `global` only: its text as a declared global of the query's languageOptions"
+        "/clauses/0/forbid/ast/rule/parse/has/resolves/unresolved: a directive's node resolves by `global` only: its text as a declared global of the query's languageOptions"
     );
     assert_eq!(
         refuse(
             json!({ "language": "python", "rule": { "kind": "string", "parse": { "grammar": "percentFormat",
             "kind": "placeholder", "resolves": { "global": true } } } })
         ),
-        "/checks/0/forbid/ast/rule/parse/resolves: `resolves` is not supported inside parse (percentFormat trees)"
+        "/clauses/0/forbid/ast/rule/parse/resolves: `resolves` is not supported inside parse (percentFormat trees)"
     );
     // A comparison inside a host rule reads the tree's captures and the host's, and no other.
     assert_eq!(
@@ -163,15 +162,14 @@ fn host_and_item_resolves_are_refused_where_they_mean_nothing() {
             json!({ "kind": "item", "capture": "N", "host": { "kind": "comment",
             "compare": { "left": "Q", "op": "eq", "right": "N" } } })
         )),
-        "/checks/0/forbid/ast/rule/parse/has/host/compare/left: `$Q` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
+        "/clauses/0/forbid/ast/rule/parse/has/host/compare/left: `$Q` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
     );
 }
 
 #[test]
 fn a_host_rule_is_as_sound_as_it_reads() {
     let sound = |item: Value| {
-        let plain =
-            json!({ "anchor": "witness.span", "code": "X", "message": "m", "severity": "error" });
+        let plain = json!({ "anchor": "witness.span", "code": "X", "message": "m" });
         let compiled =
             compile_check(items(item), plain).unwrap_or_else(|error| panic!("{}", error.reason));
         grammar_matchers(&compiled)[0].sound_under_errors

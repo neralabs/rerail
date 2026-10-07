@@ -50,8 +50,8 @@ export interface SessionHud {
 export interface RuleCoverage {
   repositoryId: string;
   activeRuleCount: number | null;
-  cosineRuleSignature: string;
-  policyRuleSignature: string;
+  conversationRuleSignature: string;
+  fileRuleSignature: string;
 }
 
 export interface WorkLink {
@@ -282,13 +282,13 @@ export class SqliteTranscriptReader {
       const coverage = database.select({
         repositoryId: sql<string | null>`json_extract(${events.payloadJson}, '$.repositoryId')`,
         activeRuleCount: sql<number | null>`json_extract(${events.payloadJson}, '$.activeRuleCount')`,
-        cosineRuleSignature: sql<string | null>`json_extract(${events.payloadJson}, '$.cosineRuleSignature')`,
-        policyRuleSignature: sql<string | null>`json_extract(${events.payloadJson}, '$.policyRuleSignature')`,
+        conversationRuleSignature: sql<string | null>`json_extract(${events.payloadJson}, '$.conversationRuleSignature')`,
+        fileRuleSignature: sql<string | null>`json_extract(${events.payloadJson}, '$.fileRuleSignature')`,
       }).from(events).where(and(eq(events.sessionId, sessionId), eq(events.kind, "rule-coverage")))
         .orderBy(desc(events.sequence)).limit(1).get();
       const current = coverage?.repositoryId != null
-        && coverage.cosineRuleSignature === scopedRuleSignature(database, coverage.repositoryId, "cosine")
-        && coverage.policyRuleSignature === scopedRuleSignature(database, coverage.repositoryId, "policy");
+        && coverage.conversationRuleSignature === scopedRuleSignature(database, coverage.repositoryId, "conversation")
+        && coverage.fileRuleSignature === scopedRuleSignature(database, coverage.repositoryId, "file");
       const steeringCount = baseline?.complete === 1
         ? database.select({ total: count() }).from(events)
           .where(and(eq(events.sessionId, sessionId), eq(events.kind, "steering-delivered"))).get()!.total

@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:restrict-plus-operands",
   "revision": 1,
+  "mode": "steer",
   "description": "Syntactic approximation: flags `+` whose operands are literals of different base types (number / string / bigint) or an array/object literal. Operands whose type needs inference are not checked.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "mixed-literal-plus",
       "forbid": {
@@ -284,10 +285,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "RESTRICT_PLUS_OPERANDS",
-        "severity": "error",
         "message": "Operands of '+' operation must either be both strings or both numbers or both bigints."
       }
     }

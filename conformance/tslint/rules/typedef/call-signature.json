@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:typedef",
   "revision": 1,
+  "mode": "steer",
   "description": "Requires type definitions for: call-signature.",
   "scope": {"include": ["**/*"], "exclude": []},
-  "checks": [
+  "clauses": [
     {
       "id": "call-signature",
       "forbid": {
@@ -54,10 +55,9 @@
           "utils": {"untyped": {"not": {"has": {"stopBy": "neighbor", "kind": "type_annotation"}}}}
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TYPEDEF",
-        "severity": "error",
         "message": "expected call-signature to have a typedef"
       }
     }

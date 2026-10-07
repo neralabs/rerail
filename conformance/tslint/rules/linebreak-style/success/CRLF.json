@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:linebreak-style",
   "revision": 1,
+  "mode": "steer",
   "description": "Enforces CRLF line endings.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "lf-line",
       "forbid": {
@@ -18,10 +19,9 @@
           "pattern": "(?m)^[^\\r\\n]*\\n"
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "LINEBREAK_STYLE",
-        "severity": "error",
         "message": "Expected linebreak to be 'CRLF'"
       }
     }

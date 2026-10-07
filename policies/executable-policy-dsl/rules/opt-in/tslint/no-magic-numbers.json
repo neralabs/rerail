@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-magic-numbers",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-magic-numbers` rule with its default options (https://palantir.github.io/tslint/rules/no-magic-numbers/). Disallows magic numbers outside declarations/initializers; allowed: -1, 0, 1.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "magic-number",
       "forbid": {
@@ -147,10 +148,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_MAGIC_NUMBERS",
-        "severity": "error",
         "message": "'magic numbers' are not allowed"
       }
     }

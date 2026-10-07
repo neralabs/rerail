@@ -1,0 +1,429 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "python-conformance:ruff-b905-zip-without-explicit-strict",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B905 (zip-without-explicit-strict), from target version 3.10 (`when`; `expression.rs:792`): a call to builtin `zip` (bare `zip`, or `zip` from `builtins`) with no `strict=` keyword (find_keyword, through `arguments` in syntactic mode), at least two positional arguments or a `*` argument, and no infinite iterator argument (`itertools.cycle`/`count`, `repeat` without a finite `times`). `zip` and the itertools names resolve with `resolves`, so a shadowed `zip` is not reported. Reported on the call. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/B905.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "zip-without-explicit-strict",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "min": "3.10"
+            }
+          },
+          "utils": {
+            "it-cycle-count": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "itertools.cycle",
+                      "itertools.count"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "it-cycle-count"
+                  }
+                }
+              ]
+            },
+            "it-repeat": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "itertools.repeat"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "it-repeat"
+                  }
+                }
+              ]
+            },
+            "none-literal": {
+              "any": [
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "none-literal"
+                  }
+                }
+              ]
+            },
+            "infinite-call": {
+              "kind": "call",
+              "any": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "matches": "it-cycle-count"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "matches": "it-repeat"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "argument_list",
+                        "any": [
+                          {
+                            "count": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "not": {
+                                  "any": [
+                                    {
+                                      "kind": "keyword_argument"
+                                    },
+                                    {
+                                      "kind": "dictionary_splat"
+                                    },
+                                    {
+                                      "kind": "comment"
+                                    },
+                                    {
+                                      "regex": "^[(),]$"
+                                    }
+                                  ]
+                                }
+                              },
+                              "min": 1,
+                              "max": 1
+                            },
+                            "not": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "any": [
+                                  {
+                                    "kind": "keyword_argument"
+                                  },
+                                  {
+                                    "kind": "dictionary_splat"
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "count": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "not": {
+                                  "any": [
+                                    {
+                                      "kind": "keyword_argument"
+                                    },
+                                    {
+                                      "kind": "dictionary_splat"
+                                    },
+                                    {
+                                      "kind": "comment"
+                                    },
+                                    {
+                                      "regex": "^[(),]$"
+                                    }
+                                  ]
+                                }
+                              },
+                              "min": 2,
+                              "max": 2
+                            },
+                            "has": {
+                              "stopBy": "neighbor",
+                              "not": {
+                                "any": [
+                                  {
+                                    "kind": "keyword_argument"
+                                  },
+                                  {
+                                    "kind": "dictionary_splat"
+                                  },
+                                  {
+                                    "kind": "comment"
+                                  },
+                                  {
+                                    "regex": "^[(),]$"
+                                  }
+                                ]
+                              },
+                              "matches": "none-literal",
+                              "follows": {
+                                "stopBy": "end",
+                                "not": {
+                                  "any": [
+                                    {
+                                      "kind": "keyword_argument"
+                                    },
+                                    {
+                                      "kind": "dictionary_splat"
+                                    },
+                                    {
+                                      "kind": "comment"
+                                    },
+                                    {
+                                      "regex": "^[(),]$"
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "keyword_argument",
+                              "all": [
+                                {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^(times)$",
+                                    "precedes": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^=$"
+                                    }
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "follows": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^=$"
+                                    },
+                                    "matches": "none-literal"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "matches": "it-repeat"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "generator_expression"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "infinite": {
+              "any": [
+                {
+                  "matches": "infinite-call"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "infinite"
+                  }
+                }
+              ]
+            },
+            "callee-zip": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "zip"
+                    ],
+                    "import": [
+                      "builtins.zip"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee-zip"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "arguments": {
+              "signature": [
+                "*",
+                "strict"
+              ],
+              "absent": [
+                "strict"
+              ],
+              "mode": "syntactic"
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "matches": "callee-zip"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "keyword_argument"
+                          },
+                          {
+                            "kind": "dictionary_splat"
+                          },
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^[(),]$"
+                          }
+                        ]
+                      },
+                      "matches": "infinite"
+                    }
+                  },
+                  "any": [
+                    {
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "keyword_argument"
+                              },
+                              {
+                                "kind": "dictionary_splat"
+                              },
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "regex": "^[(),]$"
+                              }
+                            ]
+                          }
+                        },
+                        "min": 2
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "list_splat"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B905",
+        "message": "`zip()` without an explicit `strict=` parameter",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B905"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

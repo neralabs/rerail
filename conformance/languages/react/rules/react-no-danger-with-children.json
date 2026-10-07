@@ -1,0 +1,519 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-no-danger-with-children",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-react 7.37.5 react/no-danger-with-children: an element with both `dangerouslySetInnerHTML` and children (a first child that is not a line break, or a `children` prop), props read through `{...name}` spreads of a variable initialised with an object literal; and `x.createElement(type, props, ...)` with `dangerouslySetInnerHTML` in props (an object literal or a variable initialised with one) and a third argument or a `children` prop.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "jsx",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "jsx_element",
+                "has": {
+                  "field": "open_tag",
+                  "matches": "dangerous"
+                },
+                "any": [
+                  {
+                    "has": {
+                      "field": "open_tag",
+                      "precedes": {
+                        "stopBy": "neighbor",
+                        "not": {
+                          "kind": "jsx_closing_element"
+                        }
+                      },
+                      "not": {
+                        "layout": {
+                          "after": {
+                            "to": "sibling",
+                            "breaks": {
+                              "min": 1
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "open_tag",
+                      "matches": "children"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "jsx_self_closing_element",
+                "all": [
+                  {
+                    "matches": "dangerous"
+                  },
+                  {
+                    "matches": "children"
+                  }
+                ]
+              }
+            ]
+          },
+          "utils": {
+            "dangerous": {
+              "any": [
+                {
+                  "has": {
+                    "kind": "jsx_attribute",
+                    "has": {
+                      "kind": "property_identifier",
+                      "regex": "^(?:dangerouslySetInnerHTML)$"
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "kind": "jsx_expression",
+                    "has": {
+                      "kind": "spread_element",
+                      "has": {
+                        "kind": "identifier",
+                        "resolves": {
+                          "binding": {
+                            "value": {
+                              "matches": "dangerous-obj"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "dangerous-obj": {
+              "kind": "object",
+              "has": {
+                "any": [
+                  {
+                    "kind": "pair",
+                    "has": {
+                      "field": "key",
+                      "kind": "property_identifier",
+                      "regex": "^(?:dangerouslySetInnerHTML)$"
+                    }
+                  },
+                  {
+                    "kind": "shorthand_property_identifier",
+                    "regex": "^(?:dangerouslySetInnerHTML)$"
+                  },
+                  {
+                    "kind": "method_definition",
+                    "has": {
+                      "field": "name",
+                      "kind": "property_identifier",
+                      "regex": "^(?:dangerouslySetInnerHTML)$"
+                    }
+                  },
+                  {
+                    "kind": "spread_element",
+                    "has": {
+                      "kind": "identifier",
+                      "resolves": {
+                        "binding": {
+                          "value": {
+                            "matches": "dangerous-obj"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "children": {
+              "any": [
+                {
+                  "has": {
+                    "kind": "jsx_attribute",
+                    "has": {
+                      "kind": "property_identifier",
+                      "regex": "^(?:children)$"
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "kind": "jsx_expression",
+                    "has": {
+                      "kind": "spread_element",
+                      "has": {
+                        "kind": "identifier",
+                        "resolves": {
+                          "binding": {
+                            "value": {
+                              "matches": "children-obj"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "children-obj": {
+              "kind": "object",
+              "has": {
+                "any": [
+                  {
+                    "kind": "pair",
+                    "has": {
+                      "field": "key",
+                      "kind": "property_identifier",
+                      "regex": "^(?:children)$"
+                    }
+                  },
+                  {
+                    "kind": "shorthand_property_identifier",
+                    "regex": "^(?:children)$"
+                  },
+                  {
+                    "kind": "method_definition",
+                    "has": {
+                      "field": "name",
+                      "kind": "property_identifier",
+                      "regex": "^(?:children)$"
+                    }
+                  },
+                  {
+                    "kind": "spread_element",
+                    "has": {
+                      "kind": "identifier",
+                      "resolves": {
+                        "binding": {
+                          "value": {
+                            "matches": "children-obj"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-danger-with-children",
+        "message": "Only set one of `children` or `props.dangerouslySetInnerHTML`",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-danger-with-children"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create-element-child",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "kind": "member_expression",
+              "has": {
+                "field": "property",
+                "regex": "^createElement$"
+              }
+            },
+            "arguments": {
+              "signature": [
+                "type",
+                "props",
+                "child"
+              ],
+              "bind": {
+                "PROPS": "props",
+                "CHILD": "child"
+              },
+              "mode": "estree"
+            }
+          },
+          "utils": {
+            "dangerous-obj": {
+              "kind": "object",
+              "has": {
+                "any": [
+                  {
+                    "kind": "pair",
+                    "has": {
+                      "field": "key",
+                      "kind": "property_identifier",
+                      "regex": "^(?:dangerouslySetInnerHTML)$"
+                    }
+                  },
+                  {
+                    "kind": "shorthand_property_identifier",
+                    "regex": "^(?:dangerouslySetInnerHTML)$"
+                  },
+                  {
+                    "kind": "method_definition",
+                    "has": {
+                      "field": "name",
+                      "kind": "property_identifier",
+                      "regex": "^(?:dangerouslySetInnerHTML)$"
+                    }
+                  },
+                  {
+                    "kind": "spread_element",
+                    "has": {
+                      "kind": "identifier",
+                      "resolves": {
+                        "binding": {
+                          "value": {
+                            "matches": "dangerous-obj"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "props-dangerous": {
+              "any": [
+                {
+                  "kind": "object",
+                  "all": [
+                    {
+                      "matches": "dangerous-obj"
+                    }
+                  ]
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "kind": "object",
+                        "all": [
+                          {
+                            "matches": "dangerous-obj"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "constraints": {
+            "PROPS": {
+              "matches": "props-dangerous"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-danger-with-children",
+        "message": "Only set one of `children` or `props.dangerouslySetInnerHTML`",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-danger-with-children"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create-element-prop",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "kind": "member_expression",
+              "has": {
+                "field": "property",
+                "regex": "^createElement$"
+              }
+            },
+            "arguments": {
+              "signature": [
+                "type",
+                "props",
+                "child"
+              ],
+              "bind": {
+                "PROPS": "props"
+              },
+              "absent": [
+                "child"
+              ],
+              "mode": "estree"
+            }
+          },
+          "utils": {
+            "dangerous-obj": {
+              "kind": "object",
+              "has": {
+                "any": [
+                  {
+                    "kind": "pair",
+                    "has": {
+                      "field": "key",
+                      "kind": "property_identifier",
+                      "regex": "^(?:dangerouslySetInnerHTML)$"
+                    }
+                  },
+                  {
+                    "kind": "shorthand_property_identifier",
+                    "regex": "^(?:dangerouslySetInnerHTML)$"
+                  },
+                  {
+                    "kind": "method_definition",
+                    "has": {
+                      "field": "name",
+                      "kind": "property_identifier",
+                      "regex": "^(?:dangerouslySetInnerHTML)$"
+                    }
+                  },
+                  {
+                    "kind": "spread_element",
+                    "has": {
+                      "kind": "identifier",
+                      "resolves": {
+                        "binding": {
+                          "value": {
+                            "matches": "dangerous-obj"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "children-obj": {
+              "kind": "object",
+              "has": {
+                "any": [
+                  {
+                    "kind": "pair",
+                    "has": {
+                      "field": "key",
+                      "kind": "property_identifier",
+                      "regex": "^(?:children)$"
+                    }
+                  },
+                  {
+                    "kind": "shorthand_property_identifier",
+                    "regex": "^(?:children)$"
+                  },
+                  {
+                    "kind": "method_definition",
+                    "has": {
+                      "field": "name",
+                      "kind": "property_identifier",
+                      "regex": "^(?:children)$"
+                    }
+                  },
+                  {
+                    "kind": "spread_element",
+                    "has": {
+                      "kind": "identifier",
+                      "resolves": {
+                        "binding": {
+                          "value": {
+                            "matches": "children-obj"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "props-both": {
+              "any": [
+                {
+                  "kind": "object",
+                  "all": [
+                    {
+                      "matches": "dangerous-obj"
+                    },
+                    {
+                      "matches": "children-obj"
+                    }
+                  ]
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "kind": "object",
+                        "all": [
+                          {
+                            "matches": "dangerous-obj"
+                          },
+                          {
+                            "matches": "children-obj"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "constraints": {
+            "PROPS": {
+              "matches": "props-both"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-danger-with-children",
+        "message": "Only set one of `children` or `props.dangerouslySetInnerHTML`",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-danger-with-children"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

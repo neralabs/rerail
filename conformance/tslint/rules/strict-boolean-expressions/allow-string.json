@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:strict-boolean-expressions",
   "revision": 1,
+  "mode": "steer",
   "description": "Syntactic approximation: flags non-boolean LITERAL operands (number, string, object/array/new/function/class/regex, null, undefined; also parenthesized, to any depth) of &&, ||, !, ternary conditions and if/while/do conditions; allow-string.",
   "scope": { "include": ["**/*"], "exclude": [] },
-  "checks": [
+  "clauses": [
     {
       "id": "non-boolean-literal",
       "forbid": {
@@ -71,10 +72,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "STRICT_BOOLEAN_EXPRESSIONS",
-        "severity": "error",
         "message": "This value in a boolean context is not a boolean."
       }
     }

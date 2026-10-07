@@ -10,7 +10,8 @@ use crate::policy_dsl::eval::{file_language, grammar_matcher};
 use crate::policy_dsl::json::{invalid, json_error};
 use crate::policy_dsl::language::GrammarDialect;
 use crate::policy_dsl::model::{
-    CheckKind, CompiledCheck, CompiledPolicy, FileInput, Query, python_module_path,
+    CheckKind, CompiledCheck, CompiledPolicy, FileInput, Query, package_marker_directory,
+    python_module_in,
 };
 use napi::Result;
 use serde::Deserialize;
@@ -214,7 +215,7 @@ pub(super) fn make_file(
         restored_result_ids: HashSet::new(),
         transient_failure: false,
         candidates,
-        witnesses: BTreeMap::new(),
+        witnesses: Default::default(),
         failures: BTreeMap::new(),
         syntax: None,
         crossfile: CrossFileFileState::default(),
@@ -282,23 +283,11 @@ pub(super) fn reclaim_candidate_sets(candidate_sets: &mut CandidateSets) {
     }
 }
 
-/// The directory marked as a Python package by this path, if any.
-fn package_marker_directory(path: &str) -> Option<&str> {
-    path.strip_suffix("/__init__.py")
-        .or_else(|| (path == "__init__.py").then_some(""))
-}
-
 fn path_is_below(path: &str, directory: &str) -> bool {
     directory.is_empty()
         || path
             .strip_prefix(directory)
             .is_some_and(|suffix| suffix.starts_with('/'))
-}
-
-fn workspace_module(path: &str, is_package: impl Fn(&str) -> bool) -> Option<Value> {
-    python_module_path(std::path::Path::new(path), |directory| {
-        is_package(directory.to_string_lossy().as_ref())
-    })
 }
 
 /// The module of `input`'s path as `FileInput` normalizes it, from the workspace's markers where
@@ -308,7 +297,7 @@ fn module_under(input: &FileInput, is_package: impl Fn(&str) -> bool) -> Result<
         input.path.clone(),
         input.language.clone(),
         Arc::new(String::new()),
-        workspace_module(&input.path, is_package).as_ref(),
+        python_module_in(&input.path, is_package).as_ref(),
         &input.path,
     )
 }

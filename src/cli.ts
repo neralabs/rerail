@@ -19,7 +19,8 @@ import {
   type SignedUpdatePolicy,
 } from "./activation-cli.js";
 import { CustomerActivationManager, CustomerProfileStore } from "./customer-profile.js";
-import { disableRerail, enableRerail, isRerailDisabled, rerailDisabledMarker } from "./checkout-control.js";
+import { effectiveStartState, repositoryName, startRerail, stopRerail, workspaceStartState, type RepositorySetupIo } from "./repository-start.js";
+import { devWorkspaceEnabled } from "./dev-routing.js";
 import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "./daemon.js";
 import { defaultRerailDatabasePath, RERAIL_DATABASE_FILE } from "./database.js";
 import {
@@ -37,7 +38,7 @@ import { runResetCommand, runRulesCommand, snapshotDatabaseBeforeUpdate } from "
 import { MOCK_COSINE_RULES, MOCK_POLICY_RULES, seedRerailDatabase } from "./seed.js";
 import { runScanCommand } from "./scan-cli.js";
 import { openScopedRuleCatalog } from "./scoped-rule-catalog.js";
-import { runInstallCommand, runSetupCommand } from "./setup-cli.js";
+import { parseHarnessNames, runInstallCommand, runSetupCommand } from "./setup-cli.js";
 import { defaultRerailHome } from "./rerail-home.js";
 import {
   ManagedUpdater,
@@ -102,11 +103,12 @@ function usage(): string {
     "Usage:",
     "  rerail setup [--project <dir>] [--harness omp,pi,claude-code,codex,cursor] [--port <n>] [--skip-start] [--skip-register] [--dry-run]",
     "  rerail install [--root <package>] [--project <dir>] [--harness <list>] [--remove] [--dry-run]",
-    "  rerail start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--open]",
-    "  rerail stop",
-    "  rerail disable",
-    "  rerail enable",
+    "  rerail start [--repo <dir>] [--agents <list>] [--database <file>]",
+    "  rerail stop [--repo <dir>] [--database <file>]",
+    "  rerail state [--repo <dir>] [--database <file>]",
     "  rerail status",
+    "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--open]",
+    "  rerail daemon stop",
     "  rerail session [<host> <session-id>] [--open]",
     "  rerail ui [--print]",
     "  rerail seed",
@@ -115,7 +117,7 @@ function usage(): string {
     "  rerail rules import <rules.json>",
     "  rerail [--profile <name>] events",
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
-    "  rerail settings --session <id> [--scope repository|touched-files|ai-output] [--mode log|resteer] [--json]",
+    "  rerail settings --session <id> [--scope repository|touched-files|ai-output] [--mode log|steer] [--json]",
     "  rerail [--profile <name>] activate --file <profile.jws> --trust-root <roots.json>",
     "  rerail [--profile <name>] activate --code <code> --activation-url <url> --trust-root <roots.json>",
     "  rerail [--profile <name>] activation request --deployment <id> --output <file>",
@@ -130,18 +132,18 @@ function usage(): string {
 
 function printDaemon(daemon: RunningDaemon): void {
   const { state, health } = daemon;
-  process.stdout.write(`Rerail ${state.version} running at ${state.url} (pid ${state.pid}, ${health.ui} UI)\n`);
+  process.stdout.write(`Rerail daemon ${state.version} running at ${state.url} (pid ${state.pid}, ${health.ui} UI)\n`);
   process.stdout.write(`Database: ${health.database.path}${health.database.exists ? "" : " (not created yet)"}\n`);
   process.stdout.write(health.native.ok
     ? `Native kernel: ok (version ${health.native.kernelVersion})\n`
     : `Native kernel: unavailable: ${health.native.error}\n`);
 }
 
-async function runStartCommand(args: readonly string[], home: string): Promise<number> {
+async function runDaemonStartCommand(args: readonly string[], home: string): Promise<number> {
   const { flags, options } = parseArguments(
     args,
     { flags: ["--dev", "--open", "--allow-remote"], options: ["--port", "--host", "--public-host"] },
-    argument => `Unknown start option: ${argument}\n\n${usage()}`,
+    argument => `Unknown daemon start option: ${argument}\n\n${usage()}`,
   );
   const port = options.get("--port");
   const host = options.get("--host");
@@ -154,7 +156,7 @@ async function runStartCommand(args: readonly string[], home: string): Promise<n
     ...(publicHosts.length === 0 ? {} : { publicHosts }),
     ...(port === undefined ? {} : { port: parsePort(port) }),
   });
-  if (!result.started) process.stdout.write("Rerail is already running.\n");
+  if (!result.started) process.stdout.write("The Rerail daemon is already running.\n");
   printDaemon(result.daemon);
   process.stdout.write(`Logs: ${join(home, DAEMON_LOG_FILE)}\n`);
   if (flags.has("--open")) openInBrowser(result.daemon.state.url);
@@ -162,17 +164,20 @@ async function runStartCommand(args: readonly string[], home: string): Promise<n
 }
 
 async function runStatusCommand(home: string): Promise<number> {
-  if (isRerailDisabled(process.cwd())) {
-    process.stdout.write(`Rerail is disabled for this checkout. The shared daemon is not used here. Remove ${rerailDisabledMarker(process.cwd())} or run rerail enable to resume it.\n`);
-    return 0;
-  }
+  const workspace = process.cwd();
+  const state = workspaceStartState(workspace);
+  const name = repositoryName(workspace);
+  if (state === "started") process.stdout.write(`Rerail is on in ${name}.\n`);
+  else if (state === "stopped") process.stdout.write(`Rerail is stopped in ${name}. Start it again with rerail start.\n`);
+  else if (devWorkspaceEnabled(workspace)) process.stdout.write(`Rerail is on in ${name} through its development workspace.\n`);
+  else process.stdout.write(`Rerail has not been started in ${name}. Start it with rerail start.\n`);
   const lookup = await lookupDaemon(home);
   if (lookup.status === "absent") {
-    process.stdout.write("Rerail is not running. Start it with rerail start.\n");
+    process.stdout.write("The Rerail daemon is not running. Start it with rerail daemon start.\n");
     return 3;
   }
   if (lookup.status === "unresponsive") {
-    process.stdout.write(`Rerail pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail stop, then rerail start.\n`);
+    process.stdout.write(`Rerail daemon pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail daemon stop, then rerail daemon start.\n`);
     return 4;
   }
   printDaemon({ state: lookup.state, health: lookup.health });
@@ -205,7 +210,7 @@ async function runUiCommand(args: readonly string[]): Promise<number> {
   const { flags } = parseArguments(args, { flags: ["--print"], options: [] }, argument => `Unknown ui option: ${argument}\n\n${usage()}`);
   const page = await readRulesPage({ cwd: claudeWorkspace(process.cwd()) });
   if (page.url === null) {
-    process.stdout.write(`Rerail is not running for this checkout (${page.reason}). Check rerail status, or start it with rerail start --open.\n`);
+    process.stdout.write(`Rerail is not running for this checkout (${page.reason}). Check rerail status, or start the daemon with rerail daemon start --open.\n`);
     return 3;
   }
   process.stdout.write(`${page.url}\n`);
@@ -282,23 +287,61 @@ async function runSessionCommand(rawArgs: readonly string[]): Promise<number> {
 
 /** The daemon commands need only the launcher home; they never load an activation policy. */
 async function runDaemonCommand(command: string, args: readonly string[], home: string): Promise<number | undefined> {
-  if (command === "start") return await runStartCommand(args, home);
-  if (command === "stop") {
-    process.stdout.write(await stopDaemon(home) === "stopped" ? "Rerail stopped.\n" : "Rerail is not running.\n");
-    return 0;
+  if (command === "daemon") {
+    const [verb, ...rest] = args;
+    if (verb === "start") return await runDaemonStartCommand(rest, home);
+    if (verb === "stop" && rest.length === 0) {
+      process.stdout.write(await stopDaemon(home) === "stopped" ? "Rerail daemon stopped.\n" : "The Rerail daemon is not running.\n");
+      return 0;
+    }
+    throw new Error(`Usage: rerail daemon start [options] | rerail daemon stop\n\n${usage()}`);
   }
   if (command === "status") return await runStatusCommand(home);
   if (command === "ui") return await runUiCommand(args);
   return undefined;
 }
 
-async function runCheckoutCommand(command: "disable" | "enable", args: readonly string[]): Promise<number> {
-  if (args.length > 0) throw new Error(`Unknown ${command} argument: ${args[0]}\n\n${usage()}`);
-  const workspace = process.cwd();
-  const marker = command === "disable" ? await disableRerail(workspace) : await enableRerail(workspace);
-  process.stdout.write(command === "disable"
-    ? `Rerail disabled for ${workspace}. The shared daemon was left running. Remove ${marker} or run rerail enable to resume it.\n`
-    : `Rerail enabled for ${workspace}.\n`);
+/**
+ * `rerail start` / `rerail stop` act on the checkout of `--repo` or the current directory. Without a
+ * terminal the caller is a coding agent relaying the output, so the text names its slash commands.
+ * `--database` names the database an extension was configured with, as `rerail state` takes it.
+ */
+async function runRepositoryCommand(command: "start" | "stop", args: readonly string[]): Promise<number> {
+  const { options } = parseArguments(
+    args,
+    { flags: [], options: command === "start" ? ["--repo", "--agents", "--database"] : ["--repo", "--database"] },
+    argument => `Unknown ${command} option: ${argument}\n\n${usage()}`,
+  );
+  const workspace = resolve(options.get("--repo") ?? process.cwd());
+  const database = options.get("--database");
+  const databasePath = database === undefined ? undefined : resolve(database);
+  const io: RepositorySetupIo = {
+    lane: process.stdout.isTTY ? "terminal" : "agent",
+    say: text => { process.stdout.write(`${text}\n`); },
+  };
+  if (command === "stop") {
+    stopRerail(workspace, io, databasePath);
+    return 0;
+  }
+  const agents = options.get("--agents");
+  await startRerail(workspace, io, {
+    ...(databasePath === undefined ? {} : { databasePath }),
+    ...(agents === undefined ? {} : { agents: parseHarnessNames(agents.split(",").map(name => name.trim()).filter(Boolean)) }),
+  });
+  const page = await readRulesPage({ cwd: workspace });
+  if (page.url !== null) process.stdout.write(`  ${page.url}\n`);
+  return 0;
+}
+
+/**
+ * `rerail state`: started, stopped or never for the repository, for callers that cannot open SQLite (OMP runs on
+ * Bun). `--database` names the database file when a caller configured one other than the home's default.
+ */
+function runStateCommand(args: readonly string[]): number {
+  const { options } = parseArguments(args, { flags: [], options: ["--repo", "--database"] }, argument => `Unknown state option: ${argument}\n\n${usage()}`);
+  const databasePath = options.get("--database");
+  const workspace = resolve(options.get("--repo") ?? process.cwd());
+  process.stdout.write(`${effectiveStartState(workspace, databasePath === undefined ? undefined : resolve(databasePath))}\n`);
   return 0;
 }
 
@@ -308,7 +351,8 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   const command = commandArgs[0];
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
   // `seed`, `rules`, and `reset` write the Rerail database with the invoking package's schema (a checkout build, say).
-  if (["setup", "install", "stop", "status", "session", "ui", "disable", "enable", "seed", "rules", "reset"].includes(command ?? "")) return true;
+  if (["setup", "install", "start", "stop", "state", "status", "session", "ui", "seed", "rules", "reset"].includes(command ?? "")) return true;
+  if (command === "daemon") return commandArgs[1] === "stop";
   return command === "update" && (commandArgs[1] === "status" || commandArgs[1] === "rollback");
 }
 
@@ -382,7 +426,8 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "reset") return runResetCommand(args, usage);
   const daemonExit = await runDaemonCommand(command, args, home);
   if (daemonExit !== undefined) return daemonExit;
-  if (command === "disable" || command === "enable") return await runCheckoutCommand(command, args);
+  if (command === "start" || command === "stop") return await runRepositoryCommand(command, args);
+  if (command === "state") return runStateCommand(args);
   if (command === "scan" || command === "settings") return await runScanCommand(command, args, { home });
   return undefined;
 }

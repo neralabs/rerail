@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:unnecessary-bind",
   "revision": 1,
+  "mode": "steer",
   "description": "Flags `function(){}.bind(this)` (no extra args, not a generator, name not self-referenced) \u2014 the untyped TSLint behaviour.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "function-bind",
       "forbid": {
@@ -73,10 +74,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "UNNECESSARY_BIND",
-        "severity": "error",
         "message": "Don't bind `this` without arguments as a scope to a function. Use an arrow lambda instead."
       }
     }

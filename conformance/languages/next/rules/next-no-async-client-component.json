@@ -1,0 +1,212 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-no-async-client-component",
+  "revision": 1,
+  "mode": "steer",
+  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-async-client-component: after a top-level \"use client\" statement: an `export default async function` with a capitalized name, or the first top-level declaration of the capitalized name `export default` exports when it is an async function or a variable initialized with an async arrow.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "export-default-function",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "export_statement",
+            "all": [
+              {
+                "inside": {
+                  "kind": "program"
+                }
+              },
+              {
+                "regex": "^export\\s+default\\s"
+              },
+              {
+                "has": {
+                  "kind": "function_declaration",
+                  "regex": "^async\\s",
+                  "has": {
+                    "field": "name",
+                    "regex": "^[A-Z]"
+                  }
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "kind": "expression_statement",
+                  "has": {
+                    "kind": "string",
+                    "value": {
+                      "eq": "use client"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/no-async-client-component",
+        "message": "Prevent Client Components from being async functions. See: https://nextjs.org/docs/messages/no-async-client-component",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/no-async-client-component"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "exported-declaration",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "inside": {
+                  "kind": "program"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_declaration",
+                    "regex": "^async\\s",
+                    "has": {
+                      "field": "name",
+                      "regex": "^[A-Z]",
+                      "pattern": "$N"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "lexical_declaration"
+                      },
+                      {
+                        "kind": "variable_declaration"
+                      }
+                    ],
+                    "has": {
+                      "kind": "variable_declarator",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "name",
+                            "kind": "identifier",
+                            "regex": "^[A-Z]",
+                            "pattern": "$N"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "value",
+                            "kind": "arrow_function",
+                            "regex": "^async\\b"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "function_declaration",
+                        "has": {
+                          "field": "name",
+                          "pattern": "$N"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "kind": "lexical_declaration"
+                          },
+                          {
+                            "kind": "variable_declaration"
+                          }
+                        ],
+                        "has": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "name",
+                            "kind": "identifier",
+                            "pattern": "$N"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "program",
+                  "stopBy": "end",
+                  "has": {
+                    "kind": "export_statement",
+                    "all": [
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "pattern": "$N"
+                        }
+                      },
+                      {
+                        "follows": {
+                          "stopBy": "end",
+                          "kind": "expression_statement",
+                          "has": {
+                            "kind": "string",
+                            "value": {
+                              "eq": "use client"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/no-async-client-component",
+        "message": "Prevent Client Components from being async functions. See: https://nextjs.org/docs/messages/no-async-client-component",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/no-async-client-component"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

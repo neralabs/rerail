@@ -11,7 +11,8 @@ vi.mock("../src/daemon-control.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../src/daemon-control.js"),
   daemonKernelSocket: routing.daemonKernelSocket,
 }));
-import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +20,7 @@ import { PassThrough, Readable } from "node:stream";
 import type { AdapterEvent, RerailEventLoop } from "../src/adapter-contract.js";
 import { encodeRerailEventResult, RERAIL_EVENT_PROTOCOL_PREFACE } from "../src/event-protocol.js";
 import { runRerailEventStream, serveRerailEventStream } from "../src/event-stream.js";
+import { startTestRepository } from "./support/started-repository.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -113,12 +115,14 @@ describe("rerail events in a main build", () => {
     const received = await fakeDaemonKernel(socketPath);
     routing.isMainRerailBuild.mockReturnValue(true);
     routing.daemonKernelSocket.mockResolvedValue(socketPath);
+    startTestRepository(root, join(root, "rerail.sqlite"));
     const output = new PassThrough();
     let written = "";
     output.setEncoding("utf8").on("data", (chunk: string) => { written += chunk; });
     const session = { host: "claude-code", sessionId: "s", cwd: root };
 
     await runRerailEventStream({
+      workspaceRoot: root,
       storageRoot: join(root, "sessions"),
       databasePath: join(root, "rerail.sqlite"),
       input: Readable.from([
@@ -142,5 +146,68 @@ describe("rerail events in a main build", () => {
     // Only the first event may replace a daemon from another package; a stream that outlives an update must
     // keep using the newer daemon rather than bring its own version back.
     expect(routing.daemonKernelSocket.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("never asks for the daemon, which would autostart it, while Rerail is off in the checkout", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-events-off-"));
+    cleanups.push(async () => await rm(root, { recursive: true, force: true }));
+    routing.isMainRerailBuild.mockReturnValue(true);
+    const output = new PassThrough();
+    let written = "";
+    output.setEncoding("utf8").on("data", (chunk: string) => { written += chunk; });
+    const session = { host: "claude-code", sessionId: "s", cwd: root };
+
+    await runRerailEventStream({
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      databasePath: join(root, "rerail.sqlite"),
+      input: Readable.from([
+        `${RERAIL_EVENT_PROTOCOL_PREFACE}\n`,
+        `${JSON.stringify({ event: { kind: "session-start", eventId: "start", session } })}\n`,
+      ]),
+      output,
+    });
+
+    expect(JSON.parse(written.trim())).toEqual({ eventId: "start", deliveries: [] });
+    expect(routing.daemonKernelSocket).not.toHaveBeenCalled();
+  });
+});
+
+describe("rerail events in a development workspace", () => {
+  it("sends a flagged workspace's events to its container and never opens the host database", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-events-dev-"));
+    cleanups.push(async () => await rm(root, { recursive: true, force: true }));
+    await mkdir(join(root, ".nera"));
+    await writeFile(join(root, ".nera", "instance.env"), 'NERA_RERAIL_ENABLED="true"\nNERA_RERAIL_PUBLIC_URL="http://127.0.0.1:4737"\n');
+    // In a checkout build the stream would otherwise evaluate in-process over `databasePath`.
+    routing.isMainRerailBuild.mockReturnValue(false);
+    const container: Array<{ path: string; body: KernelRequestBody }> = [];
+    vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as KernelRequestBody;
+      container.push({ path: url.pathname, body });
+      return Response.json({ eventId: body.event.eventId, deliveries: [] });
+    });
+    cleanups.push(async () => { vi.unstubAllGlobals(); });
+    const databasePath = join(root, "host", "rerail.sqlite");
+    const session = { host: "claude-code", sessionId: "s", cwd: root };
+
+    await runRerailEventStream({
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      databasePath,
+      input: Readable.from([
+        `${RERAIL_EVENT_PROTOCOL_PREFACE}\n`,
+        `${JSON.stringify({ event: { kind: "session-start", eventId: "start", session } })}\n`,
+        `${JSON.stringify({ event: { kind: "user-prompt", eventId: "prompt", sessionId: "s", text: "go" } })}\n`,
+      ]),
+      output: new PassThrough(),
+    });
+
+    expect(container.map(request => [request.path, request.body.event.eventId])).toEqual([
+      ["/kernel/events", "start"],
+      ["/kernel/events", "prompt"],
+    ]);
+    expect(container.every(request => !("databasePath" in request.body.configuration))).toBe(true);
+    expect(existsSync(databasePath)).toBe(false);
   });
 });

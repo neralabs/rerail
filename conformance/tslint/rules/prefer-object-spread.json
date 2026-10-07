@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:prefer-object-spread",
   "revision": 1,
+  "mode": "steer",
   "description": "Prefers object spread over Object.assign with an object literal first argument, or whose result is used with a side-effect-free first argument.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "object-literal-target",
       "forbid": {
@@ -53,10 +54,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "PREFER_OBJECT_SPREAD",
-        "severity": "error",
         "message": "Use the object spread operator instead."
       }
     },
@@ -104,10 +104,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "PREFER_OBJECT_SPREAD",
-        "severity": "error",
         "message": "'Object.assign' returns the first argument. Prefer object spread if you want a new object."
       }
     }

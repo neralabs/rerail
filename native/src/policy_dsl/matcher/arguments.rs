@@ -1,5 +1,6 @@
 use super::util::UNKNOWN;
 use super::value::spend_step;
+use crate::policy_dsl::identifier::python_identifier;
 use crate::policy_dsl::language::{Family, GrammarDialect};
 use crate::policy_dsl::value::{Context, Value};
 use crate::policy_dsl::value::{php, python};
@@ -152,7 +153,7 @@ impl Arguments {
                     if let (Some(name), Some(value)) =
                         (argument.field("name"), argument.field("value"))
                     {
-                        keywords.push((name.text().into_owned(), value));
+                        keywords.push((python_identifier(&name).into_owned(), value));
                     }
                 }
                 "dictionary_splat" => match literal_keywords(&argument) {
@@ -214,7 +215,7 @@ impl Arguments {
                         if let (Some(name), Some(value)) =
                             (argument.field("name"), argument.field("value"))
                         {
-                            keywords.push((name.text().into_owned(), value));
+                            keywords.push((python_identifier(&name).into_owned(), value));
                         }
                     }
                     "dictionary_splat" => {}

@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-duplicate-super",
   "revision": 1,
+  "mode": "steer",
   "description": "Warns if super() can run twice in a constructor: a later sibling (at the super's level or any enclosing level, sibling-scoped) calls super before a return/throw, or before a break that is not absorbed by a loop/switch; then/else and ternary branches exclude each other, a switch passes on only its last clause's super, and super() in a loop body not followed by break/return is flagged. Nested classes are skipped.",
   "scope": {"include": ["**/*"], "exclude": []},
-  "checks": [
+  "clauses": [
     {
       "id": "duplicate-super",
       "forbid": {
@@ -171,10 +172,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_DUPLICATE_SUPER",
-        "severity": "error",
         "message": "Multiple calls to 'super()' found. It must be called only once."
       }
     },
@@ -265,10 +265,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_DUPLICATE_SUPER_LOOP",
-        "severity": "error",
         "message": "'super()' called in a loop. It must be called only once."
       }
     }

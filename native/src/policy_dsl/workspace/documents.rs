@@ -10,7 +10,7 @@
 use super::persisted::{file_context, grammar_id, grammar_version};
 use super::*;
 use crate::content_store::{ContentStore, HashKey, StoredSourceObjects};
-use crate::policy_dsl::eval::{file_language, span_json};
+use crate::policy_dsl::eval::file_language;
 use crate::policy_dsl::lines::{LineTable, Terminators};
 use ast_grep_language::LanguageExt;
 use serde::{Deserialize, Serialize};
@@ -385,7 +385,7 @@ pub(super) fn resolve(state: &mut WorkspaceState, reference: &NodeReference) -> 
         "path": reference.path,
         "ordinal": reference.ordinal,
         "kind": kind,
-        "span": span_json(&lines, span.start, span.end),
+        "span": lines.span(span.start, span.end),
         "text": &document.source[span],
     }))
 }

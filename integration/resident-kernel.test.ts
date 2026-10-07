@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -10,6 +10,7 @@ import { stopDaemon } from "../src/daemon-control.js";
 import type { AdapterDelivery } from "../src/adapter-contract.js";
 import { SqliteTranscriptReader } from "../src/transcript-store.js";
 import { seedContractPolicy } from "./contract-policy.js";
+import { startTestRepository, startTestRepositoryById } from "../test/support/started-repository.js";
 const originalRerailHome = process.env.RERAIL_HOME;
 let isolatedRerailHome: string;
 
@@ -44,6 +45,7 @@ async function awaitPolicySteer(
 describe("resident kernel service", () => {
   it("preserves executable-policy correlation across one-shot hook connections", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-resident-kernel-"));
+    startTestRepository(root);
     const socketPath = join(root, "kernel.sock");
     const storageRoot = join(root, ".rerail", "sessions");
     let service: { close(): Promise<void> } | undefined;
@@ -56,7 +58,7 @@ describe("resident kernel service", () => {
 
       await ingestKernelEvent(socketPath, { kind: "session-start", eventId: "start", session });
       await ingestKernelEvent(socketPath, {
-        kind: "tool-call",
+        kind: "call",
         eventId: "call:write-route",
         toolCallId: "write-route",
         sessionId: session.sessionId,
@@ -66,7 +68,7 @@ describe("resident kernel service", () => {
 
       await writeFile(join(root, "api", "route.py"), 'def route(cursor):\n    cursor.execute("SELECT 1")\n');
       const deliveries = await ingestKernelEvent(socketPath, {
-        kind: "tool-result",
+        kind: "result",
         eventId: "result:write-route",
         toolCallId: "write-route",
         sessionId: session.sessionId,
@@ -99,6 +101,7 @@ describe("resident kernel service", () => {
   }, 30_000);
   it("keeps policy state when each Codex hook invocation closes its client", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-resident-hooks-"));
+    startTestRepository(root);
     const socketPath = join(root, "kernel.sock");
     const storageRoot = join(root, ".rerail/sessions");
     let service: { close(): Promise<void> } | undefined;
@@ -154,20 +157,22 @@ describe("resident kernel service", () => {
   }, 30_000);
   it("serves the native execution kernel for hooks throughout the daemon lifetime", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-daemon-kernel-"));
+    startTestRepositoryById("resident-kernel-test", join(root, ".rerail/rerail.sqlite"));
     let daemon: RerailDaemon | undefined;
     try {
       await mkdir(join(root, ".claude"));
       await writeFile(
-        join(root, ".claude/cosine-rules.json"),
+        join(root, ".claude/conversation-rules.json"),
         JSON.stringify({
           version: 1,
           rules: [
             {
               id: "resident",
+              mode: "steer",
               reference: "Preserve database transaction atomicity",
               match: { operator: "gte", threshold: 0.95 },
               sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
-              action: { delivery: "steer", content: "DAEMON_KERNEL_MATCH" },
+              action: { content: "DAEMON_KERNEL_MATCH" },
               repeat: { mode: "once" },
             },
           ],
@@ -208,6 +213,7 @@ describe("resident kernel service", () => {
   }, 30_000);
   it("retains captured pre-edit source when the daemon restarts during a tool call", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-kernel-restart-"));
+    startTestRepository(root);
     const socketPath = join(root, "kernel.sock");
     const options = { socketPath, storageRoot: join(root, ".rerail/sessions"), modelPath: resolve("model") };
     let service: { close(): Promise<void> } | undefined;
@@ -218,7 +224,7 @@ describe("resident kernel service", () => {
       service = await startKernelService(options);
       await ingestKernelEvent(socketPath, { kind: "session-start", eventId: "start", session });
       await ingestKernelEvent(socketPath, {
-        kind: "tool-call",
+        kind: "call",
         eventId: "call",
         toolCallId: "write",
         sessionId: session.sessionId,
@@ -230,7 +236,7 @@ describe("resident kernel service", () => {
       await writeFile(join(root, "api/route.py"), "def route(cursor):\n    cursor.execute('SELECT 1')\n");
       service = await startKernelService(options);
       const deliveries = await ingestKernelEvent(socketPath, {
-        kind: "tool-result",
+        kind: "result",
         eventId: "result",
         toolCallId: "write",
         sessionId: session.sessionId,
@@ -267,17 +273,19 @@ describe("resident kernel service", () => {
       for (const project of ["first", "second"]) {
         const cwd = join(root, project);
         await mkdir(join(cwd, ".claude"), { recursive: true });
+        startTestRepository(cwd, join(cwd, ".rerail/rerail.sqlite"));
         await writeFile(
-          join(cwd, ".claude/cosine-rules.json"),
+          join(cwd, ".claude/conversation-rules.json"),
           JSON.stringify({
             version: 1,
             rules: [
               {
                 id: "project-rule",
+                mode: "steer",
                 reference: "Preserve database transaction atomicity",
                 match: { operator: "gte", threshold: 0.95 },
                 sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
-                action: { delivery: "steer", content: project },
+                action: { content: project },
                 repeat: { mode: "once" },
               },
             ],
@@ -317,65 +325,27 @@ describe("resident kernel service", () => {
       await rm(root, { recursive: true, force: true });
     }
   }, 30_000);
-  it("delivers a configured Codex follow-up even when Stop has no assistant message", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rerail-codex-cosine-"));
-    const socketPath = join(root, "kernel.sock");
-    const storageRoot = join(root, ".rerail/sessions");
-    let service: { close(): Promise<void> } | undefined;
-    try {
-      await mkdir(join(root, ".codex"));
-      await writeFile(
-        join(root, ".codex/cosine-rules.json"),
-        JSON.stringify({
-          version: 1,
-          rules: [
-            {
-              id: "follow-up",
-              reference: "Preserve database transaction atomicity",
-              match: { operator: "gte", threshold: 0.95 },
-              sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
-              action: { delivery: "followUp", content: "CODEX_FOLLOW_UP" },
-              repeat: { mode: "once" },
-            },
-          ],
-        }),
-      );
-      service = await startKernelService({ socketPath, storageRoot, modelPath: resolve("model") });
-      const options = { storageRoot, modelPath: resolve("model"), kernelSocketPath: socketPath };
-      const common = { cwd: root, session_id: "codex-cosine", turn_id: "turn" };
-      await runCodexHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, options);
-      expect(
-        await runCodexHook(
-          { ...common, hook_event_name: "UserPromptSubmit", prompt: "Preserve database transaction atomicity" },
-          options,
-        ),
-      ).toEqual({});
-      expect(await runCodexHook({ ...common, hook_event_name: "Stop", last_assistant_message: null }, options)).toEqual(
-        { decision: "block", reason: "CODEX_FOLLOW_UP" },
-      );
-    } finally {
-      await service?.close();
-      await rm(root, { recursive: true, force: true });
-    }
-  }, 30_000);
+
   it("defers Cursor failure-event steering to the next supported tool context", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-cursor-delivery-"));
+    startTestRepository(root);
     const socketPath = join(root, "kernel.sock");
     const storageRoot = join(root, ".rerail/sessions");
     let service: { close(): Promise<void> } | undefined;
     try {
       await mkdir(join(root, ".cursor"));
       await writeFile(
-        join(root, ".cursor/cosine-rules.json"),
+        join(root, ".cursor/conversation-rules.json"),
         JSON.stringify({
           version: 1,
           rules: [
             {
               id: "recovery",
+              mode: "steer",
               reference: "The requested operation failed",
               match: { operator: "gte", threshold: 0.95 },
               sample: { source: "tool:Write", boundary: "tool-call", minimumTokens: 1 },
-              action: { delivery: "steer", content: "CURSOR_RECOVERY" },
+              action: { content: "CURSOR_RECOVERY" },
               repeat: { mode: "once" },
             },
           ],
@@ -427,6 +397,7 @@ describe("resident kernel service", () => {
   }, 30_000);
   it("observes Cursor Read and Write phases sharing one native tool call ID", async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-cursor-phases-")));
+    startTestRepository(root);
     const socketPath = join(root, "kernel.sock");
     const storageRoot = join(root, ".rerail/sessions");
     let service: { close(): Promise<void> } | undefined;
@@ -437,24 +408,26 @@ describe("resident kernel service", () => {
       await writeFile(file, "def route():\n    return 1\n");
       const input = { content: "def route(cursor):\n    cursor.execute('SELECT 1')\n", file_path: file };
       await writeFile(
-        join(root, ".cursor/cosine-rules.json"),
+        join(root, ".cursor/conversation-rules.json"),
         JSON.stringify({
           version: 1,
           rules: [
             {
               id: "write-call",
+              mode: "steer",
               reference: JSON.stringify(input),
               match: { operator: "gte", threshold: 0.95 },
               sample: { source: "tool:Write", boundary: "tool-call", minimumTokens: 1 },
-              action: { delivery: "steer", content: "CURSOR_WRITE_CALL" },
+              action: { content: "CURSOR_WRITE_CALL" },
               repeat: { mode: "once" },
             },
             {
               id: "write-result",
+              mode: "steer",
               reference: "The route was written",
               match: { operator: "gte", threshold: 0.95 },
               sample: { source: "tool:Write", boundary: "tool-call", minimumTokens: 1 },
-              action: { delivery: "steer", content: "CURSOR_WRITE_RESULT" },
+              action: { content: "CURSOR_WRITE_RESULT" },
               repeat: { mode: "once" },
             },
           ],
@@ -501,112 +474,27 @@ describe("resident kernel service", () => {
       await rm(root, { recursive: true, force: true });
     }
   }, 30_000);
-  it("holds Cursor next-turn delivery until the next prompt's first tool context", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rerail-cursor-next-turn-"));
-    const socketPath = join(root, "kernel.sock");
-    const storageRoot = join(root, ".rerail/sessions");
-    let service: { close(): Promise<void> } | undefined;
-    try {
-      await mkdir(join(root, ".cursor"));
-      await writeFile(
-        join(root, ".cursor/cosine-rules.json"),
-        JSON.stringify({
-          version: 1,
-          rules: [
-            {
-              id: "next",
-              reference: "Preserve database transaction atomicity",
-              match: { operator: "gte", threshold: 0.95 },
-              sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
-              action: { delivery: "nextTurn", content: "CURSOR_NEXT_TURN" },
-              repeat: { mode: "once" },
-            },
-          ],
-        }),
-      );
-      service = await startKernelService({ socketPath, storageRoot, modelPath: resolve("model") });
-      const options = { storageRoot, modelPath: resolve("model"), kernelSocketPath: socketPath };
-      const common = { workspace_roots: [root], conversation_id: "cursor-next" };
-      await runCursorHook({ ...common, hook_event_name: "sessionStart" }, options);
-      await runCursorHook(
-        {
-          ...common,
-          generation_id: "first",
-          hook_event_name: "beforeSubmitPrompt",
-          prompt: "Preserve database transaction atomicity",
-        },
-        options,
-      );
-      expect(
-        await runCursorHook(
-          {
-            ...common,
-            generation_id: "first",
-            hook_event_name: "preToolUse",
-            tool_use_id: "first",
-            tool_name: "Read",
-            tool_input: { path: "file.txt" },
-          },
-          options,
-        ),
-      ).toEqual({ permission: "allow" });
-      expect(await runCursorHook({ ...common, generation_id: "first", hook_event_name: "stop" }, options)).toEqual({});
-      await runCursorHook(
-        {
-          ...common,
-          generation_id: "second",
-          hook_event_name: "beforeSubmitPrompt",
-          prompt: "Preserve database transaction atomicity",
-        },
-        options,
-      );
-      expect(
-        await runCursorHook(
-          {
-            ...common,
-            generation_id: "second",
-            hook_event_name: "preToolUse",
-            tool_use_id: "second",
-            tool_name: "Read",
-            tool_input: { path: "file.txt" },
-          },
-          options,
-        ),
-      ).toEqual({ permission: "allow" });
-      expect(await runCursorHook(
-        {
-          ...common,
-          generation_id: "second",
-          hook_event_name: "postToolUse",
-          tool_use_id: "second",
-          tool_name: "Read",
-          tool_output: "file contents",
-        },
-        options,
-      )).toEqual({ additional_context: "CURSOR_NEXT_TURN" });
-    } finally {
-      await service?.close();
-      await rm(root, { recursive: true, force: true });
-    }
-  }, 30_000);
+
   it("starts a Codex continuation when a turn-boundary cosine rule fires at Stop", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-codex-stop-rule-"));
+    startTestRepository(root);
     const socketPath = join(root, "kernel.sock");
     const storageRoot = join(root, ".rerail/sessions");
     let service: { close(): Promise<void> } | undefined;
     try {
       await mkdir(join(root, ".codex"));
       await writeFile(
-        join(root, ".codex/cosine-rules.json"),
+        join(root, ".codex/conversation-rules.json"),
         JSON.stringify({
           version: 1,
           rules: [
             {
-              id: "turn-follow-up",
+              id: "turn-steer",
+              mode: "steer",
               reference: "Preserve database transaction atomicity",
               match: { operator: "gte", threshold: 0.95 },
               sample: { source: "assistant-text", boundary: "turn", minimumTokens: 1 },
-              action: { delivery: "followUp", content: "CONTINUE_AFTER_STOP" },
+              action: { content: "CONTINUE_AFTER_STOP" },
               repeat: { mode: "once" },
             },
           ],
@@ -638,6 +526,7 @@ describe("resident kernel service", () => {
     process.env.RERAIL_HOME = home;
     process.env.RERAIL_AUTOSTART = "0";
     delete process.env.RERAIL_KERNEL_SOCKET;
+    startTestRepository(root);
     try {
       await expect(
         runCodexHook(
@@ -645,7 +534,8 @@ describe("resident kernel service", () => {
           { storageRoot: join(root, "sessions"), modelPath: resolve("model") },
         ),
       ).rejects.toThrow("RERAIL_AUTOSTART");
-      await expect(stat(home)).rejects.toMatchObject({ code: "ENOENT" });
+      // The home holds only the database recording the repository start: no daemon state, log, or start lock.
+      expect((await readdir(home)).filter(entry => !entry.startsWith("rerail.sqlite"))).toEqual([]);
     } finally {
       await stopDaemon(home);
       for (const [key, value] of Object.entries(previous)) {
@@ -660,6 +550,7 @@ describe("resident kernel service", () => {
     const socketPath = join(root, "kernel.sock");
     const storageRoot = join(root, ".rerail/sessions");
     const databasePath = join(root, ".rerail/rerail.sqlite");
+    startTestRepository(root, databasePath);
     const transcriptPath = join(root, "cursor-transcript.jsonl");
     const marker =
       "PRIVATE_CURSOR_TRANSCRIPT_COSINE\n<timestamp>literal</timestamp>\n<user_query>\nPreserve these user-supplied tags.\n</user_query>";
@@ -667,16 +558,17 @@ describe("resident kernel service", () => {
     try {
       await mkdir(join(root, ".cursor"));
       await writeFile(
-        join(root, ".cursor/cosine-rules.json"),
+        join(root, ".cursor/conversation-rules.json"),
         JSON.stringify({
           version: 1,
           rules: [
             {
               id: "transcript-prompt",
+              mode: "steer",
               reference: marker,
               match: { operator: "gte", threshold: 0.95 },
               sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
-              action: { delivery: "steer", content: marker },
+              action: { content: marker },
               repeat: { mode: "once" },
             },
           ],
@@ -786,22 +678,24 @@ describe("resident kernel service", () => {
     const socketPath = join(root, "kernel.sock");
     const storageRoot = join(root, ".rerail/sessions");
     const databasePath = join(root, ".rerail/rerail.sqlite");
+    startTestRepository(root, databasePath);
     const transcriptPath = join(root, "cursor-transcript.jsonl");
     const marker = "PRIVATE_CURSOR_NATIVE_MODE_COSINE";
     let service: { close(): Promise<void> } | undefined;
     try {
       await mkdir(join(root, ".cursor"));
       await writeFile(
-        join(root, ".cursor/cosine-rules.json"),
+        join(root, ".cursor/conversation-rules.json"),
         JSON.stringify({
           version: 1,
           rules: [
             {
               id: "native-prompt",
+              mode: "steer",
               reference: marker,
               match: { operator: "gte", threshold: 0.95 },
               sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
-              action: { delivery: "steer", content: marker },
+              action: { content: marker },
               repeat: { mode: "once" },
             },
           ],

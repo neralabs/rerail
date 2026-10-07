@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:file-header",
   "revision": 1,
+  "mode": "steer",
   "description": "Header /Good header/ matched against the leading run of comments (allow-single-line-comments).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "missing-header",
       "forbid": {
@@ -51,10 +52,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.AFTER",
         "code": "FILE_HEADER",
-        "severity": "error",
         "message": "missing file header"
       }
     }

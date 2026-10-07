@@ -1,6 +1,7 @@
 import { StreamingSampleChunker } from "./chunker.js";
 import { stableJsonText } from "./stable-json.js";
 import { SessionLanes } from "./session-lanes.js";
+import { steers, type RuleMode } from "./rule-mode.js";
 import type {
   AdapterCapabilityProfile,
   AdapterDelivery,
@@ -116,10 +117,10 @@ export class RerailHostRuntime {
       await this.#sample(event, "assistant-text", "message", event.text);
     } else if (event.kind === "assistant-abort") {
       active.chunker.abort(`${event.sessionId}:${event.messageId}`);
-    } else if (event.kind === "tool-call") {
+    } else if (event.kind === "call") {
       const text = stableJsonText(event.input);
       if (text !== undefined) await this.#sample(event, `tool:${event.toolName}`, "tool-call", text, text);
-    } else if (event.kind === "tool-result") {
+    } else if (event.kind === "result") {
       const text = stableText(event.output);
       if (text !== undefined) await this.#sample(event, `tool:${event.toolName}`, "tool-call", text);
     } else if (event.kind === "turn-end") {
@@ -148,7 +149,7 @@ export class RerailHostRuntime {
 
   requestDelivery(
     sessionId: string,
-    requested: AdapterDelivery["requested"],
+    requested: RuleMode,
     content: string,
     ruleIds: readonly string[] = [],
   ): Promise<void> {
@@ -162,7 +163,7 @@ export class RerailHostRuntime {
         ruleIds,
       };
       await this.#port.persistDelivery(delivery);
-      if (requested !== "observe") await this.#port.deliver(delivery);
+      if (steers(requested)) await this.#port.deliver(delivery);
     });
   }
 

@@ -3,22 +3,23 @@
 
 use super::crossfile::CrossFileScheduler;
 use super::ingest::{candidate_dispatch, make_file};
-use super::memory::witness_payload_bytes;
 use super::persisted::{candidate_catalog, restore_complete_results};
 use super::{CandidateSets, CheckId, FileState, WorkspaceState};
+use crate::WORK_POOL;
 use crate::policy_dsl::eval::{
-    coverage, evaluation_json, failure, file_language, finding_from_witness, finding_identity,
+    coverage, evaluation_json, failure, file_language, finding_from_witness, result_order,
 };
-use crate::policy_dsl::findings::Witness;
 use crate::policy_dsl::json::{invalid, json_error};
 use crate::policy_dsl::model::{CheckKind, CompiledPolicy, Evaluation, Metrics, Query};
 #[cfg(feature = "policy-profile")]
 use crate::policy_dsl::profile;
 use napi::Result;
+use rayon::prelude::*;
 use serde_json::{Value, json};
 #[cfg(test)]
 use std::cell::Cell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -29,6 +30,9 @@ thread_local! {
     pub(super) static RESULT_PAGE_WITNESSES_VISITED: Cell<usize> = const { Cell::new(0) };
     pub(super) static RESULT_PAGE_SORTS: Cell<usize> = const { Cell::new(0) };
     pub(super) static RESULT_PAGE_EVICTED_RESTORES: Cell<usize> = const { Cell::new(0) };
+    /// Files whose findings a complete result rendered, and complete results that sorted theirs.
+    pub(super) static RESULT_RENDERS: Cell<usize> = const { Cell::new(0) };
+    pub(super) static RESULT_SORTS: Cell<usize> = const { Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -36,15 +40,74 @@ fn count(counter: &'static std::thread::LocalKey<Cell<usize>>, amount: usize) {
     counter.set(counter.get() + amount);
 }
 
+/// A serialized result, and whether it is all ASCII: the host then copies it into a string as
+/// Latin-1, without decoding UTF-8.
+#[derive(Debug)]
+pub struct ResultText {
+    pub(super) text: String,
+    ascii: bool,
+}
+
+impl ResultText {
+    pub(super) fn of(text: String) -> Self {
+        let ascii = text.is_ascii();
+        Self { text, ascii }
+    }
+}
+
+impl std::ops::Deref for ResultText {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.text
+    }
+}
+
+impl napi::bindgen_prelude::TypeName for ResultText {
+    fn type_name() -> &'static str {
+        "String"
+    }
+
+    fn value_type() -> napi::ValueType {
+        napi::ValueType::String
+    }
+}
+
+impl napi::bindgen_prelude::ToNapiValue for ResultText {
+    unsafe fn to_napi_value(
+        env: napi::sys::napi_env,
+        value: Self,
+    ) -> Result<napi::sys::napi_value> {
+        if !value.ascii {
+            // SAFETY: forwarded from the caller, which holds a live environment.
+            return unsafe { String::to_napi_value(env, value.text) };
+        }
+        let mut result = std::ptr::null_mut();
+        // SAFETY: the bytes are valid for their length, and ASCII is Latin-1.
+        let status = unsafe {
+            napi::sys::napi_create_string_latin1(
+                env,
+                value.text.as_ptr().cast(),
+                value.text.len() as isize,
+                &mut result,
+            )
+        };
+        if status != napi::sys::Status::napi_ok {
+            return Err(invalid("workspace result string could not be created"));
+        }
+        Ok(result)
+    }
+}
+
 pub(super) fn profile_result(
-    result: String,
+    result: ResultText,
     metrics: &Metrics,
     serialization: Duration,
-) -> Result<String> {
+) -> Result<ResultText> {
     if std::env::var_os("RERAIL_POLICY_PROFILE").is_none() {
         return Ok(result);
     }
-    let mut value: Value = serde_json::from_str(&result).map_err(json_error)?;
+    let mut value: Value = serde_json::from_str(&result.text).map_err(json_error)?;
     value.as_object_mut().expect("workspace result").insert(
         "workspaceProfile".to_owned(),
         json!({
@@ -79,47 +142,16 @@ pub(super) fn profile_result(
             "restoredLocalResults": metrics.restored_local_results,
         }),
     );
-    serde_json::to_string(&value).map_err(json_error)
-}
-
-fn result_value_order(value: &Value) -> (String, u64, String, String) {
-    (
-        value
-            .get("path")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned(),
-        value
-            .get("span")
-            .and_then(|span| span.get("startByte"))
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        value
-            .get("code")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned(),
-        value
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned(),
-    )
-}
-
-#[derive(Clone)]
-enum ResultPageEntry {
-    Local {
-        policy: usize,
-        check: usize,
-        witness: Witness,
-    },
-    Global(Value),
+    serde_json::to_string(&value)
+        .map(ResultText::of)
+        .map_err(json_error)
 }
 
 pub(super) struct ResultPageIndex {
     revision: u32,
-    entries: Vec<(String, u64, String, String, ResultPageEntry)>,
+    /// Each finding as the pages serialize it, in result order. Serialized once when the index is
+    /// built, which holds the JSON alone rather than the witnesses it renders.
+    findings: Vec<Box<str>>,
     failures: Vec<Value>,
     /// The checks' coverage from `failures`, sent with them on the first page.
     coverage: Vec<Value>,
@@ -129,22 +161,13 @@ impl ResultPageIndex {
     /// Resident bytes of the open index, estimated like the workspace's own results.
     pub(super) fn estimated_bytes(&self) -> usize {
         use std::mem::size_of;
-        let entries = self
-            .entries
-            .iter()
-            .map(|(path, _, code, id, entry)| {
-                path.capacity()
-                    + code.capacity()
-                    + id.capacity()
-                    + match entry {
-                        ResultPageEntry::Local { witness, .. } => witness_payload_bytes(witness),
-                        ResultPageEntry::Global(finding) => finding.to_string().len(),
-                    }
-            })
-            .sum::<usize>();
         size_of::<Self>()
-            + self.entries.capacity() * size_of::<(String, u64, String, String, ResultPageEntry)>()
-            + entries
+            + self.findings.capacity() * size_of::<Box<str>>()
+            + self
+                .findings
+                .iter()
+                .map(|finding| finding.len())
+                .sum::<usize>()
             + self.failures.capacity() * size_of::<Value>()
             + self
                 .failures
@@ -260,49 +283,53 @@ fn evicted_file_states(
         .collect()
 }
 
+/// The AST checks with a result on `file`: the ones evaluated on its current parse, restored from
+/// the store, or evaluated before a cross-file consumer pass narrowed `candidates` to its consumers
+/// (each keeps its result, so a check that ran around the file's syntax errors is reported partial
+/// whichever pass ran it last). Ordered by check, as the stateless evaluation reports them.
 fn reporting_ast_candidates<'a>(
     file: &'a FileState,
     policies: &'a [Arc<CompiledPolicy>],
 ) -> impl Iterator<Item = CheckId> + 'a {
-    file.candidates
-        .ast
-        .iter()
-        .copied()
-        .chain(file.restored_result_ids.iter().copied().filter(|id| {
-            matches!(
-                policies[id.0].checks[id.1].kind,
-                CheckKind::Forbid(Query::Ast { .. })
-            )
-        }))
+    file.witnesses.keys().copied().filter(|id| {
+        matches!(
+            policies[id.0].checks[id.1].kind,
+            CheckKind::Forbid(Query::Ast { .. })
+        )
+    })
+}
+
+/// A finding's place in result order (`result_order`) and its serialization.
+type PageEntry = (String, u64, String, String, Box<str>);
+
+fn page_entry(finding: &Value) -> Result<PageEntry> {
+    let (path, start, code, id) = result_order(finding);
+    Ok((
+        path.to_owned(),
+        start,
+        code.to_owned(),
+        id.to_owned(),
+        serde_json::to_string(finding)
+            .map_err(json_error)?
+            .into_boxed_str(),
+    ))
 }
 
 fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
     let evicted = evicted_file_states(state, None)?;
-    let mut entries = Vec::new();
+    let mut witnesses = Vec::new();
     let mut failures = Vec::new();
     for file in state.files.values().chain(&evicted) {
-        for (&id, witnesses) in &file.witnesses {
+        for (&id, file_witnesses) in file.witnesses.iter() {
             if file.failures.contains_key(&id) || state.policies[id.0].checks[id.1].synthetic {
                 continue;
             }
             let policy = &state.policies[id.0];
             let check = &policy.checks[id.1];
-            for witness in witnesses {
+            for witness in file_witnesses {
                 #[cfg(test)]
                 count(&RESULT_PAGE_WITNESSES_VISITED, 1);
-                let (finding_id, span, _) = finding_identity(policy, check, witness);
-                let start = span.get("startByte").and_then(Value::as_u64).unwrap_or(0);
-                entries.push((
-                    witness.path.clone(),
-                    start,
-                    check.finding.code.clone(),
-                    finding_id,
-                    ResultPageEntry::Local {
-                        policy: id.0,
-                        check: id.1,
-                        witness: witness.clone(),
-                    },
-                ));
+                witnesses.push((policy, check, witness));
             }
         }
         for (&id, &(code, message)) in &file.failures {
@@ -317,7 +344,7 @@ fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
             );
             item.as_object_mut()
                 .expect("failure object")
-                .insert("policyId".to_owned(), json!(state.policies[id.0].id));
+                .insert("ruleId".to_owned(), json!(state.policies[id.0].id));
             failures.push(item);
         }
         if let Some(message) = &file.syntax {
@@ -333,27 +360,30 @@ fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
                 );
                 item.as_object_mut()
                     .expect("failure object")
-                    .insert("policyId".to_owned(), json!(state.policies[id.0].id));
+                    .insert("ruleId".to_owned(), json!(state.policies[id.0].id));
                 failures.push(item);
             }
         }
     }
+    // Each witness's finding is rendered and serialized on the worker pool, one at a time, so the
+    // index never holds the findings as JSON values.
+    let mut entries = WORK_POOL.install(|| {
+        witnesses
+            .par_iter()
+            .map(|&(policy, check, witness)| {
+                page_entry(&finding_from_witness(policy, check, witness.clone()))
+            })
+            .collect::<Result<Vec<_>>>()
+    })?;
     for (&index, global) in &state.global_results {
         for finding in &global.findings {
-            let (path, start, code, id) = result_value_order(finding);
-            entries.push((
-                path,
-                start,
-                code,
-                id,
-                ResultPageEntry::Global(finding.clone()),
-            ));
+            entries.push(page_entry(finding)?);
         }
         for item in &global.failures {
             let mut item = item.clone();
             item.as_object_mut()
                 .expect("failure object")
-                .insert("policyId".to_owned(), json!(state.policies[index].id));
+                .insert("ruleId".to_owned(), json!(state.policies[index].id));
             failures.push(item);
         }
     }
@@ -364,7 +394,7 @@ fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
     });
     Ok(ResultPageIndex {
         revision: state.revision,
-        entries,
+        findings: entries.into_iter().map(|entry| entry.4).collect(),
         coverage: coverage(&reported_checks(state), &failures),
         failures,
     })
@@ -383,54 +413,210 @@ pub(super) fn serialize_result_page(
         .as_ref()
         .filter(|index| index.revision == state.revision)
         .ok_or_else(|| invalid("result page cursor is stale; restart at cursor 0"))?;
-    let total = index.entries.len();
-    let mut findings = Vec::new();
+    let total = index.findings.len();
     let mut bytes = 0_usize;
-    let mut next = cursor.min(total);
-    for (_, _, _, _, entry) in index.entries.iter().skip(cursor) {
-        let finding = match entry {
-            ResultPageEntry::Local {
-                policy,
-                check,
-                witness,
-            } => finding_from_witness(
-                &state.policies[*policy],
-                &state.policies[*policy].checks[*check],
-                witness.clone(),
-            ),
-            ResultPageEntry::Global(finding) => finding.clone(),
-        };
-        let finding_bytes = serde_json::to_vec(&finding).map_err(json_error)?.len();
-        if !findings.is_empty() && bytes.saturating_add(finding_bytes) > maximum_bytes {
+    let start = cursor.min(total);
+    let mut next = start;
+    for finding in &index.findings[start..] {
+        if next > start && bytes.saturating_add(finding.len()) > maximum_bytes {
             break;
         }
-        bytes = bytes.saturating_add(finding_bytes);
-        findings.push(finding);
+        bytes = bytes.saturating_add(finding.len());
         next += 1;
     }
     let done = next >= total;
-    let page = serde_json::to_string(&json!({
-        "revision": state.revision,
-        "cursor": next,
-        "done": done,
-        "findings": findings,
-        "failures": if cursor == 0 { index.failures.clone() } else { Vec::new() },
-        "coverage": if cursor == 0 { index.coverage.clone() } else { Vec::new() },
-        "bytes": bytes,
-    }))
-    .map_err(json_error)?;
+    // The bytes `serde_json` writes for the page as a map (its keys sorted, values compact),
+    // with the violations as the index serialized them.
+    let mut page = Vec::with_capacity(bytes + 256);
+    let empty = Vec::new();
+    let (failures, coverage) = if cursor == 0 {
+        (&index.failures, &index.coverage)
+    } else {
+        (&empty, &empty)
+    };
+    page.extend_from_slice(format!("{{\"bytes\":{bytes},\"coverage\":").as_bytes());
+    serde_json::to_writer(&mut page, coverage).map_err(json_error)?;
+    page.extend_from_slice(format!(",\"cursor\":{next},\"done\":{done},\"failures\":").as_bytes());
+    serde_json::to_writer(&mut page, failures).map_err(json_error)?;
+    page.extend_from_slice(format!(",\"revision\":{},\"violations\":[", state.revision).as_bytes());
+    for (position, finding) in index.findings[start..next].iter().enumerate() {
+        if position > 0 {
+            page.push(b',');
+        }
+        page.extend_from_slice(finding.as_bytes());
+    }
+    page.extend_from_slice(b"]}");
+    let page = String::from_utf8(page).map_err(|error| invalid(error.to_string()))?;
     if done {
         state.result_page_index = None;
     }
     Ok(page)
 }
 
+/// A file's findings as a complete result serializes them, with what they were rendered under
+/// besides its witnesses (`rendering_key`).
+pub(super) struct Rendered {
+    key: u64,
+    findings: Vec<RenderedFinding>,
+}
+
+impl Rendered {
+    /// Bytes the rendering holds, for memory accounting.
+    pub(super) fn bytes(&self) -> usize {
+        self.findings
+            .iter()
+            .map(|finding| {
+                std::mem::size_of::<RenderedFinding>()
+                    + finding.path.capacity()
+                    + finding.code.capacity()
+                    + finding.id.capacity()
+                    + finding.json.capacity()
+            })
+            .sum()
+    }
+}
+
+/// One finding serialized, with the fields results are ordered by (`result_order`).
+pub(super) struct RenderedFinding {
+    path: String,
+    start: u64,
+    code: String,
+    id: String,
+    json: String,
+    ascii: bool,
+}
+
+impl RenderedFinding {
+    fn of(finding: &Value) -> Result<Self> {
+        let (path, start, code, id) = result_order(finding);
+        let json = serde_json::to_string(finding).map_err(json_error)?;
+        Ok(Self {
+            path: path.to_owned(),
+            start,
+            code: code.to_owned(),
+            id: id.to_owned(),
+            ascii: json.is_ascii(),
+            json,
+        })
+    }
+
+    fn order(&self) -> (&str, u64, &str, &str) {
+        (&self.path, self.start, &self.code, &self.id)
+    }
+}
+
+/// What a file's findings render under besides its witnesses: the policies (by digest) and the
+/// checks that failed in the file, whose witnesses are not reported.
+fn rendering_key(policies: u64, file: &FileState) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    policies.hash(&mut hasher);
+    for id in file.failures.keys() {
+        id.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// `file`'s reported findings, serialized, in result order.
+fn render(state: &WorkspaceState, file: &FileState) -> Result<Vec<RenderedFinding>> {
+    #[cfg(test)]
+    count(&RESULT_RENDERS, 1);
+    let mut findings = Vec::new();
+    for (&id, witnesses) in file.witnesses.iter() {
+        if file.failures.contains_key(&id) || state.policies[id.0].checks[id.1].synthetic {
+            continue;
+        }
+        let policy = &state.policies[id.0];
+        for witness in witnesses {
+            let finding = finding_from_witness(policy, &policy.checks[id.1], witness.clone());
+            findings.push(RenderedFinding::of(&finding)?);
+        }
+    }
+    findings.sort_by(|a, b| a.order().cmp(&b.order()));
+    Ok(findings)
+}
+
+/// A file's rendered findings: kept with its witnesses, or rendered for this result alone where
+/// those were rendered under another key.
+enum Rendering<'a> {
+    Kept(&'a [RenderedFinding]),
+    Fresh(Vec<RenderedFinding>),
+}
+
+impl<'a> Rendering<'a> {
+    fn of(state: &WorkspaceState, file: &'a FileState, policies: u64) -> Result<Self> {
+        let key = rendering_key(policies, file);
+        let rendered = &file.witnesses.rendered;
+        if rendered.get().is_none() {
+            let findings = render(state, file)?;
+            let _ = rendered.set(Rendered { key, findings });
+        }
+        Ok(match rendered.get() {
+            Some(kept) if kept.key == key => Rendering::Kept(&kept.findings),
+            _ => Rendering::Fresh(render(state, file)?),
+        })
+    }
+
+    fn findings(&self) -> &[RenderedFinding] {
+        match self {
+            Rendering::Kept(findings) => findings,
+            Rendering::Fresh(findings) => findings,
+        }
+    }
+}
+
+/// Adds to `replaced` the paths whose findings or failures from a global check differ between its
+/// `previous` and `current` evaluation. False where a pathless one differs: no delta carries it.
+pub(super) fn replace_global_changes(
+    previous: Option<&Evaluation>,
+    current: &Evaluation,
+    replaced: &mut BTreeSet<String>,
+) -> Result<bool> {
+    /// Each path's findings and failures, serialized and sorted.
+    fn by_path(evaluation: Option<&Evaluation>) -> Result<BTreeMap<Option<&str>, Vec<String>>> {
+        let mut items = BTreeMap::<_, Vec<_>>::new();
+        if let Some(evaluation) = evaluation {
+            let findings = evaluation.findings.iter().map(|item| ('f', item));
+            for (kind, item) in findings.chain(evaluation.failures.iter().map(|item| ('x', item))) {
+                let json = serde_json::to_string(item).map_err(json_error)?;
+                items
+                    .entry(item["path"].as_str())
+                    .or_default()
+                    .push(format!("{kind}{json}"));
+            }
+        }
+        for list in items.values_mut() {
+            list.sort_unstable();
+        }
+        Ok(items)
+    }
+    let (previous, current) = (by_path(previous)?, by_path(Some(current))?);
+    let mut bounded = true;
+    for path in previous.keys().chain(current.keys()) {
+        if previous.get(path) == current.get(path) {
+            continue;
+        }
+        match path {
+            Some(path) => {
+                replaced.insert((*path).to_owned());
+            }
+            None => bounded = false,
+        }
+    }
+    Ok(bounded)
+}
+
+/// The workspace's result: complete, or a delta of `replaced_paths`. A file's findings are
+/// serialized once per set of witnesses (`Witnesses`), so a result after an edit re-serializes
+/// only what the edit changed. A delta carries every finding and failure at a replaced path, its
+/// global checks' too, so the result is `complete` only where a change has no path: a global
+/// check's pathless failure.
 pub(super) fn serialize_result(
     state: &WorkspaceState,
     metrics: Metrics,
     deferred: bool,
     replaced_paths: &BTreeSet<String>,
-) -> Result<String> {
+    complete: bool,
+) -> Result<ResultText> {
     #[cfg(feature = "policy-profile")]
     let _serialization_timer = profile::PhaseTimer::start(profile::Phase::Serialization);
     let mut evaluation = Evaluation {
@@ -438,28 +624,37 @@ pub(super) fn serialize_result(
         checks: reported_checks(state),
         ..Evaluation::default()
     };
-    let delta = state.storage.is_some()
-        && !replaced_paths.is_empty()
-        && (deferred || state.globals.is_empty());
+    let delta = state.storage.is_some() && !replaced_paths.is_empty() && !complete;
+    let policies = {
+        let mut hasher = DefaultHasher::new();
+        for policy in &state.policies {
+            policy.digest.hash(&mut hasher);
+        }
+        hasher.finish()
+    };
     // A complete result covers evicted files too, from their stored results; a delta covers the
     // replaced ones, including consumers whose relation changed while they remained evicted.
     let evicted = evicted_file_states(state, delta.then_some(replaced_paths))?;
+    let mut renderings = Vec::new();
+    // Each file's rendering is in result order: where every finding of a file is at its path and
+    // files come in path order (resident ones), so is their concatenation.
+    let mut ordered = true;
+    let mut previous: Option<&str> = None;
     for file in state.files.values().chain(&evicted) {
         if delta && !replaced_paths.contains(&file.input.path) {
             continue;
         }
-        for (&id, witnesses) in &file.witnesses {
-            if file.failures.contains_key(&id) || state.policies[id.0].checks[id.1].synthetic {
-                continue;
-            }
-            let policy = &state.policies[id.0];
-            evaluation.findings.extend(
-                witnesses
-                    .iter()
-                    .cloned()
-                    .map(|witness| finding_from_witness(policy, &policy.checks[id.1], witness)),
-            );
+        let rendering = Rendering::of(state, file, policies)?;
+        if let (Some(first), Some(last)) =
+            (rendering.findings().first(), rendering.findings().last())
+        {
+            let path = file.input.path.as_str();
+            ordered &= first.path == path
+                && last.path == path
+                && previous.is_none_or(|previous| previous < path);
+            previous = Some(path);
         }
+        renderings.push(rendering);
         for (&id, &(code, message)) in &file.failures {
             if state.policies[id.0].checks[id.1].synthetic {
                 continue;
@@ -472,7 +667,7 @@ pub(super) fn serialize_result(
             );
             item.as_object_mut()
                 .expect("failure object")
-                .insert("policyId".to_owned(), json!(state.policies[id.0].id));
+                .insert("ruleId".to_owned(), json!(state.policies[id.0].id));
             evaluation.failures.push(item);
         }
         if let Some(message) = &file.syntax {
@@ -488,35 +683,84 @@ pub(super) fn serialize_result(
                 );
                 item.as_object_mut()
                     .expect("failure object")
-                    .insert("policyId".to_owned(), json!(state.policies[id.0].id));
+                    .insert("ruleId".to_owned(), json!(state.policies[id.0].id));
                 evaluation.failures.push(item);
             }
         }
     }
-    for &index in state.globals.keys().filter(|_| !delta) {
+    // A delta carries a global check's findings and failures at the replaced paths; the pathless
+    // ones did not change (else the result is complete), and the host keeps them.
+    let reported = |item: &Value| {
+        !delta
+            || item["path"]
+                .as_str()
+                .is_some_and(|path| replaced_paths.contains(path))
+    };
+    let mut global_findings = Vec::new();
+    for &index in state.globals.keys() {
         if deferred && state.dirty_globals.contains(&index) {
             continue;
         }
         if let Some(global) = state.global_results.get(&index) {
-            evaluation.findings.extend(global.findings.iter().cloned());
-            for failure in &global.failures {
+            for finding in global.findings.iter().filter(|item| reported(item)) {
+                global_findings.push(RenderedFinding::of(finding)?);
+            }
+            for failure in global.failures.iter().filter(|item| reported(item)) {
                 let mut failure = failure.clone();
                 failure
                     .as_object_mut()
                     .expect("failure object")
-                    .insert("policyId".to_owned(), json!(state.policies[index].id));
+                    .insert("ruleId".to_owned(), json!(state.policies[index].id));
                 evaluation.failures.push(failure);
             }
         }
     }
-    evaluation.findings.sort_by_key(result_value_order);
-    evaluation.failures.sort_by_key(result_value_order);
-    serde_json::to_string(&json!({
+    let mut findings = renderings
+        .iter()
+        .flat_map(Rendering::findings)
+        .chain(&global_findings)
+        .collect::<Vec<_>>();
+    if !ordered || !global_findings.is_empty() {
+        #[cfg(test)]
+        count(&RESULT_SORTS, 1);
+        findings.sort_by(|a, b| a.order().cmp(&b.order()));
+    }
+    evaluation
+        .failures
+        .sort_by(|a, b| result_order(a).cmp(&result_order(b)));
+    // The violations are spliced into the serialized evaluation, whose own list is empty.
+    let text = serde_json::to_string(&json!({
         "revision": state.revision,
         "replacedPaths": delta.then(|| replaced_paths.iter().collect::<Vec<_>>()),
         "evaluation": evaluation_json(evaluation, None, &[], &[])
     }))
-    .map_err(json_error)
+    .map_err(json_error)?;
+    const EMPTY: &str = "\"violations\":[]";
+    let at = text
+        .find(EMPTY)
+        .ok_or_else(|| invalid("serialized evaluation lacks its violations"))?;
+    let mut output = String::with_capacity(
+        text.len()
+            + findings
+                .iter()
+                .map(|finding| finding.json.len() + 1)
+                .sum::<usize>(),
+    );
+    output.push_str(&text[..at]);
+    output.push_str("\"violations\":[");
+    for (index, finding) in findings.iter().enumerate() {
+        if index > 0 {
+            output.push(',');
+        }
+        output.push_str(&finding.json);
+    }
+    output.push(']');
+    output.push_str(&text[at + EMPTY.len()..]);
+    let ascii = text.is_ascii() && findings.iter().all(|finding| finding.ascii);
+    Ok(ResultText {
+        text: output,
+        ascii,
+    })
 }
 
 #[cfg(test)]
@@ -592,11 +836,12 @@ mod tests {
         ));
         std::fs::create_dir_all(&directory).unwrap();
         let store = Arc::new(ContentStore::open(&directory.join("content.sqlite")).unwrap());
-        let ast = |id: &str, language: &str, rule: Value| json!({ "id": id, "forbid": { "ast": { "language": language, "rule": rule } }, "finding": finding() });
+        let ast = |id: &str, language: &str, rule: Value| json!({ "id": id, "forbid": { "ast": { "language": language, "rule": rule } }, "violation": finding() });
         let policy = json!({
             "format": "rerail.policy/v1", "id": "covered", "revision": 1,
+            "mode": "steer",
             "scope": { "include": ["**/*"], "exclude": [] },
-            "checks": [
+            "clauses": [
                 ast("print", "python", json!({ "pattern": "print($A)" })),
                 ast("clean", "typescript", json!({ "kind": "debugger_statement" })),
             ],
@@ -605,10 +850,10 @@ mod tests {
         let files =
             json!([{ "path": "broken.py", "language": "python", "source": "print(3)\ndef (:\n" }]);
         let expected = json!([
-            { "policyId": "covered", "checkId": "print", "status": "partial", "reasons": [
+            { "ruleId": "covered", "clauseId": "print", "status": "partial", "reasons": [
                 { "code": "source-partial", "count": 1, "paths": ["broken.py"] },
             ] },
-            { "policyId": "covered", "checkId": "clean", "status": "complete", "reasons": [] },
+            { "ruleId": "covered", "clauseId": "clean", "status": "complete", "reasons": [] },
         ]);
 
         let cold = stored_workspace(&store, "/coverage", &policy);
@@ -634,5 +879,64 @@ mod tests {
         warm.close();
         drop(store);
         let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// A complete result after an edit renders the edited file's findings alone and sorts none:
+    /// unchanged files' renderings are kept, in path order, and the result is a fresh
+    /// workspace's.
+    #[test]
+    fn an_edit_renders_only_its_file_and_keeps_result_order() {
+        use super::{RESULT_RENDERS, RESULT_SORTS};
+        let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+        let policy = json!({
+            "format": "rerail.policy/v1", "id": "rendered", "revision": 1,
+            "mode": "steer",
+            "scope": { "include": ["**/*"], "exclude": [] },
+            "clauses": [
+                { "id": "print", "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }, "violation": finding() },
+                { "id": "call", "forbid": { "ast": { "language": "python", "rule": { "kind": "call" } } }, "violation": finding() },
+            ],
+        })
+        .to_string();
+        let compiled =
+            PolicyDslRuntime::compile(policy, "json".into(), CAPABILITIES.into()).unwrap();
+        let file = |path: &str, source: &str| json!({ "path": path, "language": "python", "source": source });
+        let files = [
+            file("b.py", "print(1)\nf()\n"),
+            file("a.py", "print(2)\n"),
+            file("c/d.py", "g(print(3))\n"),
+        ];
+        let run = |workspace: &PolicyDslWorkspace, revision: u32, files: &[Value]| -> Value {
+            let mut task = WorkspaceApplyTask {
+                state: Arc::clone(&workspace.state),
+                closed: Arc::clone(&workspace.closed),
+                request_json: json!({ "revision": revision, "files": files, "removed": [] })
+                    .to_string(),
+                request_buffer: None,
+                request_direct: None,
+            };
+            serde_json::from_str(&task.compute().unwrap()).unwrap()
+        };
+        let mut workspace = PolicyDslWorkspace::new();
+        workspace.add_policy(&compiled).unwrap();
+        run(&workspace, 1, &files);
+        let edited = file("b.py", "x = 1\nprint(1)\nf()\n");
+        RESULT_RENDERS.set(0);
+        RESULT_SORTS.set(0);
+        let result = run(&workspace, 2, std::slice::from_ref(&edited));
+        assert_eq!((RESULT_RENDERS.get(), RESULT_SORTS.get()), (1, 0));
+        let mut fresh = PolicyDslWorkspace::new();
+        fresh.add_policy(&compiled).unwrap();
+        let expected = run(&fresh, 1, &[files[1].clone(), edited, files[2].clone()]);
+        assert_eq!(
+            result["evaluation"]["violations"],
+            expected["evaluation"]["violations"]
+        );
+        assert_eq!(
+            result["evaluation"]["violations"].as_array().unwrap().len(),
+            8
+        );
+        workspace.close();
+        fresh.close();
     }
 }

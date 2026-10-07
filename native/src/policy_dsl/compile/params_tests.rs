@@ -63,11 +63,11 @@ fn a_pair_of_captures_recurses_element_by_element_to_any_depth() {
     let document = check_document(json!({
         "id": "ast-match",
         "forbid": { "ast": { "language": "typescript", "rule": messages["rule"], "utils": messages["utils"] } },
-        "finding": { "anchor": "witness.span", "code": "X", "message": "$L at $YP", "severity": "error" },
+        "violation": { "anchor": "witness.span", "code": "X", "message": "$L at $YP" },
     }));
     assert_eq!(
         rejection(compile_document_with(document, &defaults())),
-        "/checks/0/finding/message: `$YP` names no capture; the query can bind: L, R; write `\\$YP` for literal text"
+        "/clauses/0/violation/message: `$YP` names no capture; the query can bind: L, R; write `\\$YP` for literal text"
     );
 }
 
@@ -142,7 +142,7 @@ fn calls_take_part_in_capture_ordering_and_the_never_bound_walk() {
             "rule": { "pattern": "$A($B)", "matches": { "u": { "P": "$A" } } },
             "utils": { "u": { "params": ["P"], "rule": { "compare": { "left": "P", "op": "eq", "right": "B" } } } },
         }))),
-        "/checks/0/forbid/ast/utils/u/rule/compare/right: `$B` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
+        "/clauses/0/forbid/ast/utils/u/rule/compare/right: `$B` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
     );
     // A utility it calls by name shares its frame.
     compiled(json!({
@@ -186,13 +186,13 @@ fn each_enumerates_the_bindings_a_call_returns() {
             "rule": { "kind": "call_expression", "matches": { "argument": { "A": "$ARG" } } },
             "utils": { "argument": { "params": ["A"], "rule": { "has": { "field": "arguments", "has": { "kind": "identifier", "pattern": "$A" } } } } },
         } },
-        "finding": { "anchor": "capture.ARG", "code": "X", "message": "$ARG", "severity": "error", "each": "ARG" },
+        "violation": { "anchor": "capture.ARG", "code": "X", "message": "$ARG", "each": "ARG" },
     }));
     let rule = compile_document_with(document, &defaults())
         .unwrap_or_else(|error| panic!("{}", error.reason));
     let source = "f(a, 1, b);\n";
     let result = evaluate_file(&rule, "typescript", "a.ts", source);
-    let messages = result["findings"]
+    let messages = result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -203,17 +203,17 @@ fn each_enumerates_the_bindings_a_call_returns() {
 
 #[test]
 fn a_define_shares_parameterized_utilities() {
-    let document = json!({ "format": "rerail.policy/v1", "id": "p", "revision": 1, "checks": [
+    let document = json!({ "format": "rerail.policy/v1", "id": "p", "revision": 1, "mode": "steer", "clauses": [
         { "id": "shared", "define": { "language": "typescript", "utils": {
             "callee": { "params": ["F"], "rule": { "has": { "field": "function", "pattern": "$F" } } },
         } } },
         { "id": "q", "forbid": { "ast": { "language": "typescript", "rule": { "kind": "call_expression", "matches": { "callee": { "F": "$C" } } } } },
-          "finding": { "anchor": "capture.C", "code": "X", "message": "$C", "severity": "error" } },
+          "violation": { "anchor": "capture.C", "code": "X", "message": "$C" } },
     ] });
     let rule = compile_document_with(document, &defaults())
         .unwrap_or_else(|error| panic!("{}", error.reason));
     let result = evaluate_file(&rule, "typescript", "a.ts", "f(1);\n");
-    assert_eq!(result["findings"][0]["message"], "f", "{result}");
+    assert_eq!(result["violations"][0]["message"], "f", "{result}");
 }
 
 #[test]
@@ -223,59 +223,59 @@ fn parameterized_utilities_and_calls_are_checked_where_they_are_written() {
     for (ast, reason) in [
         (
             json!({ "rule": { "matches": "callee" }, "utils": { "callee": callee } }),
-            "/checks/0/forbid/ast/rule/matches: utility rule `callee` takes parameters (F); call it as { \"callee\": { \"F\": \"$NAME\" } }",
+            "/clauses/0/forbid/ast/rule/matches: utility rule `callee` takes parameters (F); call it as { \"callee\": { \"F\": \"$NAME\" } }",
         ),
         (
             json!({ "rule": { "matches": { "callee": { "G": "$C" } } }, "utils": { "callee": callee } }),
-            "/checks/0/forbid/ast/rule/matches/callee/G: `G` is not a parameter of `callee` (F)",
+            "/clauses/0/forbid/ast/rule/matches/callee/G: `G` is not a parameter of `callee` (F)",
         ),
         (
             json!({ "rule": { "matches": { "callee": {} } }, "utils": { "callee": callee } }),
-            "/checks/0/forbid/ast/rule/matches/callee: parameter `F` is not passed; map it to a capture (\"F\": \"$NAME\")",
+            "/clauses/0/forbid/ast/rule/matches/callee: parameter `F` is not passed; map it to a capture (\"F\": \"$NAME\")",
         ),
         (
             json!({ "rule": { "matches": { "callee": { "F": "C" } } }, "utils": { "callee": callee } }),
-            "/checks/0/forbid/ast/rule/matches/callee/F must name a capture: `$NAME` (A-Z, 0-9, _)",
+            "/clauses/0/forbid/ast/rule/matches/callee/F must name a capture: `$NAME` (A-Z, 0-9, _)",
         ),
         (
             json!({ "rule": { "matches": { "callee": { "F": "$$$C" } } }, "utils": { "callee": callee } }),
-            "/checks/0/forbid/ast/rule/matches/callee/F must name a capture: `$NAME` (A-Z, 0-9, _)",
+            "/clauses/0/forbid/ast/rule/matches/callee/F must name a capture: `$NAME` (A-Z, 0-9, _)",
         ),
         (
             json!({ "rule": { "matches": { "callee": { "F": "$C" }, "other": {} } }, "utils": { "callee": callee } }),
-            "/checks/0/forbid/ast/rule/matches must call one utility: { \"id\": { \"PARAM\": \"$CAPTURE\" } }",
+            "/clauses/0/forbid/ast/rule/matches must call one utility: { \"id\": { \"PARAM\": \"$CAPTURE\" } }",
         ),
         (
             json!({ "rule": { "matches": { "missing": { "F": "$C" } } } }),
-            "/checks/0/forbid/ast/rule/matches: utility rule `missing` is not defined in this query's utils or a define of its language",
+            "/clauses/0/forbid/ast/rule/matches: utility rule `missing` is not defined in this query's utils or a define of its language",
         ),
         (
             json!({ "rule": { "kind": "number" }, "utils": { "u": { "params": [], "rule": { "kind": "number" } } } }),
-            "/checks/0/forbid/ast/utils/u/params must be a non-empty array of capture names",
+            "/clauses/0/forbid/ast/utils/u/params must be a non-empty array of capture names",
         ),
         (
             json!({ "rule": { "kind": "number" }, "utils": { "u": { "params": ["a"], "rule": { "kind": "number" } } } }),
-            "/checks/0/forbid/ast/utils/u/params/0 must be a capture name without `$` (A-Z, 0-9, _)",
+            "/clauses/0/forbid/ast/utils/u/params/0 must be a capture name without `$` (A-Z, 0-9, _)",
         ),
         (
             json!({ "rule": { "kind": "number" }, "utils": { "u": { "params": ["A", "A"], "rule": { "kind": "number" } } } }),
-            "/checks/0/forbid/ast/utils/u/params/1: `A` is listed twice",
+            "/clauses/0/forbid/ast/utils/u/params/1: `A` is listed twice",
         ),
         (
             json!({ "rule": { "kind": "number" }, "utils": { "u": { "params": ["A"] } } }),
-            "/checks/0/forbid/ast/utils/u/rule is required",
+            "/clauses/0/forbid/ast/utils/u/rule is required",
         ),
         (
             json!({ "rule": { "kind": "number" }, "utils": { "u": { "params": ["A"], "rule": { "kind": "number" }, "kind": "number" } } }),
-            "unknown field `kind` at /checks/0/forbid/ast/utils/u",
+            "unknown field `kind` at /clauses/0/forbid/ast/utils/u",
         ),
         (
             json!({ "rule": { "kind": "number" }, "utils": { "u": { "params": ["A"], "rule": { "stopBy": "end" } } } }),
-            "unknown field `stopBy` at /checks/0/forbid/ast/utils/u/rule",
+            "unknown field `stopBy` at /clauses/0/forbid/ast/utils/u/rule",
         ),
         (
             json!({ "rule": { "matches": { "u": { "A": "$A" } } }, "utils": { "u": { "params": ["A"], "rule": { "not": { "matches": { "u": { "A": "$A" } } } } } } }),
-            "/checks/0/forbid/ast/utils/u: utility rule `u` has a cyclic dependency in its `matches` sub-rule",
+            "/clauses/0/forbid/ast/utils/u: utility rule `u` has a cyclic dependency in its `matches` sub-rule",
         ),
     ] {
         assert_eq!(rejection(compile_typescript_ast(ast)), reason);
@@ -300,7 +300,7 @@ fn distinct_calls_are_capped_per_query() {
         rejection(compile_typescript_ast(ast(
             super::super::matcher::MAX_UTIL_INSTANCES + 1
         ))),
-        "/checks/0/forbid/ast/rule/any/1024/matches: more than 1024 distinct parameterized utility calls in one query"
+        "/clauses/0/forbid/ast/rule/any/1024/matches: more than 1024 distinct parameterized utility calls in one query"
     );
 }
 

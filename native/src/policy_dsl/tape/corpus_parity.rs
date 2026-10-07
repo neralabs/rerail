@@ -609,8 +609,9 @@ fn persisted_python_and_typescript_corpora_match_native() {
         PathBuf::from(std::env::var("RERAIL_PYTHON_MANIFEST").expect("RERAIL_PYTHON_MANIFEST"));
     let web_root =
         PathBuf::from(std::env::var("RERAIL_TYPESCRIPT_CORPUS").expect("RERAIL_TYPESCRIPT_CORPUS"));
-    let output =
-        PathBuf::from(std::env::var("RERAIL_TAPE_PARITY_REPORT").expect("RERAIL_TAPE_PARITY_REPORT"));
+    let output = PathBuf::from(
+        std::env::var("RERAIL_TAPE_PARITY_REPORT").expect("RERAIL_TAPE_PARITY_REPORT"),
+    );
     let python_paths: Vec<PathBuf> =
         serde_json::from_slice::<Vec<String>>(&fs::read(&manifest).expect("read Python manifest"))
             .expect("parse Python manifest")
@@ -780,6 +781,30 @@ fn benchmark_go_worktree_oracle_parity() {
         excluded_suffixes: &[],
         env: "RERAIL_GO",
         patterns: GO_PATTERNS,
+    });
+}
+
+const PYTHON_PATTERNS: &[&str] = &[
+    "$F($$$ARGS)",
+    "$X.$A",
+    "return $V",
+    "$L = $R",
+    "if $COND: $$$BODY",
+    "def $NAME($$$PARAMS): $$$BODY",
+    "lambda $$$PARAMS: $BODY",
+    "import $M",
+];
+
+#[test]
+#[ignore = "full Python corpus: native tree-sitter / ast-grep versus Rerail tapes"]
+fn benchmark_python_worktree_oracle_parity() {
+    worktree_oracle_parity(&OracleCorpus {
+        name: "Python",
+        language: GrammarDialect::Python,
+        extensions: &["py", "pyi"],
+        excluded_suffixes: &[],
+        env: "RERAIL_PYTHON_ORACLE",
+        patterns: PYTHON_PATTERNS,
     });
 }
 

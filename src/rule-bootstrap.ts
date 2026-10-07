@@ -6,7 +6,7 @@ import { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
 import { assertPolicyCompiles, PolicyCompileError } from "./policy-kernel-check.js";
 import { policyRuleSchema, POLICY_FORMAT } from "./policy-schema.js";
 import { cosineRuleSchema } from "./rule-schema.js";
-import { RULE_APPLICABILITIES, RULE_KINDS, RULE_ORIGINS, RULE_SYNC_STATES } from "./schema.js";
+import { RULE_APPLICABILITIES, RULE_KINDS, RULE_ORIGINS } from "./schema.js";
 import type { BundledRuleDocument, RuleDocument } from "./rule-store.js";
 import { ScopedRuleCatalog } from "./scoped-rule-catalog.js";
 
@@ -25,10 +25,10 @@ export function defaultRulesDumpPath(databasePath: string): string {
 
 function parseRuleDocument(value: unknown, label: string): RuleDocument {
   const isPolicy = typeof value === "object" && value !== null && "format" in value && value.format === POLICY_FORMAT;
-  if (isPolicy) return { kind: "policy", rule: policyRuleSchema.parse(value) };
+  if (isPolicy) return { kind: "file", rule: policyRuleSchema.parse(value) };
   const cosine = cosineRuleSchema.safeParse(value);
-  if (cosine.success) return { kind: "cosine", rule: cosine.data };
-  throw new Error(`${label} is neither a ${POLICY_FORMAT} document nor a cosine rule: ${cosine.error.issues[0]?.message ?? "invalid"}`);
+  if (cosine.success) return { kind: "conversation", rule: cosine.data };
+  throw new Error(`${label} is neither a ${POLICY_FORMAT} document nor a conversation rule: ${cosine.error.issues[0]?.message ?? "invalid"}`);
 }
 
 /**
@@ -94,8 +94,6 @@ const dumpEntrySchema = z.object({
   updatedAt: z.number().int(),
   sourceDigest: z.string().nullable(),
   catalogOrigin: z.enum(RULE_ORIGINS),
-  syncState: z.enum(RULE_SYNC_STATES),
-  upstreamRuleId: z.string().nullable(),
 }).strict();
 
 const rulesDumpSchema = z.object({
@@ -123,7 +121,7 @@ export function exportScopedRules(store: ScopedRuleCatalog, path: string, now = 
 function assertDumpCompiles(path: string, documents: readonly RuleDocument[]): void {
   const problems: string[] = [];
   for (const [index, document] of documents.entries()) {
-    if (document.kind !== "policy") continue;
+    if (document.kind !== "file") continue;
     try {
       assertPolicyCompiles(document.rule);
     } catch (error) {
@@ -132,7 +130,7 @@ function assertDumpCompiles(path: string, documents: readonly RuleDocument[]): v
     }
   }
   if (problems.length > 0) {
-    throw new Error(`${path}: nothing imported; ${problems.length} policy rule(s) do not compile:\n${problems.join("\n")}`);
+    throw new Error(`${path}: nothing imported; ${problems.length} file rule(s) do not compile:\n${problems.join("\n")}`);
   }
 }
 
@@ -152,8 +150,6 @@ export function importScopedRules(store: ScopedRuleCatalog, path: string): numbe
         now: entry.updatedAt,
         sourceDigest: entry.sourceDigest,
         origin: entry.catalogOrigin,
-        syncState: entry.syncState,
-        upstreamRuleId: entry.upstreamRuleId,
       },
     };
   });

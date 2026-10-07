@@ -547,7 +547,7 @@ pub(super) fn resolve(document: &Value) -> Result<(Value, Options)> {
     let mut declared = BTreeMap::new();
     let mut values = BTreeMap::new();
     let checks = document
-        .get("checks")
+        .get("clauses")
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_default();
@@ -557,7 +557,7 @@ pub(super) fn resolve(document: &Value) -> Result<(Value, Options)> {
         if check.get("$option").is_some() {
             return None;
         }
-        Some((format!("/checks/{index}/define"), check.get("define")?))
+        Some((format!("/clauses/{index}/define"), check.get("define")?))
     });
     for (path, define) in defines.clone() {
         let Some(options) = define.get("options") else {
@@ -607,7 +607,7 @@ pub(super) fn resolve(document: &Value) -> Result<(Value, Options)> {
         let path = format!("/{key}");
         let value = match key.as_str() {
             "format" | "id" | "revision" => value.clone(),
-            "checks" => match value.as_array() {
+            "clauses" => match value.as_array() {
                 Some(checks) => {
                     let mut out = Vec::with_capacity(checks.len());
                     for (index, check) in checks.iter().enumerate() {
@@ -622,7 +622,7 @@ pub(super) fn resolve(document: &Value) -> Result<(Value, Options)> {
                         };
                         if items.iter().any(|item| item.get("define").is_some()) {
                             return Err(invalid(format!(
-                                "{check_path}: a define is written among the checks, not made by a $option reference"
+                                "{check_path}: a define is written among the clauses, not made by a $option reference"
                             )));
                         }
                         out.extend(items);
@@ -676,13 +676,13 @@ mod tests {
         let mut all =
             vec![json!({ "id": "options", "define": { "options": options, "config": config } })];
         all.extend(checks.as_array().expect("checks").iter().cloned());
-        json!({ "format": "rerail.policy/v1", "id": "p", "revision": 1, "checks": all })
+        json!({ "format": "rerail.policy/v1", "id": "p", "revision": 1, "mode": "steer", "clauses": all })
     }
 
     fn query(id: &str, ast: Value) -> Value {
         let mut ast = ast;
         ast["language"] = json!("typescript");
-        json!({ "id": id, "forbid": { "ast": ast }, "finding": finding() })
+        json!({ "id": id, "forbid": { "ast": ast }, "violation": finding() })
     }
 
     fn compile(document: Value) -> napi::Result<crate::policy_dsl::CompiledPolicyDsl> {
@@ -696,7 +696,7 @@ mod tests {
         let compiled = compile(document).unwrap_or_else(|error| panic!("{}", error.reason));
         let result = evaluate_file(&compiled, "typescript", "a.ts", source);
         assert_eq!(result["failures"], json!([]), "{result}");
-        result["findings"]
+        result["violations"]
             .as_array()
             .expect("findings")
             .iter()
@@ -708,7 +708,7 @@ mod tests {
                 );
                 format!(
                     "{} {}",
-                    finding["checkId"].as_str().expect("id"),
+                    finding["clauseId"].as_str().expect("id"),
                     &source[start as usize..end as usize]
                 )
             })
@@ -836,7 +836,7 @@ mod tests {
                     json!({ "on": false }),
                     json!([spread(json!([class]))]),
                 ),
-                "/checks must hold a check besides define: a define reports nothing",
+                "/clauses must hold a clause besides define: a define reports nothing",
             ),
             (
                 document(
@@ -849,7 +849,7 @@ mod tests {
                         class,
                     ]),
                 ),
-                "/checks/1: a define is written among the checks, not made by a $option reference",
+                "/clauses/1: a define is written among the clauses, not made by a $option reference",
             ),
             (
                 document(
@@ -860,7 +860,7 @@ mod tests {
                         class,
                     ]),
                 ),
-                "unknown field `define` at /checks/1",
+                "unknown field `define` at /clauses/1",
             ),
         ] {
             assert_eq!(rejection(compile(document)), reason);
@@ -989,7 +989,7 @@ mod tests {
                 json!({}),
                 json!([query("number", json!({ "rule": { "kind": "number" } }))]),
             ))),
-            "/checks/0/define/options/level/default: 100000000000000000000 is not exactly representable as a JavaScript number"
+            "/clauses/0/define/options/level/default: 100000000000000000000 is not exactly representable as a JavaScript number"
         );
     }
 
@@ -1062,27 +1062,27 @@ mod tests {
             (
                 json!({ "n": { "type": "integer", "default": beyond } }),
                 json!({}),
-                "/checks/0/define/options/n/default: 9007199254740993 is not exactly representable as a JavaScript number",
+                "/clauses/0/define/options/n/default: 9007199254740993 is not exactly representable as a JavaScript number",
             ),
             (
                 json!({ "n": { "type": "integer", "default": -9_007_199_254_740_992i64 } }),
                 json!({}),
-                "/checks/0/define/options/n/default: -9007199254740992 is not exactly representable as a JavaScript number",
+                "/clauses/0/define/options/n/default: -9007199254740992 is not exactly representable as a JavaScript number",
             ),
             (
                 json!({ "n": { "type": "array", "items": "integer", "enum": [1, beyond], "default": [] } }),
                 json!({}),
-                "/checks/0/define/options/n/enum/1: 9007199254740993 is not exactly representable as a JavaScript number",
+                "/clauses/0/define/options/n/enum/1: 9007199254740993 is not exactly representable as a JavaScript number",
             ),
             (
                 json!({ "n": { "type": "integer", "default": 1 } }),
                 json!({ "n": beyond }),
-                "/checks/0/define/config/n: 9007199254740993 is not exactly representable as a JavaScript number",
+                "/clauses/0/define/config/n: 9007199254740993 is not exactly representable as a JavaScript number",
             ),
             (
                 json!({ "n": { "type": "number", "default": 1e21 } }),
                 json!({}),
-                "/checks/0/define/options/n/default: 1e+21 is not exactly representable as a JavaScript number",
+                "/clauses/0/define/options/n/default: 1e+21 is not exactly representable as a JavaScript number",
             ),
         ] {
             assert_eq!(
@@ -1103,7 +1103,7 @@ mod tests {
                     json!({}),
                     json!([rule]),
                 ),
-                "/checks/0/define/options/s/type must equal boolean, string, number, integer or array",
+                "/clauses/0/define/options/s/type must equal boolean, string, number, integer or array",
             ),
             (
                 document(
@@ -1111,7 +1111,7 @@ mod tests {
                     json!({}),
                     json!([rule]),
                 ),
-                "/checks/0/define/options/s/default is required",
+                "/clauses/0/define/options/s/default is required",
             ),
             (
                 document(
@@ -1119,7 +1119,7 @@ mod tests {
                     json!({}),
                     json!([rule]),
                 ),
-                "/checks/0/define/options/s/default is not a value of the option's type",
+                "/clauses/0/define/options/s/default is not a value of the option's type",
             ),
             (
                 document(
@@ -1127,7 +1127,7 @@ mod tests {
                     json!({}),
                     json!([rule]),
                 ),
-                "/checks/0/define/options/s/default is not one of the option's enum values",
+                "/clauses/0/define/options/s/default is not one of the option's enum values",
             ),
             (
                 document(
@@ -1135,7 +1135,7 @@ mod tests {
                     json!({}),
                     json!([rule]),
                 ),
-                "/checks/0/define/options/s/default/0 is not an allowed item of the option",
+                "/clauses/0/define/options/s/default/0 is not an allowed item of the option",
             ),
             (
                 document(
@@ -1143,7 +1143,7 @@ mod tests {
                     json!({}),
                     json!([rule]),
                 ),
-                "/checks/0/define/options/s/default: null is not allowed; the option is not nullable",
+                "/clauses/0/define/options/s/default: null is not allowed; the option is not nullable",
             ),
             (
                 document(
@@ -1151,15 +1151,15 @@ mod tests {
                     json!({}),
                     json!([rule]),
                 ),
-                "/checks/0/define/options/1s: an option's name starts with a letter or _ and holds letters, digits, _, - and .",
+                "/clauses/0/define/options/1s: an option's name starts with a letter or _ and holds letters, digits, _, - and .",
             ),
             (
                 document(string.clone(), json!({ "t": "a" }), json!([rule])),
-                "/checks/0/define/config/t: `t` is not an option this document declares",
+                "/clauses/0/define/config/t: `t` is not an option this document declares",
             ),
             (
                 document(string.clone(), json!({ "s": true }), json!([rule])),
-                "/checks/0/define/config/s is not a value of the option's type",
+                "/clauses/0/define/config/s is not a value of the option's type",
             ),
             (
                 document(
@@ -1170,7 +1170,7 @@ mod tests {
                         json!({ "rule": { "regex": { "$option": "t" } } })
                     )]),
                 ),
-                "/checks/1/forbid/ast/rule/regex/$option: `t` is not an option this document declares",
+                "/clauses/1/forbid/ast/rule/regex/$option: `t` is not an option this document declares",
             ),
             (
                 document(
@@ -1181,7 +1181,7 @@ mod tests {
                         json!({ "rule": { "regex": { "$option": "s", "spread": true } } })
                     )]),
                 ),
-                "/checks/1/forbid/ast/rule/regex/spread: only an array's item may spread",
+                "/clauses/1/forbid/ast/rule/regex/spread: only an array's item may spread",
             ),
             (
                 document(
@@ -1192,7 +1192,7 @@ mod tests {
                         json!({ "rule": { "regex": { "$option": "s", "cases": { "b": "x" } } } })
                     )]),
                 ),
-                "/checks/1/forbid/ast/rule/regex/cases: no case for `a` and no default",
+                "/clauses/1/forbid/ast/rule/regex/cases: no case for `a` and no default",
             ),
             (
                 document(
@@ -1203,7 +1203,7 @@ mod tests {
                         json!({ "rule": { "regex": { "$option": "s", "join": "|" } } })
                     )]),
                 ),
-                "/checks/1/forbid/ast/rule/regex/join: the option's value is not an array",
+                "/clauses/1/forbid/ast/rule/regex/join: the option's value is not an array",
             ),
             (
                 document(
@@ -1214,7 +1214,7 @@ mod tests {
                         json!({ "rule": { "regex": { "$option": "s", "suffix": "x" } } })
                     )]),
                 ),
-                "unknown field `suffix` at /checks/1/forbid/ast/rule/regex",
+                "unknown field `suffix` at /clauses/1/forbid/ast/rule/regex",
             ),
             (
                 document(
@@ -1225,7 +1225,7 @@ mod tests {
                         json!({ "rule": { "kind": "number" }, "when": { "option": { "t": "a" } } })
                     )]),
                 ),
-                "/checks/1/forbid/ast/when/option: `t` is not an option this document declares",
+                "/clauses/1/forbid/ast/when/option: `t` is not an option this document declares",
             ),
             (
                 document(
@@ -1236,15 +1236,15 @@ mod tests {
                         json!({ "rule": { "kind": "number" }, "when": { "option": { "s": { "startsWith": "a" } } } })
                     )]),
                 ),
-                "/checks/1/forbid/ast/when/option/s: unknown condition `startsWith`; expected in, includes or not",
+                "/clauses/1/forbid/ast/when/option/s: unknown condition `startsWith`; expected in, includes or not",
             ),
             (
-                json!({ "format": "rerail.policy/v1", "id": "p", "revision": 1, "checks": [
+                json!({ "format": "rerail.policy/v1", "id": "p", "revision": 1, "mode": "steer", "clauses": [
                     { "id": "a", "define": { "options": string } },
                     { "id": "b", "define": { "options": string } },
                     rule,
                 ] }),
-                "/checks/1/define/options/s: option `s` is already declared by another define",
+                "/clauses/1/define/options/s: option `s` is already declared by another define",
             ),
         ] {
             assert_eq!(rejection(compile(document)), reason);

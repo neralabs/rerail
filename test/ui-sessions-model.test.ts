@@ -15,9 +15,9 @@ function events(list: readonly { kind: string; payload: unknown; at?: number }[]
 }
 
 const prompt = (text: string) => ({ kind: "user-prompt", payload: { text } });
-const call = (toolCallId: string, toolName: string, input: unknown) => ({ kind: "tool-call", payload: { toolCallId, toolName, input } });
+const call = (toolCallId: string, toolName: string, input: unknown) => ({ kind: "call", payload: { toolCallId, toolName, input } });
 const result = (toolCallId: string, output: unknown, extra: { failed?: boolean; at?: number } = {}) =>
-  ({ kind: "tool-result", payload: { toolCallId, toolName: "x", output, ...(extra.failed === undefined ? {} : { failed: extra.failed }) }, ...(extra.at === undefined ? {} : { at: extra.at }) });
+  ({ kind: "result", payload: { toolCallId, toolName: "x", output, ...(extra.failed === undefined ? {} : { failed: extra.failed }) }, ...(extra.at === undefined ? {} : { at: extra.at }) });
 const turnEnd = (text = "") => ({ kind: "turn-end", payload: { text } });
 
 const correction = (key: string, path: string | null): Correction => ({ key, finding: { path }, rule: {} });

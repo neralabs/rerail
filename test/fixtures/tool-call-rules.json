@@ -3,6 +3,7 @@
   "rules": [
     {
       "id": "oss:no-force-push",
+      "mode": "steer",
       "match": {
         "all": [
           { "field": "tool.name", "regex": "^(?:Bash|bash|shell)$" },
@@ -10,11 +11,12 @@
         ]
       },
       "sample": { "source": "tool:*", "boundary": "tool-call" },
-      "action": { "delivery": "steer", "content": "Do not force-push: it rewrites published history. Ask the user first." },
+      "action": { "content": "Do not force-push: it rewrites published history. Ask the user first." },
       "repeat": { "mode": "always" }
     },
     {
       "id": "oss:no-skip-verify",
+      "mode": "steer",
       "match": {
         "all": [
           { "field": "input.command", "regex": "\\bgit\\s+(?:commit|push)\\b" },
@@ -22,11 +24,12 @@
         ]
       },
       "sample": { "source": "tool:Bash", "boundary": "tool-call" },
-      "action": { "delivery": "steer", "content": "Do not bypass git hooks with --no-verify; fix the failing check." },
+      "action": { "content": "Do not bypass git hooks with --no-verify; fix the failing check." },
       "repeat": { "mode": "always" }
     },
     {
       "id": "oss:no-git-internals-write",
+      "mode": "steer",
       "match": {
         "any": [
           { "field": "input.file_path", "regex": "(?:^|/)\\.git/" },
@@ -34,7 +37,7 @@
         ]
       },
       "sample": { "source": "tool:*", "boundary": "tool-call" },
-      "action": { "delivery": "steer", "content": "Do not write inside .git/; use git commands instead." },
+      "action": { "content": "Do not write inside .git/; use git commands instead." },
       "repeat": { "mode": "always" }
     }
   ]

@@ -1,0 +1,39 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "blade-parser-debug-directive",
+  "revision": 1,
+  "mode": "steer",
+  "description": "stillat/blade-parser 2.1.0 DebugDirectiveValidator: a @dd or @dump directive (CoreDirectiveRetriever::getDebugDirectiveNames).",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "rule": {
+            "any": [
+              {
+                "kind": "directive"
+              },
+              {
+                "kind": "directive_start"
+              }
+            ],
+            "regex": "^@(dd|dump)$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "DebugDirectiveValidator",
+        "message": "Debug directive detected"
+      }
+    }
+  ]
+}

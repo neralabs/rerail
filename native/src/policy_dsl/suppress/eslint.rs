@@ -15,12 +15,11 @@ fn every_name() -> Value {
 }
 
 fn starts(fixture: &str, source: &str, suppress: Option<Value>) -> Vec<u64> {
-    let mut finding =
-        json!({ "anchor": "witness.span", "code": "NAME", "message": "name", "severity": "error" });
+    let mut finding = json!({ "anchor": "witness.span", "code": "NAME", "message": "name" });
     if let Some(suppress) = suppress {
         finding["suppress"] = suppress;
     }
-    let document = check_document(json!({ "id": "every-name", "finding": finding,
+    let document = check_document(json!({ "id": "every-name", "violation": finding,
         "forbid": { "ast": { "language": "typescript", "rule": every_name() } } }));
     let compiled = compile_document_with(
         document,
@@ -34,7 +33,7 @@ fn starts(fixture: &str, source: &str, suppress: Option<Value>) -> Vec<u64> {
     };
     let result = evaluate_file(&compiled, language, fixture, source);
     assert_eq!(result["failures"], json!([]), "{result}");
-    let mut starts = result["findings"]
+    let mut starts = result["violations"]
         .as_array()
         .expect("findings")
         .iter()

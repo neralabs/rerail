@@ -162,7 +162,7 @@ fn ranges(ast: Value, source: &str) -> Vec<[u64; 2]> {
     let mut ast = ast;
     ast["language"] = json!("python");
     let document =
-        check_document(json!({ "id": "port", "forbid": { "ast": ast }, "finding": finding() }));
+        check_document(json!({ "id": "port", "forbid": { "ast": ast }, "violation": finding() }));
     let compiled = compile_document_with(
         document,
         &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
@@ -170,7 +170,7 @@ fn ranges(ast: Value, source: &str) -> Vec<[u64; 2]> {
     .unwrap_or_else(|error| panic!("{}", error.reason));
     let result = evaluate_file(&compiled, "python", "fixture.py", source);
     assert_eq!(result["failures"], json!([]), "{result}");
-    let mut ranges: Vec<[u64; 2]> = result["findings"]
+    let mut ranges: Vec<[u64; 2]> = result["violations"]
         .as_array()
         .expect("findings")
         .iter()

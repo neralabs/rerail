@@ -25,6 +25,9 @@ const CONTEXT_EVENTS: EventTable = {
   PreToolUse: true,
 };
 
+/** Stop carries steering too: Codex continues the turn with it as a `decision: "block"` reason. */
+const CARRY_EVENTS: EventTable = { ...CONTEXT_EVENTS, Stop: true };
+
 const { required: requiredText } = hookText("Codex");
 
 export function supportsCodexHook(input: HookInput): boolean {
@@ -50,10 +53,6 @@ export async function handleCodexEvent(
   const hook = requiredText(input, "hook_event_name");
   const deliveries: AdapterDelivery[] = [];
   for (const event of codexHookEvents(input)) deliveries.push(...await eventLoop.ingest(event));
-  const routed = hook === "PostToolUse" || hook === "Stop"
-    ? deliveries.map((delivery): AdapterDelivery =>
-        delivery.requested === "steer" ? { ...delivery, requested: "followUp" } : delivery)
-    : deliveries;
   const path = pendingPath(storageRoot, "codex", requiredText(input, "session_id"));
-  return codexHookOutput(hook, await routeDeliveries(path, hook, routed, CONTEXT_EVENTS));
+  return codexHookOutput(hook, await routeDeliveries(path, hook, deliveries, CARRY_EVENTS));
 }

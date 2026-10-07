@@ -165,7 +165,7 @@ fn follow<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     let Some(followed) = context.follow(node.range(), &node.text()) else {
         return Value::Unknown;
     };
-    match followed.value.find(node.root().root()) {
+    match followed.value.find_near(node.root().root(), node) {
         Some(target) => decode(&target, context),
         None => Value::Unknown,
     }
@@ -176,7 +176,7 @@ fn constant<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     let Some(value) = context.constant(NodeRef::of(node)) else {
         return Value::Unknown;
     };
-    match value.find(node.root().root()) {
+    match value.find_near(node.root().root(), node) {
         Some(target) => decode(&target, context),
         None => Value::Unknown,
     }

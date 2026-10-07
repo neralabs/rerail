@@ -82,8 +82,13 @@ pub(super) fn required_u64(value: &Value, key: &str, path: &str) -> Result<u64> 
 }
 
 pub(super) fn hex_digest(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut hex = String::with_capacity(64);
+    for byte in Sha256::digest(bytes) {
+        hex.push(char::from(HEX[usize::from(byte >> 4)]));
+        hex.push(char::from(HEX[usize::from(byte & 0xf)]));
+    }
+    hex
 }
 
 pub(super) fn invalid(message: impl Into<String>) -> Error {

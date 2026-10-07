@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-import-side-effect",
   "revision": 1,
+  "mode": "steer",
   "description": "Option ignore-module: (allow-side-effect|\\.css)$",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "side-effect-import",
       "forbid": {
@@ -60,10 +61,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_IMPORT_SIDE_EFFECT",
-        "severity": "error",
         "message": "import with explicit side-effect"
       }
     }

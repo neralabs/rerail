@@ -1,5 +1,6 @@
 use super::util::{UNKNOWN, UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
 use crate::policy_dsl::budget;
+use crate::policy_dsl::identifier::{name_in, python_identifier};
 use crate::policy_dsl::language::{Family, GrammarDialect};
 use crate::policy_dsl::language::{SourceType, is_stub_file};
 use crate::policy_dsl::lines::{LineTable, Terminators};
@@ -16,8 +17,9 @@ use crate::policy_dsl::value::NodeRef;
 use crate::policy_dsl::value::structure::{Equality, Tok};
 use crate::policy_dsl::value::{Followed, Value};
 use ast_grep_core::{Doc, Node};
+use foldhash::{HashMap, HashMapExt};
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -113,7 +115,7 @@ pub(crate) enum Unresolved {
 fn dotted<D: Doc>(node: &Node<'_, D>) -> String {
     let parts = node.children().filter(|part| part.kind() == "identifier");
     parts
-        .map(|part| part.text().into_owned())
+        .map(|part| python_identifier(&part).into_owned())
         .collect::<Vec<_>>()
         .join(".")
 }
@@ -278,7 +280,7 @@ impl Resolves {
         }
         let chain =
             (!self.imports.is_empty() || self.import_any) && self.import_chain(node).is_some();
-        let text = node.text();
+        let text = name_in(self.language, node.text());
         // Without language options only a comment can make another name global; without the
         // opt-in no table is needed.
         let unlisted = self.directives && self.options.is_none();
@@ -309,7 +311,7 @@ impl Resolves {
         let Some(reference) = table.reference(&node.range()) else {
             return false;
         };
-        let name = node.text();
+        let name = name_in(self.language, node.text());
         // A function's bare annotation ends a load: an unbound local, whatever an outer scope,
         // builtin or star import binds, unless a nested `nonlocal` may initialize it (Ruff's
         // `annotation_binding_id` with rebinding scopes).
@@ -386,7 +388,7 @@ impl Resolves {
             return false;
         };
         match file_usage(node, &table).and_then(|usage| usage.before_local(reference.start)) {
-            Some(builtin) => !builtin || self.python_options().declares(&node.text()),
+            Some(builtin) => !builtin || self.python_options().declares(&python_identifier(node)),
             None => false,
         }
     }
@@ -580,7 +582,7 @@ impl Resolves {
         let mut tail = Vec::new();
         let mut head = node.clone();
         while self.attribute_kinds.contains(&head.kind_id()) {
-            tail.push(head.field("attribute")?.text().into_owned());
+            tail.push(name_in(self.language, head.field("attribute")?.text()).into_owned());
             head = self.unparenthesized(head.field("object")?);
         }
         if !self.reference_kinds.contains(&head.kind_id()) {
@@ -604,7 +606,7 @@ impl Resolves {
         let Some((head, tail)) = self.import_chain(node) else {
             return false;
         };
-        let name = head.text();
+        let name = name_in(self.language, head.text());
         let Some(reference) = table.reference(&head.range()) else {
             return false;
         };
@@ -1211,7 +1213,7 @@ pub(super) fn constant_value<D: Doc>(
         return None;
     }
     let names = file_php_names(node, language)?;
-    names.constant_value(&target.find(node.root().root())?)
+    names.constant_value(&target.find_near(node.root().root(), node)?)
 }
 
 /// How a table reads the file under these options: Python annotations after the module from 3.14,
@@ -1258,19 +1260,24 @@ pub(super) fn file_usage<D: Doc>(
         },
     };
     let key = (CURRENT_CHECK.get(), Arc::as_ptr(table) as usize);
-    let charged = FILE_SCOPES.with_borrow_mut(|slot| match slot {
-        Some(slot) if slot.usage_charged.contains(&key) => true,
-        Some(slot) => {
-            slot.usage_charged.push(key);
-            false
+    let charged = FILE_SCOPES.with_borrow_mut(|slot| {
+        let Some(slot) = slot else {
+            return false;
+        };
+        // Charged to each check once: what this one spends depends on whether it was.
+        super::read_check_state();
+        if slot.usage_charged.contains(&key) {
+            return true;
         }
-        None => false,
+        slot.usage_charged.push(key);
+        false
     });
     if !charged || built {
         let Some(left) = steps.checked_sub(usage.cost) else {
             return exceed();
         };
         UTIL_STEPS_LEFT.set(left);
+        super::filled(usage.cost);
     }
     Some(usage)
 }
@@ -1317,6 +1324,10 @@ fn file_php_names<D: Doc>(node: &Node<'_, D>, language: GrammarDialect) -> Optio
             )
         })
     });
+    if installed.is_some() {
+        // Charged to each check once (`php_names_charged`).
+        super::read_check_state();
+    }
     let (names, charged) = match installed {
         Some((Some(names), _, charged)) => (names, charged),
         Some((None, failed_within, _)) => {
@@ -1456,6 +1467,10 @@ pub(super) fn file_table<D: Doc>(
             )
         })
     });
+    if installed.is_some() {
+        // Charged to each check once (`charged`).
+        super::read_check_state();
+    }
     let steps = UTIL_STEPS_LEFT.get();
     let (table, charged) = match installed {
         Some((Some(table), _, charged)) => (table, charged),
@@ -1498,6 +1513,7 @@ pub(super) fn file_table<D: Doc>(
             return exceed();
         };
         UTIL_STEPS_LEFT.set(left);
+        super::filled(table.cost);
         FILE_SCOPES.with_borrow_mut(|slot| {
             if let Some(slot) = slot {
                 slot.charged.push(check);

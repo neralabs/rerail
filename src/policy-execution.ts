@@ -1,7 +1,7 @@
 import type { ExecutablePolicyFinding } from "./executable-policy.js";
 
 export const POLICY_SCOPES = ["repository", "touched-files", "ai-output"] as const;
-export const POLICY_MODES = ["resteer", "log"] as const;
+export const POLICY_MODES = ["steer", "log"] as const;
 export const POLICY_RUN_STATUSES = ["running", "completed", "failed", "interrupted", "superseded"] as const;
 export type PolicyScope = (typeof POLICY_SCOPES)[number];
 export type PolicyMode = (typeof POLICY_MODES)[number];
@@ -13,14 +13,12 @@ export interface RuleEvaluationProvenance {
   payloadHash: string;
   applicability: "global" | "project";
   projectId?: string;
-  origin: "local" | "bundled" | "nera";
-  syncState: "local-only" | "synced" | "pending";
-  upstreamRuleId?: string;
+  origin: "user" | "rerail";
 }
 
 export interface PolicyExecutionFailure {
-  policyId?: string | undefined;
-  checkId: string;
+  ruleId?: string;
+  clauseId: string;
   code: "budget-exceeded" | "missing-capability" | "source-incomplete" | "source-partial" | "adapter-error";
   message: string;
   path?: string | undefined;
@@ -29,7 +27,7 @@ export interface PolicyExecutionFailure {
 
 export const POLICY_COVERAGE_STATUSES = ["complete", "partial", "failed"] as const;
 
-/** One failure code against a check: how many failures, and at most three example paths, the first in path order. */
+/** One failure code against a clause: how many failures, and at most three example paths, the first in path order. */
 export interface PolicyCoverageReason {
   code: PolicyExecutionFailure["code"];
   count: number;
@@ -37,13 +35,13 @@ export interface PolicyCoverageReason {
 }
 
 /**
- * A check's coverage, which the native evaluation (`eval/output.rs` `coverage`) derives from its failures alone:
+ * A clause's coverage, which the native evaluation (`eval/output.rs` `coverage`) derives from its failures alone:
  * `complete` without any, `partial` where each is `source-partial` or `source-incomplete`, else `failed`. A failure
- * naming no evaluated check (the `runtime` budget) counts against every check of its policy.
+ * naming no evaluated clause (the `runtime` budget) counts against every clause of its rule.
  */
 export interface PolicyCheckCoverage {
-  checkId: string;
-  policyId?: string | undefined;
+  clauseId: string;
+  ruleId?: string;
   status: (typeof POLICY_COVERAGE_STATUSES)[number];
   reasons: PolicyCoverageReason[];
 }
@@ -64,37 +62,37 @@ export interface PolicyRunInput {
 
 export interface PolicyRunResult {
   status: Exclude<PolicyRunStatus, "running">;
-  findings?: ExecutablePolicyFinding[];
+  violations?: ExecutablePolicyFinding[];
   failures?: PolicyExecutionFailure[];
 }
 
 export interface PolicyRunRecord extends Omit<PolicyRunInput, "ruleProvenance"> {
   ruleProvenance: RuleEvaluationProvenance[];
-  runId: string;
+  auditId: string;
   startedAt: number;
   finishedAt: number | null;
   status: PolicyRunStatus;
-  findings: ExecutablePolicyFinding[];
+  violations: ExecutablePolicyFinding[];
   failures: PolicyExecutionFailure[];
 }
 
-/** Bounded session status, independent of the size of stored finding payloads. */
+/** Bounded session status, independent of the size of stored violation payloads. */
 export interface PolicyRunSummary {
   workspaceRoot: string;
   scope: PolicyScope;
   mode: PolicyMode;
   status: PolicyRunStatus;
-  findingCount: number;
+  violationCount: number;
   failureCount: number;
 }
 
-/** Execution bookkeeping is separate from policy findings. */
+/** Execution bookkeeping is separate from policy violations. */
 export interface PolicyExecutionRecorder {
   readonly supportsResultPages?: boolean;
   start(input: PolicyRunInput): string;
   finish(runId: string, result: PolicyRunResult): void;
-  progress(runId: string, result: Pick<PolicyRunResult, "findings" | "failures">): void;
-  appendResultPage?(runId: string, pageIndex: number, result: Pick<PolicyRunResult, "findings" | "failures">): void;
+  progress(runId: string, result: Pick<PolicyRunResult, "violations" | "failures">): void;
+  appendResultPage?(runId: string, pageIndex: number, result: Pick<PolicyRunResult, "violations" | "failures">): void;
   finishResultPages?(runId: string, status: PolicyRunStatus): void;
   interrupt(sessionId: string): void;
 }

@@ -8,7 +8,7 @@ import {
   type AdapterSession,
 } from "./adapter-contract.js";
 import { LiveCosineRules } from "./cosine-rule-sync.js";
-import { isRerailDisabled } from "./checkout-control.js";
+import { isRerailStarted } from "./repository-start.js";
 import { bundledModelPath, PACKAGE_ROOT } from "./extension.js";
 import type { ExtensionTranscriptOptions } from "./extension-transcript.js";
 import type { ModelFingerprint } from "./native.js";
@@ -18,7 +18,6 @@ import type { DevNativeClient } from "./dev-native-client.js";
 import { PiDevNativeSession } from "./pi-dev-native-session.js";
 import { registerPiHostAdapter } from "./pi-host-adapter.js";
 import { CosineRuleRegistry, type RuleMatch } from "./registry.js";
-import type { CosineRule } from "./rule-schema.js";
 import { cosineRuleLoader, type CosineRuleSourceOptions } from "./rule-sources.js";
 import { loadBundledRules } from "./rule-bootstrap.js";
 import { openScopedRuleCatalog } from "./scoped-rule-catalog.js";
@@ -42,7 +41,7 @@ interface MatchEntryData {
   tokenCount?: number | undefined;
   source: AdapterSample["source"];
   boundary: AdapterSample["boundary"];
-  delivery: CosineRule["action"]["delivery"];
+  mode: RuleMatch["mode"];
   turn: number;
   modelFingerprint: ModelFingerprint;
 }
@@ -90,7 +89,7 @@ export function createPiCosineRulesExtension(options: PiCosineRulesOptions = {})
         tokenCount: match.tokenCount,
         source: sample.source,
         boundary: sample.boundary,
-        delivery: match.action.delivery,
+        mode: match.mode,
         turn: matchedTurn,
         modelFingerprint: activeRegistry().fingerprint(),
       } satisfies MatchEntryData);
@@ -198,7 +197,7 @@ export function createPiCosineRulesExtension(options: PiCosineRulesOptions = {})
 
     const initializeNow = async (ctx: ExtensionContext, options_: InitializeOptions = {}): Promise<void> => {
       if (options_.onlyIfCurrent === true && (native.context() ?? currentContext) !== ctx) return;
-      if (isRerailDisabled(ctx.cwd)) {
+      if (!isRerailStarted(ctx.cwd, configuredDatabasePath(options, ctx.cwd))) {
         await closeRuntimeNow();
         currentContext = ctx;
         return;
@@ -258,7 +257,7 @@ export function createPiCosineRulesExtension(options: PiCosineRulesOptions = {})
         ...(options.maxInputTokens === undefined ? {} : { maxInputTokens: options.maxInputTokens }),
         ...(options.maxRules === undefined ? {} : { maxRules: options.maxRules }),
       });
-      const loadRules = cosineRuleLoader(options, ctx.cwd, ".pi/cosine-rules.json");
+      const loadRules = cosineRuleLoader(options, ctx.cwd, ".pi/conversation-rules.json");
       const ruleStore = openScopedRuleCatalog(ctx.cwd, databasePath);
       const sync = new LiveCosineRules(ruleStore, next, loadRules);
       try {
@@ -273,6 +272,7 @@ export function createPiCosineRulesExtension(options: PiCosineRulesOptions = {})
           databasePath,
           workspaceRoot: ctx.cwd,
           repositoryContext: ruleStore.context(),
+          startGate: true,
           beforeSessionPublish: async nextSession => {
             if (activeSession?.host === nextSession.host && activeSession.sessionId === nextSession.sessionId) {
               await closeRuntimeNow();
@@ -335,6 +335,8 @@ export function createPiCosineRulesExtension(options: PiCosineRulesOptions = {})
         },
       },
       packageRoot: PACKAGE_ROOT,
+      started: cwd => isRerailStarted(cwd, configuredDatabasePath(options, cwd)),
+      configuredDatabase: cwd => options.databasePath === undefined ? undefined : resolve(cwd, options.databasePath),
     });
   };
 }

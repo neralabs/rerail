@@ -1,0 +1,61 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-no-head-import-in-document",
+  "revision": 1,
+  "mode": "steer",
+  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-head-import-in-document: an import from next/head in a file whose path, between its first and second `pages`, names a document (name starts with `_document`, or `/_document/index`).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "path": {
+              "regex": "^(?:[^p]|p(?:p|ap|agp|agep)*(?:[^pa]|a[^gp]|ag[^ep]|age[^sp]))*(?:p(?:p|ap|agp|agep)*(?:a|ag|age)?)?pages(?:(?:(?:[^p]|p(?:p|ap|agp|agep)*(?:[^pa]|a[^gp]|ag[^ep]|age[^sp]))*(?:p(?:p|ap|agp|agep)*(?:a|ag|age)?)?/)?_document(?:[^p/]|p(?:p|ap|agp|agep)*(?:[^pa/]|a[^gp/]|ag[^ep/]|age[^sp/]))*(?:p(?:p|ap|agp|agep)*(?:a|ag|age)?)?/*|/_document/index(?:\\.[^./]*)?/*)(?:pages.*)?$"
+            }
+          },
+          "rule": {
+            "kind": "import_statement",
+            "all": [
+              {
+                "has": {
+                  "field": "source",
+                  "kind": "string",
+                  "value": {
+                    "eq": "next/head"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/no-head-import-in-document",
+        "message": "`next/head` should not be imported in `pages/_document.js`. Use `<Head />` from `next/document` instead. See: https://nextjs.org/docs/messages/no-head-import-in-document",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/no-head-import-in-document"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

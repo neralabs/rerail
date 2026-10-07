@@ -37,6 +37,7 @@ function lifecycleHarness(changeOwnerBeforeFailure: boolean) {
     cosineTool: {},
     cosineCommand: {},
     packageRoot: "/rerail",
+    started: () => true,
   });
   return { context, handlers, ingested: () => ingested };
 }

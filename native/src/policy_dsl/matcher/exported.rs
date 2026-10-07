@@ -5,7 +5,6 @@
 use ast_grep_core::Doc;
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
 use ast_grep_core::source::Content;
-#[cfg(test)]
 use std::borrow::Cow;
 use std::ops::Range;
 
@@ -33,7 +32,6 @@ pub(crate) fn exported_text_bytes() -> usize {
 
 /// Exports a parsed tree's capture to the host: its decoded text as a transformed variable, which
 /// messages and fix templates interpolate, and its source range under the reserved name.
-#[cfg(test)]
 pub(super) fn export<D: Doc>(
     env: &mut Cow<MetaVarEnv<'_, D>>,
     name: &str,

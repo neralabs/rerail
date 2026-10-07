@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:unnecessary-constructor",
   "revision": 1,
+  "mode": "steer",
   "description": "Prevents blank constructors, as they are redundant (TSLint default: check-super-calls off).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "empty-constructor",
       "forbid": {
@@ -80,10 +81,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "UNNECESSARY_CONSTRUCTOR",
-        "severity": "error",
         "message": "Remove unnecessary empty constructor."
       }
     }

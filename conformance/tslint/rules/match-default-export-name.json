@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:match-default-export-name",
   "revision": 1,
+  "mode": "steer",
   "description": "Candidate set only: every default-import binding (cannot resolve the exported declaration's name).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "default-import",
       "forbid": {
@@ -30,10 +31,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "MATCH_DEFAULT_EXPORT_NAME",
-        "severity": "error",
         "message": "Default import should match the default export name."
       }
     }

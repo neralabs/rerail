@@ -8,6 +8,7 @@ import { DAEMON_STATE_FILE, processAlive, readDaemonState } from "./daemon-contr
 import type { DaemonState } from "./daemon.js";
 import { resolveRerailWorkspaceRoute, type RerailDevInstance } from "./dev-routing.js";
 import { readRepositoryId } from "./repository-identity.js";
+import type { RepositoryStartState } from "./repository-start.js";
 import type { PresentationPresence } from "./schema.js";
 import { RERAIL_BRAND_FOREGROUND } from "./terminal-brand.generated.js";
 import { defaultRerailHome } from "./rerail-home.js";
@@ -19,6 +20,8 @@ export interface SessionPresentation {
   url: string | null;
   parts: { text: string; url: string | null }[];
   presence: PresentationPresence;
+  /** Whether Rerail runs in the session's repository, as the daemon reports it; null when no daemon answered. */
+  repositoryState: RepositoryStartState | null;
 }
 
 export interface PresentationRequest {
@@ -45,8 +48,12 @@ const READ_TIMEOUT_MS = 2_000;
 const MAX_RESPONSE_BYTES = 1_048_576;
 const terminalText = (value: string): string => value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
 
-function presentation(parts: SessionPresentation["parts"], presence: PresentationPresence): SessionPresentation {
-  return { text: parts.map(part => part.text).join(" | "), url: parts[0]?.url ?? null, parts, presence };
+function presentation(
+  parts: SessionPresentation["parts"],
+  presence: PresentationPresence,
+  repositoryState: RepositoryStartState | null = null,
+): SessionPresentation {
+  return { text: parts.map(part => part.text).join(" | "), url: parts[0]?.url ?? null, parts, presence, repositoryState };
 }
 
 /**
@@ -62,8 +69,8 @@ export function formatTerminalStatus({ parts }: SessionPresentation): string {
   }).join(" | ");
 }
 
-function unavailable(reason: string, presence: PresentationPresence): SessionPresentation {
-  return presentation([{ text: "Rerail", url: null }, { text: reason, url: null }], presence);
+function unavailable(reason: string, presence: PresentationPresence, repositoryState: RepositoryStartState | null = null): SessionPresentation {
+  return presentation([{ text: "Rerail", url: null }, { text: reason, url: null }], presence, repositoryState);
 }
 
 /** Validate responses with the same contracts used by the daemon, without opening a database. */
@@ -105,14 +112,14 @@ function sessionParts(origin: URL, { session, hud }: z.infer<typeof sessionRespo
 }
 
 async function appendEvaluation(
-  parts: SessionPresentation["parts"], { evaluation: run }: z.infer<typeof sessionResponseSchema>,
+  parts: SessionPresentation["parts"], { audit: run }: z.infer<typeof sessionResponseSchema>,
   nativeOk: boolean, workspace: string, onDemand: boolean,
 ): Promise<void> {
   try {
     if (run !== null && await realpath(run.workspaceRoot) !== workspace) throw new Error("Mismatched evaluation identity");
     if (onDemand) {
       const evaluation = run === null ? "not evaluated"
-        : `${run.scope}: ${run.status} | ${run.findingCount} findings | ${run.failureCount} failures`;
+        : `${run.scope}: ${run.status} | ${run.violationCount} findings | ${run.failureCount} failures`;
       parts.push({ text: `${nativeOk ? "healthy" : "kernel unavailable"} | ${evaluation}`, url: null });
       return;
     }
@@ -139,6 +146,14 @@ interface VerifiedDaemon {
 /** `/healthz` answers with the daemon's own identity, so a stale locator cannot borrow another listener. */
 const healthSchema = presentationDaemonSchema.extend({ status: z.literal("ok") });
 
+/** The footer in a repository where Rerail is not started, or was stopped. */
+const NOT_ON_HERE = "not on here";
+
+/** The footer for a session whose host already knows Rerail is off here; no daemon is asked. */
+export function notOnHerePresentation(): SessionPresentation {
+  return unavailable(NOT_ON_HERE, "compact");
+}
+
 /**
  * A state file records intent, not liveness: the recorded pid must still exist and the listener must
  * answer `/healthz` as that same pid before any caller is handed a URL.
@@ -161,7 +176,7 @@ async function liveHealth(origin: URL, pid: number): Promise<z.infer<typeof heal
 async function verifyDaemon(cwd: string): Promise<VerifiedDaemon | string> {
   const workspace = await realpath(cwd);
   const route = await resolveRerailWorkspaceRoute(workspace);
-  if (route.kind === "disabled") return "Rerail disabled for this checkout";
+  if (route.kind === "disabled") return NOT_ON_HERE;
   const instance = route.kind === "workspace" ? route.instance : undefined;
   const state = await readDaemonState(instance?.stateFile ?? join(defaultRerailHome(), DAEMON_STATE_FILE));
   if (state === undefined || !await matchesWorkspace(state.workspaceRoot, instance?.workspaceRoot)) return "daemon unavailable";
@@ -196,6 +211,24 @@ export async function readRulesPage({ cwd }: RulesPageRequest): Promise<RulesPag
   }
 }
 
+/**
+ * Whether Rerail is started in `cwd`'s repository, from the live host daemon, or null when none
+ * answers. One request: the recorded pid must be alive and the reply must parse as a presentation.
+ * Passive, and free of SQLite, so hooks and hosts that cannot load the binding (OMP runs on Bun)
+ * ask this first. A repository-operations workspace's container is not consulted.
+ */
+export async function readRepositoryState(cwd: string, host: RerailHost): Promise<RepositoryStartState | null> {
+  try {
+    const daemon = await verifyDaemon(cwd);
+    if (daemon === NOT_ON_HERE) return "stopped";
+    if (typeof daemon === "string" || daemon.instance !== undefined || !processAlive(daemon.state.pid)) return null;
+    const response = await get(daemon.origin, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationResponseSchema);
+    return response.repositoryState;
+  } catch {
+    return null;
+  }
+}
+
 /** Passive session reads: never start a daemon, mutate discovery, or open a writable database. */
 export async function readPresentation({ sessionId, host, cwd, onDemand = false }: PresentationRequest): Promise<SessionPresentation> {
   let presence: PresentationPresence = "compact";
@@ -206,6 +239,8 @@ export async function readPresentation({ sessionId, host, cwd, onDemand = false 
   try {
     // The `/api/presentation` response proves liveness; it must not pay for a second probe.
     const daemon = await verifyDaemon(cwd);
+    // A repository-operations workspace that switched its container off is stopped there.
+    if (daemon === NOT_ON_HERE) return unavailable(NOT_ON_HERE, presence, "stopped");
     if (typeof daemon === "string") return unavailable(daemon, presence);
     const { workspace, instance, state, origin, publicOrigin } = daemon;
     const response = await get(origin, `/api/presentation?${new URLSearchParams({
@@ -215,18 +250,20 @@ export async function readPresentation({ sessionId, host, cwd, onDemand = false 
     if (context === undefined || context.daemon.pid !== state.pid
         || !await matchesWorkspace(context.daemon.workspaceRoot, instance?.workspaceRoot)) return unavailable("daemon unavailable", presence);
     presence = response.presence;
-    if (presence === "silent" && !onDemand) return presentation([], presence);
-    if (context.session === null) return unavailable("session unavailable", presence);
+    if (presence === "silent" && !onDemand) return presentation([], presence, response.repositoryState);
+    // A session in a repository where Rerail is not started is never recorded, so this comes first.
+    if (response.repositoryState !== "started") return unavailable(NOT_ON_HERE, presence, response.repositoryState);
+    if (context.session === null) return unavailable("session unavailable", presence, "started");
     const { session } = context.session;
     // The harness may sit below its launch root; the session's canonical cwd stays the identity.
     const root = await realpath(session.cwd);
     if (session.sessionId !== sessionId || session.host !== host || !withinCheckout(root, workspace)) {
-      return unavailable("session unavailable", presence);
+      return unavailable("session unavailable", presence, "started");
     }
     const parts = sessionParts(publicOrigin, context.session);
     // History failure must not discard already verified session counters.
     await appendEvaluation(parts, context.session, context.daemon.native.ok, root, onDemand);
-    return presentation(parts, presence);
+    return presentation(parts, presence, "started");
   } catch {
     return unavailable("unavailable", presence);
   }

@@ -14,9 +14,6 @@ use ast_grep_core::matcher::NodeMatch;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 
-/// The key under which a witness of an evidence producer carries its projected row.
-pub(crate) const PROJECTION: &str = "$project";
-
 /// A producer's witnesses across its domain, and the files whose witnesses are unknown.
 #[derive(Default)]
 pub(crate) struct Rows {
@@ -108,7 +105,7 @@ fn relation(rows: &Rows) -> Relation {
             .map(|witness| {
                 witness
                     .captures
-                    .get(PROJECTION)
+                    .projection()
                     .and_then(Value::as_object)
                     .cloned()
                     .unwrap_or_default()
@@ -120,9 +117,7 @@ fn relation(rows: &Rows) -> Relation {
 
 /// The witness as the check reports it: without its projection.
 fn reported(mut witness: Witness) -> Witness {
-    if let Some(captures) = witness.captures.as_object_mut() {
-        captures.remove(PROJECTION);
-    }
+    witness.captures.set_projection(None);
     witness
 }
 
@@ -156,11 +151,11 @@ pub(crate) fn require_each(
         crate::policy_dsl::budget::matcher_budget_exhausted,
     ) {
         Ok(answers) => answers,
-        Err(error) => {
+        Err(crossfile::Interrupted) => {
             evaluation.failures.push(failure(
                 &check.id,
                 "runtime",
-                &format!("cross-file statement failed: {error}"),
+                "cross-file check interrupted",
                 None,
             ));
             return evaluation;
@@ -231,11 +226,11 @@ pub(crate) fn budget(
         crate::policy_dsl::budget::matcher_budget_exhausted,
     ) {
         Ok(groups) => groups,
-        Err(error) => {
+        Err(crossfile::Interrupted) => {
             evaluation.failures.push(failure(
                 &check.id,
                 "runtime",
-                &format!("cross-file statement failed: {error}"),
+                "cross-file check interrupted",
                 None,
             ));
             return evaluation;
@@ -300,7 +295,8 @@ mod tests {
             "format": "rerail.policy/v1",
             "id": "evidence-projection",
             "revision": 1,
-            "checks": [check],
+            "mode": "steer",
+            "clauses": [check],
         });
         let compiled = PolicyDslRuntime::compile(
             policy.to_string(),
@@ -328,7 +324,6 @@ mod tests {
             "anchor": "witness.span",
             "code": "E",
             "message": "evidence",
-            "severity": "error",
         })
     }
 
@@ -337,7 +332,7 @@ mod tests {
         let result = evaluate(
             json!({
                 "id": "named-comment-evidence",
-                "finding": finding(),
+                "violation": finding(),
                 "require_each": {
                     "subject": { "evidence": {
                         "as": "subject",
@@ -364,7 +359,7 @@ mod tests {
             ]),
         );
         assert_eq!(
-            result["findings"].as_array().map(Vec::len),
+            result["violations"].as_array().map(Vec::len),
             Some(1),
             "{result}"
         );
@@ -375,7 +370,7 @@ mod tests {
         let result = evaluate(
             json!({
                 "id": "module-package",
-                "finding": finding(),
+                "violation": finding(),
                 "budget": {
                     "query": { "evidence": {
                         "as": "usage",
@@ -396,15 +391,15 @@ mod tests {
             }]),
         );
         assert_eq!(
-            result["findings"][0]["variables"]["subjectId"], "\"pkg\"",
+            result["violations"][0]["variables"]["subjectId"], "\"pkg\"",
             "{result}"
         );
     }
 
-    /// A cross-file statement polls the evaluating thread's budget: past it, the check fails
+    /// A cross-file check polls the evaluating thread's budget: past it, the check fails
     /// instead of answering late, and the poll records the overrun for the caller to report.
     #[test]
-    fn cross_file_statements_stop_at_the_evaluation_budget() {
+    fn cross_file_checks_stop_at_the_evaluation_budget() {
         use crate::policy_dsl::budget::MatchBudget;
         use crate::policy_dsl::eval::evidence::{Rows, budget};
         use crate::policy_dsl::findings::Witness;
@@ -413,9 +408,10 @@ mod tests {
             "format": "rerail.policy/v1",
             "id": "evidence-budget",
             "revision": 1,
-            "checks": [{
+            "mode": "steer",
+            "clauses": [{
                 "id": "usage-budget",
-                "finding": finding(),
+                "violation": finding(),
                 "budget": {
                     "query": { "evidence": {
                         "as": "usage",
@@ -442,8 +438,16 @@ mod tests {
         let rows = || Rows {
             witnesses: vec![Witness {
                 path: "pkg/a.py".to_owned(),
-                span: json!({ "startByte": 0, "endByte": 5 }),
-                captures: json!({ (super::PROJECTION): { "package": "pkg" } }),
+                span: crate::policy_dsl::findings::Span {
+                    start_byte: 0,
+                    end_byte: 5,
+                    ..Default::default()
+                },
+                captures: {
+                    let mut captures = crate::policy_dsl::findings::Captures::default();
+                    captures.set_projection(Some(json!({ "package": "pkg" })));
+                    captures
+                },
                 message: None,
                 fix: None,
             }],
@@ -454,7 +458,7 @@ mod tests {
 
         let expired = MatchBudget::expired_for_test();
         let late = budget(&compiled.inner, check, query, rows());
-        assert!(late.findings.is_empty(), "a late statement answered");
+        assert!(late.findings.is_empty(), "a late check answered");
         assert_eq!(late.failures.len(), 1);
         assert_eq!(late.failures[0]["code"], "runtime", "{:?}", late.failures);
         assert!(expired.observed(), "the overrun was not recorded");

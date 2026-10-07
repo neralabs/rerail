@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-invalid-this",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-invalid-this` rule with its default options (https://palantir.github.io/tslint/rules/no-invalid-this/). TSLint tracks the nearest enclosing class or function-like (method, accessor, constructor, property, function declaration or expression; arrow functions are transparent). `this` is allowed when that scope is a class method (a function-like whose own nearest enclosing scope is a class) or a function with a `this` parameter, found by an inside walk that stops at the nearest scope. Without check-function-in-method, a `this` inside any class is not reported.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "invalid-this",
       "forbid": {
@@ -146,10 +147,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_INVALID_THIS",
-        "severity": "error",
         "message": "the \"this\" keyword is disallowed outside of a class body"
       }
     }

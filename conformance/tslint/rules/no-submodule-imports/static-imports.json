@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-submodule-imports",
   "revision": 1,
+  "mode": "steer",
   "description": "no-submodule-imports with whitelist @angular/core, rxjs, @angular/platform-browser/animations.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "submodule-import",
       "forbid": {
@@ -70,10 +71,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_SUBMODULE_IMPORTS",
-        "severity": "error",
         "message": "Submodule import paths from this package are disallowed; import from the root instead"
       }
     }

@@ -379,7 +379,7 @@ function f(bool $c, array $items) {
             check_document(json!({
                 "id": "php-bindings",
                 "forbid": { "ast": { "language": "php", "rule": rule } },
-                "finding": finding(),
+                "violation": finding(),
             })),
             &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
         )
@@ -390,7 +390,7 @@ function f(bool $c, array $items) {
         let compiled = compile(rule).unwrap_or_else(|error| panic!("{}", error.reason));
         let result = evaluate_file(&compiled, "php", "f.php", SOURCE);
         assert_eq!(result["failures"], json!([]), "{result}");
-        result["findings"]
+        result["violations"]
             .as_array()
             .expect("findings")
             .iter()
@@ -511,7 +511,7 @@ function f(bool $c, array $items) {
             compile(json!({ "kind": "variable_name", "resolves": { "unresolved": true } }))
                 .unwrap_or_else(|error| panic!("{}", error.reason));
         let result = evaluate_file(&compiled, "php", "g.php", source);
-        let lines: Vec<_> = result["findings"]
+        let lines: Vec<_> = result["violations"]
             .as_array()
             .expect("findings")
             .iter()
@@ -525,7 +525,7 @@ function f(bool $c, array $items) {
 
     #[test]
     fn what_php_has_no_counterpart_for_is_refused_with_why() {
-        let at = "/checks/0/forbid/ast/rule";
+        let at = "/clauses/0/forbid/ast/rule";
         for (rule, message) in [
             (
                 json!({ "kind": "variable_name", "binds": { "exported": false } }),

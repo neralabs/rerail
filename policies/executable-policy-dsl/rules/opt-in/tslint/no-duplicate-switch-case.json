@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-duplicate-switch-case",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-duplicate-switch-case` rule with its default options (https://palantir.github.io/tslint/rules/no-duplicate-switch-case/). Prevents duplicate cases in switch statements: a case value textually equal to the value of an earlier case of the same switch (TSLint compares getText()).",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "duplicate-case",
       "forbid": {
@@ -51,10 +52,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_DUPLICATE_SWITCH_CASE",
-        "severity": "error",
         "message": "Duplicate switch case."
       }
     }

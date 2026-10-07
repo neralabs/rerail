@@ -832,8 +832,10 @@ fn position<D: Doc>(node: &Node<'_, D>) -> Option<Option<NameKind>> {
         | "use_as_clause"
         | "goto_statement"
         | "named_label_statement"
-        | "property_hook"
         | "visibility_modifier" => return None,
+        // A hook's name (`get`, `set`) is no reference; a short hook's body (`get => X;`) is an
+        // expression.
+        "property_hook" if !is("body") => return None,
         "ERROR" => return Some(None),
         "object_creation_expression"
         | "base_clause"

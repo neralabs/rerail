@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:curly",
   "revision": 1,
+  "mode": "steer",
   "description": "Enforces braces unless the body is on the same line (ignore-same-line).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "loop-braces",
       "forbid": {
@@ -47,10 +48,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "CURLY",
-        "severity": "error",
         "message": "for/while statements must be braced"
       }
     },
@@ -81,10 +81,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "CURLY",
-        "severity": "error",
         "message": "do statements must be braced"
       }
     },
@@ -115,10 +114,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "CURLY",
-        "severity": "error",
         "message": "if statements must be braced"
       }
     },
@@ -157,10 +155,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "CURLY",
-        "severity": "error",
         "message": "else statements must be braced"
       }
     }

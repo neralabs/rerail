@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:ban-ts-ignore",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `ban-ts-ignore` rule with its default options (https://palantir.github.io/tslint/rules/ban-ts-ignore/). Bans `// @ts-ignore` comments.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "ts-ignore-comment",
       "forbid": {
@@ -42,10 +43,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "BAN_TS_IGNORE",
-        "severity": "error",
         "message": "Do not use \"// @ts-ignore\" comments because they suppress compilation errors."
       }
     }

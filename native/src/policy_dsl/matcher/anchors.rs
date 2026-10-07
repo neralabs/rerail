@@ -8,10 +8,11 @@ use crate::policy_dsl::language::GrammarDialect;
 use ast_grep_core::matcher::{Matcher, PatternNode, kind_utils};
 use ast_grep_core::source::SgNode;
 use ast_grep_core::{AstGrep, Doc, MatchStrictness, Node};
+use foldhash::{HashMap, HashMapExt, HashSet};
 use regex::Regex;
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
@@ -110,8 +111,8 @@ use text::TextProbe;
 mod tests;
 
 // S073/S256: value predicates name node positions, not just candidate files.
-// Plans only remove impossible roots. The compiled query statement still produces all
-// captures and witnesses, including for predicates answered by this index.
+// Plans only remove impossible roots. The matcher still produces all captures and witnesses at
+// the roots they keep (`run_check`), including for predicates answered by this index.
 #[derive(Clone)]
 pub(in crate::policy_dsl) struct AnchorPlan {
     root_kinds: Option<BTreeSet<u16>>,
@@ -569,6 +570,14 @@ struct Values<'tree> {
     prefixes: BTreeMap<&'tree str, Vec<usize>>,
 }
 
+/// The dictionary of `grouped` (each text's ordinals, ascending): sorting only the distinct
+/// texts, it is built in one pass.
+fn postings(grouped: HashMap<&str, Vec<usize>>) -> BTreeMap<&str, Vec<usize>> {
+    let mut grouped = grouped.into_iter().collect::<Vec<_>>();
+    grouped.sort_unstable_by_key(|&(text, _)| text);
+    grouped.into_iter().collect()
+}
+
 pub(in crate::policy_dsl) enum Selection<'index> {
     All,
     Roots(Cow<'index, [usize]>),
@@ -615,6 +624,8 @@ struct UtilitySelections<'index> {
     estimates: HashMap<usize, usize>,
     /// The roots each plan was evaluated over so far, and its selection among them.
     selections: HashMap<usize, (Selection<'index>, Selection<'index>)>,
+    /// The nodes of each set of several root kinds, merged once however many plans root there.
+    roots: HashMap<BTreeSet<u16>, Selection<'index>>,
 }
 
 pub(in crate::policy_dsl) struct FileAnchorIndex<'tree, D: Doc> {
@@ -653,12 +664,12 @@ where
             entries: Vec::new(),
             kinds: vec![Vec::new(); doc.get_lang().kind_count()],
             errors: Vec::new(),
-            values: HashMap::new(),
-            text_cache: RefCell::new(HashMap::new()),
+            values: HashMap::default(),
+            text_cache: RefCell::new(HashMap::default()),
             visited_nodes: 0,
             complete: false,
             walked_siblings: false,
-            by_node_id: RefCell::new(HashMap::new()),
+            by_node_id: RefCell::new(HashMap::default()),
         };
         let mut ancestors: Vec<NonZeroUsize> = Vec::new();
         // (last immediate child, children after the cursor's current child).
@@ -728,7 +739,7 @@ where
             }
         }
         let mut needs: Vec<_> = (0..index.kinds.len()).map(|_| Needs::default()).collect();
-        let mut utilities = HashSet::new();
+        let mut utilities = HashSet::default();
         for plan in plans {
             plan.collect_needs(None, &mut utilities, &mut needs);
         }
@@ -753,6 +764,11 @@ where
                 complete,
                 ..Values::default()
             };
+            // Postings are grouped by text and each dictionary is built once from them:
+            // inserting node by node searched a growing B-tree for every identifier of a large
+            // file. Ordinals arrive ascending, so each text's list is ordered.
+            let mut terms = HashMap::<&str, Vec<usize>>::new();
+            let mut prefixes = HashMap::<&str, Vec<usize>>::new();
             for &ordinal in nodes {
                 if steps & 255 == 0 && budget_exhausted() {
                     return false;
@@ -762,7 +778,7 @@ where
                 let text = &self.source[node.range()];
                 let required = node.is_named() && need.terminals.contains(text);
                 if required || (complete && text.len() <= MAX_VALUE_BYTES) {
-                    values.terms.entry(text).or_default().push(ordinal);
+                    terms.entry(text).or_default().push(ordinal);
                 } else if complete {
                     values.residue.push(ordinal);
                     if need.prefix {
@@ -770,14 +786,12 @@ where
                             .char_indices()
                             .nth(PREFIX_CHARS)
                             .map_or(text.len(), |(offset, _)| offset);
-                        values
-                            .prefixes
-                            .entry(&text[..end])
-                            .or_default()
-                            .push(ordinal);
+                        prefixes.entry(&text[..end]).or_default().push(ordinal);
                     }
                 }
             }
+            values.terms = postings(terms);
+            values.prefixes = postings(prefixes);
             self.values.insert(kind as u16, values);
         }
         true
@@ -868,16 +882,72 @@ where
                 self.kind_posting(*kinds.first().unwrap()),
             )));
         }
-        let mut result = Selection::empty();
-        for (step, &kind) in kinds.iter().enumerate() {
-            check_budget(step)?;
-            result = combine(
-                result,
-                Selection::Roots(Cow::Borrowed(self.kind_posting(kind))),
-                false,
-            )?;
+        // Each node is in one kind's posting, and every error kind reads the one of errors: the
+        // union is the postings side by side, sorted.
+        let mut result = Vec::new();
+        let mut errors = false;
+        let mut steps = 0;
+        for &kind in kinds {
+            if kind_utils::is_error_kind(kind) && std::mem::replace(&mut errors, true) {
+                continue;
+            }
+            for &ordinal in self.kind_posting(kind) {
+                check_budget(steps)?;
+                steps += 1;
+                result.push(ordinal);
+            }
         }
-        Ok(result)
+        result.sort_unstable();
+        Ok(Selection::Roots(Cow::Owned(result)))
+    }
+
+    /// `scope`'s roots of `plan`'s root kinds: the scope's own roots tested by kind when there are
+    /// fewer of them than in the kinds' postings, the postings intersected with it otherwise.
+    fn within_root_kinds<'index>(
+        &'index self,
+        scope: Selection<'index>,
+        plan: &AnchorPlan,
+        memo: &mut UtilitySelections<'index>,
+    ) -> Result<Selection<'index>, ()> {
+        let Some(kinds) = plan.root_kinds() else {
+            return Ok(scope);
+        };
+        let postings = kinds
+            .iter()
+            .map(|&kind| self.kind_posting(kind).len())
+            .sum::<usize>();
+        if scope.len(self.len()) >= postings {
+            return combine(scope, self.root_selection_in(plan, memo)?, true);
+        }
+        let errors = kinds.iter().any(|&kind| kind_utils::is_error_kind(kind));
+        self.filter(scope, |ordinal| {
+            let kind = self.kind(ordinal);
+            if kind_utils::is_error_kind(kind) {
+                errors
+            } else {
+                kinds.contains(&kind)
+            }
+        })
+    }
+
+    /// `root_selection`, merging the postings of several root kinds once per selection.
+    fn root_selection_in<'index>(
+        &'index self,
+        plan: &AnchorPlan,
+        memo: &mut UtilitySelections<'index>,
+    ) -> Result<Selection<'index>, ()> {
+        let Some(kinds) = plan
+            .root_kinds()
+            .filter(|kinds| kinds.len() > 1 && crate::policy_dsl::budget::shortcuts_on())
+        else {
+            return self.root_selection(plan);
+        };
+        if let Some(roots) = memo.roots.get(kinds) {
+            return Ok(copy_selection(roots));
+        }
+        let roots = self.root_selection(plan)?;
+        memo.roots.insert(kinds.clone(), copy_selection(&roots));
+        Ok(roots)
     }
 
     fn estimate(&self, plan: &AnchorPlan, memo: &mut UtilitySelections<'_>) -> usize {
@@ -933,7 +1003,7 @@ where
         memo: &mut UtilitySelections<'index>,
     ) -> Result<Selection<'index>, ()> {
         check_budget(0)?;
-        let scope = combine(scope, self.root_selection(plan)?, true)?;
+        let scope = self.within_root_kinds(scope, plan, memo)?;
         if scope.is_empty() {
             return Ok(scope);
         }
@@ -1057,7 +1127,7 @@ where
         regex: &Regex,
         probe: &TextProbe,
     ) -> Result<Selection<'index>, ()> {
-        let mut counts = HashMap::<u16, usize>::new();
+        let mut counts = HashMap::<u16, usize>::default();
         for (step, ordinal) in scope.ordinals(self.len()).enumerate() {
             check_budget(step)?;
             #[cfg(test)]
@@ -1065,7 +1135,7 @@ where
             *counts.entry(self.kind(ordinal)).or_default() += 1;
         }
         let mut selected = Vec::new();
-        let mut direct = HashSet::new();
+        let mut direct = HashSet::default();
         for (kind, count) in counts {
             let Some(values) = self.values.get(&kind).filter(|values| values.complete) else {
                 direct.insert(kind);
@@ -1248,26 +1318,36 @@ where
         recursive: bool,
         memo: &mut UtilitySelections<'index>,
     ) -> Result<Selection<'index>, ()> {
-        // A neighbor relation supplies a real structural context before text
-        // selection: don't read all identifiers to find a direct child of one
-        // of the already-selected parents. No grammar-specific split is needed.
-        let inner_scope = if matches!(direction, Direction::Has) && !recursive {
-            let mut children = Vec::new();
-            let mut steps = 0;
-            for parent in scope.ordinals(self.len()) {
-                let mut child = parent + 1;
-                while child < self.entries[parent].subtree_end {
-                    check_budget(steps)?;
-                    steps += 1;
-                    children.push(child);
-                    child = self.entries[child].subtree_end;
+        // A relation supplies a real structural context before text selection: don't read all
+        // identifiers to find a direct child of one of the already-selected parents, or a sibling
+        // of one of the already-selected roots. No grammar-specific split is needed.
+        let inner_scope = match direction {
+            Direction::Has if !recursive => {
+                let mut children = Vec::new();
+                let mut steps = 0;
+                for parent in scope.ordinals(self.len()) {
+                    self.push_children(parent, &mut children, &mut steps)?;
                 }
+                children.sort_unstable();
+                children.dedup();
+                Selection::Roots(Cow::Owned(children))
             }
-            children.sort_unstable();
-            children.dedup();
-            Selection::Roots(Cow::Owned(children))
-        } else {
-            Selection::All
+            Direction::Inside if !recursive && !matches!(scope, Selection::All) => {
+                let mut parents = Vec::new();
+                for (step, ordinal) in scope.ordinals(self.len()).enumerate() {
+                    check_budget(step)?;
+                    if let Some(parent) = self.entries[ordinal].parent {
+                        parents.push(parent.get() - 1);
+                    }
+                }
+                parents.sort_unstable();
+                parents.dedup();
+                Selection::Roots(Cow::Owned(parents))
+            }
+            Direction::Precedes | Direction::Follows if !matches!(scope, Selection::All) => {
+                self.sibling_scope(&scope)?
+            }
+            _ => Selection::All,
         };
         let matches = self.select_complete(inner, inner_scope, memo)?;
         if matches.is_empty() {
@@ -1276,7 +1356,8 @@ where
         match direction {
             Direction::Has => {
                 let mut roots = Vec::new();
-                let mut seen = HashSet::new();
+                // Ancestors already walked, by ordinal.
+                let mut seen = vec![0_u64; self.len().div_ceil(64)];
                 let mut steps = 0;
                 for child in matches.ordinals(self.len()) {
                     let mut current = self.entries[child].parent;
@@ -1284,9 +1365,11 @@ where
                         check_budget(steps)?;
                         steps += 1;
                         let parent = parent.get() - 1;
-                        if !seen.insert(parent) {
+                        let (word, bit) = (parent / 64, 1_u64 << (parent % 64));
+                        if seen[word] & bit != 0 {
                             break;
                         }
+                        seen[word] |= bit;
                         if scope.contains(parent) {
                             roots.push(parent);
                         }
@@ -1298,6 +1381,16 @@ where
                 }
                 roots.sort_unstable();
                 Ok(Selection::Roots(Cow::Owned(roots)))
+            }
+            // Every node is the child of a matched parent: list the matched parents' children.
+            Direction::Inside if !recursive && matches!(scope, Selection::All) => {
+                let mut children = Vec::new();
+                let mut steps = 0;
+                for parent in matches.ordinals(self.len()) {
+                    self.push_children(parent, &mut children, &mut steps)?;
+                }
+                children.sort_unstable();
+                Ok(Selection::Roots(Cow::Owned(children)))
             }
             Direction::Inside if !recursive => self.filter(scope, |ordinal| {
                 self.entries[ordinal]
@@ -1333,6 +1426,49 @@ where
         }
     }
 
+    /// Appends `parent`'s children, in order, to `children`.
+    fn push_children(
+        &self,
+        parent: usize,
+        children: &mut Vec<usize>,
+        steps: &mut usize,
+    ) -> Result<(), ()> {
+        let mut child = parent + 1;
+        while child < self.entries[parent].subtree_end {
+            check_budget(*steps)?;
+            *steps += 1;
+            children.push(child);
+            child = self.entries[child].subtree_end;
+        }
+        Ok(())
+    }
+
+    /// Every node a sibling relation reads for the roots of `scope` (`sibling_selection`): the
+    /// children of each root's parent, and of the root itself where it has none (a walk at the
+    /// root reads the root's own children). The relation's inner rule is selected among these
+    /// alone, not among every node of the file: what it selects elsewhere no root reads.
+    fn sibling_scope(&self, scope: &Selection<'_>) -> Result<Selection<'static>, ()> {
+        let mut containers = Vec::new();
+        for (step, ordinal) in scope.ordinals(self.len()).enumerate() {
+            check_budget(step)?;
+            containers.push(
+                self.entries[ordinal]
+                    .parent
+                    .map_or(ordinal, |parent| parent.get() - 1),
+            );
+        }
+        containers.sort_unstable();
+        containers.dedup();
+        let mut siblings = Vec::new();
+        let mut steps = 0;
+        for container in containers {
+            self.push_children(container, &mut siblings, &mut steps)?;
+        }
+        // A container nested in another lists its children inside the outer one's.
+        siblings.sort_unstable();
+        Ok(Selection::Roots(Cow::Owned(siblings)))
+    }
+
     // `precedes`/`follows` relate a node to its own siblings (named or anonymous): the adjacent
     // one for `neighbor`, every one in that direction for `end`. With `end`, a node qualifies iff
     // the last (first) matched child of its parent comes after (before) it.
@@ -1343,7 +1479,7 @@ where
         following: bool,
         every: bool,
     ) -> Result<Selection<'index>, ()> {
-        let mut extreme = HashMap::<usize, usize>::new();
+        let mut extreme = HashMap::<usize, usize>::default();
         if every {
             for (step, matched) in matches.ordinals(self.len()).enumerate() {
                 check_budget(step)?;
@@ -1362,7 +1498,7 @@ where
             }
         }
         let mut steps = 0;
-        let mut runs = HashMap::new();
+        let mut runs = HashMap::default();
         self.filter(scope, |ordinal| {
             let entry = &self.entries[ordinal];
             let Some(parent) = entry.parent.map(|parent| parent.get() - 1) else {
@@ -1542,6 +1678,10 @@ fn check_budget(step: usize) -> Result<(), ()> {
     }
 }
 
+/// How many times larger than the other an intersection's side must be for `combine` to search
+/// it for each root of the other rather than merge the two.
+const SEARCHED_INTERSECTION: usize = 16;
+
 // Merge sorted, unique ordinal sets; identities preserve borrowed postings.
 fn combine<'index>(
     left: Selection<'index>,
@@ -1554,7 +1694,11 @@ fn combine<'index>(
         }
         (Selection::Roots(left), Selection::Roots(right)) => (left, right),
     };
-    if std::ptr::eq(left.as_ref(), right.as_ref()) {
+    // Equal sets (one posting reached through several terms, or a merge that added nothing) are
+    // their own union and intersection: a comparison, not a merge.
+    if std::ptr::eq(left.as_ref(), right.as_ref())
+        || (crate::policy_dsl::budget::shortcuts_on() && left.as_ref() == right.as_ref())
+    {
         return Ok(Selection::Roots(left));
     }
     if left.is_empty() {
@@ -1562,6 +1706,27 @@ fn combine<'index>(
     }
     if right.is_empty() {
         return Ok(Selection::Roots(if intersection { right } else { left }));
+    }
+    // A few roots against a large posting (a scope against every identifier): search each root
+    // in the posting rather than merge the whole posting.
+    if intersection {
+        let (small, large) = if left.len() <= right.len() {
+            (&left, &right)
+        } else {
+            (&right, &left)
+        };
+        if small.len().saturating_mul(SEARCHED_INTERSECTION) < large.len() {
+            let mut result = Vec::with_capacity(small.len());
+            let mut rest: &[usize] = large;
+            for (step, &ordinal) in small.iter().enumerate() {
+                check_budget(step)?;
+                rest = &rest[rest.partition_point(|&candidate| candidate < ordinal)..];
+                if rest.first() == Some(&ordinal) {
+                    result.push(ordinal);
+                }
+            }
+            return Ok(Selection::Roots(Cow::Owned(result)));
+        }
     }
     let mut result = Vec::with_capacity(if intersection {
         left.len().min(right.len())

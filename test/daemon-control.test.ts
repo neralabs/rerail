@@ -23,6 +23,7 @@ vi.mock("node:child_process", async () => {
 });
 import { defaultKernelSocketPath, RerailDaemon, type DaemonState } from "../src/daemon.js";
 import {
+  autostartDaemon,
   DAEMON_STATE_FILE,
   daemonUsesPackageRoot,
   findRunningDaemon,
@@ -349,5 +350,26 @@ describe("openPage", () => {
     const commands = interceptSpawns(child => child.emit("exit", 1, null));
     expect(await openPage(url, underOrca, candidates)).toBe("system-browser");
     expect(commands).toEqual([orca, desktopOpener]);
+  });
+});
+
+describe("autostartDaemon", () => {
+  afterEach(() => {
+    opener.intercept = undefined;
+    vi.unstubAllEnvs();
+  });
+
+  it("launches the daemon verb, never `rerail start`, which would start the spawning repository", async () => {
+    vi.stubEnv("RERAIL_HOME", await mkdtemp(join(tmpdir(), "rerail-autostart-")));
+    vi.stubEnv("RERAIL_AUTOSTART", "1");
+    const spawned: Array<readonly string[]> = [];
+    opener.intercept = (_command, args) => {
+      spawned.push(args);
+      return Object.assign(new EventEmitter(), { unref() {} }) as unknown as ChildProcess;
+    };
+    autostartDaemon();
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0]!.slice(1)).toEqual(["daemon", "start"]);
+    expect(spawned[0]![0]).toMatch(/[\\/]dist[\\/]cli\.js$/u);
   });
 });

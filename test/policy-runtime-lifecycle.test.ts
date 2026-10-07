@@ -11,6 +11,7 @@ import { policyRuleSchema } from "../src/policy-schema.js";
 import { SqliteRuleStore } from "../src/rule-store.js";
 import { RerailRuntime } from "../src/runtime.js";
 import { temporaryDirectories, testEmbedder } from "./hook-fixtures.js";
+import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
 import { gateStorageAttachments } from "./storage-attach-gate.js";
 
 vi.mock("node:fs/promises", async importOriginal => {
@@ -26,14 +27,18 @@ interface FixtureOptions {
   /** Runs before the session starts, e.g. to seed sources the baseline walk must observe. */
   prepare?(root: string): Promise<void>;
   evaluateGeneratedEdits?(delivery: PolicySteeringDelivery): ExecutablePolicyEvaluator["evaluateGeneratedEdits"];
+  /** Start the workspace's repository and gate the runtime on it, as resident runtimes are. */
+  startGate?: boolean;
 }
-async function fixture({ deliverBackground, host = "claude-code", prepare, evaluateGeneratedEdits }: FixtureOptions = {}) {
+async function fixture({ deliverBackground, host = "claude-code", prepare, evaluateGeneratedEdits, startGate }: FixtureOptions = {}) {
   const root = await temporaryDirectory();
   await prepare?.(root);
+  const databasePath = join(root, "rerail.sqlite");
+  if (startGate === true) startTestRepository(root, databasePath);
   let delivery: PolicySteeringDelivery | undefined;
   const runtime = new RerailRuntime({
-    storageRoot: join(root, "sessions"), databasePath: join(root, "rerail.sqlite"), workspaceRoot: root,
-    embedder: testEmbedder,
+    storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root,
+    embedder: testEmbedder, startGate: startGate === true,
     ...(deliverBackground === undefined ? {} : { deliverBackground }),
     createPolicyEvaluator: options => {
       delivery = options.delivery;
@@ -41,7 +46,7 @@ async function fixture({ deliverBackground, host = "claude-code", prepare, evalu
         openWorkspace: async () => undefined,
         acceptsPath: () => true,
         evaluateGeneratedEdits: evaluateGeneratedEdits?.(options.delivery)
-          ?? (async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", findings: [], failures: [] })),
+          ?? (async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] })),
         close: async () => undefined,
       };
     },
@@ -51,7 +56,7 @@ async function fixture({ deliverBackground, host = "claude-code", prepare, evalu
   if (delivery === undefined) throw new Error("Policy delivery was not initialized");
   let event = 0;
   return {
-    runtime, delivery, session, root,
+    runtime, delivery, session, root, databasePath,
     poll: () => runtime.ingest({ kind: "user-prompt", eventId: `poll-${++event}`, sessionId: session.sessionId, text: "continue" }),
     close: () => runtime.dispose(),
   };
@@ -65,11 +70,11 @@ describe("source-scoped policy delivery", () => {
     const databasePath = join(root, "rerail.sqlite");
     const rules = new SqliteRuleStore(databasePath);
     rules.upsertPolicy(policyRuleSchema.parse({
-      format: "rerail.policy/v1", id: "test:startup", revision: 1,
+      format: "rerail.policy/v1", id: "test:startup", revision: 1, mode: "block",
       scope: { include: ["**/*.py"], exclude: [] },
-      checks: [{
+      clauses: [{
         id: "needle",
-        finding: { code: "NEEDLE", severity: "error", anchor: "witness.span", message: "No needle" },
+        violation: { code: "NEEDLE", anchor: "witness.span", message: "No needle" },
         forbid: { regex: { pattern: "NEEDLE", source: "file.content" } },
       }],
     }));
@@ -99,19 +104,19 @@ describe("source-scoped policy delivery", () => {
     try {
       await vi.waitFor(() => expect(ready).toBe(true));
       expect(enforcer!.snapshotStatus().pending).toBe(true);
-      expect(runs.list({ sessionId: session.sessionId }).runs).toEqual([
+      expect(runs.list({ sessionId: session.sessionId }).audits).toEqual([
         expect.objectContaining({ scope: "repository", status: "running" }),
       ]);
       await runtime.ingest({
-        kind: "tool-call", eventId: "call", sessionId: session.sessionId,
+        kind: "call", eventId: "call", sessionId: session.sessionId,
         toolCallId: "write", toolName: "write", input: { path: "edited.py" },
       });
       await writeFile(join(root, "edited.py"), "NEEDLE\n");
       const editDeliveries = await runtime.ingest({
-        kind: "tool-result", eventId: "result", sessionId: session.sessionId,
+        kind: "result", eventId: "result", sessionId: session.sessionId,
         toolCallId: "write", toolName: "write", output: "written",
       });
-      await vi.waitFor(() => expect(runs.list({ sessionId: session.sessionId }).runs).toEqual(expect.arrayContaining([
+      await vi.waitFor(() => expect(runs.list({ sessionId: session.sessionId }).audits).toEqual(expect.arrayContaining([
         expect.objectContaining({ scope: "touched-files", status: "completed" }),
         expect.objectContaining({ scope: "repository", status: "running" }),
       ])));
@@ -122,7 +127,7 @@ describe("source-scoped policy delivery", () => {
       await writeFile(join(root, "shell.py"), "safe()\n");
       gate.resolve();
       await enforcer!.settle();
-      expect(runs.list({ sessionId: session.sessionId }).runs).toEqual(expect.arrayContaining([
+      expect(runs.list({ sessionId: session.sessionId }).audits).toEqual(expect.arrayContaining([
         expect.objectContaining({
           scope: "repository", status: "failed",
           failures: expect.arrayContaining([expect.objectContaining({ path: "broken.py", code: "source-incomplete" })]),
@@ -132,7 +137,7 @@ describe("source-scoped policy delivery", () => {
       expect(await runtime.ingest({
         kind: "turn-end", eventId: "turn", sessionId: session.sessionId, text: "done",
       })).toEqual([]);
-      expect(runs.list({ sessionId: session.sessionId }).runs.filter(run => run.scope === "touched-files").flatMap(run => run.paths).sort())
+      expect(runs.list({ sessionId: session.sessionId }).audits.filter(run => run.scope === "touched-files").flatMap(run => run.paths).sort())
         .toEqual(["edited.py", "shell.py"]);
     } finally {
       gate.resolve();
@@ -149,11 +154,11 @@ describe("source-scoped policy delivery", () => {
     await mkdir(join(root, "web"));
     const databasePath = join(root, "rerail.sqlite");
     const needleIn = (revision: number, include: string) => policyRuleSchema.parse({
-      format: "rerail.policy/v1", id: "test:widened", revision,
+      format: "rerail.policy/v1", id: "test:widened", mode: "steer", revision,
       scope: { include: [include], exclude: [] },
-      checks: [{
+      clauses: [{
         id: "needle",
-        finding: { code: "NEEDLE", severity: "error", anchor: "witness.span", message: "No needle" },
+        violation: { code: "NEEDLE", anchor: "witness.span", message: "No needle" },
         forbid: { regex: { pattern: "NEEDLE", source: "file.content" } },
       }],
     });
@@ -188,13 +193,13 @@ describe("source-scoped policy delivery", () => {
       widened.upsertPolicy(needleIn(2, "**/*.py"));
       widened.close();
       await runtime.ingest({
-        kind: "tool-call", eventId: "call", sessionId: session.sessionId,
+        kind: "call", eventId: "call", sessionId: session.sessionId,
         toolCallId: "write", toolName: "write", input: { path: "web/new.py" },
       });
       await writeFile(join(root, "web", "new.py"), "NEEDLE\n");
       toolResult = true;
       const deliveries = await runtime.ingest({
-        kind: "tool-result", eventId: "result", sessionId: session.sessionId,
+        kind: "result", eventId: "result", sessionId: session.sessionId,
         toolCallId: "write", toolName: "write", output: "written",
       });
       expect(deliveries).toEqual([expect.objectContaining({ content: expect.stringContaining("web/new.py") })]);
@@ -220,11 +225,49 @@ describe("source-scoped policy delivery", () => {
     } finally { await test.close(); }
   });
 
+  it("hands a polling host no finding while the repository is stopped, and the held finding once restarted", async () => {
+    const test = await fixture({ startGate: true });
+    try {
+      await test.delivery.requestDelivery(test.session.sessionId, "steer", "Use the query plan", {
+        revision: 0, scope: ["route.py"], background: true,
+      });
+      stopTestRepository(test.root, test.databasePath);
+      expect(await test.runtime.collectDeliveries(test.session.sessionId)).toEqual([]);
+      startTestRepository(test.root, test.databasePath);
+      expect(await test.runtime.collectDeliveries(test.session.sessionId)).toEqual([
+        expect.objectContaining({ content: "Use the query plan" }),
+      ]);
+    } finally { await test.close(); }
+  });
+
+  it("pushes nothing when the repository is stopped while the delivery is being recorded", async () => {
+    const pushed: AdapterDelivery[] = [];
+    const test = await fixture({ host: "omp", startGate: true, deliverBackground: async delivery => { pushed.push(delivery); } });
+    const record = test.runtime.persistDelivery.bind(test.runtime);
+    const recorded = Promise.withResolvers<void>();
+    test.runtime.persistDelivery = async delivery => {
+      await record(delivery);
+      stopTestRepository(test.root, test.databasePath);
+      recorded.resolve();
+    };
+    try {
+      await test.delivery.requestDelivery(test.session.sessionId, "steer", "Use the query plan", {
+        revision: 0, scope: ["route.py"], background: true,
+      });
+      await recorded.promise;
+      // The handoff follows the ledger write within the same task chain; one macrotask lets it run.
+      const handedOff = Promise.withResolvers<void>();
+      setImmediate(handedOff.resolve);
+      await handedOff.promise;
+      expect(pushed).toEqual([]);
+    } finally { await test.close(); }
+  });
+
   it("invalidates only results depending on a changed source", async () => {
     const test = await fixture();
     try {
       await test.runtime.ingest({
-        kind: "tool-call", eventId: "call", sessionId: test.session.sessionId,
+        kind: "call", eventId: "call", sessionId: test.session.sessionId,
         toolCallId: "write-b", toolName: "write", input: { path: "b.py" },
       });
       await test.delivery.requestDelivery(test.session.sessionId, "steer", "Finding in A", { revision: 0, scope: ["a.py"] });
@@ -232,7 +275,7 @@ describe("source-scoped policy delivery", () => {
       await test.delivery.requestDelivery(test.session.sessionId, "steer", "Old cross-file finding", { revision: 0, scope: ["a.py", "b.py"] });
       await writeFile(join(test.root, "b.py"), "value = 1\n");
       const deliveries = await test.runtime.ingest({
-        kind: "tool-result", eventId: "result", sessionId: test.session.sessionId,
+        kind: "result", eventId: "result", sessionId: test.session.sessionId,
         toolCallId: "write-b", toolName: "write", output: "written",
       });
       expect(deliveries).toEqual([expect.objectContaining({ content: "Finding in A" })]);
@@ -278,18 +321,18 @@ describe("source-scoped policy delivery", () => {
           background: true,
           generatedEdit: true,
         });
-        return { revision: batch.revision, disposition: "resteer", findings: [], failures: [] };
+        return { revision: batch.revision, disposition: "steer", violations: [], failures: [] };
       },
     });
     try {
       await test.runtime.ingest({
-        kind: "tool-call", eventId: "write", sessionId: test.session.sessionId,
+        kind: "call", eventId: "write", sessionId: test.session.sessionId,
         toolCallId: "write", toolName: "write", input: { path: "route.py" },
       });
       await writeFile(join(test.root, "route.py"), "generated()\n");
       let toolResultCompleted = false;
       const toolResult = test.runtime.ingest({
-        kind: "tool-result", eventId: "result", sessionId: test.session.sessionId,
+        kind: "result", eventId: "result", sessionId: test.session.sessionId,
         toolCallId: "write", toolName: "write", output: "written",
       }).then(deliveries => {
         toolResultCompleted = true;
@@ -332,19 +375,19 @@ describe("source-scoped policy delivery", () => {
         if (violation) await delivery.requestDelivery(sessionId, "steer", `CURSOR_EXECUTE revision ${batch.revision}`, {
           revision: batch.revision, scope: batch.edits.map(edit => edit.path),
         });
-        return { revision: batch.revision, disposition: "continue", findings: [], failures: [] };
+        return { revision: batch.revision, disposition: "continue", violations: [], failures: [] };
       },
     });
     try {
       const sessionId = test.session.sessionId;
       // The agent rewrites the file from a shell, not an edit tool, so no preimage is captured.
       await test.runtime.ingest({
-        kind: "tool-call", eventId: "shell-write", sessionId, toolCallId: "shell-1", toolName: "shell",
+        kind: "call", eventId: "shell-write", sessionId, toolCallId: "shell-1", toolName: "shell",
         input: { command: ["bash", "-lc", "python3 -c \"...p.write_text(...)\""] },
       });
       await writeFile(join(test.root, "route.py"), "cursor.execute('SELECT 1')\n");
       const writeBoundary = await test.runtime.ingest({
-        kind: "tool-result", eventId: "shell-write-result", sessionId, toolCallId: "shell-1", toolName: "shell", output: "",
+        kind: "result", eventId: "shell-write-result", sessionId, toolCallId: "shell-1", toolName: "shell", output: "",
       });
       expect(batches).toEqual([{
         revision: 1,
@@ -358,11 +401,11 @@ describe("source-scoped policy delivery", () => {
 
       // The follow-up read-only command sees nothing new and no duplicate delivery.
       await test.runtime.ingest({
-        kind: "tool-call", eventId: "shell-read", sessionId, toolCallId: "shell-2", toolName: "shell",
+        kind: "call", eventId: "shell-read", sessionId, toolCallId: "shell-2", toolName: "shell",
         input: { command: ["bash", "-lc", "sed -n '1,200p' route.py"] },
       });
       const readBoundary = await test.runtime.ingest({
-        kind: "tool-result", eventId: "shell-read-result", sessionId, toolCallId: "shell-2", toolName: "shell", output: "",
+        kind: "result", eventId: "shell-read-result", sessionId, toolCallId: "shell-2", toolName: "shell", output: "",
       });
       expect(batches).toHaveLength(1);
       expect(readBoundary).toEqual([]);
@@ -400,7 +443,7 @@ describe("source-scoped policy delivery", () => {
         evaluateGeneratedEdits: async (_sessionId, batch) => ({
           revision: batch.revision,
           disposition: "continue" as const,
-          findings: [],
+          violations: [],
           failures: [],
         }),
         close: async () => undefined,

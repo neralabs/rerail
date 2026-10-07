@@ -19,7 +19,7 @@ fn run_in(language: &str, path: &str, rule: Json, source: &str) -> Vec<String> {
         check_document(json!({
             "id": language,
             "forbid": { "ast": { "language": language, "rule": rule } },
-            "finding": finding(),
+            "violation": finding(),
         })),
         &capabilities,
     )
@@ -412,7 +412,7 @@ fn blade_refusals_say_what_its_php_lacks() {
             check_document(json!({
                 "id": "blade",
                 "forbid": { "ast": { "language": "blade", "rule": rule } },
-                "finding": finding(),
+                "violation": finding(),
             })),
             &capabilities,
         ) {
@@ -463,7 +463,7 @@ fn blade_calls_reach_workspace_definitions() {
             "forbid": { "ast": { "language": "blade", "rule": {
                 "calls": { "has": { "stopBy": "end", "kind": "function_call_expression", "regex": "^exec\\(" } }
             } } },
-            "finding": finding(),
+            "violation": finding(),
         })),
         &capabilities,
     )
@@ -487,7 +487,7 @@ fn blade_calls_reach_workspace_definitions() {
             .expect("evaluation succeeds"),
     )
     .expect("JSON");
-    let found: Vec<&str> = output["findings"]
+    let found: Vec<&str> = output["violations"]
         .as_array()
         .expect("findings")
         .iter()

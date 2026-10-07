@@ -2,13 +2,13 @@ use super::AstMatcher;
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 /// `matches` recursion deeper than this fails the check for the file instead of risking the stack.
 /// Utilities recurse only through relations, so real rules recurse as deep as the syntax they walk.
 pub(super) const MAX_UTIL_DEPTH: u32 = 256;
 
-/// Stack a root's `matches` recursion may use, measured from `match_root`. A level's frames grow
+/// Stack a root's `matches` recursion may use, measured from `begin_check`. A level's frames grow
 /// with how much rule it nests and with the build (a small recursive rule takes about 2 KiB per
 /// level in release, 15 KiB in debug), so bytes back up the level count. Every thread matching runs
 /// on has room for this on top of its callers: Node's main thread and libuv workers (8 MiB) and
@@ -17,16 +17,15 @@ pub(super) const MAX_UTIL_STACK_BYTES: usize = 1 << 20;
 
 thread_local! {
     pub(super) static UTIL_DEPTH: Cell<u32> = const { Cell::new(0) };
-    /// The stack address `match_root` started at; 0 outside one (no stack limit applies).
+    /// The stack address `begin_check` started at; 0 outside one (no stack limit applies).
     pub(super) static UTIL_STACK_BASE: Cell<usize> = const { Cell::new(0) };
     pub(super) static UTIL_STEPS_LEFT: Cell<usize> = const { Cell::new(usize::MAX) };
     pub(super) static UTIL_EXCEEDED: Cell<Option<UtilLimit>> = const { Cell::new(None) };
-    /// The Unknown bridge of the test reference matcher and of the sub-rules semantic predicates
-    /// match themselves (the query engine's predicates return `Verdict`s): set when a rule failed
-    /// because a verdict it read was unknown rather than false (a value it could not decide). A
-    /// matcher that returns a match leaves it as it found it; one that fails leaves it set if it
-    /// was set on entry or its own failure is unknown. Readers (`not`, relations, `count`) clear it
-    /// before the sub-rule they read and restore it after.
+    /// The matcher's Unknown flag: set when a rule failed because a verdict it read was unknown
+    /// rather than false (a value it could not decide). A matcher that returns a match leaves it
+    /// as it found it; one that fails leaves it set if it was set on entry or its own failure is
+    /// unknown. Readers (`not`, relations, `count`) clear it before the sub-rule they read and
+    /// restore it after.
     pub(super) static UNKNOWN: Cell<bool> = const { Cell::new(false) };
     /// Whether the root being matched can reach an unknown verdict (it reads values). Without one,
     /// no matcher touches `UNKNOWN`, so rules that read no values match exactly as they did.
@@ -81,6 +80,17 @@ pub(crate) const MAX_UTIL_INSTANCES: usize = 1024;
 /// A parameterized call's mapping: each parameter and the caller's capture it names.
 pub(crate) type CallArgs = Vec<(String, String)>;
 
+/// A utility's memo scope: capture names, sorted (`UtilRef::scope`).
+pub(super) type Scope = Arc<[Arc<str>]>;
+
+/// What a utility compiles from: a digest of its language, its id and every utility it reaches
+/// (id, parameters, rule). Equal utilities of any query or document compile alike wherever nothing
+/// of the query shapes them (`context_free`): their verdicts are one (`UtilRef::memo_term`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct UtilOrigin {
+    pub(crate) digest: [u8; 32],
+}
+
 /// The `utils` of one ast query compiled for one grammar, indexed by `UtilRef::index`. Filled once,
 /// after every utility compiled, so utilities can refer to each other and to themselves.
 pub(crate) struct UtilTable {
@@ -89,6 +99,12 @@ pub(crate) struct UtilTable {
     /// Whether each utility has parameters: it runs in a frame of its own, never in its caller's
     /// environment, so its captures are not the query's.
     pub(crate) framed: Vec<bool>,
+    /// What each utility compiles from (`UtilOrigin`); `None` in a define's validation table.
+    pub(crate) origins: Vec<Option<UtilOrigin>>,
+    /// Each utility's memo scope (`UtilRef::scope`), worked out on first use.
+    scopes: Vec<OnceLock<Option<Scope>>>,
+    /// Each utility's memo identity (`UtilRef::memo_term`), worked out on first use.
+    memo_terms: Vec<OnceLock<(usize, usize)>>,
     pub(crate) rules: OnceLock<Vec<AstMatcher>>,
     /// A first compilation of the utilities, which compile-time walks read while `rules` is being
     /// compiled: what a utility binds or exports does not depend on the order of its terms, which is
@@ -101,10 +117,17 @@ pub(crate) struct UtilTable {
 }
 
 impl UtilTable {
-    pub(crate) fn new(names: Vec<String>, framed: Vec<bool>) -> Self {
+    pub(crate) fn new(
+        names: Vec<String>,
+        framed: Vec<bool>,
+        origins: Vec<Option<UtilOrigin>>,
+    ) -> Self {
         Self {
+            scopes: names.iter().map(|_| OnceLock::new()).collect(),
+            memo_terms: names.iter().map(|_| OnceLock::new()).collect(),
             names,
             framed,
+            origins,
             rules: OnceLock::new(),
             draft: OnceLock::new(),
             unfilled: AtomicBool::new(false),
@@ -350,6 +373,117 @@ pub(crate) struct UtilRef {
 }
 
 impl UtilRef {
+    /// What the memo keys the referenced utility's verdicts by (`memo`): where it compiles alike
+    /// in every query (it has a `scope`), what it compiles from (`UtilOrigin::digest`), so every
+    /// check of a file reaching an equal utility shares them; else its table and index. `None`
+    /// where its table is gone.
+    pub(super) fn memo_term(&self) -> Option<(usize, usize)> {
+        let table = self.table.upgrade()?;
+        let term = table.memo_terms.get(self.index)?.get_or_init(|| {
+            let shared = self.scope().flatten().is_some();
+            match table.origins.get(self.index).cloned().flatten() {
+                Some(origin) if shared => {
+                    let word = |bytes: &[u8]| {
+                        usize::from_le_bytes(bytes.try_into().expect("eight digest bytes"))
+                    };
+                    // Table addresses never have the top bit set: the two kinds never collide.
+                    (
+                        word(&origin.digest[..8]) | 1 << (usize::BITS - 1),
+                        word(&origin.digest[8..16]),
+                    )
+                }
+                _ => (self.table.as_ptr() as usize, self.index),
+            }
+        });
+        Some(*term)
+    }
+
+    /// The captures the referenced utility may read or bind, sorted: all its verdict reads of its
+    /// caller's bindings. `Some(None)` where it holds a term that reads more (`context_free`),
+    /// `None` where its table is gone.
+    pub(super) fn scope(&self) -> Option<Option<Scope>> {
+        let table = self.table.upgrade()?;
+        let scope = table.scopes.get(self.index)?.get_or_init(|| {
+            self.with_target(|rule| {
+                context_free(rule, &mut BTreeMap::new()).then(|| {
+                    super::CaptureAnalysis::default()
+                        .mentions(rule)
+                        .into_iter()
+                        .map(Arc::from)
+                        .collect()
+                })
+            })
+            .flatten()
+        });
+        Some(scope.clone())
+    }
+
+    /// Whether the referenced utility and the utilities it reaches hold no term a query's own
+    /// context shapes (`context_free`), with the utilities read so far: `None` while one is
+    /// being read, which a reference back counts as context-free (its cycle is as free as its
+    /// other utilities).
+    fn context_free_within(&self, read: &mut BTreeMap<(usize, usize), Option<bool>>) -> bool {
+        let key = (self.table.as_ptr() as usize, self.index);
+        if let Some(known) = read.get(&key) {
+            return known.unwrap_or(true);
+        }
+        read.insert(key, None);
+        let free = self
+            .with_target(|rule| context_free(rule, read))
+            .unwrap_or(false);
+        read.insert(key, Some(free));
+        free
+    }
+}
+
+/// Whether `matcher` holds only terms that read nothing of the environment but the captures they
+/// name (`UtilRef::scope`, for a utility): no Rerail predicate (a `parse`'s `host` rules read
+/// the host's captures, `binds` its own) and no comparison of values or of a transform's text.
+/// `read`: the utilities read so far (`UtilRef::context_free_within`).
+fn context_free(matcher: &AstMatcher, read: &mut BTreeMap<(usize, usize), Option<bool>>) -> bool {
+    let stop = |by: &super::StopBy, read: &mut BTreeMap<(usize, usize), Option<bool>>| match by {
+        super::StopBy::Rule(rule) => context_free(rule, read),
+        super::StopBy::Neighbor | super::StopBy::End => true,
+    };
+    match matcher {
+        AstMatcher::Pattern(_) | AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
+            true
+        }
+        AstMatcher::All(items) | AstMatcher::Any(items) => {
+            items.iter().all(|item| context_free(item, read))
+        }
+        AstMatcher::Not(item) => context_free(item, read),
+        AstMatcher::Inside(item, by)
+        | AstMatcher::Has(item, by)
+        | AstMatcher::Precedes(item, by)
+        | AstMatcher::Follows(item, by) => context_free(item, read) && stop(by, read),
+        AstMatcher::Field(relation) => {
+            context_free(&relation.rule, read) && stop(&relation.stop, read)
+        }
+        AstMatcher::NthChild(nth) => nth
+            .of_rule
+            .as_ref()
+            .is_none_or(|rule| context_free(rule, read)),
+        AstMatcher::Constrained(core) => {
+            context_free(&core.rule, read)
+                && core
+                    .constraints
+                    .iter()
+                    .all(|(_, constraint)| context_free(constraint, read))
+        }
+        AstMatcher::Count(count) => context_free(&count.relation, read),
+        AstMatcher::Compare(comparison) => {
+            comparison.reading.is_none() && comparison.transform.is_none()
+        }
+        AstMatcher::Util(util) => util.context_free_within(read),
+        AstMatcher::Call(call) => call.util.context_free_within(read),
+        AstMatcher::Semantic(_) => false,
+        #[cfg(test)]
+        AstMatcher::TestUnknown(_) => false,
+    }
+}
+
+impl UtilRef {
     /// The referenced rule, or its draft while the table is being compiled; `None` before the draft
     /// is filled (which the table records) or after the table is dropped.
     pub(crate) fn with_target<T>(&self, visit: impl FnOnce(&AstMatcher) -> T) -> Option<T> {
@@ -521,16 +655,16 @@ mod tests {
         let result = evaluate_file(&rule, "typescript", "a.ts", &shallow);
         assert_eq!(result["failures"], json!([]), "{result}");
         assert_eq!(
-            result["findings"].as_array().map(Vec::len),
+            result["violations"].as_array().map(Vec::len),
             Some(1),
             "{result}"
         );
         let deep = source(depth + 50);
         let result = evaluate_file(&rule, "typescript", "a.ts", &deep);
-        assert_eq!(result["findings"], json!([]), "{result}");
+        assert_eq!(result["violations"], json!([]), "{result}");
         assert_eq!(
             result["failures"],
-            json!([{ "checkId": "ast-match", "code": "budget-exceeded", "message": UtilLimit::Depth.message(), "path": "a.ts" }]),
+            json!([{ "clauseId": "ast-match", "code": "budget-exceeded", "message": UtilLimit::Depth.message(), "path": "a.ts" }]),
             "{result}"
         );
         assert!(
@@ -548,13 +682,15 @@ mod tests {
     #[test]
     fn util_evaluations_are_metered_by_the_visited_node_budget() {
         // Each level re-walks every descendant before its cheap test fails: exponential in depth.
+        // The cheap test reads text a walk cannot select nodes by (a `kind` or a literal would let
+        // the walk pass over every node before recursing).
         let document = check_document(json!({
             "id": "ast-match",
-            "finding": finding(),
+            "violation": finding(),
             "forbid": { "ast": {
                 "language": "typescript",
                 "rule": { "kind": "program", "matches": "slow" },
-                "utils": { "slow": { "has": { "stopBy": "end", "all": [{ "matches": "slow" }, { "kind": "regex" }] } } },
+                "utils": { "slow": { "has": { "stopBy": "end", "all": [{ "matches": "slow" }, { "not": { "regex": "." } }] } } },
             } },
         }));
         let capabilities = capabilities_with(|capabilities| {
@@ -566,7 +702,7 @@ mod tests {
         let result = evaluate_file(&rule, "typescript", "a.ts", &source);
         assert_eq!(
             result["failures"],
-            json!([{ "checkId": "ast-match", "code": "budget-exceeded", "message": UtilLimit::Work.message(), "path": "a.ts" }]),
+            json!([{ "clauseId": "ast-match", "code": "budget-exceeded", "message": UtilLimit::Work.message(), "path": "a.ts" }]),
             "{result}"
         );
         // The same rule on a shallow file finishes inside the budget.

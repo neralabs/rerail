@@ -60,15 +60,16 @@ function writeCapabilities(root: string): string {
 
 function rule(id: string, revision = 1): PolicyRule {
   return policyRuleSchema.parse({
-    checks: [
+    clauses: [
       {
         id: `${id}:check`,
-        finding: { anchor: "witness.span", code: "FORBIDDEN_PRINT", message: "No print", severity: "error" },
+        violation: { anchor: "witness.span", code: "FORBIDDEN_PRINT", message: "No print" },
         forbid: { ast: { language: "python", rule: { pattern: "print($ARG)" } } },
       },
     ],
     format: "rerail.policy/v1",
     id,
+    mode: "block",
     revision,
     scope: { exclude: [], include: ["**/*.py"] },
   });
@@ -121,7 +122,7 @@ describe("policy DSL catalog", () => {
     try {
       expect(catalog.policies()).toEqual([]);
       expect(catalog.quarantined()).toEqual([
-        expect.objectContaining({ kind: "policy", ruleId: "test:requires-python", reason: expect.stringMatching(/missing.*python.*capability/iu) }),
+        expect.objectContaining({ kind: "file", ruleId: "test:requires-python", reason: expect.stringMatching(/missing.*python.*capability/iu) }),
       ]);
     } finally {
       catalog.close();
@@ -231,14 +232,14 @@ describe("policy DSL catalog", () => {
       const other = catalog.policy("test:other");
       const shell = new Database(databasePath);
       shell
-        .prepare("UPDATE rules SET checks_json = ?, updated_at = 2000 WHERE id = ?")
-        .run(JSON.stringify([{ id: "x", finding: { anchor: "witness.span", code: "X", message: "x", severity: "error" }, forbid: { regex: { source: "file.content", pattern: "(" } } }]), "test:atomic");
+        .prepare("UPDATE rules SET clauses_json = ?, updated_at = 2000 WHERE id = ?")
+        .run(JSON.stringify([{ id: "x", violation: { anchor: "witness.span", code: "X", message: "x" }, forbid: { regex: { source: "file.content", pattern: "(" } } }]), "test:atomic");
       shell.close();
 
       expect(catalog.refresh()).toBe(true);
       expect(catalog.policies().map(({ id }) => id)).toEqual(["test:other"]);
       expect(catalog.policy("test:other")).toBe(other);
-      expect(catalog.quarantined()).toEqual([expect.objectContaining({ kind: "policy", ruleId: "test:atomic" })]);
+      expect(catalog.quarantined()).toEqual([expect.objectContaining({ kind: "file", ruleId: "test:atomic" })]);
 
       const store = new SqliteRuleStore(databasePath);
       store.upsertPolicy(rule("test:atomic", 3), { now: 3_000 });
@@ -255,28 +256,30 @@ describe("policy DSL catalog", () => {
 
 describe("policy schema and kernel agree on unsupported fields", () => {
   const bundledCapabilities = readFileSync(join(bundledPolicyDslDirectory(), "capabilities.json"), "utf8");
-  const finding = { anchor: "witness.span", code: "X", message: "x", severity: "error" };
+  const finding = { anchor: "witness.span", code: "X", message: "x" };
   const regex = { regex: { pattern: "x", source: "file.content" } };
-  const document = (check: Record<string, unknown>) => ({
-    checks: [{ id: "x", finding, forbid: regex, ...check }],
+  const document = (check: Record<string, unknown>, rule: Record<string, unknown> = {}) => ({
+    clauses: [{ id: "x", violation: finding, forbid: regex, ...check }],
     format: "rerail.policy/v1",
     id: "x",
+    mode: "block",
     revision: 1,
+    ...rule,
   });
   const ast = (rule: unknown, extra: Record<string, unknown> = {}, spec: Record<string, unknown> = {}) =>
-    document({ forbid: { ast: { language: "typescript", rule, ...extra } }, finding: { ...finding, ...spec } });
+    document({ forbid: { ast: { language: "typescript", rule, ...extra } }, violation: { ...finding, ...spec } });
   const evidenceQuery = (where?: unknown) => ({
     evidence: { as: "s", query: { ast: { language: "typescript", rule: { kind: "identifier" } } }, project: { path: "file.path" }, ...(where === undefined ? {} : { where }) },
   });
   const where = (predicate: unknown) => document({ forbid: undefined, budget: { query: evidenceQuery(predicate), count: { lte: 1 } } });
   const py = (rule: unknown, extra: Record<string, unknown> = {}, spec: Record<string, unknown> = {}) =>
-    document({ forbid: { ast: { language: "python", rule, ...extra } }, finding: { ...finding, ...spec } });
+    document({ forbid: { ast: { language: "python", rule, ...extra } }, violation: { ...finding, ...spec } });
   const php = (rule: unknown, extra: Record<string, unknown> = {}, spec: Record<string, unknown> = {}) =>
-    document({ forbid: { ast: { language: "php", rule, ...extra } }, finding: { ...finding, ...spec } });
+    document({ forbid: { ast: { language: "php", rule, ...extra } }, violation: { ...finding, ...spec } });
   const relation = (form: "require_each" | "budget", spec: Record<string, unknown>) => document({
     forbid: undefined,
     ...(form === "require_each" ? { require_each: { subject: evidenceQuery(), evidence: evidenceQuery() } } : { budget: { query: evidenceQuery(), count: { lte: 1 } } }),
-    finding: { ...finding, ...spec },
+    violation: { ...finding, ...spec },
   });
 
   it.each([
@@ -322,7 +325,7 @@ describe("policy schema and kernel agree on unsupported fields", () => {
     ["noqa suppression on a TypeScript query", ast({ kind: "identifier" }, {}, { suppress: { noqa: { codes: ["F401"] } } }), /noqa comments are Ruff's; a typescript query has none/],
     ["psalm suppression on a Python query", py({ kind: "identifier" }, {}, { suppress: { psalm: { issues: ["UndefinedVariable"] } } }), /@psalm-suppress tags are Psalm's; a python query has none/],
     ["phpcs suppression on a TypeScript query", ast({ kind: "identifier" }, {}, { suppress: { phpcs: { sniffs: ["Squiz.PHP.DiscouragedFunctions"] } } }), /phpcs: annotations are PHP_CodeSniffer's; a typescript query has none/],
-    ["suppression on a regex query", document({ finding: { ...finding, suppress: { eslint: { rules: ["strict"] } } } }), /suppress removes an ast query's findings/],
+    ["suppression on a regex query", document({ violation: { ...finding, suppress: { eslint: { rules: ["strict"] } } } }), /suppress removes an ast query's violations/],
     ["a cyclic transform", ast({ pattern: "f($A)" }, { transform: { B: { substring: { source: "$C" } }, C: { substring: { source: "$B" } } } }), /B has a cyclic dependency/],
     ["a transform in the string form", ast({ pattern: "f($A)" }, { transform: { B: "substring($A, startChar=1)" } }), /Invalid input/],
     ["a rewrite transform", ast({ pattern: "f($A)" }, { transform: { B: { rewrite: { source: "$A", rewriters: ["r"] } } } }), /Invalid input/],
@@ -334,19 +337,19 @@ describe("policy schema and kernel agree on unsupported fields", () => {
     ["a transform value that is no boolean", ast({ pattern: "f($A)" }, { transform: { B: { substring: { source: "$A", value: "yes" } } } }), /Invalid input/],
     ["the value of a list capture", ast({ pattern: "f($$$A)" }, { transform: { B: { substring: { source: "$$$A", value: true } } } }), /A value is read from a single capture/],
     ["the value of a transform variable", ast({ pattern: "f($A)" }, { transform: { B: { substring: { source: "$A" } }, C: { substring: { source: "$B", value: true } } } }), /A transform variable is text/],
-    ["a fix range on a regex query", document({ finding: { ...finding, fix: { template: "y", range: "capture.X" } } }), /A fix range names a capture of an ast query/],
+    ["a fix range on a regex query", document({ violation: { ...finding, fix: { template: "y", range: "capture.X" } } }), /A fix range names a capture of an ast query/],
     ["an unknown fix range", ast({ pattern: "f($A)" }, {}, { fix: { template: "y", range: "witness.start" } }), /A fix range is witness.span or capture/],
     ["a fix object without a template", ast({ pattern: "f($A)" }, {}, { fix: { range: "capture.A" } }), /Invalid input/],
-    ["each on a regex query", document({ finding: { ...finding, each: "X" } }), /each enumerates the captures of an ast query/],
+    ["each on a regex query", document({ violation: { ...finding, each: "X" } }), /each enumerates the captures of an ast query/],
     ["each with a $", ast({ pattern: "f($A)" }, {}, { each: "$A" }), /each is a metavariable name/],
     ["an array kind", ast({ kind: ["identifier"], pattern: "f()" }), /expected string/],
     ["a non-string regex", ast({ kind: "identifier", regex: 1 }), /expected string/],
     ["the removed ast capture field", ast({ pattern: "f($A)" }, { capture: "A" }), /Unrecognized key: \\"capture\\"/],
     ["the removed regex captures field", document({ forbid: { regex: { ...regex.regex, captures: ["x"] } } }), /Unrecognized key: \\"captures\\"/],
-    ["an unknown anchor", document({ finding: { ...finding, anchor: "subject.id" } }), /Anchor must be witness\.span, witness\.start, witness\.end, file\.start, or capture\.<NAME>/],
-    ["an empty capture anchor", document({ finding: { ...finding, anchor: "capture." } }), /Anchor must be/],
-    ["a non-string fix", document({ finding: { ...finding, fix: { template: "y" } } }), /expected string/],
-    ["finding variables", document({ finding: { ...finding, variables: { name: "x" } } }), /Finding variables are not supported yet/],
+    ["an unknown anchor", document({ violation: { ...finding, anchor: "subject.id" } }), /Anchor must be witness\.span, witness\.start, witness\.end, file\.start, or capture\.<NAME>/],
+    ["an empty capture anchor", document({ violation: { ...finding, anchor: "capture." } }), /Anchor must be/],
+    ["a non-string fix", document({ violation: { ...finding, fix: { template: "y" } } }), /expected string/],
+    ["finding variables", document({ violation: { ...finding, variables: { name: "x" } } }), /Violation variables are not supported yet/],
     ["an unknown predicate operator", where({ gt: ["s.size", 1] }), /Invalid input/],
     ["an eq with one operand", where({ eq: ["s.size"] }), /Invalid input/],
     ["an undefined utility", ast({ kind: "identifier", not: { matches: "missing" } }), /Utility rule missing is not defined/],
@@ -382,6 +385,9 @@ describe("policy schema and kernel agree on unsupported fields", () => {
     ["a count with two relations", ast({ kind: "program", count: { has: { kind: "if_statement" }, inside: { kind: "module" }, min: 1 } }), /exactly one relation/],
     ["a count whose min exceeds its max", ast({ kind: "program", count: { has: { kind: "if_statement" }, min: 2, max: 1 } }), /min must not exceed/],
     ["a count with an undefined utility", ast({ kind: "program", count: { has: { matches: "missing" }, min: 1 } }), /Utility rule missing is not defined/],
+    ["a missing mode", document({}, { mode: undefined }), /expected one of \\"log\\"\|\\"steer\\"\|\\"block\\"/],
+    ["a mode outside log, steer, and block", document({}, { mode: "error" }), /expected one of \\"log\\"\|\\"steer\\"\|\\"block\\"/],
+    ["a finding severity", document({ violation: { ...finding, severity: "error" } }), /Unrecognized key: \\"severity\\"/],
     ["an empty resolves list", ast({ kind: "identifier", resolves: { global: [] } }), /Too small/],
     ["a dotted global name", ast({ kind: "identifier", resolves: { global: ["a.b"] } }), /Must be an identifier/],
     ["a resolves without names", ast({ kind: "identifier", resolves: {} }), /global names, import names, imported names, this, unresolved, a binding, write, or beforeLocal/],
@@ -532,14 +538,14 @@ describe("policy schema and kernel agree on unsupported fields", () => {
     ["scriptDeclarations without language options", ast({ kind: "identifier", resolves: { global: ["a"], scriptDeclarations: true } }), /declare languageOptions/],
     ["scriptDeclarations in a Python rule", document({ forbid: { ast: { language: "python", languageOptions: {}, rule: { kind: "identifier", resolves: { global: ["a"], scriptDeclarations: true } } } } }), /Scripts are ESLint's/],
     ["this in a Python rule", document({ forbid: { ast: { language: "python", rule: { kind: "identifier", resolves: { this: "global" } } } } }), /this is TypeScript's/],
-    ["a fix on a require_each check", relation("require_each", { fix: "y" }), /Only forbid checks over an ast or file.content regex query can suggest a fix/],
+    ["a fix on a require_each check", relation("require_each", { fix: "y" }), /Only forbid clauses over an ast or file.content regex query can suggest a fix/],
     ["a start anchor on a budget check", relation("budget", { anchor: "witness.start" }), /support only witness.span/],
     ["a file start anchor on a budget check", relation("budget", { anchor: "file.start" }), /support only witness.span/],
-    ["a capture anchor on an llm check", document({ forbid: undefined, llm: {}, finding: { ...finding, anchor: "capture.X" } }), /support only witness.span/],
+    ["a capture anchor on an llm check", document({ forbid: undefined, llm: {}, violation: { ...finding, anchor: "capture.X" } }), /support only witness.span/],
     ["a host fact query", document({ forbid: { fact: { as: "s", relation: "symbols" } } }), /Unrecognized key|Invalid input/],
-    ["a fix on a file.path regex", document({ forbid: { regex: { pattern: "x", source: "file.path" } }, finding: { ...finding, fix: "y" } }), /file.path regex match is not source text/],
-    ["a capture anchor on a regex without that group", document({ finding: { ...finding, anchor: "capture.X" } }), /capture.X names no capture of the query/],
-    ["a message variable on a group-less regex", document({ finding: { ...finding, message: "set $HOME" } }), /\$HOME names no capture/],
+    ["a fix on a file.path regex", document({ forbid: { regex: { pattern: "x", source: "file.path" } }, violation: { ...finding, fix: "y" } }), /file.path regex match is not source text/],
+    ["a capture anchor on a regex without that group", document({ violation: { ...finding, anchor: "capture.X" } }), /capture.X names no capture of the query/],
+    ["a message variable on a group-less regex", document({ violation: { ...finding, message: "set $HOME" } }), /\$HOME names no capture/],
     ["a capture outside parse", py({ kind: "string", capture: "S" }), /capture binds a node of a parsed tree; use it inside parse/],
     ["an unknown grammar", py({ kind: "string", parse: { grammar: "yaml", kind: "format" } }), /grammar must be one of percentFormat, braceFormat/],
     ["a parse without a rule", py({ kind: "string", parse: { grammar: "percentFormat" } }), /parse must hold a rule over the parsed tree/],
@@ -600,20 +606,20 @@ describe("policy schema and kernel agree on unsupported fields", () => {
   });
 
   const shared = (utils: Record<string, unknown>, language = "typescript") => ({ id: `shared-${language}`, define: { language, utils } });
-  const checks = (...list: unknown[]) => ({ checks: list, format: "rerail.policy/v1", id: "x", revision: 1 });
-  const tsQuery = (id: string, rule: unknown, extra: Record<string, unknown> = {}) => ({ id, finding, forbid: { ast: { language: "typescript", rule, ...extra } } });
+  const checks = (...list: unknown[]) => ({ clauses: list, format: "rerail.policy/v1", id: "x", mode: "steer", revision: 1 });
+  const tsQuery = (id: string, rule: unknown, extra: Record<string, unknown> = {}) => ({ id, violation: finding, forbid: { ast: { language: "typescript", rule, ...extra } } });
 
   it.each([
-    ["a define with a finding", checks({ ...shared({ u: { kind: "identifier" } }), finding }, tsQuery("q", { matches: "u" })), /A define check reports nothing, so it has no finding/],
+    ["a define with a finding", checks({ ...shared({ u: { kind: "identifier" } }), violation: finding }, tsQuery("q", { matches: "u" })), /A define clause reports nothing, so it has no violation/],
     ["a define without a language", checks({ id: "d", define: { utils: { u: { kind: "identifier" } } } }, tsQuery("q", { kind: "identifier" })), /language is required/],
     ["a define without utils", checks({ id: "d", define: { language: "typescript" } }, tsQuery("q", { kind: "identifier" })), /define must hold utils/],
     ["a define beside another form", checks({ ...shared({ u: { kind: "identifier" } }), forbid: regex }, tsQuery("q", { kind: "identifier" })), /exactly one constraint form/],
-    ["a document of defines alone", checks(shared({ u: { kind: "identifier" } })), /checks must hold a check besides define/],
-    ["a check without a finding", checks({ id: "q", forbid: regex }), /finding is required/],
+    ["a document of defines alone", checks(shared({ u: { kind: "identifier" } })), /clauses must hold a clause besides define/],
+    ["a check without a finding", checks({ id: "q", forbid: regex }), /violation is required/],
     ["a utility defined twice", checks(shared({ u: { kind: "identifier" } }), { id: "e", define: { language: "typescript", utils: { u: { kind: "number" } } } }, tsQuery("q", { matches: "u" })), /already defined by another define of typescript/],
     ["a shared utility naming a query's", checks(shared({ u: { matches: "local" } }), tsQuery("q", { matches: "u" }, { utils: { local: { kind: "identifier" } } })), /Utility rule local is not defined/],
     ["a query utility a define also names", checks(shared({ u: { kind: "identifier" } }), tsQuery("q", { matches: "u" }, { utils: { u: { kind: "number" } } })), /also defined by a define of typescript; rename one/],
-    ["a shared utility of another language", checks(shared({ u: { kind: "identifier" } }), { id: "q", finding, forbid: { ast: { language: "python", rule: { matches: "u" } } } }), /Utility rule u is not defined/],
+    ["a shared utility of another language", checks(shared({ u: { kind: "identifier" } }), { id: "q", violation: finding, forbid: { ast: { language: "python", rule: { matches: "u" } } } }), /Utility rule u is not defined/],
     ["a shared utility with a key its language lacks", checks(shared({ u: { kind: "call", formatArgs: { style: "brace", string: "S", args: "A", unused: { kind: "identifier" } } } }), tsQuery("q", { kind: "identifier" })), /`formatArgs` is not available for typescript policies/],
     ["a malformed shared utility", checks(shared({ u: { kind: "identifier", stopBy: "end" } }), tsQuery("q", { kind: "identifier" })), /Unrecognized key/],
   ])("both reject %s", (_name, input, schemaError) => {
@@ -702,9 +708,9 @@ describe("policy schema and kernel agree on unsupported fields", () => {
       const patched = applyPolicyConfig(written, config);
       const parsed = policyRuleSchema.parse(patched);
       expect(JSON.stringify(parsed)).not.toContain("$option");
-      expect(parsed.checks[0]?.define?.config).toEqual(config);
+      expect(parsed.clauses[0]?.define?.config).toEqual(config);
       const runtime = loadNativeBinding().PolicyDslRuntime;
-      const findings = (document: unknown) => JSON.parse(runtime.compile(JSON.stringify(document), "json", bundledCapabilities).evaluate(snapshotOf(source), "diagnostic")).findings;
+      const findings = (document: unknown) => JSON.parse(runtime.compile(JSON.stringify(document), "json", bundledCapabilities).evaluate(snapshotOf(source), "diagnostic")).violations;
       expect(findings(parsed)).toEqual(findings(patched));
     }
     expect(() => applyPolicyConfig(checks(optionsCheck(unusedOptions), ...unusedChecks), { argz: "none" })).toThrow(/argz` is not an option this document declares/);
@@ -718,7 +724,7 @@ describe("policy schema and kernel agree on unsupported fields", () => {
     const numbers = tsQuery("n", { kind: "number" });
     const runtime = loadNativeBinding().PolicyDslRuntime;
     const findings = (document: unknown) =>
-      (JSON.parse(runtime.compile(JSON.stringify(document), "json", bundledCapabilities).evaluate(snapshotOf("class A {}\n1;\n"), "diagnostic")).findings as { checkId: string }[]).map(finding => finding.checkId);
+      (JSON.parse(runtime.compile(JSON.stringify(document), "json", bundledCapabilities).evaluate(snapshotOf("class A {}\n1;\n"), "diagnostic")).violations as { clauseId: string }[]).map(finding => finding.clauseId);
     for (const [written, expected] of [
       [checks(optionsCheck(on), spread([classes])), ["c"]],
       [checks(optionsCheck(on), spread([classes]), numbers), ["c", "n"]],
@@ -731,13 +737,13 @@ describe("policy schema and kernel agree on unsupported fields", () => {
       expect(findings(parsed)).toEqual(expected);
     }
     for (const [input, schemaError, kernelError] of [
-      [checks(optionsCheck(on, { on: false }), spread([classes])), /checks must hold a check besides define/, /checks must hold a check besides define/],
+      [checks(optionsCheck(on, { on: false }), spread([classes])), /clauses must hold a clause besides define/, /clauses must hold a clause besides define/],
       [
         checks(optionsCheck(on), spread([{ id: "d", define: { options: { x: { type: "boolean", default: true } } } }]), classes),
-        /a define is written among the checks, not made by a \$option reference/,
-        /\/checks\/1: a define is written among the checks, not made by a \$option reference/,
+        /a define is written among the clauses, not made by a \$option reference/,
+        /\/clauses\/1: a define is written among the clauses, not made by a \$option reference/,
       ],
-      [checks(optionsCheck(on), { $option: "on", define: { options: {} } }, classes), /unknown field `define`/, /unknown field `define` at \/checks\/1/],
+      [checks(optionsCheck(on), { $option: "on", define: { options: {} } }, classes), /unknown field `define`/, /unknown field `define` at \/clauses\/1/],
     ] as const) {
       const parsed = policyRuleSchema.safeParse(input);
       expect(parsed.success).toBe(false);
@@ -810,10 +816,10 @@ describe("policy schema and kernel agree on unsupported fields", () => {
           transform: { T: { replace: { source: "$X", replace: "^", by: { $option: "missing" } } }, D: { substring: { source: "$Y", default: { $option: "missing" } } } },
         },
       },
-      finding: { ...finding, anchor: "capture.X", message: "$X ${T} ${D}", suppress: { eslint: { rules: { $option: "disable" } } } },
+      violation: { ...finding, anchor: "capture.X", message: "$X ${T} ${D}", suppress: { eslint: { rules: { $option: "disable" } } } },
     };
     const window = tsQuery("window", { kind: "identifier", regex: "^window$", resolves: { global: ["window"] } }, { languageOptions: { globals: { $option: "browser", cases: { true: { window: "readonly" } }, default: {} } } });
-    const noqa = { id: "noqa", forbid: { ast: { language: "python", rule: { kind: "import_statement" } } }, finding: { ...finding, suppress: { noqa: { codes: { $option: "codes" } } } } };
+    const noqa = { id: "noqa", forbid: { ast: { language: "python", rule: { kind: "import_statement" } } }, violation: { ...finding, suppress: { noqa: { codes: { $option: "codes" } } } } };
     const files = [
       { language: "typescript", path: "a.ts", source: "const v = [a,\n  // eslint-disable-next-line names\n  b,\n\n  c, d];\nwindow.x;\n" },
       { language: "python", path: "a.py", source: "import os  # noqa: F401\n" },
@@ -821,8 +827,8 @@ describe("policy schema and kernel agree on unsupported fields", () => {
     const snapshot = JSON.stringify({ facts: [], files, format: "rerail.repository-snapshot/v1", revision: 0 });
     const runtime = loadNativeBinding().PolicyDslRuntime;
     const reported = (document: unknown) =>
-      (JSON.parse(runtime.compile(JSON.stringify(document), "json", bundledCapabilities).evaluate(snapshot, "diagnostic")).findings as { checkId: string; message: string }[]).map(
-        found => `${found.checkId}: ${found.message}`,
+      (JSON.parse(runtime.compile(JSON.stringify(document), "json", bundledCapabilities).evaluate(snapshot, "diagnostic")).violations as { clauseId: string; message: string }[]).map(
+        found => `${found.clauseId}: ${found.message}`,
       );
     const configurations: [Parameters<typeof applyPolicyConfig>[1], string[]][] = [
       [{}, ["names: a nonea none", "names: d noned none"]],
@@ -863,8 +869,8 @@ describe("policy schema and kernel agree on unsupported fields", () => {
       checks(shared({ u: { kind: "identifier", resolves: { global: ["window"] } } }), tsQuery("q", { matches: "u" }, { languageOptions: { globals: { window: "readonly" } } })),
       checks(tsQuery("q", { kind: "arguments", has: { matches: "local" } }, { utils: { local: { matches: "u" } } }), shared({ u: { kind: "identifier", not: { matches: "v" } }, v: { regex: "^_" } })),
       checks(shared({ tail: { any: [{ kind: "number" }, { kind: "parenthesized_expression", has: { matches: "tail" } }] } }), tsQuery("q", { kind: "return_statement", has: { matches: "tail" } })),
-      checks(shared({ u: { kind: "identifier" } }), shared({ u: { kind: "call" } }, "python"), tsQuery("q", { matches: "u" }), { id: "p", finding, forbid: { ast: { language: "python", rule: { matches: "u" } } } }),
-      checks(shared({ u: { kind: "identifier" } }), { id: "sw", finding, forbid: { select_when: { select: { ast: { language: "typescript", rule: { matches: "u" } } }, exists: { ast: { language: "typescript", rule: { kind: "number", inside: { matches: "u", stopBy: "end" } } } } } } }),
+      checks(shared({ u: { kind: "identifier" } }), shared({ u: { kind: "call" } }, "python"), tsQuery("q", { matches: "u" }), { id: "p", violation: finding, forbid: { ast: { language: "python", rule: { matches: "u" } } } }),
+      checks(shared({ u: { kind: "identifier" } }), { id: "sw", violation: finding, forbid: { select_when: { select: { ast: { language: "typescript", rule: { matches: "u" } } }, exists: { ast: { language: "typescript", rule: { kind: "number", inside: { matches: "u", stopBy: "end" } } } } } } }),
     ]) {
       expect(policyRuleSchema.safeParse(input).error).toBeUndefined();
       expect(() => loadNativeBinding().PolicyDslRuntime.compile(JSON.stringify(input), "json", bundledCapabilities)).not.toThrow();
@@ -955,10 +961,10 @@ describe("policy schema and kernel agree on unsupported fields", () => {
       ast({ pattern: "f($A)" }, { transform: { B: { replace: { source: "$A", replace: "^\\s+|\\s+$", by: "" } } } }, { message: "$B", fix: "g($B)" }),
       ast({ pattern: "f($$$A)" }, { transform: { B: { substring: { source: "$$$A", startChar: 1, endChar: -1 } }, C: { convert: { source: "$B", toCase: "snakeCase", separatedBy: ["caseChange", "dash"] } } } }, { message: "$C" }),
       ast({ pattern: "f($A, $C)", compare: { left: "B", op: "eq", right: "C", text: "unquoted" } }, { transform: { B: { convert: { source: "$A", toCase: "lowerCase" } } } }),
-      document({ forbid: { ast: { language: "python", rule: { pattern: "f($A)" }, transform: { B: { convert: { source: "$A", toCase: "pascalCase" } } } } }, finding: { ...finding, message: "use $B" } }),
+      document({ forbid: { ast: { language: "python", rule: { pattern: "f($A)" }, transform: { B: { convert: { source: "$A", toCase: "pascalCase" } } } } }, violation: { ...finding, message: "use $B" } }),
       ast({ any: [{ pattern: "f($A)" }, { pattern: "g()" }] }, { transform: { B: { replace: { source: "$A", default: "", replace: "^$", by: "none" } }, C: { convert: { source: "$A", default: "x", toCase: "upperCase" } }, D: { substring: { source: "$A", default: "", startChar: 1 } } } }, { message: "$B $C $D" }),
       ast({ pattern: "f($A, $C)", compare: { left: "B", op: "eq", right: "C", text: "source" } }, { transform: { B: { replace: { source: "$A", value: true, replace: "^\\s+|\\s+$", by: "" } }, D: { substring: { source: "$A", value: false } } } }, { message: "$B $D" }),
-      document({ forbid: { ast: { language: "python", rule: { pattern: "f($A)" }, transform: { B: { convert: { source: "$A", value: true, default: "", toCase: "upperCase" } } } } }, finding: { ...finding, message: "$B" } }),
+      document({ forbid: { ast: { language: "python", rule: { pattern: "f($A)" }, transform: { B: { convert: { source: "$A", value: true, default: "", toCase: "upperCase" } } } } }, violation: { ...finding, message: "$B" } }),
     ]) {
       expect(policyRuleSchema.safeParse(input).success).toBe(true);
       expect(() => loadNativeBinding().PolicyDslRuntime.compile(JSON.stringify(input), "json", bundledCapabilities)).not.toThrow();
@@ -970,7 +976,7 @@ describe("policy schema and kernel agree on unsupported fields", () => {
       ast({ kind: "call_expression", has: { kind: "arguments", has: { kind: "identifier", pattern: "$X" } } }, {}, { each: "X", anchor: "capture.X" }),
       ast({ kind: "regex", regex: "^/(?<EQ>=)" }, {}, { fix: { template: "[=]", range: "capture.EQ" } }),
       ast({ pattern: "f($A)" }, {}, { fix: { template: "g($A)", range: "witness.span" } }),
-      document({ forbid: { ast: { language: "python", rule: { kind: "comparison_operator", has: { kind: "true", pattern: "$OP" } } } }, finding: { ...finding, each: "OP" } }),
+      document({ forbid: { ast: { language: "python", rule: { kind: "comparison_operator", has: { kind: "true", pattern: "$OP" } } } }, violation: { ...finding, each: "OP" } }),
     ]) {
       expect(policyRuleSchema.safeParse(input).success).toBe(true);
       expect(() => loadNativeBinding().PolicyDslRuntime.compile(JSON.stringify(input), "json", bundledCapabilities)).not.toThrow();
@@ -1259,19 +1265,19 @@ describe("policy schema and kernel agree on unsupported fields", () => {
   });
 
   it("both accept empty finding variables and the witness anchor", () => {
-    const input = document({ finding: { ...finding, variables: {} } });
+    const input = document({ violation: { ...finding, variables: {} } });
     expect(policyRuleSchema.safeParse(input).success).toBe(true);
     expect(() => loadNativeBinding().PolicyDslRuntime.compile(JSON.stringify(input), "json", bundledCapabilities)).not.toThrow();
   });
 
   it.each([
-    ["a start anchor", document({ finding: { ...finding, anchor: "witness.start" } })],
-    ["a file start anchor", document({ finding: { ...finding, anchor: "file.start" } })],
+    ["a start anchor", document({ violation: { ...finding, anchor: "witness.start" } })],
+    ["a file start anchor", document({ violation: { ...finding, anchor: "file.start" } })],
     ["a file start anchor on an ast query", ast({ kind: "program" }, {}, { anchor: "file.start" })],
-    ["an end anchor with a regex fix", document({ finding: { ...finding, anchor: "witness.end", fix: "y" } })],
+    ["an end anchor with a regex fix", document({ violation: { ...finding, anchor: "witness.end", fix: "y" } })],
     ["a capture anchor, interpolation, and an ast fix", ast({ pattern: "f($A)" }, {}, { anchor: "capture.A", message: "f of $A", fix: "g($A)" })],
-    ["a named regex group", document({ forbid: { regex: { pattern: "(?<X>x)", source: "file.content" } }, finding: { ...finding, anchor: "capture.X", message: "$X", fix: "[$X]" } })],
-    ["escaped and digit dollars in a message", document({ finding: { ...finding, message: "set \\$HOME, pay $100" } })],
+    ["a named regex group", document({ forbid: { regex: { pattern: "(?<X>x)", source: "file.content" } }, violation: { ...finding, anchor: "capture.X", message: "$X", fix: "[$X]" } })],
+    ["escaped and digit dollars in a message", document({ violation: { ...finding, message: "set \\$HOME, pay $100" } })],
     ["a comparison of names its own negation binds", ast({
       kind: "pair",
       all: [

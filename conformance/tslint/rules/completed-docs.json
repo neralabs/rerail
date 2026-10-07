@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:completed-docs",
   "revision": 1,
+  "mode": "steer",
   "description": "Default options: classes, functions, methods, properties need a JSDoc with text; methods/properties exempt when tagged @deprecated/@inheritdoc/@see. Documented = previous sibling is a /** */ comment with text; function and method overloads share docs with a same-named sibling, get/set accessors with their counterpart.",
   "scope": { "include": ["**/*"], "exclude": [] },
-  "checks": [
+  "clauses": [
     {
       "id": "classes-internal",
       "forbid": {
@@ -19,10 +20,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for classes."
       }
     },
@@ -40,10 +40,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for exported classes."
       }
     },
@@ -89,10 +88,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for functions."
       }
     },
@@ -138,10 +136,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for exported functions."
       }
     },
@@ -205,10 +202,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for methods."
       }
     },
@@ -273,10 +269,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for properties."
       }
     }

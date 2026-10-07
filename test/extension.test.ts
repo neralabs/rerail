@@ -12,6 +12,12 @@ import { closeNativeTestDaemons, startNativeTestDaemon } from "./native-daemon-f
 import { defaultRerailDatabasePath, resetRepositoryHistory } from "../src/database.js";
 import { openScopedRuleCatalog, resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
 import { SqliteTranscriptReader } from "../src/transcript-store.js";
+import { isRerailStarted } from "../src/repository-start.js";
+import { startTestRepository } from "./support/started-repository.js";
+
+// Every test here builds real sessions (native model, kernel, rule catalog); on a loaded CI runner a
+// build alone can pass the 5 s default, whichever test happens to pay the cold start.
+vi.setConfig({ testTimeout: 30_000 });
 
 type Handler = (event: unknown, context: ExtensionContext) => unknown;
 type CommandHandler = (args: string, context: { ui: { notify(message: string, level: string): void } }) => Promise<void>;
@@ -71,10 +77,11 @@ function stubDevInstance(cwd: string, options: {
   return { remove: () => rmSync(path) };
 }
 
-async function createHarness() {
+async function createHarness({ started = true }: { started?: boolean } = {}) {
   const cwd = mkdtempSync(join(tmpdir(), "rerail-omp-extension-"));
   process.env.RERAIL_HOME = join(cwd, "home");
   temporaryDirectories.push(cwd);
+  if (started) startTestRepository(cwd);
   await startNativeTestDaemon(cwd);
   const handlers = new Map<string, Handler>();
   const commands = new Map<string, CommandHandler>();
@@ -120,19 +127,20 @@ function receiptCount(context: ExtensionContext): number {
 
 const sentenceRule: CosineRule = {
   id: "checkout",
+  mode: "steer",
   reference: "Guest checkout remains available.",
   match: { operator: "gte", threshold: 0.99 },
   sample: { source: "assistant-text", boundary: "sentence", minimumTokens: 1 },
-  action: { delivery: "steer", content: "Check checkout requirements." },
+  action: { content: "Check checkout requirements." },
   repeat: { mode: "once" },
 };
 
 describe("OMP cosine-rules extension", () => {
-  it("steers immediately when a streamed sentence matches", async () => {
+  it.each(["steer", "block"] as const)("steers immediately when a streamed sentence matches a %s rule", async mode => {
     const harness = await createHarness();
     createCosineRulesExtension({
       modelPath: resolve("model"),
-      rules: [sentenceRule],
+      rules: [{ ...sentenceRule, mode }],
       registerTool: false,
       registerCommand: false,
     })(harness.pi);
@@ -160,7 +168,7 @@ describe("OMP cosine-rules extension", () => {
           customType: RULE_MESSAGE_TYPE,
           content: "Check checkout requirements.",
           display: true,
-          details: { requested: "steer", mechanism: expect.any(String), sessionId: "omp-test-session" },
+          details: { requested: mode, mechanism: "native-queue", sessionId: "omp-test-session" },
         },
         options: { deliverAs: "steer" },
       },
@@ -168,7 +176,7 @@ describe("OMP cosine-rules extension", () => {
     expect(harness.entries).toEqual([
       expect.objectContaining({
         customType: "rerail.match",
-        data: expect.objectContaining({ ruleId: "checkout", delivery: "steer" }),
+        data: expect.objectContaining({ ruleId: "checkout", mode }),
       }),
     ]);
     expect(receiptCount(harness.context)).toBe(1);
@@ -218,25 +226,25 @@ describe("OMP cosine-rules extension", () => {
   it("loads enabled cosine rules from the project database and lets them override file rules", async () => {
     const harness = await createHarness();
     mkdirSync(join(harness.context.cwd, ".omp"));
-    writeFileSync(join(harness.context.cwd, ".omp", "cosine-rules.json"), JSON.stringify({
+    writeFileSync(join(harness.context.cwd, ".omp", "conversation-rules.json"), JSON.stringify({
       version: 1,
       rules: [
-        { ...sentenceRule, action: { delivery: "steer", content: "From the JSON file." } },
-        { ...sentenceRule, id: "file-only", action: { delivery: "steer", content: "First file." } },
+        { ...sentenceRule, action: { content: "From the JSON file." } },
+        { ...sentenceRule, id: "file-only", action: { content: "First file." } },
       ],
     }), { flag: "wx" });
     writeFileSync(join(harness.context.cwd, ".omp", "second-rules.json"), JSON.stringify({
       version: 1,
-      rules: [{ ...sentenceRule, id: "file-only", action: { delivery: "steer", content: "File-only rule." } }],
+      rules: [{ ...sentenceRule, id: "file-only", action: { content: "File-only rule." } }],
     }), { flag: "wx" });
     const store = openScopedRuleCatalog(harness.context.cwd);
-    store.upsertCosine({ ...sentenceRule, action: { delivery: "steer", content: "From the database." } });
-    store.upsertCosine({ ...sentenceRule, id: "disabled", action: { delivery: "steer", content: "Disabled rule." } }, { enabled: false });
+    store.upsertCosine({ ...sentenceRule, action: { content: "From the database." } });
+    store.upsertCosine({ ...sentenceRule, id: "disabled", action: { content: "Disabled rule." } }, { enabled: false });
     store.close();
     createCosineRulesExtension({
       modelPath: resolve("model"),
-      rules: [{ ...sentenceRule, id: "file-only", action: { delivery: "steer", content: "Host fallback." } }],
-      ruleFiles: [".omp/cosine-rules.json", ".omp/second-rules.json"],
+      rules: [{ ...sentenceRule, id: "file-only", action: { content: "Host fallback." } }],
+      ruleFiles: [".omp/conversation-rules.json", ".omp/second-rules.json"],
       registerTool: false,
       registerCommand: false,
     })(harness.pi);
@@ -302,8 +310,9 @@ describe("OMP cosine-rules extension", () => {
       ...sentenceRule,
       id: "tool-input",
       reference: '{"checkout":"Guest checkout remains available."}',
+      mode: "log",
       sample: { source: "tool:submit", boundary: "tool-call", minimumTokens: 1 },
-      action: { delivery: "observe", content: "Observe the tool." },
+      action: { content: "Observe the tool." },
     };
     createCosineRulesExtension({
       modelPath: resolve("model"),
@@ -351,7 +360,7 @@ describe("OMP cosine-rules extension", () => {
           ruleId: "tool-input",
           source: "tool:submit",
           boundary: "tool-call",
-          delivery: "observe",
+          mode: "log",
         }),
       }),
     ]);
@@ -361,9 +370,10 @@ describe("OMP cosine-rules extension", () => {
     const harness = await createHarness();
     const forcePush: CosineRule = {
       id: "no-force-push",
+      mode: "log",
       match: { field: "input.command", regex: "\\bgit\\s+push\\b[^\\n]*--force\\b" },
       sample: { source: "tool:bash", boundary: "tool-call" },
-      action: { delivery: "observe", content: "Do not force-push." },
+      action: { content: "Do not force-push." },
       repeat: { mode: "always" },
     };
     createCosineRulesExtension({
@@ -395,12 +405,12 @@ describe("OMP cosine-rules extension", () => {
     expect(harness.entries).toEqual([
       expect.objectContaining({
         customType: "rerail.match",
-        data: expect.objectContaining({ ruleId: "no-force-push", source: "tool:bash", boundary: "tool-call", delivery: "observe" }),
+        data: expect.objectContaining({ ruleId: "no-force-push", source: "tool:bash", boundary: "tool-call", mode: "log" }),
       }),
     ]);
   });
 
-  it("detaches the current OMP runtime when the checkout is disabled", async () => {
+  it("detaches the current OMP runtime when Rerail is stopped in the repository", async () => {
     const harness = await createHarness();
     const notices: Array<{ message: string; level: string }> = [];
     createCosineRulesExtension({
@@ -410,21 +420,61 @@ describe("OMP cosine-rules extension", () => {
     })(harness.pi);
     await harness.handlers.get("session_start")?.({ type: "session_start" }, harness.context);
 
-    const disable = harness.commands.get("rerail-disable");
-    if (disable === undefined) throw new Error("OMP extension did not register rerail-disable");
-    await disable("", { ui: { notify(message, level) { notices.push({ message, level }); } } });
+    const stop = harness.commands.get("rerail-stop");
+    if (stop === undefined) throw new Error("OMP extension did not register rerail-stop");
+    await stop("", { ui: { notify(message, level) { notices.push({ message, level }); } } });
     await harness.handlers.get("session_start")?.({ type: "session_start" }, harness.context);
     await harness.handlers.get("before_agent_start")?.(
       { type: "before_agent_start", prompt: "Guest checkout remains available." },
       harness.context,
     );
 
-    expect(existsSync(join(harness.context.cwd, ".rerail", "disabled"))).toBe(true);
-    expect(notices).toEqual([{
-      message: expect.stringContaining(`Rerail disabled for ${harness.context.cwd}`),
-      level: "info",
-    }]);
+    expect(isRerailStarted(harness.context.cwd)).toBe(false);
+    expect(notices).toEqual([{ message: expect.stringContaining("○ Rerail is stopped in"), level: "info" }]);
     expect(harness.messages).toEqual([]);
+  }, 30_000); // `/rerail-stop` runs the real CLI, a Node process of its own.
+
+  it("stops Rerail in the database the extension was configured with, not the Rerail home's", async () => {
+    const harness = await createHarness();
+    const configured = join(harness.context.cwd, "configured", "rules.sqlite");
+    startTestRepository(harness.context.cwd, configured);
+    createCosineRulesExtension({
+      modelPath: resolve("model"),
+      databasePath: configured,
+      rules: [sentenceRule],
+      registerTool: false,
+    })(harness.pi);
+    await harness.handlers.get("session_start")?.({ type: "session_start" }, harness.context);
+
+    const stop = harness.commands.get("rerail-stop");
+    if (stop === undefined) throw new Error("OMP extension did not register rerail-stop");
+    await stop("", { ui: { notify() {} } });
+
+    expect(isRerailStarted(harness.context.cwd, configured)).toBe(false);
+    // The home's database, which this extension does not read, is left as it was.
+    expect(isRerailStarted(harness.context.cwd)).toBe(true);
+  }, 30_000); // `/rerail-stop` runs the real CLI, a Node process of its own.
+
+  it("records and steers nothing in a repository where Rerail was never started", async () => {
+    const harness = await createHarness({ started: false });
+    createCosineRulesExtension({
+      modelPath: resolve("model"),
+      rules: [sentenceRule],
+      registerTool: false,
+    })(harness.pi);
+    await harness.handlers.get("session_start")?.({ type: "session_start" }, harness.context);
+    await harness.handlers.get("before_agent_start")?.(
+      { type: "before_agent_start", prompt: "Guest checkout remains available." },
+      harness.context,
+    );
+
+    expect(harness.messages).toEqual([]);
+    const reader = new SqliteTranscriptReader(defaultRerailDatabasePath());
+    try {
+      expect(reader.session("omp-test-session")).toBeUndefined();
+    } finally {
+      reader.close();
+    }
   });
 
   it("retires the live owner before rebuilding the same OMP session through cosine reload", async () => {

@@ -31,11 +31,12 @@ const printPolicy = {
   format: "rerail.policy/v1",
   id: "test:print",
   revision: 1,
+  mode: "steer",
   scope: { include: ["api/**/*.py"], exclude: [] },
-  checks: [
+  clauses: [
     {
       id: "print-check",
-      finding: { code: "PRINT", severity: "error", anchor: "witness.span", message: "Prefer logging" },
+      violation: { code: "PRINT", anchor: "witness.span", message: "Prefer logging" },
       forbid: { ast: { language: "python", rule: { pattern: "print($$$ARGS)" } } },
     },
   ],
@@ -46,11 +47,12 @@ const componentStoryPolicy = {
   format: "rerail.policy/v1",
   id: "test:component-story",
   revision: 1,
+  mode: "steer",
   scope: { include: ["api/**/*.tsx"], exclude: [] },
-  checks: [
+  clauses: [
     {
       id: "component-without-story",
-      finding: { code: "STORY", severity: "warning", anchor: "witness.span", message: "Component has no story" },
+      violation: { code: "STORY", anchor: "witness.span", message: "Component has no story" },
       require_each: {
         subject: {
           evidence: {
@@ -79,11 +81,12 @@ const asyncBlockingPolicy = {
   format: "rerail.policy/v1",
   id: "test:async-blocking",
   revision: 1,
+  mode: "steer",
   scope: { include: ["api/**/*.py"], exclude: [] },
-  checks: [
+  clauses: [
     {
       id: "async-blocking",
-      finding: { code: "BLOCKING", severity: "warning", anchor: "witness.span", message: "blocks via $CHAIN" },
+      violation: { code: "BLOCKING", anchor: "witness.span", message: "blocks via $CHAIN" },
       forbid: {
         ast: {
           language: "python",
@@ -111,7 +114,7 @@ async function fixture(
   root: string,
   options: {
     scope?: "repository" | "touched-files" | "ai-output";
-    mode?: "resteer" | "log";
+    mode?: "steer" | "log";
     executions?: PolicyExecutionRecorder;
   } = {},
   limits: Partial<{ maxSourceBytes: number; maxVisitedNodes: number }> = {},
@@ -144,7 +147,7 @@ describe("Rerail executable policy runtime", () => {
   it("starts generation without waiting for, or inheriting findings from, the initial diagnostic scan", async () => {
     const root = await rootDirectory();
     await writeFile(join(root, "api", "existing.py"), "print('existing')\n");
-    const { catalog, deliveries, enforcer } = await fixture(root, { scope: "touched-files", mode: "resteer" });
+    const { catalog, deliveries, enforcer } = await fixture(root, { scope: "touched-files", mode: "steer" });
     try {
       await enforcer.openWorkspace("generation");
       const diagnostic = enforcer.scan("generation", { scope: "repository", mode: "log" });
@@ -157,7 +160,7 @@ describe("Rerail executable policy runtime", () => {
       });
       const result = await settled(enforcer);
       await diagnostic;
-      expect(result.findings).toEqual([expect.objectContaining({ path: "api/generated.py", code: "PRINT" })]);
+      expect(result.violations).toEqual([expect.objectContaining({ path: "api/generated.py", code: "PRINT" })]);
       expect(deliveries).toHaveLength(1);
     } finally {
       await enforcer.close();
@@ -181,7 +184,7 @@ describe("Rerail executable policy runtime", () => {
         checkpoints: ["edit"],
         edits: [{ path: "api/generated.py", language: "python", previousText: "print('bad')\n", deleted: true }],
       });
-      expect((await settled(enforcer)).findings).toEqual([]);
+      expect((await settled(enforcer)).violations).toEqual([]);
     } finally {
       await enforcer.close();
       catalog.close();
@@ -212,10 +215,10 @@ describe("Rerail executable policy runtime", () => {
           ruleId: "test:print",
           revision: 1,
           applicability: "project",
-          origin: "local",
+          origin: "user",
         }),
       ]);
-      expect(runs.find(({ input }) => input.scope === "ai-output")?.result?.findings).toEqual([
+      expect(runs.find(({ input }) => input.scope === "ai-output")?.result?.violations).toEqual([
         expect.objectContaining({ path: "api/generated.py", code: "PRINT" }),
       ]);
     } finally {
@@ -241,14 +244,14 @@ describe("Rerail executable policy runtime", () => {
       await enforcer.openWorkspace("scope-budget");
       await enforcer.scan("scope-budget", { scope: "repository", mode: "log" });
       expect(deliveries).toEqual([]);
-      expect(reader.list({ scope: "repository", sessionId: "scope-budget" }).runs).toEqual([
+      expect(reader.list({ scope: "repository", sessionId: "scope-budget" }).audits).toEqual([
         expect.objectContaining({
           status: "completed",
           failures: [],
-          findings: [expect.objectContaining({ path: "api/route.py", code: "PRINT" })],
+          violations: [expect.objectContaining({ path: "api/route.py", code: "PRINT" })],
         }),
       ]);
-      await enforcer.scan("scope-budget", { scope: "repository", mode: "resteer" });
+      await enforcer.scan("scope-budget", { scope: "repository", mode: "steer" });
       expect(deliveries).toEqual([expect.stringContaining("api/route.py")]);
       await enforcer.evaluateGeneratedEdits("scope-budget", {
         revision: 1, checkpoints: ["edit"],
@@ -262,7 +265,7 @@ describe("Rerail executable policy runtime", () => {
       });
       const result = await settled(enforcer);
       expect(result.failures).toEqual([]);
-      expect(result.findings).toEqual([expect.objectContaining({ path: "api/route.py", code: "PRINT" })]);
+      expect(result.violations).toEqual([expect.objectContaining({ path: "api/route.py", code: "PRINT" })]);
       expect(deliveries).toHaveLength(2);
     } finally {
       await enforcer.close();
@@ -288,9 +291,9 @@ describe("Rerail executable policy runtime", () => {
       const result = await settled(enforcer);
       expect(deliveries).toEqual([]);
       expect(result.failures).toEqual([expect.objectContaining({ stage: "scope", code: "source-incomplete" })]);
-      expect(reader.list({ scope: "ai-output", sessionId: "missing-preimage" }).runs).toEqual([
+      expect(reader.list({ scope: "ai-output", sessionId: "missing-preimage" }).audits).toEqual([
         expect.objectContaining({
-          status: "failed", findings: [],
+          status: "failed", violations: [],
           failures: [expect.objectContaining({ stage: "scope", code: "source-incomplete", path: "api/existing.py" })],
         }),
       ]);
@@ -301,7 +304,7 @@ describe("Rerail executable policy runtime", () => {
     }
   });
 
-  it("records repository scans and only delivers them in resteer mode", async () => {
+  it("records repository scans and only delivers them in steer mode", async () => {
     const root = await rootDirectory();
     await writeFile(join(root, "api", "existing.py"), "print('existing')\n");
     const { catalog, deliveries, enforcer } = await fixture(root);
@@ -309,7 +312,7 @@ describe("Rerail executable policy runtime", () => {
       await enforcer.openWorkspace("diagnostic");
       await enforcer.scan("diagnostic", { scope: "repository", mode: "log" });
       expect(deliveries).toEqual([]);
-      await enforcer.scan("diagnostic", { scope: "repository", mode: "resteer" });
+      await enforcer.scan("diagnostic", { scope: "repository", mode: "steer" });
       expect(deliveries).toHaveLength(1);
     } finally {
       await enforcer.close();
@@ -334,7 +337,7 @@ describe("Rerail executable policy runtime", () => {
       expect(runs[0]?.result).toMatchObject({
         status: "completed",
         failures: [],
-        findings: [expect.objectContaining({ code: "PRINT", path: "api/large.py" })],
+        violations: [expect.objectContaining({ code: "PRINT", path: "api/large.py" })],
       });
     } finally {
       await enforcer.close();
@@ -367,11 +370,11 @@ describe("Rerail executable policy runtime", () => {
             failures: [
               ...Array.from({ length: 20 }, () => expect.objectContaining({
                 code: "budget-exceeded",
-                checkId: "source",
+                clauseId: "source",
                 stage: "read",
               })),
               expect.objectContaining({
-                checkId: "scan",
+                clauseId: "scan",
                 code: "budget-exceeded",
                 stage: "scan",
               }),
@@ -407,7 +410,7 @@ describe("Rerail executable policy runtime", () => {
           stage: "evaluate",
         })),
         expect.objectContaining({
-          checkId: "scan",
+          clauseId: "scan",
           code: "budget-exceeded",
           stage: "scan",
         }),
@@ -423,7 +426,7 @@ describe("Rerail executable policy runtime", () => {
     await Promise.all(Array.from({ length: 24 }, (_, index) =>
       writeFile(join(root, "api", `complex-paged-${index}.py`), "print('one')\nprint('two')\n"),
     ));
-    const pages: Array<Pick<PolicyRunResult, "findings" | "failures">> = [];
+    const pages: Array<Pick<PolicyRunResult, "violations" | "failures">> = [];
     const executions: PolicyExecutionRecorder = {
       supportsResultPages: true,
       start() { return "paged"; },
@@ -443,7 +446,7 @@ describe("Rerail executable policy runtime", () => {
           stage: "evaluate",
         })),
         expect.objectContaining({
-          checkId: "scan",
+          clauseId: "scan",
           code: "budget-exceeded",
           stage: "scan",
         }),
@@ -485,7 +488,7 @@ describe("Rerail executable policy runtime", () => {
     try {
       await enforcer.openWorkspace("stories");
       await enforcer.scan("stories", { scope: "repository", mode: "log" });
-      expect(runs[0]?.result?.findings).toEqual([
+      expect(runs[0]?.result?.violations).toEqual([
         expect.objectContaining({ path: "api/Card.tsx", code: "STORY" }),
       ]);
       // Repository scope re-reads the checkout, as an agent's saved edit would be.
@@ -495,14 +498,14 @@ describe("Rerail executable policy runtime", () => {
         checkpoints: ["edit"],
         edits: [{ path: "api/Card.stories.tsx", language: "typescript", generatedText: story }],
       });
-      expect((await settled(enforcer)).findings).toEqual([]);
+      expect((await settled(enforcer)).violations).toEqual([]);
       await rm(join(root, "api", "Button.stories.tsx"));
       await enforcer.evaluateGeneratedEdits("stories", {
         revision: 2,
         checkpoints: ["edit"],
         edits: [{ path: "api/Button.stories.tsx", language: "typescript", previousText: story, deleted: true }],
       });
-      expect((await settled(enforcer)).findings).toEqual([
+      expect((await settled(enforcer)).violations).toEqual([
         expect.objectContaining({ path: "api/Button.tsx", code: "STORY" }),
       ]);
     } finally {
@@ -529,7 +532,7 @@ describe("Rerail executable policy runtime", () => {
     try {
       await enforcer.openWorkspace("calls");
       await enforcer.scan("calls", { scope: "repository", mode: "log" });
-      expect(runs[0]?.result?.findings).toEqual([
+      expect(runs[0]?.result?.violations).toEqual([
         expect.objectContaining({ path: "api/handler.py", code: "BLOCKING", message: "blocks via api.util.pause" }),
       ]);
       // The callee's file loses its blocking call: the finding in the unchanged caller goes.
@@ -539,14 +542,14 @@ describe("Rerail executable policy runtime", () => {
         checkpoints: ["edit"],
         edits: [{ path: "api/util.py", language: "python", generatedText: idle, previousText: sleeps }],
       });
-      expect((await settled(enforcer)).findings).toEqual([]);
+      expect((await settled(enforcer)).violations).toEqual([]);
       await writeFile(join(root, "api", "util.py"), sleeps);
       await enforcer.evaluateGeneratedEdits("calls", {
         revision: 2,
         checkpoints: ["edit"],
         edits: [{ path: "api/util.py", language: "python", generatedText: sleeps, previousText: idle }],
       });
-      expect((await settled(enforcer)).findings).toEqual([
+      expect((await settled(enforcer)).violations).toEqual([
         expect.objectContaining({ path: "api/handler.py", code: "BLOCKING" }),
       ]);
     } finally {

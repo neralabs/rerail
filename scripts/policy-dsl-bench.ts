@@ -13,7 +13,7 @@ import { bundledPolicyDslDirectory } from "../src/policy-dsl-catalog.js";
  * The directory must lie inside this repository. Defaults to `src` and a `console.log($$$ARGS)` rule. `.ts` files
  * parse with the TypeScript grammar and `.tsx` with TSX, so a tree holding both exercises both grammars.
  * Evaluation goes through the incremental workspace the enforcer uses, so a file the grammar cannot parse is
- * reported as a per-file failure while every other file still yields findings.
+ * reported as a per-file failure while every other file still yields violations.
  */
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -44,13 +44,14 @@ function compile(pattern: string): NativeCompiledPolicyDsl {
   const runtime = loadNativeBinding().PolicyDslRuntime;
   if (runtime === undefined) throw new Error("Native binding does not export PolicyDslRuntime; run npm run build:native");
   const policy = JSON.stringify({
-    checks: [{
-      finding: { anchor: "witness.span", code: "BENCH_MATCH", message: `Matched ${pattern}`, severity: "advisory" },
+    clauses: [{
       forbid: { ast: { language: "typescript", rule: { pattern } } },
       id: "bench",
+      violation: { anchor: "witness.span", code: "BENCH_MATCH", message: `Matched ${pattern}` },
     }],
     format: "rerail.policy/v1",
     id: "bench:typescript-ast",
+    mode: "log",
     revision: 1,
     scope: { exclude: [], include: ["**/*"] },
   });
@@ -76,7 +77,7 @@ const compileMs = performance.now() - compileStarted;
 const request = JSON.stringify({ files, removed: [], revision: 1 });
 
 const timings: number[] = [];
-let last: { status: string; findings: unknown[]; failures: Array<{ code: string; path?: string }>; metrics: { visitedNodes: number } } | undefined;
+let last: { status: string; violations: unknown[]; failures: Array<{ code: string; path?: string }>; metrics: { visitedNodes: number } } | undefined;
 for (let run = 0; run < runs; run += 1) {
   const workspace = new (loadNativeBinding().PolicyDslWorkspace)();
   workspace.addPolicy(compiled);
@@ -96,5 +97,5 @@ console.log(`files          ${files.length} (${counts.typescript} .ts, ${counts.
 console.log(`compile        ${compileMs.toFixed(1)} ms`);
 console.log(`evaluate       best ${best.toFixed(1)} ms, median ${median.toFixed(1)} ms over ${runs} runs`);
 console.log(`throughput     ${(files.length / (best / 1000)).toFixed(0)} files/s, ${(bytes / 1_048_576 / (best / 1000)).toFixed(1)} MiB/s`);
-console.log(`result         ${last.status}, ${last.findings.length} findings, ${last.failures.length} failures, ${last.metrics.visitedNodes} nodes visited`);
+console.log(`result         ${last.status}, ${last.violations.length} violations, ${last.failures.length} failures, ${last.metrics.visitedNodes} nodes visited`);
 for (const failure of last.failures.slice(0, 20)) console.log(`  failure      ${failure.code} ${failure.path ?? ""}`);

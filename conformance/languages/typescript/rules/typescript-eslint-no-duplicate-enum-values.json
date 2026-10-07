@@ -1,0 +1,178 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-no-duplicate-enum-values",
+  "revision": 3,
+  "mode": "steer",
+  "description": "typescript-eslint 8.70.1 @typescript-eslint/no-duplicate-enum-values, default options. Port of typescript-eslint's `no-duplicate-enum-values` rule (https://typescript-eslint.io/rules/no-duplicate-enum-values). Flags an enum member whose initializer (a string, number or static template literal under any chain of unary + and -) has the same value, by Object.is, as an earlier member's; NaN values and other initializers are ignored.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "duplicate-value",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "enum_assignment",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "ev",
+                  "pattern": "$V",
+                  "follows": {
+                    "regex": "^=$",
+                    "stopBy": "neighbor"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "pattern": "$V",
+                  "any": [
+                    {
+                      "value": {
+                        "ge": 0
+                      }
+                    },
+                    {
+                      "value": {
+                        "lt": 0
+                      }
+                    },
+                    {
+                      "value": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "count": {
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "enum_assignment",
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "ev",
+                          "pattern": "$W",
+                          "follows": {
+                            "regex": "^=$",
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      }
+                    ],
+                    "compare": {
+                      "left": "W",
+                      "op": "eq",
+                      "right": "V",
+                      "text": "value"
+                    }
+                  },
+                  "min": 1
+                }
+              }
+            ]
+          },
+          "utils": {
+            "ev": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "number",
+                  "value": {
+                    "type": "number"
+                  }
+                },
+                {
+                  "kind": "template_string",
+                  "not": {
+                    "has": {
+                      "kind": "template_substitution",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "ev"
+                  }
+                },
+                {
+                  "kind": "unary_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^[-+]$"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "ev"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "transform": {
+            "VQ": {
+              "replace": {
+                "source": "$V",
+                "replace": "(?s)^['\"`](.*)['\"`]$",
+                "by": "${1}"
+              }
+            },
+            "VS": {
+              "replace": {
+                "source": "$VQ",
+                "replace": "^\\+*(-?)\\+*([0-9])",
+                "by": "${1}${2}"
+              }
+            },
+            "VT": {
+              "replace": {
+                "source": "$VS",
+                "replace": "^-(0+(?:\\.0*)?)$",
+                "by": "${1}"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-duplicate-enum-values",
+        "message": "Duplicate enum member value $VT.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-duplicate-enum-values"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

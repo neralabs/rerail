@@ -40,16 +40,17 @@ describe("shared harness kernel", () => {
       await mkdir(join(root, ".omp"));
       await mkdir(join(root, "api"));
       await writeFile(
-        join(root, ".omp", "cosine-rules.json"),
+        join(root, ".omp", "conversation-rules.json"),
         JSON.stringify({
           version: 1,
           rules: [
             {
               id: "require-transaction-guidance",
+              mode: "steer",
               reference: "Preserve database transaction atomicity",
               match: { operator: "gte", threshold: 0.95 },
               sample: { source: "user-input", boundary: "message" },
-              action: { delivery: "steer", content: "COSINE: preserve transaction atomicity" },
+              action: { content: "COSINE: preserve transaction atomicity" },
               repeat: { mode: "once" },
             },
           ],
@@ -76,7 +77,7 @@ describe("shared harness kernel", () => {
         },
       ]);
       await runtime.ingest({
-        kind: "tool-call",
+        kind: "call",
         toolCallId: "write-route",
         eventId: "write-start",
         sessionId: session.sessionId,
@@ -85,7 +86,7 @@ describe("shared harness kernel", () => {
       });
       await writeFile(join(root, "api", "route.py"), 'def route(cursor):\n    cursor.execute("SELECT 1")\n');
       const policy = await runtime.ingest({
-        kind: "tool-result",
+        kind: "result",
         toolCallId: "write-route",
         eventId: "write-end",
         sessionId: session.sessionId,
@@ -127,7 +128,7 @@ describe("shared harness kernel", () => {
         const { event } = decodeRerailEventFrame(
           JSON.stringify({
             event: {
-              kind: "tool-call",
+              kind: "call",
               eventId: `call:${toolCallId}`,
               toolCallId,
               sessionId: session.sessionId,
@@ -142,7 +143,7 @@ describe("shared harness kernel", () => {
       const { event } = decodeRerailEventFrame(
         JSON.stringify({
           event: {
-            kind: "tool-result",
+            kind: "result",
             eventId: "result:second",
             toolCallId: "second",
             sessionId: session.sessionId,
@@ -171,7 +172,7 @@ describe("shared harness kernel", () => {
       const session = { host: "codex" as const, sessionId: "shell", cwd: root };
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
       await runtime.ingest({
-        kind: "tool-call",
+        kind: "call",
         eventId: "call:shell",
         toolCallId: "shell",
         sessionId: session.sessionId,
@@ -188,7 +189,7 @@ describe("shared harness kernel", () => {
       );
       // The command result reconciles the shell write and carries its diagnostic.
       const boundary = await runtime.ingest({
-        kind: "tool-result",
+        kind: "result",
         eventId: "result:shell",
         toolCallId: "shell",
         sessionId: session.sessionId,
@@ -218,16 +219,17 @@ describe("shared harness kernel", () => {
     try {
       await mkdir(join(root, ".pi"));
       await writeFile(
-        join(root, ".pi/cosine-rules.json"),
+        join(root, ".pi/conversation-rules.json"),
         JSON.stringify({
           version: 1,
           rules: [
             {
               id: "unfinished",
+              mode: "steer",
               reference: "Preserve database transaction atomicity",
               match: { operator: "gte", threshold: 0.95 },
               sample: { source: "assistant-text", boundary: "message", minimumTokens: 1 },
-              action: { delivery: "steer", content: "UNFINISHED" },
+              action: { content: "UNFINISHED" },
               repeat: { mode: "always" },
             },
           ],
@@ -284,7 +286,7 @@ describe("shared harness kernel", () => {
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
       for (const name of ["first", "second"]) {
         await runtime.ingest({
-          kind: "tool-call",
+          kind: "call",
           eventId: `call:${name}`,
           toolCallId: name,
           sessionId: session.sessionId,
@@ -296,7 +298,7 @@ describe("shared harness kernel", () => {
       const deliveries = await Promise.all(
         ["first", "second"].map((name) =>
           runtime!.ingest({
-            kind: "tool-result",
+            kind: "result",
             eventId: `result:${name}`,
             toolCallId: name,
             sessionId: session.sessionId,

@@ -1,0 +1,71 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-no-script-url",
+  "revision": 2,
+  "mode": "steer",
+  "description": "ESLint 10.11.0 no-script-url, default options. Port of ESLint's `no-script-url` rule (https://eslint.org/docs/latest/rules/no-script-url). Flags string literals and untagged, substitution-free template literals whose value starts with `javascript:` (case-insensitive): cooked, or for a JSX attribute string raw with HTML character references decoded.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "script-url",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "template_string",
+                "not": {
+                  "any": [
+                    {
+                      "has": {
+                        "kind": "template_substitution",
+                        "stopBy": "neighbor"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "call_expression",
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "value": {
+              "regex": "^(?i:javascript:)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-script-url",
+        "message": "Script URL is a form of eval.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-script-url"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

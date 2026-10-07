@@ -5,7 +5,6 @@
 use super::super::PolicyDslRuntime;
 use super::super::matcher::UtilLimit;
 use super::api::{PolicyDslWorkspace, WorkspaceApplyTask};
-use super::evaluate::TEXT_BATCH_REGISTRATIONS;
 use super::index::{WorkspaceIndexTask, repository_module};
 use super::ingest::{BINARY_REQUEST_MAGIC, PACKAGE_CONTEXT_PATH_VISITS};
 use super::persisted::{decode_local_result, encode_local_result};
@@ -43,8 +42,9 @@ fn compile(id: &str, checks: Value) -> CompiledPolicyDsl {
     PolicyDslRuntime::compile(
         json!({
             "format": "rerail.policy/v1", "id": id, "revision": 1,
+            "mode": "steer",
             "scope": { "include": ["**/*"], "exclude": [] },
-            "checks": checks,
+            "clauses": checks,
         })
         .to_string(),
         "json".into(),
@@ -58,8 +58,7 @@ fn module_policy() -> CompiledPolicyDsl {
         "module-context",
         json!([{
             "id": "alpha-helper",
-            "finding": { "anchor": "witness.span", "code": "CTX", "message": "alpha helper",
-                "severity": "error" },
+            "violation": { "anchor": "witness.span", "code": "CTX", "message": "alpha helper" },
             "forbid": { "ast": { "language": "python", "rule": {
                 "kind": "identifier", "regex": "^helper$",
                 "resolves": { "import": ["alpha.helper"] } } } }
@@ -73,8 +72,7 @@ fn helper_call_policy() -> CompiledPolicyDsl {
         "helper-call",
         json!([{
             "id": "helper-call",
-            "finding": { "anchor": "witness.span", "code": "CTX", "message": "helper call",
-                "severity": "error" },
+            "violation": { "anchor": "witness.span", "code": "CTX", "message": "helper call" },
             "forbid": { "ast": { "language": "python", "rule": {
                 "kind": "identifier", "regex": "^helper$", "inside": { "kind": "call" } } } }
         }]),
@@ -201,7 +199,7 @@ fn located(findings: &Value) -> Vec<(String, String, u64)> {
         .map(|finding| {
             (
                 finding["path"].as_str().unwrap().to_owned(),
-                finding["checkId"].as_str().unwrap().to_owned(),
+                finding["clauseId"].as_str().unwrap().to_owned(),
                 finding["span"]["startByte"].as_u64().unwrap(),
             )
         })
@@ -214,7 +212,7 @@ fn all_pages(workspace: &PolicyDslWorkspace, maximum_bytes: u32) -> Value {
     loop {
         let page: Value =
             serde_json::from_str(&result_page(workspace, cursor, maximum_bytes).unwrap()).unwrap();
-        findings.extend(page["findings"].as_array().unwrap().iter().cloned());
+        findings.extend(page["violations"].as_array().unwrap().iter().cloned());
         if page["done"].as_bool().unwrap() {
             return Value::Array(findings);
         }
@@ -306,8 +304,7 @@ fn package_marker_policy() -> CompiledPolicyDsl {
         "package-marker-context",
         json!([{
             "id": "pkg-helper",
-            "finding": { "anchor": "witness.span", "code": "CTX", "message": "pkg helper",
-                "severity": "error" },
+            "violation": { "anchor": "witness.span", "code": "CTX", "message": "pkg helper" },
             "forbid": { "ast": { "language": "python", "rule": {
                 "kind": "identifier", "regex": "^helper$",
                 "resolves": { "import": ["pkg.helper"] } } } }
@@ -572,7 +569,7 @@ fn an_interactive_apply_runs_while_a_repository_index_plans_its_restore() {
     }))
     .unwrap();
     assert_eq!(
-        located(&applied["evaluation"]["findings"]),
+        located(&applied["evaluation"]["violations"]),
         vec![("edit.py".to_owned(), "helper-call".to_owned(), 0)]
     );
     assert!(
@@ -814,8 +811,7 @@ fn restored_results_keep_partial_source_diagnostics() {
         "restored-partial-source",
         json!([{
             "id": "debugger",
-            "finding": { "anchor": "witness.span", "code": "DEBUG", "message": "debugger",
-                "severity": "error" },
+            "violation": { "anchor": "witness.span", "code": "DEBUG", "message": "debugger" },
             "forbid": { "ast": { "language": "typescript",
                 "rule": { "kind": "debugger_statement" } } }
         }]),
@@ -867,7 +863,7 @@ fn a_storage_prefetch_failure_keeps_dirty_files_for_the_next_revision() {
     }
     let retry = apply_json(&workspace, 2, json!([]));
     assert_eq!(
-        located(&retry["evaluation"]["findings"]),
+        located(&retry["evaluation"]["violations"]),
         vec![("a.py".to_owned(), "print".to_owned(), 0)]
     );
     workspace.close();
@@ -897,7 +893,7 @@ fn a_recovered_file_is_replaced_with_later_revision_changes() {
         json!([{ "path": "b.py", "language": "python", "source": "print(2)\n" }]),
     );
     assert_eq!(
-        located(&retry["evaluation"]["findings"]),
+        located(&retry["evaluation"]["violations"]),
         vec![
             ("a.py".to_owned(), "print".to_owned(), 0),
             ("b.py".to_owned(), "print".to_owned(), 0),
@@ -917,7 +913,7 @@ fn package_marker_overlays_refresh_unchanged_siblings_for_json_and_buffer_reques
         { "path": "pkg/mod.py", "language": "python", "source": PACKAGE_SOURCE },
     ]);
     assert_eq!(
-        apply_json(&workspace, 1, siblings)["evaluation"]["findings"],
+        apply_json(&workspace, 1, siblings)["evaluation"]["violations"],
         json!([])
     );
     let created = apply_buffer(
@@ -927,7 +923,7 @@ fn package_marker_overlays_refresh_unchanged_siblings_for_json_and_buffer_reques
     )
     .unwrap();
     assert_eq!(
-        located(&created["evaluation"]["findings"]),
+        located(&created["evaluation"]["violations"]),
         vec![("pkg/mod.py".to_owned(), "pkg-helper".to_owned(), 21)],
         "a binary unsaved marker overlay refreshes the unchanged JSON sibling"
     );
@@ -941,7 +937,7 @@ fn package_marker_overlays_refresh_unchanged_siblings_for_json_and_buffer_reques
     };
     let deleted: Value = serde_json::from_str(&remove.compute().unwrap()).unwrap();
     assert_eq!(
-        deleted["evaluation"]["findings"],
+        deleted["evaluation"]["violations"],
         json!([]),
         "a JSON unsaved marker deletion refreshes the unchanged binary sibling"
     );
@@ -957,8 +953,7 @@ fn removing_a_package_marker_never_reintroduces_the_removed_file() {
         "removed-package-marker",
         json!([{
             "id": "marker",
-            "finding": { "anchor": "witness.span", "code": "MARKER", "message": "marker",
-                "severity": "error" },
+            "violation": { "anchor": "witness.span", "code": "MARKER", "message": "marker" },
             "forbid": { "ast": { "language": "python",
                 "rule": { "pattern": "marker()" } } }
         }]),
@@ -969,7 +964,7 @@ fn removing_a_package_marker_never_reintroduces_the_removed_file() {
         { "path": "pkg/mod.py", "language": "python", "source": "value = 1\n" }
     ]);
     assert_eq!(
-        located(&apply_json(&workspace, 1, files)["evaluation"]["findings"]).len(),
+        located(&apply_json(&workspace, 1, files)["evaluation"]["violations"]).len(),
         1
     );
     let mut remove = WorkspaceApplyTask {
@@ -1006,7 +1001,7 @@ fn an_edit_without_a_module_keeps_the_module_the_workspace_markers_give() {
     ]);
     let expected = vec![("pkg/mod.py".to_owned(), "pkg-helper".to_owned(), 21)];
     assert_eq!(
-        located(&apply_json(&workspace, 1, files)["evaluation"]["findings"]),
+        located(&apply_json(&workspace, 1, files)["evaluation"]["violations"]),
         expected
     );
     let edited = apply_json(
@@ -1016,7 +1011,7 @@ fn an_edit_without_a_module_keeps_the_module_the_workspace_markers_give() {
             "source": format!("{PACKAGE_SOURCE}# edited\n") }]),
     );
     assert_eq!(
-        located(&edited["evaluation"]["findings"]),
+        located(&edited["evaluation"]["violations"]),
         expected,
         "the edited file is still `pkg.mod`, not a loose `mod`"
     );
@@ -1039,7 +1034,7 @@ fn buffer_inline_and_repository_ingestion_agree_on_python_module_context() {
     inline.add_policy(&policy).unwrap();
     let inline_result = apply_json(&inline, 1, files.clone());
     assert_eq!(
-        located(&inline_result["evaluation"]["findings"]),
+        located(&inline_result["evaluation"]["violations"]),
         expected_package_findings()
     );
     inline.close();
@@ -1048,8 +1043,8 @@ fn buffer_inline_and_repository_ingestion_agree_on_python_module_context() {
     buffered.add_policy(&policy).unwrap();
     let buffered_result = apply_buffer(&buffered, 1, &files).expect("buffer request with modules");
     assert_eq!(
-        buffered_result["evaluation"]["findings"],
-        inline_result["evaluation"]["findings"]
+        buffered_result["evaluation"]["violations"],
+        inline_result["evaluation"]["violations"]
     );
     buffered.close();
 
@@ -1060,7 +1055,7 @@ fn buffer_inline_and_repository_ingestion_agree_on_python_module_context() {
     index_workspace(&indexed);
     assert_eq!(
         all_pages(&indexed, MAXIMUM_PAGE_BYTES),
-        inline_result["evaluation"]["findings"]
+        inline_result["evaluation"]["violations"]
     );
     indexed.close();
 }
@@ -1076,7 +1071,7 @@ fn identical_source_in_two_packages_never_reuses_a_wrong_result() {
         let workspace = stored_workspace(&store, "/packages", &policy);
         let cold = apply_json(&workspace, 1, package_files(first));
         assert_eq!(
-            located(&cold["evaluation"]["findings"]),
+            located(&cold["evaluation"]["violations"]),
             expected_package_findings(),
             "cold evaluation, {first} first"
         );
@@ -1084,7 +1079,7 @@ fn identical_source_in_two_packages_never_reuses_a_wrong_result() {
         assert!(workspace.evict_inactive().unwrap());
         let evicted = apply_json(&workspace, 2, package_files(first));
         assert_eq!(
-            located(&evicted["evaluation"]["findings"]),
+            located(&evicted["evaluation"]["violations"]),
             expected_package_findings(),
             "after eviction, {first} first"
         );
@@ -1093,7 +1088,7 @@ fn identical_source_in_two_packages_never_reuses_a_wrong_result() {
         let restarted = stored_workspace(&store, "/packages", &policy);
         let warm = apply_json(&restarted, 1, package_files(first));
         assert_eq!(
-            located(&warm["evaluation"]["findings"]),
+            located(&warm["evaluation"]["violations"]),
             expected_package_findings(),
             "after restart, {first} first"
         );
@@ -1146,8 +1141,8 @@ fn another_engine_build_never_reuses_stored_results() {
     other.close();
     for result in [&warm, &rebuilt] {
         assert_eq!(
-            result["evaluation"]["findings"],
-            expected["evaluation"]["findings"]
+            result["evaluation"]["violations"],
+            expected["evaluation"]["violations"]
         );
     }
 }
@@ -1160,8 +1155,8 @@ fn select_when_leaves_never_restore_each_others_results() {
     let policy = compile(
         "leaves",
         json!([{
-            "id": "gated", "finding": { "anchor": "witness.span", "code": "GATE",
-                "message": "print while os is imported", "severity": "error" },
+            "id": "gated", "violation": { "anchor": "witness.span", "code": "GATE",
+                "message": "print while os is imported" },
             "forbid": { "select_when": {
                 "select": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } },
                 "exists": { "ast": { "language": "python", "rule": { "pattern": "import os" } } }
@@ -1171,12 +1166,12 @@ fn select_when_leaves_never_restore_each_others_results() {
     let files = json!([{ "path": "a.py", "language": "python", "source": "print(1)\n" }]);
     let cold = stored_workspace(&store, "/leaves", &policy);
     let expected = apply_json(&cold, 1, files.clone());
-    assert_eq!(expected["evaluation"]["findings"], json!([]));
+    assert_eq!(expected["evaluation"]["violations"], json!([]));
     cold.close();
     let restarted = stored_workspace(&store, "/leaves", &policy);
     let warm = apply_json(&restarted, 1, files);
     assert_eq!(
-        warm["evaluation"]["findings"], expected["evaluation"]["findings"],
+        warm["evaluation"]["violations"], expected["evaluation"]["violations"],
         "the exists leaf must not restore the select leaf's witnesses"
     );
     restarted.close();
@@ -1190,18 +1185,18 @@ fn transient_timeouts_are_retried_and_never_persisted() {
     let policy = compile(
         "deadline",
         json!([{
-            "id": "print", "finding": { "anchor": "witness.span", "code": "PY",
-                "message": "print", "severity": "error" },
+            "id": "print", "violation": { "anchor": "witness.span", "code": "PY",
+                "message": "print" },
             "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
         }]),
     );
     let file = json!([{ "path": "slow.py", "language": "python", "source": "print(1)\n" }]);
 
     let workspace = stored_workspace(&store, "/deadline", &policy);
-    TEST_FILE_TIME_BUDGET.set(Some(Duration::ZERO));
+    TEST_FILE_WORK_BUDGET.set(Some(0));
     let timed_out = apply_json(&workspace, 1, file.clone());
-    TEST_FILE_TIME_BUDGET.set(None);
-    assert_eq!(timed_out["evaluation"]["findings"], json!([]));
+    TEST_FILE_WORK_BUDGET.set(None);
+    assert_eq!(timed_out["evaluation"]["violations"], json!([]));
     assert_eq!(
         timed_out["evaluation"]["failures"][0]["code"],
         "budget-exceeded"
@@ -1209,7 +1204,7 @@ fn transient_timeouts_are_retried_and_never_persisted() {
 
     let retried = apply_json(&workspace, 2, file.clone());
     assert_eq!(
-        located(&retried["evaluation"]["findings"]),
+        located(&retried["evaluation"]["violations"]),
         vec![("slow.py".to_owned(), "print".to_owned(), 0)],
         "an unchanged file whose evaluation timed out is evaluated again"
     );
@@ -1217,14 +1212,14 @@ fn transient_timeouts_are_retried_and_never_persisted() {
     workspace.close();
 
     let timed_out_again = stored_workspace(&store, "/deadline-restart", &policy);
-    TEST_FILE_TIME_BUDGET.set(Some(Duration::ZERO));
+    TEST_FILE_WORK_BUDGET.set(Some(0));
     apply_json(&timed_out_again, 1, file.clone());
-    TEST_FILE_TIME_BUDGET.set(None);
+    TEST_FILE_WORK_BUDGET.set(None);
     timed_out_again.close();
     let restarted = stored_workspace(&store, "/deadline-restart", &policy);
     let warm = apply_json(&restarted, 1, file);
     assert_eq!(
-        located(&warm["evaluation"]["findings"]),
+        located(&warm["evaluation"]["violations"]),
         vec![("slow.py".to_owned(), "print".to_owned(), 0)],
         "a timed-out result is never restored as the content's verdict"
     );
@@ -1239,8 +1234,8 @@ fn an_evaluation_that_finishes_past_an_unobserved_deadline_is_kept() {
     let policy = compile(
         "unobserved-deadline",
         json!([{
-            "id": "needle", "finding": { "anchor": "witness.span", "code": "NEEDLE",
-                "message": "needle", "severity": "error" },
+            "id": "needle", "violation": { "anchor": "witness.span", "code": "NEEDLE",
+                "message": "needle" },
             "forbid": { "regex": { "source": "file.content", "pattern": "needle" } }
         }]),
     );
@@ -1249,11 +1244,11 @@ fn an_evaluation_that_finishes_past_an_unobserved_deadline_is_kept() {
     // The deadline passes before the evaluation ends, yet no step of it polls the deadline: a
     // regex without matches never does. The finished evaluation is the content's verdict.
     let workspace = stored_workspace(&store, "/unobserved-deadline", &policy);
-    TEST_FILE_TIME_BUDGET.set(Some(Duration::ZERO));
+    TEST_FILE_WORK_BUDGET.set(Some(0));
     let finished = apply_json(&workspace, 1, file.clone());
-    TEST_FILE_TIME_BUDGET.set(None);
+    TEST_FILE_WORK_BUDGET.set(None);
     assert_eq!(finished["evaluation"]["failures"], json!([]));
-    assert_eq!(finished["evaluation"]["findings"], json!([]));
+    assert_eq!(finished["evaluation"]["violations"], json!([]));
     assert!(
         !workspace.state.lock().unwrap().files["clean.py"].transient_failure,
         "an evaluation no deadline check interrupted is not transient"
@@ -1278,22 +1273,22 @@ fn an_ast_evaluation_that_finishes_past_an_unobserved_deadline_is_kept() {
     let policy = compile(
         "unobserved-ast-deadline",
         json!([{
-            "id": "print", "finding": { "anchor": "witness.span", "code": "PY",
-                "message": "print", "severity": "error" },
+            "id": "print", "violation": { "anchor": "witness.span", "code": "PY",
+                "message": "print" },
             "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
         }]),
     );
     let file = json!([{ "path": "late.py", "language": "python", "source": "print(1)\n" }]);
 
-    // Every statement ran to its end; the deadline passes after the last one, and no step polls
+    // Every check ran to its end; the deadline passes after the last one, and no step polls
     // it again. The finished evaluation is the content's verdict.
     let workspace = stored_workspace(&store, "/unobserved-ast-deadline", &policy);
-    TEST_DEADLINE_PASSES_AT.set(Some("statements-done"));
+    TEST_DEADLINE_PASSES_AT.set(Some("checks-done"));
     let finished = apply_json(&workspace, 1, file.clone());
     TEST_DEADLINE_PASSES_AT.set(None);
     assert_eq!(finished["evaluation"]["failures"], json!([]));
     assert_eq!(
-        located(&finished["evaluation"]["findings"]),
+        located(&finished["evaluation"]["violations"]),
         vec![("late.py".to_owned(), "print".to_owned(), 0)]
     );
     assert!(
@@ -1312,22 +1307,22 @@ fn an_ast_evaluation_that_finishes_past_an_unobserved_deadline_is_kept() {
     restarted.close();
 }
 
-/// The workspace runs the statements of its own `SqlPlans`: a registered policy's compiled
-/// statements are released with the policy, and its `llm` checks still report what they lack.
+/// A registered policy's AST checks report their findings and its `llm` checks still report what
+/// they lack.
 #[test]
-fn a_registered_policy_keeps_none_of_its_compiled_statements() {
+fn a_registered_policy_reports_ast_findings_and_missing_llm_capability() {
     let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
     let policy = compile(
-        "released-statements",
+        "ast-and-llm",
         json!([
             {
-                "id": "print", "finding": { "anchor": "witness.span", "code": "PY",
-                    "message": "print", "severity": "error" },
+                "id": "print", "violation": { "anchor": "witness.span", "code": "PY",
+                    "message": "print" },
                 "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
             },
             {
-                "id": "intent", "finding": { "anchor": "witness.span", "code": "INTENT",
-                    "message": "intent", "severity": "error" },
+                "id": "intent", "violation": { "anchor": "witness.span", "code": "INTENT",
+                    "message": "intent" },
                 "llm": { "input": { "source": "changed-symbol" },
                     "rubric": "Fail on direct persistence access", "verdicts": ["pass", "fail"] }
             }
@@ -1335,11 +1330,6 @@ fn a_registered_policy_keeps_none_of_its_compiled_statements() {
     );
     let mut workspace = PolicyDslWorkspace::new();
     workspace.add_policy(&policy).unwrap();
-    assert_eq!(
-        StdArc::strong_count(&policy.statements),
-        1,
-        "the workspace holds no reference to the policy's compiled statements"
-    );
     let applied = apply_json(
         &workspace,
         1,
@@ -1347,62 +1337,21 @@ fn a_registered_policy_keeps_none_of_its_compiled_statements() {
     );
     workspace.close();
     assert_eq!(
-        located(&applied["evaluation"]["findings"]),
+        located(&applied["evaluation"]["violations"]),
         vec![("a.py".to_owned(), "print".to_owned(), 0)]
     );
     let failures = applied["evaluation"]["failures"].as_array().unwrap();
     assert_eq!(
         failures
             .iter()
-            .map(|failure| (failure["checkId"].as_str(), failure["code"].as_str()))
+            .map(|failure| (failure["clauseId"].as_str(), failure["code"].as_str()))
             .collect::<Vec<_>>(),
         [(Some("intent"), Some("missing-capability"))]
     );
 }
 
 #[test]
-fn witness_errors_reach_native_and_workspace_callers_unchanged() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
-    let policy = compile(
-        "witness-error",
-        json!([{
-            "id": "print", "finding": { "anchor": "witness.span", "code": "PY",
-                "message": "print", "severity": "error" },
-            "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
-        }]),
-    );
-    let file = json!({ "path": "a.py", "language": "python", "source": "print(1)\n" });
-    let mut workspace = PolicyDslWorkspace::new();
-    workspace.add_policy(&policy).unwrap();
-    let mut task = WorkspaceApplyTask {
-        state: Arc::clone(&workspace.state),
-        closed: Arc::clone(&workspace.closed),
-        request_json: json!({ "revision": 1, "files": [file.clone()], "removed": [] }).to_string(),
-        request_buffer: None,
-        request_direct: None,
-    };
-    let snapshot = json!({
-        "facts": [], "files": [file], "format": "rerail.repository-snapshot/v1", "revision": 0,
-    });
 
-    crate::policy_dsl::eval::FAIL_WITNESS.set(Some("injected witness failure"));
-    let applied = task.compute().err();
-    let native = policy
-        .evaluate(snapshot.to_string(), "diagnostic".to_owned())
-        .err();
-    crate::policy_dsl::eval::FAIL_WITNESS.set(None);
-    workspace.close();
-
-    let summary = |error: Option<napi::Error>| error.map(|error| (error.status, error.reason));
-    let expected = Some((
-        napi::Status::GenericFailure,
-        "injected witness failure".to_owned(),
-    ));
-    assert_eq!(summary(applied), expected, "workspace evaluation");
-    assert_eq!(summary(native), expected, "native evaluation");
-}
-
-#[test]
 fn every_engine_limit_failure_round_trips_through_the_local_result_codec() {
     for limit in [
         UtilLimit::Depth,
@@ -1425,8 +1374,7 @@ fn paged_results_equal_complete_results_for_each_findings_and_capture_anchors() 
     let rule = json!({ "kind": "comparison_operator",
         "has": { "any": [{ "kind": "true" }, { "kind": "false" }], "pattern": "$OP" } });
     let finding = |each: bool| {
-        let mut finding = json!({ "anchor": "witness.span", "code": "CMP", "message": "compare",
-            "severity": "error" });
+        let mut finding = json!({ "anchor": "witness.span", "code": "CMP", "message": "compare" });
         if each {
             finding["each"] = json!("OP");
             finding["anchor"] = json!("capture.OP");
@@ -1436,9 +1384,9 @@ fn paged_results_equal_complete_results_for_each_findings_and_capture_anchors() 
     let policy = compile(
         "paging",
         json!([
-            { "id": "once", "finding": finding(false),
+            { "id": "once", "violation": finding(false),
               "forbid": { "ast": { "language": "python", "rule": rule } } },
-            { "id": "each", "finding": finding(true),
+            { "id": "each", "violation": finding(true),
               "forbid": { "ast": { "language": "python", "rule": rule } } }
         ]),
     );
@@ -1450,28 +1398,139 @@ fn paged_results_equal_complete_results_for_each_findings_and_capture_anchors() 
             "source": "if res == True != False:\n    pass\n" }]),
     );
     assert_eq!(
-        complete["evaluation"]["findings"].as_array().unwrap().len(),
+        complete["evaluation"]["violations"]
+            .as_array()
+            .unwrap()
+            .len(),
         3
     );
     for maximum_bytes in [1, MAXIMUM_PAGE_BYTES] {
         assert_eq!(
             all_pages(&workspace, maximum_bytes),
-            complete["evaluation"]["findings"],
+            complete["evaluation"]["violations"],
             "pages of at most {maximum_bytes} bytes"
         );
     }
     workspace.close();
 }
 
+/// Every stored local result as `(path, check, codec, raw length, frame)`, in that order.
+fn stored_local_results(store: &std::path::Path) -> Vec<(String, String, i64, i64, Vec<u8>)> {
+    let connection = rusqlite::Connection::open(store).unwrap();
+    let mut statement = connection
+        .prepare(
+            "SELECT ps.value,cs.value,r.codec_id,r.raw_length,r.frame FROM context_check_results r \
+             JOIN workspace_overlay o ON o.source_id=r.source_id \
+             JOIN paths p ON p.path_id=o.path_id JOIN strings ps ON ps.string_id=p.string_id \
+             JOIN candidate_checks c ON c.check_id=r.check_id \
+             JOIN strings cs ON cs.string_id=c.check_string_id ORDER BY 1,2",
+        )
+        .unwrap();
+    statement
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+#[test]
+fn stored_local_results_and_their_read_back_are_unchanged_by_eviction_round_trips() {
+    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let directory = TempDir::new("round-trips");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let policy = compile(
+        "round-trips",
+        json!([
+            { "id": "print", "violation": { "anchor": "witness.span", "code": "PRINT",
+                "message": "print of $A", "fix": "log($A)" },
+              "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } } },
+            { "id": "call", "violation": { "anchor": "capture.ARGS", "code": "CALL",
+                "message": "call" },
+              "forbid": { "ast": { "language": "python",
+                "rule": { "pattern": "foo($$$ARGS)" } } } },
+            { "id": "never", "violation": { "anchor": "witness.span", "code": "NEVER",
+                "message": "never" },
+              "forbid": { "ast": { "language": "python", "rule": { "pattern": "exec($A)" } } } }
+        ]),
+    );
+    let files = json!([
+        { "path": "a.py", "language": "python",
+          "source": "print(1)\nfoo(1, 2)\nprint('ü')\n" },
+        { "path": "b.py", "language": "python", "source": "x = 1\n" },
+        { "path": "c.py", "language": "python", "source": "foo()\nprint(x\n" },
+    ]);
+    let workspace = stored_workspace(&store, "/round-trips", &policy);
+    let cold = apply_json(&workspace, 1, files.clone())["evaluation"]["violations"].clone();
+    assert!(cold.as_array().unwrap().len() >= 3, "{cold}");
+    let stored = stored_local_results(&directory.store());
+    for check in ["call", "print"] {
+        assert!(
+            stored.iter().any(|row| row.0 == "a.py" && row.1 == check),
+            "{check}: {stored:?}"
+        );
+    }
+    for (path, check, _, raw_length, frame) in &stored {
+        let bytes = zstd::stream::decode_all(std::io::Cursor::new(frame)).unwrap();
+        assert_eq!(bytes.len() as i64, *raw_length, "{path} {check}");
+        // A result is the canonical (key-ordered) serialization of its JSON value.
+        let value = serde_json::from_slice::<Value>(&bytes).unwrap();
+        assert_eq!(serde_json::to_vec(&value).unwrap(), bytes, "{path} {check}");
+        assert_eq!(value["version"], 3, "{path} {check}");
+    }
+
+    for revision in 2..=3 {
+        workspace.completion_task().compute().unwrap();
+        assert!(workspace.evict_inactive().unwrap());
+        let restored = apply_json(&workspace, revision, files.clone());
+        assert_eq!(
+            restored["evaluation"]["violations"], cold,
+            "revision {revision}"
+        );
+        assert_eq!(all_pages(&workspace, 1), cold, "revision {revision} pages");
+        assert!(
+            restored_results(&workspace) > 0,
+            "revision {revision} reads the store"
+        );
+        assert_eq!(
+            stored_local_results(&directory.store()),
+            stored,
+            "revision {revision}"
+        );
+    }
+    workspace.close();
+
+    let restarted = stored_workspace(&store, "/round-trips", &policy);
+    let warm = apply_json(&restarted, 1, files);
+    assert_eq!(warm["evaluation"]["violations"], cold, "after restart");
+    assert!(
+        restored_results(&restarted) > 0,
+        "a restart reads the store"
+    );
+    assert_eq!(
+        stored_local_results(&directory.store()),
+        stored,
+        "after restart"
+    );
+    restarted.close();
+}
+
 fn print_policy() -> CompiledPolicyDsl {
     compile(
         "documents",
         json!([
-            { "id": "print", "finding": { "anchor": "witness.span", "code": "PY",
-                "message": "print", "severity": "error" },
+            { "id": "print", "violation": { "anchor": "witness.span", "code": "PY",
+                "message": "print" },
               "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } } },
-            { "id": "alpha-helper", "finding": { "anchor": "witness.span", "code": "CTX",
-                "message": "alpha helper", "severity": "error" },
+            { "id": "alpha-helper", "violation": { "anchor": "witness.span", "code": "CTX",
+                "message": "alpha helper" },
               "forbid": { "ast": { "language": "python", "rule": {
                   "kind": "identifier", "regex": "^helper$",
                   "resolves": { "import": ["alpha.helper"] } } } } }
@@ -1503,11 +1562,11 @@ fn selector_index_misses_keep_input_budget_failures() {
     let capped = PolicyDslRuntime::compile(
         json!({
             "format": "rerail.policy/v1", "id": "capped-lambdas", "revision": 1,
+            "mode": "steer",
             "scope": { "include": ["**/*"], "exclude": [] },
-            "checks": [{
+            "clauses": [{
                 "id": "lambda",
-                "finding": { "anchor": "witness.span", "code": "L", "message": "lambda",
-                    "severity": "error" },
+                "violation": { "anchor": "witness.span", "code": "L", "message": "lambda" },
                 "forbid": { "ast": { "language": "python", "rule": { "kind": "lambda" } } }
             }],
         })
@@ -1548,8 +1607,8 @@ fn node_references_resolve_through_the_store_and_refuse_stale_versions() {
             { "path": "b.py", "language": "python", "source": "print(2)\n" }
         ]),
     );
-    let span = &applied["evaluation"]["findings"][0]["span"];
-    assert_eq!(applied["evaluation"]["findings"][0]["path"], "a.py");
+    let span = &applied["evaluation"]["violations"][0]["span"];
+    assert_eq!(applied["evaluation"]["violations"][0]["path"], "a.py");
     let (start, end) = (
         span["startByte"].as_u64().unwrap() as u32,
         span["endByte"].as_u64().unwrap() as u32,
@@ -1636,12 +1695,12 @@ fn javascript_and_php_documents_have_distinct_persisted_grammars() {
     let policy = compile(
         "javascript-php-grammars",
         json!([
-            { "id": "js", "finding": { "anchor": "witness.span", "code": "JS",
-                "message": "js", "severity": "error" },
+            { "id": "js", "violation": { "anchor": "witness.span", "code": "JS",
+                "message": "js" },
               "forbid": { "ast": { "language": "typescript",
                   "rule": { "pattern": "marker()" } } } },
-            { "id": "php", "finding": { "anchor": "witness.span", "code": "PHP",
-                "message": "php", "severity": "error" },
+            { "id": "php", "violation": { "anchor": "witness.span", "code": "PHP",
+                "message": "php" },
               "forbid": { "ast": { "language": "php",
                   "rule": { "pattern": "marker()" } } } }
         ]),
@@ -1655,7 +1714,7 @@ fn javascript_and_php_documents_have_distinct_persisted_grammars() {
             { "path": "b.php", "language": "php", "source": "marker();\n" }
         ]),
     );
-    let js = &applied["evaluation"]["findings"][0]["span"];
+    let js = &applied["evaluation"]["violations"][0]["span"];
     let reference = workspace
         .node_reference(
             "a.js".to_owned(),
@@ -1751,7 +1810,7 @@ fn evicted_resident_and_unstored_workspaces_publish_the_same_results() {
         let evicted_delta = apply(&evicted);
         assert!(evicted.evict_inactive().unwrap());
         let complete = apply(&unstored);
-        let unstored_delta = complete["findings"]
+        let unstored_delta = complete["violations"]
             .as_array()
             .unwrap()
             .iter()
@@ -1759,14 +1818,14 @@ fn evicted_resident_and_unstored_workspaces_publish_the_same_results() {
             .cloned()
             .collect::<Vec<_>>();
         // Work metrics differ by design (a restored or reloaded file does less); results must not.
-        for key in ["status", "findings", "failures"] {
+        for key in ["status", "violations", "failures"] {
             assert_eq!(
                 evicted_delta[key], resident_delta[key],
                 "revision {revision}: {key}"
             );
         }
         assert_eq!(
-            resident_delta["findings"],
+            resident_delta["violations"],
             Value::Array(unstored_delta),
             "revision {revision}"
         );
@@ -1839,8 +1898,7 @@ fn package_context_refresh_visits_only_affected_paths_across_index_batches() {
         "package-refresh-cost",
         json!([{
             "id": "typescript-only",
-            "finding": { "anchor": "witness.span", "code": "COST", "message": "cost",
-                "severity": "error" },
+            "violation": { "anchor": "witness.span", "code": "COST", "message": "cost" },
             "forbid": { "ast": { "language": "typescript", "rule": { "kind": "identifier" } } }
         }]),
     );
@@ -1883,48 +1941,7 @@ fn package_context_refresh_visits_only_affected_paths_across_index_batches() {
 }
 
 #[test]
-fn regex_checks_share_one_source_and_text_batch_per_file() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
-    let checks = (0..50)
-        .map(|index| {
-            json!({
-                "id": format!("regex-{index}"),
-                "finding": { "anchor": "witness.span", "code": "REGEX", "message": "regex",
-                    "severity": "error" },
-                "forbid": { "regex": { "source": "file.content", "pattern": "needle" } }
-            })
-        })
-        .collect::<Vec<_>>();
-    let policy = compile("shared-regex-batch", Value::Array(checks));
-    let mut workspace = PolicyDslWorkspace::new();
-    workspace.add_policy(&policy).unwrap();
 
-    TEXT_BATCH_REGISTRATIONS.store(0, Ordering::Relaxed);
-    crate::policy_dsl::transducer::sql_backend::take_text_batch_sources();
-    apply_json(
-        &workspace,
-        1,
-        json!([{ "path": "probe.py", "language": "python", "source": "needle\n" }]),
-    );
-    let source = Arc::as_ptr(
-        &workspace.state.lock().unwrap().files["probe.py"]
-            .input
-            .source,
-    );
-    assert_eq!(
-        crate::policy_dsl::transducer::sql_backend::take_text_batch_sources(),
-        vec![source],
-        "regex checks must read the FileInput source allocation itself"
-    );
-    assert_eq!(
-        TEXT_BATCH_REGISTRATIONS.load(Ordering::Relaxed),
-        1,
-        "all regex terminals for a file share one registered text batch"
-    );
-    workspace.close();
-}
-
-#[test]
 fn repository_index_carries_each_verified_blob_hash_to_publication() {
     let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
     let directory = package_repository("blob-hash-once");
@@ -1987,7 +2004,7 @@ fn a_bulk_restored_package_marker_names_unhosted_files_and_its_removal_rederives
         Some("alpha.new")
     );
     assert!(
-        located(&added["evaluation"]["findings"]).contains(&(
+        located(&added["evaluation"]["violations"]).contains(&(
             "alpha/new.py".to_owned(),
             "alpha-helper".to_owned(),
             21
@@ -2023,8 +2040,7 @@ fn a_package_marker_offered_inline_names_unhosted_siblings() {
         "inline-marker",
         json!([{
             "id": "needle",
-            "finding": { "anchor": "witness.span", "code": "NEEDLE", "message": "needle",
-                "severity": "error" },
+            "violation": { "anchor": "witness.span", "code": "NEEDLE", "message": "needle" },
             "forbid": { "regex": { "source": "file.content", "pattern": "needle" } }
         }]),
     );
@@ -2081,28 +2097,21 @@ fn a_package_marker_offered_inline_names_unhosted_siblings() {
 }
 
 #[test]
-fn stateless_regex_checks_read_the_snapshot_source_in_place() {
+fn stateless_regex_checks_report_snapshot_matches() {
     let policy = compile(
         "stateless-regex",
         json!([{
             "id": "needle",
-            "finding": { "anchor": "witness.span", "code": "NEEDLE", "message": "needle",
-                "severity": "error" },
+            "violation": { "anchor": "witness.span", "code": "NEEDLE", "message": "needle" },
             "forbid": { "regex": { "source": "file.content", "pattern": "needle" } }
         }]),
     );
     let snapshot = json!({ "format": "rerail.repository-snapshot/v1", "revision": 0, "facts": [],
         "files": [{ "path": "probe.py", "language": "python", "source": "needle\n" }] });
     let mut session = policy.open_session(snapshot.to_string()).unwrap();
-    crate::policy_dsl::transducer::sql_backend::take_text_batch_sources();
     let result: Value =
         serde_json::from_str(&session.evaluate("diagnostic".to_owned()).unwrap()).unwrap();
-    assert_eq!(located(&result["findings"]).len(), 1, "{result}");
-    assert_eq!(
-        crate::policy_dsl::transducer::sql_backend::take_text_batch_sources(),
-        vec![Arc::as_ptr(&session.snapshot.files[0].source)],
-        "a stateless regex check must register the snapshot file's own source allocation"
-    );
+    assert_eq!(located(&result["violations"]).len(), 1, "{result}");
 }
 
 /// Tapes the maintenance indexer can never decode (a previous tape format left behind by a
@@ -2294,11 +2303,11 @@ fn checkouts_sharing_a_store_restore_only_results_of_their_own_checkout_bytes() 
     let policy = compile(
         "checkout-bytes",
         json!([
-            { "id": "cr", "finding": { "anchor": "witness.span", "code": "CR",
-                "message": "carriage return", "severity": "error" },
+            { "id": "cr", "violation": { "anchor": "witness.span", "code": "CR",
+                "message": "carriage return" },
               "forbid": { "regex": { "source": "file.content", "pattern": "\\r" } } },
-            { "id": "print", "finding": { "anchor": "witness.span", "code": "PY",
-                "message": "print", "severity": "error" },
+            { "id": "print", "violation": { "anchor": "witness.span", "code": "PY",
+                "message": "print" },
               "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } } }
         ]),
     );
@@ -2400,8 +2409,7 @@ fn selector_indexes_skip_only_error_free_tapes_that_cannot_match() {
         "lambdas",
         json!([{
             "id": "lambda",
-            "finding": { "anchor": "witness.span", "code": "L", "message": "lambda",
-                "severity": "error" },
+            "violation": { "anchor": "witness.span", "code": "L", "message": "lambda" },
             "forbid": { "ast": { "language": "python", "rule": { "kind": "lambda" } } }
         }]),
     );
@@ -2411,13 +2419,13 @@ fn selector_indexes_skip_only_error_free_tapes_that_cannot_match() {
     unstored.add_policy(&lambdas).unwrap();
     let fresh = apply_json(&unstored, 1, files);
     unstored.close();
-    for key in ["findings", "failures"] {
+    for key in ["violations", "failures"] {
         assert_eq!(
             applied["evaluation"][key], fresh["evaluation"][key],
             "{key}"
         );
     }
-    assert_eq!(located(&applied["evaluation"]["findings"]).len(), 1);
+    assert_eq!(located(&applied["evaluation"]["violations"]).len(), 1);
     // `plain.py` has no lambda and no syntax error: skipped undecoded. `broken.py` has no lambda
     // either, but its syntax errors must still be reported, so it is decoded.
     let skipped = |workspace: &PolicyDslWorkspace, path: &str| {

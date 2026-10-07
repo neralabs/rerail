@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-unsafe-finally",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-unsafe-finally` rule with its default options (https://palantir.github.io/tslint/rules/no-unsafe-finally/). Disallows return, throw, break and continue that escape a finally block: no function, loop/switch (unlabeled break/continue) or statement with the jump's own label lies between the jump and the finally block.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "return-or-throw",
       "forbid": {
@@ -83,10 +84,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_UNSAFE_FINALLY",
-        "severity": "error",
         "message": "'return' statements in finally blocks are forbidden."
       }
     },
@@ -161,10 +161,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_UNSAFE_FINALLY",
-        "severity": "error",
         "message": "'return' statements in finally blocks are forbidden."
       }
     },
@@ -236,10 +235,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_UNSAFE_FINALLY",
-        "severity": "error",
         "message": "'return' statements in finally blocks are forbidden."
       }
     },
@@ -312,10 +310,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_UNSAFE_FINALLY",
-        "severity": "error",
         "message": "'return' statements in finally blocks are forbidden."
       }
     }

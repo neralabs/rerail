@@ -16,13 +16,14 @@ const unboundMessage: PolicyRule = {
   format: "rerail.policy/v1",
   id: "test:unbound-message",
   revision: 1,
-  checks: [{
+  mode: "steer",
+  clauses: [{
     id: "call",
     forbid: { ast: { language: "typescript", rule: { pattern: "foo($A)" } } },
-    finding: { anchor: "witness.span", code: "X", severity: "error", message: "bad $TYPO" },
+    violation: { anchor: "witness.span", code: "X", message: "bad $TYPO" },
   }],
 };
-const KERNEL_REASON = /\/checks\/0\/finding\/message: `\$TYPO` names no capture/;
+const KERNEL_REASON = /\/clauses\/0\/violation\/message: `\$TYPO` names no capture/;
 
 let root: string;
 const originalKernelPath = process.env.RERAIL_NATIVE_KERNEL_PATH;
@@ -84,7 +85,7 @@ describe("policy writes compile in the kernel", () => {
       const rejected = await app.request(`/api/rules/${unboundMessage.id}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ kind: "policy", rule: unboundMessage }),
+        body: JSON.stringify({ kind: "file", rule: unboundMessage }),
       });
       expect(rejected.status).toBe(400);
       const body = await rejected.json() as { error: string; message: string };
@@ -96,7 +97,7 @@ describe("policy writes compile in the kernel", () => {
       const unavailable = await app.request(`/api/rules/${MOCK_POLICY_RULES[0]!.id}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ kind: "policy", rule: MOCK_POLICY_RULES[0] }),
+        body: JSON.stringify({ kind: "file", rule: MOCK_POLICY_RULES[0] }),
       });
       expect(unavailable.status).toBe(503);
       expect(await unavailable.json()).toMatchObject({ error: "kernel-unavailable" });

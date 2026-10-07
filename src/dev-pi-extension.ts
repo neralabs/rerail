@@ -2,7 +2,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { sendNativeDeliveries, type AdapterEvent, type AdapterSession } from "./adapter-contract.js";
-import { isRerailDisabled } from "./checkout-control.js";
+import { devWorkspaceEnabled } from "./dev-routing.js";
 import { PiDevNativeSession } from "./pi-dev-native-session.js";
 import { registerPiHostAdapter } from "./pi-host-adapter.js";
 
@@ -39,11 +39,6 @@ export function createPiDevExtension(): ExtensionFactory {
     };
     const initializeNow = async (context: ExtensionContext, options: InitializeOptions): Promise<void> => {
       if (options.onlyIfCurrent === true && native.context() !== context) return;
-      if (isRerailDisabled(context.cwd)) {
-        await closeRuntimeNow();
-        native.rememberContext(context);
-        return;
-      }
       const session = {
         host: "pi",
         sessionId: context.sessionManager.getSessionId(),
@@ -105,6 +100,8 @@ export function createPiDevExtension(): ExtensionFactory {
         },
       },
       packageRoot: resolve(dirname(fileURLToPath(import.meta.url)), ".."),
+      // A development bridge has no host database; its workspace flag is its start switch.
+      started: devWorkspaceEnabled,
     });
   };
 }

@@ -210,11 +210,11 @@ describe("RerailHostRuntime tool samples", () => {
     await runtime.ingest({ kind: "session-start", eventId: "start", session });
 
     await runtime.ingest({
-      kind: "tool-call", eventId: "call", sessionId: session.sessionId, toolCallId: "t1", toolName: "Bash",
+      kind: "call", eventId: "call", sessionId: session.sessionId, toolCallId: "t1", toolName: "Bash",
       input: { command: "git push --force", description: "push" },
     });
     await runtime.ingest({
-      kind: "tool-result", eventId: "result", sessionId: session.sessionId, toolCallId: "t1", toolName: "Bash",
+      kind: "result", eventId: "result", sessionId: session.sessionId, toolCallId: "t1", toolName: "Bash",
       output: "rejected: git push --force",
     });
 

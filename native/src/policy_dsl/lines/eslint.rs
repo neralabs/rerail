@@ -20,7 +20,7 @@ fn starts_at(ast: Value, anchor: &str, source: &str) -> Vec<u64> {
     let document = check_document(json!({
         "id": "port",
         "forbid": { "ast": ast },
-        "finding": { "anchor": anchor, "code": "PORT", "message": "port", "severity": "error" },
+        "violation": { "anchor": anchor, "code": "PORT", "message": "port" },
     }));
     let compiled = compile_document_with(
         document,
@@ -29,7 +29,7 @@ fn starts_at(ast: Value, anchor: &str, source: &str) -> Vec<u64> {
     .unwrap_or_else(|error| panic!("{}", error.reason));
     let result = evaluate_file(&compiled, "typescript", "fixture.ts", source);
     assert_eq!(result["failures"], json!([]), "{result}");
-    let mut starts = result["findings"]
+    let mut starts = result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -181,7 +181,7 @@ fn messages(ast: Value, message: &str, source: &str) -> Vec<(u64, String)> {
     let document = check_document(json!({
         "id": "port",
         "forbid": { "ast": ast },
-        "finding": { "anchor": "witness.start", "code": "PORT", "message": message, "severity": "error" },
+        "violation": { "anchor": "witness.start", "code": "PORT", "message": message },
     }));
     let compiled = compile_document_with(
         document,
@@ -190,7 +190,7 @@ fn messages(ast: Value, message: &str, source: &str) -> Vec<(u64, String)> {
     .unwrap_or_else(|error| panic!("{}", error.reason));
     let result = evaluate_file(&compiled, "typescript", "fixture.ts", source);
     assert_eq!(result["failures"], json!([]), "{result}");
-    let mut found = result["findings"]
+    let mut found = result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -281,8 +281,8 @@ fn each_over_a_regex_group_reports_nothing_where_no_match_binds_it() {
         let document = check_document(json!({
             "id": "port",
             "forbid": { "ast": finding },
-            "finding": { "anchor": "capture.WS", "code": "PORT", "message": "port",
-                "severity": "error", "each": "WS" },
+            "violation": { "anchor": "capture.WS", "code": "PORT", "message": "port",
+                "each": "WS" },
         }));
         let compiled = compile_document_with(
             document,
@@ -290,7 +290,7 @@ fn each_over_a_regex_group_reports_nothing_where_no_match_binds_it() {
         )
         .unwrap_or_else(|error| panic!("{}", error.reason));
         let result = evaluate_file(&compiled, "typescript", "fixture.ts", source);
-        let mut found = result["findings"]
+        let mut found = result["violations"]
             .as_array()
             .expect("findings")
             .iter()
@@ -313,8 +313,7 @@ fn a_transform_of_a_regex_group_fixes_the_letter() {
         "forbid": { "ast": { "language": "typescript",
             "rule": { "kind": "comment", "regex": "^(?://|/\\*)[\\s*]*(?<L>\\p{Lu})" },
             "transform": { "C": { "convert": { "source": "$L", "toCase": "lowerCase" } } } } },
-        "finding": { "anchor": "witness.span", "code": "PORT", "message": "port", "severity": "error",
-            "fix": { "template": "$C", "range": "capture.L" } },
+        "violation": { "anchor": "witness.span", "code": "PORT", "message": "port", "fix": { "template": "$C", "range": "capture.L" } },
     }));
     let compiled = compile_document_with(
         document,
@@ -322,7 +321,7 @@ fn a_transform_of_a_regex_group_fixes_the_letter() {
     )
     .unwrap_or_else(|error| panic!("{}", error.reason));
     let result = evaluate_file(&compiled, "typescript", "fixture.ts", source);
-    let mut fixes = result["findings"]
+    let mut fixes = result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -345,7 +344,7 @@ fn a_transform_of_a_regex_group_fixes_the_letter() {
         fixed,
         oracle["fixes"][fixture].as_str().expect("fixed text")
     );
-    let mut starts = result["findings"]
+    let mut starts = result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -380,8 +379,8 @@ fn no_redeclare_reports_every_item_a_host_test_or_a_global_names() {
         "forbid": { "ast": { "language": "typescript",
             "languageOptions": { "sourceType": "script", "globals": { "conf1": "readonly", "conf2": "writable" } },
             "rule": { "kind": "comment", "parse": names(item) } } },
-        "finding": { "anchor": "capture.N", "code": "PORT", "message": "'$N' is already defined.",
-            "severity": "error", "each": "N" },
+        "violation": { "anchor": "capture.N", "code": "PORT", "message": "'$N' is already defined.",
+            "each": "N" },
     }));
     let compiled = compile_document_with(
         document,
@@ -391,7 +390,7 @@ fn no_redeclare_reports_every_item_a_host_test_or_a_global_names() {
     let source = oracle!("ecma/lines/eslint/no-redeclare@items.ts");
     let result = evaluate_file(&compiled, "typescript", "fixture.ts", source);
     assert_eq!(result["failures"], json!([]), "{result}");
-    let mut found = result["findings"]
+    let mut found = result["violations"]
         .as_array()
         .expect("findings")
         .iter()

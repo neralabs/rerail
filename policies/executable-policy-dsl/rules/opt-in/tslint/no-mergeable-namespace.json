@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-mergeable-namespace",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-mergeable-namespace` rule with its default options (https://palantir.github.io/tslint/rules/no-mergeable-namespace/). Disallows mergeable namespaces in the same file: a namespace/module whose name (first segment of a dotted name) equals an earlier sibling namespace/module declaration's in the same statement list.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "later-sibling-namespace",
       "forbid": {
@@ -239,10 +240,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_MERGEABLE_NAMESPACE",
-        "severity": "error",
         "message": "Mergeable namespace found. Merge its contents with the earlier namespace of the same name."
       }
     }

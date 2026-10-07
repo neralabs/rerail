@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-namespace",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-namespace` rule with its default options (https://palantir.github.io/tslint/rules/no-namespace/). Disallows top-level `namespace`/`module` declarations (string-named ambient modules and `declare global` allowed).",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "namespace",
       "forbid": {
@@ -146,10 +147,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_NAMESPACE",
-        "severity": "error",
         "message": "'namespace' and 'module' are disallowed"
       }
     }

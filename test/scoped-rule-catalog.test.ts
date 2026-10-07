@@ -84,7 +84,7 @@ describe("ScopedRuleCatalog", () => {
     expect(project.get("shared")).toMatchObject({ applicability: "global", origin: { kind: "global" }, enabled: true });
 
     project.upsertCosine(
-      { ...MOCK_COSINE_RULES[0]!, id: "shared", action: { delivery: "steer", content: "Project override" } },
+      { ...MOCK_COSINE_RULES[0]!, id: "shared", action: { content: "Project override" } },
       { applicability: "project", now: 1_200 },
     );
     expect(project.get("shared")).toMatchObject({
@@ -120,7 +120,7 @@ describe("ScopedRuleCatalog", () => {
     expect(unrelated.cosineRules()).toEqual([]);
 
     first.upsertCosine(
-      { ...MOCK_COSINE_RULES[0]!, id: "project-rule", action: { delivery: "steer", content: "Updated once" } },
+      { ...MOCK_COSINE_RULES[0]!, id: "project-rule", action: { content: "Updated once" } },
       { applicability: "project", now: 1_300 },
     );
     expect(second.get("project-rule")).toMatchObject({ revision: 2, rule: { action: { content: "Updated once" } } });
@@ -222,7 +222,7 @@ describe("ScopedRuleCatalog", () => {
     global.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "broken-inherited" }, { applicability: "global", now: 1_000 });
     const raw = new Database(path);
     raw.prepare("UPDATE catalog_rules SET document_json = ? WHERE rule_id = ?").run(
-      JSON.stringify({ kind: "cosine", rule: { id: "broken-inherited", unknown: true } }),
+      JSON.stringify({ kind: "conversation", rule: { id: "broken-inherited", unknown: true } }),
       "broken-inherited",
     );
     raw.close();
@@ -250,7 +250,7 @@ describe("ScopedRuleCatalog", () => {
     await expectCatalogReservation(
       () => {},
       catalog => {
-        catalog.restore([{ document: { kind: "cosine", rule: { ...MOCK_COSINE_RULES[0]!, id: "restored" } } }]);
+        catalog.restore([{ document: { kind: "conversation", rule: { ...MOCK_COSINE_RULES[0]!, id: "restored" } } }]);
       },
       catalog => { expect(catalog.get("restored")).toMatchObject({ rule: { id: "restored" } }); },
     );
@@ -273,16 +273,16 @@ describe("ScopedRuleCatalog", () => {
     const reader = ScopedRuleCatalog.open(path, { repositoryId: "repo", workspaceRoot: "/repo" });
     const writer = ScopedRuleCatalog.open(path, { repositoryId: "repo", workspaceRoot: "/repo" });
     const initialVersion = reader.dataVersion();
-    writer.upsertDocument({ kind: "policy", rule: MOCK_POLICY_RULES[0]! }, { now: 1_000 });
+    writer.upsertDocument({ kind: "file", rule: MOCK_POLICY_RULES[0]! }, { now: 1_000 });
     writer.upsertDocument(
       {
-        kind: "cosine",
+        kind: "conversation",
         rule: {
           ...MOCK_COSINE_RULES[0]!,
           id: "cosine-filter",
           reference: "Generated API client",
           sample: { source: "assistant-text", boundary: "sentence" },
-          action: { delivery: "steer", content: "Use the generated client." },
+          action: { content: "Use the generated client." },
         },
       },
       { enabled: false, now: 2_000 },
@@ -293,13 +293,15 @@ describe("ScopedRuleCatalog", () => {
     expect(reader.cosineIds()).toEqual(new Set(["cosine-filter"]));
     expect(reader.cosineRules()).toEqual([]);
     expect(reader.list({
-      kind: "cosine",
+      kind: "conversation",
       enabled: false,
       text: "generated",
       source: "assistant-text",
       boundary: "sentence",
-      delivery: "steer",
+      mode: "steer",
     })).toEqual([expect.objectContaining({ rule: expect.objectContaining({ id: "cosine-filter" }) })]);
+    expect(reader.list({ mode: "steer" }).map(stored => stored.rule.id)).toEqual(["cosine-filter", MOCK_POLICY_RULES[0]!.id]);
+    expect(reader.list({ mode: "log" })).toEqual([]);
     reader.close();
     writer.close();
   });
@@ -307,9 +309,9 @@ describe("ScopedRuleCatalog", () => {
   it("keeps local seed edits while refreshing unchanged bundled definitions", async () => {
     const path = await catalogPath();
     const catalog = ScopedRuleCatalog.open(path, { repositoryId: "repo", workspaceRoot: "/repo" });
-    const bundled = { kind: "cosine" as const, rule: { ...MOCK_COSINE_RULES[0]!, id: "bundled" } };
+    const bundled = { kind: "conversation" as const, rule: { ...MOCK_COSINE_RULES[0]!, id: "bundled" } };
     const refreshed = {
-      kind: "cosine" as const,
+      kind: "conversation" as const,
       rule: { ...bundled.rule, reference: "Updated bundled reference" },
     };
 
@@ -326,10 +328,10 @@ describe("ScopedRuleCatalog", () => {
     const path = await catalogPath();
     const catalog = ScopedRuleCatalog.open(path, { repositoryId: "repo", workspaceRoot: "/repo" });
     const rule = { ...MOCK_COSINE_RULES[0]!, id: "opt-in" };
-    const optIn = { kind: "cosine" as const, rule, enabledByDefault: false };
+    const optIn = { kind: "conversation" as const, rule, enabledByDefault: false };
 
     expect(catalog.seed([optIn], 1_000)).toEqual({ inserted: 1, refreshed: 0, kept: 0 });
-    expect(catalog.get("opt-in")).toMatchObject({ enabled: false, sourceDigest: ruleDocumentDigest({ kind: "cosine", rule }) });
+    expect(catalog.get("opt-in")).toMatchObject({ enabled: false, sourceDigest: ruleDocumentDigest({ kind: "conversation", rule }) });
     expect(catalog.get("opt-in")).not.toHaveProperty("enabledByDefault");
     expect(catalog.cosineRules()).toEqual([]);
     catalog.setEnabled({ ids: ["opt-in"] }, true, 1_500);
@@ -362,7 +364,7 @@ describe("ScopedRuleCatalog", () => {
     catalog.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "broken" }, { now: 1_000 });
     const database = new Database(path);
     database.prepare("UPDATE catalog_rules SET document_json = ? WHERE rule_id = ?")
-      .run(JSON.stringify({ kind: "cosine", rule: { id: "broken", unknown: true } }), "broken");
+      .run(JSON.stringify({ kind: "conversation", rule: { id: "broken", unknown: true } }), "broken");
     database.close();
 
     expect(catalog.list().map(({ rule }) => rule.id)).toEqual(["healthy"]);

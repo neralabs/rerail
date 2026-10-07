@@ -1,0 +1,358 @@
+{
+  "pack": "node",
+  "family": "ecma",
+  "capabilities": [
+    "syntax",
+    "scope",
+    "value",
+    "suppression"
+  ],
+  "corpora": [
+    {
+      "name": "fastify",
+      "repository": "https://github.com/fastify/fastify",
+      "commit": "0d945819bebc08f4ca666d8283c03a26ed9706a0",
+      "paths": [
+        "fastify.js",
+        "fastify.d.ts",
+        "lib",
+        "test",
+        "examples",
+        "build",
+        "integration",
+        "scripts",
+        "types"
+      ],
+      "exclude": []
+    },
+    {
+      "name": "prettier",
+      "repository": "https://github.com/prettier/prettier",
+      "commit": "5927216227411bc2cdaf30d50559e0a475ab4832",
+      "paths": [
+        "src",
+        "scripts"
+      ],
+      "exclude": []
+    }
+  ],
+  "tools": [
+    {
+      "name": "eslint-plugin-n",
+      "version": "18.4.1"
+    }
+  ],
+  "rules": [
+    {
+      "id": "n-no-process-exit",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-process-exit"
+      },
+      "policy": "rules/n-no-process-exit.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-new-require",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-new-require"
+      },
+      "policy": "rules/n-no-new-require.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-process-env",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-process-env"
+      },
+      "policy": "rules/n-no-process-env.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-global-require",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/global-require"
+      },
+      "policy": "rules/n-global-require.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-exports-assign",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-exports-assign"
+      },
+      "policy": "rules/n-no-exports-assign.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-sync",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-sync"
+      },
+      "policy": "rules/n-no-sync.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-mixed-requires",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-mixed-requires"
+      },
+      "policy": "rules/n-no-mixed-requires.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-prefer-global-buffer",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/prefer-global/buffer"
+      },
+      "policy": "rules/n-prefer-global-buffer.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-prefer-global-console",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/prefer-global/console"
+      },
+      "policy": "rules/n-prefer-global-console.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-prefer-global-process",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/prefer-global/process"
+      },
+      "policy": "rules/n-prefer-global-process.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-prefer-global-url",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/prefer-global/url"
+      },
+      "policy": "rules/n-prefer-global-url.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-prefer-global-url-search-params",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/prefer-global/url-search-params"
+      },
+      "policy": "rules/n-prefer-global-url-search-params.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-prefer-global-text-decoder",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/prefer-global/text-decoder"
+      },
+      "policy": "rules/n-prefer-global-text-decoder.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-prefer-global-text-encoder",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/prefer-global/text-encoder"
+      },
+      "policy": "rules/n-prefer-global-text-encoder.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-prefer-promises-fs",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/prefer-promises/fs"
+      },
+      "policy": "rules/n-prefer-promises-fs.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-prefer-promises-dns",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/prefer-promises/dns"
+      },
+      "policy": "rules/n-prefer-promises-dns.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-prefer-node-protocol",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/prefer-node-protocol"
+      },
+      "policy": "rules/n-prefer-node-protocol.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-path-concat",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-path-concat"
+      },
+      "policy": "rules/n-no-path-concat.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-exports-style",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/exports-style"
+      },
+      "policy": "rules/n-exports-style.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-handle-callback-err",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/handle-callback-err"
+      },
+      "policy": "rules/n-handle-callback-err.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-callback-literal",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-callback-literal"
+      },
+      "policy": "rules/n-no-callback-literal.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-callback-return",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/callback-return"
+      },
+      "policy": "rules/n-callback-return.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    }
+  ]
+}

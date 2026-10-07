@@ -1,0 +1,224 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-no-children-prop",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-react 7.37.5 react/no-children-prop (allowFunctions: false): a `children` JSX attribute, and a createElement call (isCreateElement, default pragma) whose second argument is an object literal with a `children` key.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "attribute",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "jsx_attribute",
+            "has": {
+              "kind": "property_identifier",
+              "regex": "^(?:children)$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-children-prop",
+        "message": "Do not pass children as props. Instead, nest children between the opening and closing tags.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-children-prop"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create-element",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "matches": "create-element"
+            },
+            "arguments": {
+              "signature": [
+                "type",
+                "props"
+              ],
+              "bind": {
+                "PROPS": "props"
+              },
+              "mode": "estree"
+            }
+          },
+          "utils": {
+            "create-element": {
+              "any": [
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^React$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "regex": "^createElement$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "identifier",
+                  "regex": "^createElement$",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "matches": "react-site"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "react-site": {
+              "any": [
+                {
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "value",
+                    "matches": "react-init"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "import_statement",
+                    "has": {
+                      "field": "source",
+                      "kind": "string",
+                      "value": {
+                        "eq": "react"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "react-init": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^React$"
+                },
+                {
+                  "kind": "member_expression",
+                  "has": {
+                    "field": "object",
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^React$"
+                      },
+                      {
+                        "matches": "require-react"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "matches": "require-react"
+                }
+              ]
+            },
+            "require-react": {
+              "kind": "call_expression",
+              "all": [
+                {
+                  "has": {
+                    "field": "function",
+                    "kind": "identifier",
+                    "regex": "^require$"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "arguments",
+                    "has": {
+                      "kind": "string",
+                      "nthChild": 1,
+                      "value": {
+                        "eq": "react"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "constraints": {
+            "PROPS": {
+              "kind": "object",
+              "has": {
+                "any": [
+                  {
+                    "kind": "pair",
+                    "has": {
+                      "field": "key",
+                      "kind": "property_identifier",
+                      "regex": "^(?:children)$"
+                    }
+                  },
+                  {
+                    "kind": "shorthand_property_identifier",
+                    "regex": "^(?:children)$"
+                  },
+                  {
+                    "kind": "method_definition",
+                    "has": {
+                      "field": "name",
+                      "kind": "property_identifier",
+                      "regex": "^(?:children)$"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-children-prop",
+        "message": "Do not pass children as props. Instead, pass them as additional arguments to React.createElement.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-children-prop"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

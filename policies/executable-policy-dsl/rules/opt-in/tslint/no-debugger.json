@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-debugger",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-debugger` rule with its default options (https://palantir.github.io/tslint/rules/no-debugger/). Disallows debugger statements.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "debugger-statement",
       "forbid": {
@@ -35,10 +36,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_DEBUGGER",
-        "severity": "error",
         "message": "Use of debugger statements is forbidden"
       }
     }

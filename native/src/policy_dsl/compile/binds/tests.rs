@@ -12,7 +12,7 @@ fn compile(language: &str, ast: Value) -> Result<CompiledPolicyDsl> {
     ast["language"] = json!(language);
     compile_document_with(
         check_document(
-            json!({ "id": "ast-match", "forbid": { "ast": ast }, "finding": finding() }),
+            json!({ "id": "ast-match", "forbid": { "ast": ast }, "violation": finding() }),
         ),
         &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
     )
@@ -25,7 +25,7 @@ fn python(rule: Value) -> CompiledPolicyDsl {
 /// Each finding as `line:text` (1-based lines).
 fn found(result: &Value, source: &str) -> Vec<String> {
     assert_eq!(result["failures"], json!([]), "{result}");
-    result["findings"]
+    result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -247,27 +247,27 @@ fn binds_checks_its_filters() {
     for (rule, expected) in [
         (
             json!({ "kind": "identifier", "binds": { "form": "assign" } }),
-            "/checks/0/forbid/ast/rule/binds/form: `\"assign\"` is not a binding form; expected one of assignment, annotated, annotation, augmented, named, for, with, except, import, definition, parameter, global, match, typeParameter, typeAlias, implicit, deletion, field, method, accessor, static",
+            "/clauses/0/forbid/ast/rule/binds/form: `\"assign\"` is not a binding form; expected one of assignment, annotated, annotation, augmented, named, for, with, except, import, definition, parameter, global, match, typeParameter, typeAlias, implicit, deletion, field, method, accessor, static",
         ),
         (
             json!({ "kind": "identifier", "binds": { "scope": [] } }),
-            "/checks/0/forbid/ast/rule/binds/scope must be a scope kind name or a non-empty array of them",
+            "/clauses/0/forbid/ast/rule/binds/scope must be a scope kind name or a non-empty array of them",
         ),
         (
             json!({ "kind": "identifier", "binds": { "used": "no" } }),
-            "/checks/0/forbid/ast/rule/binds/used must be true or false",
+            "/clauses/0/forbid/ast/rule/binds/used must be true or false",
         ),
         (
             json!({ "kind": "identifier", "binds": { "shadows": true } }),
-            "unknown field `shadows` at /checks/0/forbid/ast/rule/binds",
+            "unknown field `shadows` at /clauses/0/forbid/ast/rule/binds",
         ),
         (
             json!({ "kind": "identifier", "binds": { "redefines": { "redefines": {} } } }),
-            "unknown field `redefines` at /checks/0/forbid/ast/rule/binds/redefines",
+            "unknown field `redefines` at /clauses/0/forbid/ast/rule/binds/redefines",
         ),
         (
             json!({ "kind": "identifier", "binds": { "redefines": { "sameScope": 1 } } }),
-            "/checks/0/forbid/ast/rule/binds/redefines/sameScope must be true or false",
+            "/clauses/0/forbid/ast/rule/binds/redefines/sameScope must be true or false",
         ),
     ] {
         assert_eq!(
@@ -281,21 +281,21 @@ fn binds_checks_its_filters() {
             "python",
             json!({ "rule": { "kind": "identifier", "binds": { "directives": "eslint" } } })
         )),
-        "/checks/0/forbid/ast/rule/binds/directives: /* exported */ comments are ESLint's; Python has none"
+        "/clauses/0/forbid/ast/rule/binds/directives: /* exported */ comments are ESLint's; Python has none"
     );
     assert_eq!(
         rejection(compile(
             "typescript",
             json!({ "rule": { "kind": "identifier", "binds": { "directives": "jshint" } } })
         )),
-        "/checks/0/forbid/ast/rule/binds/directives must be \"eslint\" (honor /* exported */ comments)"
+        "/clauses/0/forbid/ast/rule/binds/directives must be \"eslint\" (honor /* exported */ comments)"
     );
     assert_eq!(
         rejection(compile(
             "typescript",
             json!({ "rule": { "kind": "identifier", "binds": { "scope": "lambda" } } })
         )),
-        "/checks/0/forbid/ast/rule/binds/scope: `\"lambda\"` is not a scope kind; expected one of global, module, function, class, block, namespace, typeParameters, functionName"
+        "/clauses/0/forbid/ast/rule/binds/scope: `\"lambda\"` is not a scope kind; expected one of global, module, function, class, block, namespace, typeParameters, functionName"
     );
 }
 
@@ -304,11 +304,11 @@ fn before_local_is_pythons_and_alone_in_its_resolves() {
     for (rule, expected) in [
         (
             json!({ "kind": "identifier", "resolves": { "beforeLocal": false } }),
-            "/checks/0/forbid/ast/rule/resolves/beforeLocal must be true",
+            "/clauses/0/forbid/ast/rule/resolves/beforeLocal must be true",
         ),
         (
             json!({ "kind": "identifier", "resolves": { "beforeLocal": true, "global": true } }),
-            "/checks/0/forbid/ast/rule/resolves/global: `beforeLocal` asks about a read before the function binds the name; write other `resolves` terms in a resolves of their own",
+            "/clauses/0/forbid/ast/rule/resolves/global: `beforeLocal` asks about a read before the function binds the name; write other `resolves` terms in a resolves of their own",
         ),
     ] {
         assert_eq!(
@@ -322,7 +322,7 @@ fn before_local_is_pythons_and_alone_in_its_resolves() {
             "typescript",
             json!({ "rule": { "kind": "identifier", "resolves": { "beforeLocal": true } } })
         )),
-        "/checks/0/forbid/ast/rule/resolves/beforeLocal reads Python's binding order; TypeScript has none"
+        "/clauses/0/forbid/ast/rule/resolves/beforeLocal reads Python's binding order; TypeScript has none"
     );
     // Only the first read, not in a nested scope, and not once the function binds the name twice
     // (the latest binding then shadows its own scope's).
@@ -350,7 +350,7 @@ fn binds_is_source_incomplete_under_syntax_errors() {
         "a.py",
         "def f():\n    x = 1\ndef g(:\n",
     );
-    assert_eq!(result["findings"], json!([]), "{result}");
+    assert_eq!(result["violations"], json!([]), "{result}");
     assert_eq!(
         result["failures"][0]["code"], "source-incomplete",
         "{result}"
@@ -472,7 +472,7 @@ fn typescript_binding_filters_read_forms_scopes_and_usedness() {
             json!({ "rule": { "kind": "identifier", "resolves": { "binding": { key: value } } } });
         assert_eq!(
             rejection(compile("typescript", rule)),
-            format!("/checks/0/forbid/ast/rule/resolves/binding/{key}: {expected}")
+            format!("/clauses/0/forbid/ast/rule/resolves/binding/{key}: {expected}")
         );
     }
     assert_eq!(
@@ -480,7 +480,7 @@ fn typescript_binding_filters_read_forms_scopes_and_usedness() {
             "python",
             json!({ "rule": { "kind": "identifier", "resolves": { "binding": { "form": "let" } } } })
         )),
-        "/checks/0/forbid/ast/rule/resolves/binding/form: `\"let\"` is not a binding form; expected one of assignment, annotated, annotation, augmented, named, for, with, except, import, definition, parameter, global, match, typeParameter, typeAlias, implicit, deletion, field, method, accessor, static"
+        "/clauses/0/forbid/ast/rule/resolves/binding/form: `\"let\"` is not a binding form; expected one of assignment, annotated, annotation, augmented, named, for, with, except, import, definition, parameter, global, match, typeParameter, typeAlias, implicit, deletion, field, method, accessor, static"
     );
 }
 
@@ -651,15 +651,27 @@ print(v)
     );
 }
 
-/// Where a TypeScript rule reports on a file, as `line:text`.
+/// Where a TypeScript rule reports on a file, as `line:text`; a `.js` file is read in
+/// tree-sitter-javascript, a dialect TypeScript rules span.
 fn run_typescript(ast: Value, path: &str, source: &str) -> Vec<String> {
     let language = if path.ends_with(".tsx") {
         "tsx"
+    } else if path.ends_with(".js") {
+        "javascript"
     } else {
         "typescript"
     };
     let compiled = compile("typescript", ast).unwrap_or_else(|error| panic!("{}", error.reason));
     found(&evaluate_file(&compiled, language, path, source), source)
+}
+
+/// Where a JavaScript rule reports on `a.js`, as `line:text`.
+fn run_javascript(ast: Value, source: &str) -> Vec<String> {
+    let compiled = compile("javascript", ast).unwrap_or_else(|error| panic!("{}", error.reason));
+    found(
+        &evaluate_file(&compiled, "javascript", "a.js", source),
+        source,
+    )
 }
 
 /// Every name node of a TypeScript binding.
@@ -825,7 +837,7 @@ fn binds_has_no_lookup_and_redefines_is_not_only() {
         let rule = json!({ "rule": { "kind": "identifier", "binds": { key: true } } });
         assert_eq!(
             rejection(compile("python", rule)),
-            format!("unknown field `{key}` at /checks/0/forbid/ast/rule/binds")
+            format!("unknown field `{key}` at /clauses/0/forbid/ast/rule/binds")
         );
     }
     // `only` fails for any earlier binding in the scope; `redefines` reads only the one shadowed
@@ -867,6 +879,31 @@ fn all_goes_on_past_an_unknown_binds_term_that_binds_nothing() {
     let rule = json!({ "kind": "identifier", "binds": { "form": "assignment" },
                        "not": { "all": [binding, { "has": { "stopBy": "end", "pattern": "$S", "regex": "^y$" } }] } });
     assert_eq!(run(rule, source), Vec::<String>::new());
+}
+
+/// `redefines` holds at an earlier definition that passes past one whose sub-rules are unknown,
+/// and leaves no unknown verdict behind: a false term beside it decides the conjunction false at
+/// every definition.
+#[test]
+fn redefines_decides_at_a_later_definition_past_an_unknown_one() {
+    let false_beside = |kind: &str, unknown: &str| {
+        let binds = json!({ "redefines": { "site": { "testUnknown": unknown } } });
+        json!({ "rule": { "kind": kind, "not": { "all": [{ "binds": binds }, { "regex": "^never$" }] } } })
+    };
+    let source = "var a = 1;\nvar a = 2;\nvar a = 3;\n";
+    assert_eq!(
+        run_typescript(false_beside("identifier", "a = 1"), "a.ts", source),
+        ["1:a", "2:a", "3:a"]
+    );
+    let source = "class C {\n  get #p() { return 1; }\n  set #p(v) {}\n  #p = 2;\n}\n";
+    assert_eq!(
+        run_typescript(
+            false_beside("private_property_identifier", "^get"),
+            "a.ts",
+            source
+        ),
+        ["2:#p", "3:#p", "4:#p"]
+    );
 }
 
 #[test]
@@ -919,7 +956,7 @@ def f(y):
 
 #[test]
 fn bindings_checks_its_bounds_and_capture_and_is_python_only() {
-    let at = "/checks/0/forbid/ast/rule/binds/bindings";
+    let at = "/clauses/0/forbid/ast/rule/binds/bindings";
     for (bindings, expected) in [
         (
             json!({ "within": "LOOP" }),
@@ -1041,7 +1078,7 @@ fn the_jsx_pragma_reads_its_variable() {
     );
     assert_eq!(
         rejection(compile("typescript", rule(json!({ "jsxPragma": "a.b" })))),
-        "/checks/0/forbid/ast/languageOptions/jsxPragma must be an identifier of at most 256 bytes, or null"
+        "/clauses/0/forbid/ast/languageOptions/jsxPragma must be an identifier of at most 256 bytes, or null"
     );
 }
 
@@ -1097,11 +1134,11 @@ function h() { var arguments; }
     for (rule, expected) in [
         (
             json!({ "kind": "identifier", "binds": { "redefines": { "sameImport": true } } }),
-            "/checks/0/forbid/ast/rule/binds/redefines/sameImport: qualified import names are Python's; TypeScript has none",
+            "/clauses/0/forbid/ast/rule/binds/redefines/sameImport: qualified import names are Python's; TypeScript has none",
         ),
         (
             json!({ "kind": "identifier", "binds": { "redefines": { "every": 1 } } }),
-            "/checks/0/forbid/ast/rule/binds/redefines/every must be true or false",
+            "/clauses/0/forbid/ast/rule/binds/redefines/every must be true or false",
         ),
     ] {
         assert_eq!(
@@ -1112,11 +1149,11 @@ function h() { var arguments; }
     for (rule, expected) in [
         (
             json!({ "kind": "identifier", "binds": { "redefines": { "every": true } } }),
-            "/checks/0/forbid/ast/rule/binds/redefines/every: Python's redefines reads the one binding shadowed; `every` is TypeScript's",
+            "/clauses/0/forbid/ast/rule/binds/redefines/every: Python's redefines reads the one binding shadowed; `every` is TypeScript's",
         ),
         (
             json!({ "kind": "identifier", "binds": { "builtin": true } }),
-            "/checks/0/forbid/ast/rule/binds/builtin: configured globals are ESLint's; Python has none",
+            "/clauses/0/forbid/ast/rule/binds/builtin: configured globals are ESLint's; Python has none",
         ),
     ] {
         assert_eq!(
@@ -1155,11 +1192,11 @@ export { f };
     for (resolves, expected) in [
         (
             json!({ "write": "first" }),
-            "/checks/0/forbid/ast/rule/resolves/write must be \"last\"",
+            "/clauses/0/forbid/ast/rule/resolves/write must be \"last\"",
         ),
         (
             json!({ "write": "last", "global": ["a"] }),
-            "/checks/0/forbid/ast/rule/resolves/global: `write` asks where ESLint reports a variable; filter it with `binding`, and write other `resolves` terms in a resolves of their own",
+            "/clauses/0/forbid/ast/rule/resolves/global: `write` asks where ESLint reports a variable; filter it with `binding`, and write other `resolves` terms in a resolves of their own",
         ),
     ] {
         let rule = json!({ "rule": { "kind": "identifier", "resolves": resolves } });
@@ -1170,7 +1207,7 @@ export { f };
             "python",
             json!({ "rule": { "kind": "identifier", "resolves": { "write": "last" } } })
         )),
-        "/checks/0/forbid/ast/rule/resolves/write: where ESLint reports a variable is TypeScript's; Python has none"
+        "/clauses/0/forbid/ast/rule/resolves/write: where ESLint reports a variable is TypeScript's; Python has none"
     );
 }
 
@@ -1207,7 +1244,7 @@ fn occurrence_matches_a_definition_name_or_reference_of_the_variable() {
             "python",
             json!({ "rule": { "kind": "identifier", "binds": { "occurrence": { "kind": "identifier" } } } })
         )),
-        "/checks/0/forbid/ast/rule/binds/occurrence: a variable's occurrences are TypeScript's; Python has none"
+        "/clauses/0/forbid/ast/rule/binds/occurrence: a variable's occurrences are TypeScript's; Python has none"
     );
 }
 
@@ -1435,7 +1472,8 @@ function e() {}
 /// M10b's private-name binds beside M9's `member` compare: `binds` keeps `#g` and `g` apart (each
 /// its own member of the class body), while `member` names `#g` as typescript-eslint's
 /// getStaticMemberAccessValue does, without its `#`, so it equals the public `g`. A relation that
-/// compares against the binding's `site` runs after `binds` binds it.
+/// compares against the binding's `site` runs after `binds` binds it. tree-sitter-javascript keys
+/// a field `property` where tree-sitter-typescript keys it `name`; both read alike.
 #[test]
 fn member_compare_names_private_members_that_binds_keeps_apart() {
     let source = "\
@@ -1449,17 +1487,26 @@ class C {
   #n = 4;
 }
 ";
-    let members = json!([{ "kind": "public_field_definition" }, { "kind": "method_definition" }]);
     // An unused private member with a public namesake in the same body.
-    let shadowed = json!({ "rule": {
-        "kind": "private_property_identifier",
-        "binds": { "used": false, "site": { "pattern": "$P" } },
-        "inside": { "kind": "class_body", "stopBy": "end", "has": {
-            "stopBy": "neighbor", "any": members, "pattern": "$Q",
-            "not": { "has": { "stopBy": "neighbor", "kind": "private_property_identifier" } },
-            "compare": { "left": "Q", "op": "eq", "right": "P", "text": "member" } } },
-    } });
-    assert_eq!(run_typescript(shadowed, "a.ts", source), ["2:#g", "6:#k"]);
+    let shadowed = |field: &str| {
+        let members = json!([{ "kind": field }, { "kind": "method_definition" }]);
+        json!({ "rule": {
+            "kind": "private_property_identifier",
+            "binds": { "used": false, "site": { "pattern": "$P" } },
+            "inside": { "kind": "class_body", "stopBy": "end", "has": {
+                "stopBy": "neighbor", "any": members, "pattern": "$Q",
+                "not": { "has": { "stopBy": "neighbor", "kind": "private_property_identifier" } },
+                "compare": { "left": "Q", "op": "eq", "right": "P", "text": "member" } } },
+        } })
+    };
+    assert_eq!(
+        run_typescript(shadowed("public_field_definition"), "a.ts", source),
+        ["2:#g", "6:#k"]
+    );
+    assert_eq!(
+        run_javascript(shadowed("field_definition"), source),
+        ["2:#g", "6:#k"]
+    );
     // The public namesake is no other definition of the private member.
     assert_eq!(
         run_typescript(
@@ -1469,14 +1516,17 @@ class C {
         ),
         Vec::<String>::new()
     );
-    assert_eq!(
-        run_typescript(
-            json!({ "rule": { "kind": "private_property_identifier", "binds": { "used": false } } }),
-            "a.ts",
-            source
-        ),
-        ["2:#g", "6:#k", "8:#n"]
-    );
+    for path in ["a.ts", "a.js"] {
+        assert_eq!(
+            run_typescript(
+                json!({ "rule": { "kind": "private_property_identifier", "binds": { "used": false } } }),
+                path,
+                source
+            ),
+            ["2:#g", "6:#k", "8:#n"],
+            "{path}"
+        );
+    }
 }
 
 /// M10a's fix round's bare annotations under M10b's filters: `referenced` counts the reads that

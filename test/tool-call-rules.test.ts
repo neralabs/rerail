@@ -85,7 +85,8 @@ describe("tool-call rules from the open-source corpus", () => {
     expect(match).toEqual({
       ruleId: FORCE_PUSH,
       kind: "structural",
-      action: { delivery: "steer", content: "Do not force-push: it rewrites published history. Ask the user first." },
+      mode: "steer",
+      action: { content: "Do not force-push: it rewrites published history. Ask the user first." },
     });
   });
 });

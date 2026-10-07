@@ -111,7 +111,7 @@ describe("SQLite binding repair", () => {
     await expect(ensureSqlite(packageRoot, { npm: recordingNpm(calls, async () => {}) })).rejects.toThrow(
       new RegExp(
         `^better-sqlite3 in ${prefix} cannot load under Node ${process.versions.node} \\(ABI ${process.versions.modules}\\) ` +
-        "and npm rebuild did not fix it\\.\\nProbe still fails: [\\s\\S]*NODE_MODULE_VERSION 141[\\s\\S]*run rerail start again[\\s\\S]*" +
+        "and npm rebuild did not fix it\\.\\nProbe still fails: [\\s\\S]*NODE_MODULE_VERSION 141[\\s\\S]*run rerail daemon start again[\\s\\S]*" +
         "npx @neralabs/rerail setup",
         "u",
       ),

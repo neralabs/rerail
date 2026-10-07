@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:binary-expression-operand-order",
   "revision": 1,
+  "mode": "steer",
   "description": "A literal should be on the right-hand side of a binary expression (text-regex approximation of the left/right operand split).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "literal-left",
       "forbid": {
@@ -47,10 +48,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "BINARY_EXPRESSION_OPERAND_ORDER",
-        "severity": "error",
         "message": "Literal expression should be on the right-hand side of a binary expression."
       }
     }

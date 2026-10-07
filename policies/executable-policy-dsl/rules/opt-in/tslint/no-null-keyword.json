@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-null-keyword",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-null-keyword` rule with its default options (https://palantir.github.io/tslint/rules/no-null-keyword/). Disallows the null keyword outside type positions; strict comparisons (=== / !==) against null are allowed.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "null-keyword",
       "forbid": {
@@ -68,10 +69,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_NULL_KEYWORD",
-        "severity": "error",
         "message": "Use 'undefined' instead of 'null'"
       }
     }

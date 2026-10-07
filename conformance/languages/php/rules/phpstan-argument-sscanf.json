@@ -1,0 +1,174 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "phpstan-argument-sscanf",
+  "revision": 1,
+  "mode": "steer",
+  "description": "PHPStan 2.2.16 argument.sscanf (PrintfParametersRule): an sscanf() call passing variables whose known format assigns more or fewer of them than it passes, or that PHP refuses.",
+  "scope": {
+    "include": [
+      "**/*.php"
+    ],
+    "exclude": [
+      "**/*.blade.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "missing",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "pattern": "$FN($S, $F, $$$A)",
+            "kind": "function_call_expression",
+            "has": {
+              "field": "function",
+              "resolves": {
+                "import": [
+                  "sscanf"
+                ]
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "kind": "argument",
+                    "nthChild": 3
+                  }
+                }
+              }
+            ],
+            "formatArgs": {
+              "style": "scanf",
+              "string": "F",
+              "args": "A",
+              "missing": {
+                "kind": "placeholder"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "argument.sscanf",
+        "anchor": "witness.start",
+        "suppress": {
+          "phpstan": {
+            "identifiers": [
+              "argument.sscanf"
+            ]
+          }
+        },
+        "message": "Call to sscanf contains more placeholders than values given."
+      }
+    },
+    {
+      "id": "unused",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "pattern": "$FN($S, $F, $$$A)",
+            "kind": "function_call_expression",
+            "has": {
+              "field": "function",
+              "resolves": {
+                "import": [
+                  "sscanf"
+                ]
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "kind": "argument",
+                    "nthChild": 3
+                  }
+                }
+              }
+            ],
+            "formatArgs": {
+              "style": "scanf",
+              "string": "F",
+              "args": "A",
+              "unused": {
+                "kind": "argument"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "argument.sscanf",
+        "anchor": "witness.start",
+        "suppress": {
+          "phpstan": {
+            "identifiers": [
+              "argument.sscanf"
+            ]
+          }
+        },
+        "message": "Call to sscanf contains fewer placeholders than values given."
+      }
+    },
+    {
+      "id": "invalid",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "pattern": "$FN($S, $F, $$$A)",
+            "kind": "function_call_expression",
+            "has": {
+              "field": "function",
+              "resolves": {
+                "import": [
+                  "sscanf"
+                ]
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "kind": "argument",
+                    "nthChild": 3
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "has": {
+                "parse": {
+                  "grammar": "scanfFormat",
+                  "has": {
+                    "kind": "error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "argument.sscanf",
+        "anchor": "witness.start",
+        "suppress": {
+          "phpstan": {
+            "identifiers": [
+              "argument.sscanf"
+            ]
+          }
+        },
+        "message": "Call to sscanf contains an invalid placeholder."
+      }
+    }
+  ]
+}

@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:completed-docs",
   "revision": 1,
+  "mode": "steer",
   "description": "All categories listed as strings (no tag exemptions).",
   "scope": { "include": ["**/*"], "exclude": [] },
-  "checks": [
+  "clauses": [
     {
       "id": "classes-internal",
       "forbid": {
@@ -19,10 +20,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for classes."
       }
     },
@@ -40,10 +40,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for exported classes."
       }
     },
@@ -61,10 +60,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for enums."
       }
     },
@@ -82,10 +80,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for exported enums."
       }
     },
@@ -103,10 +100,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for enum members."
       }
     },
@@ -152,10 +148,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for functions."
       }
     },
@@ -201,10 +196,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for exported functions."
       }
     },
@@ -222,10 +216,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for interfaces."
       }
     },
@@ -243,10 +236,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for exported interfaces."
       }
     },
@@ -302,10 +294,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for methods."
       }
     },
@@ -331,10 +322,9 @@
           "utils": { "documented": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for namespaces."
       }
     },
@@ -352,10 +342,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for exported namespaces."
       }
     },
@@ -412,10 +401,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for properties."
       }
     },
@@ -433,10 +421,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for types."
       }
     },
@@ -454,10 +441,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for exported types."
       }
     },
@@ -509,10 +495,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for variables."
       }
     },
@@ -572,10 +557,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for exported variables."
       }
     }

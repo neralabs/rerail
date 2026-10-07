@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:unnecessary-bind",
   "revision": 1,
+  "mode": "steer",
   "description": "unnecessary-bind with type info: also flags `.bind(x)` on arrow functions. Only arrow LITERALS are visible; identifiers bound to arrows need binding/type resolution.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "function-bind",
       "forbid": {
@@ -73,10 +74,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "UNNECESSARY_BIND",
-        "severity": "error",
         "message": "Don't bind `this` without arguments as a scope to a function. Use an arrow lambda instead."
       }
     },
@@ -131,10 +131,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "UNNECESSARY_BIND",
-        "severity": "error",
         "message": "Don't bind scopes to arrow lambdas, as they already have a bound scope."
       }
     }

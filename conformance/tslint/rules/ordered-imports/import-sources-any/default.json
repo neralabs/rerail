@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:ordered-imports",
   "revision": 1,
+  "mode": "steer",
   "description": "Options [{\"import-sources-order\":\"any\"}]. Sources: an import (or import-equals require) fails when its module path sorts before the path of the import directly before it (through comments; any other statement ends the block), after TSLint's transform (any), with relative paths (./ or /) sorting after library paths, as compare() does. Named imports: the first specifier whose next specifier sorts before it, as findUnsortedPair (case-insensitive). Not modelled: blank lines ending a block (trivia), grouped-imports/groups, module-source-path basename.",
   "scope": {"include": ["**/*"], "exclude": []},
-  "checks": [
+  "clauses": [
     {
       "id": "named-imports",
       "forbid": {
@@ -31,10 +32,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "ORDERED_IMPORTS",
-        "severity": "error",
         "message": "Named imports must be alphabetized ($B before $A)."
       }
     }

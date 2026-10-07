@@ -60,8 +60,8 @@ pub(super) fn record_workspace_residency(state: &WorkspaceState) {
                 .flatten()
                 .map(|witness| {
                     witness.path.len()
-                        + witness.span.to_string().len()
-                        + witness.captures.to_string().len()
+                        + json_len(&witness.span)
+                        + json_len(&witness.captures)
                         + witness.message.as_ref().map_or(0, String::len)
                         + witness.fix.as_ref().map_or(0, |fix| fix.to_string().len())
                         + size_of::<Witness>()
@@ -85,11 +85,16 @@ pub(super) fn record_workspace_residency(state: &WorkspaceState) {
     profile::record_retained(source, tape, grammar, dispatch, results);
 }
 
+/// The length of `value` serialized, standing in for its heap bytes.
+fn json_len(value: &impl serde::Serialize) -> usize {
+    serde_json::to_string(value).map_or(0, |text| text.len())
+}
+
 /// Estimated heap bytes of one witness's payload.
 pub(super) fn witness_payload_bytes(witness: &Witness) -> usize {
     witness.path.len()
-        + witness.span.to_string().len()
-        + witness.captures.to_string().len()
+        + json_len(&witness.span)
+        + json_len(&witness.captures)
         + witness.message.as_ref().map_or(0, String::len)
         + witness.fix.as_ref().map_or(0, |fix| fix.to_string().len())
 }
@@ -113,6 +118,11 @@ pub(super) fn workspace_memory_profile(state: &WorkspaceState) -> Value {
                     .map(|witnesses| witnesses.capacity() * size_of::<Witness>())
                     .sum::<usize>()
                 + file.failures.len() * size_of::<(CheckId, (&str, &str))>()
+                + file
+                    .witnesses
+                    .rendered
+                    .get()
+                    .map_or(0, super::results::Rendered::bytes)
         })
         .sum::<usize>();
     let witness_payload_bytes = state
@@ -152,8 +162,8 @@ pub(super) fn workspace_memory_profile(state: &WorkspaceState) -> Value {
                             .map(|witness| {
                                 size_of::<Witness>()
                                     + witness.path.capacity()
-                                    + witness.span.to_string().len()
-                                    + witness.captures.to_string().len()
+                                    + json_len(&witness.span)
+                                    + json_len(&witness.captures)
                                     + witness.message.as_ref().map_or(0, String::capacity)
                             })
                             .sum::<usize>()

@@ -1,0 +1,40 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "phpcs-generic-php-no-silenced-errors",
+  "revision": 1,
+  "mode": "steer",
+  "description": "PHP_CodeSniffer 4.0.4 Generic.PHP.NoSilencedErrors: every @ error-control operator.",
+  "scope": {
+    "include": [
+      "**/*.php"
+    ],
+    "exclude": [
+      "**/*.blade.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "kind": "error_suppression_expression"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "Generic.PHP.NoSilencedErrors",
+        "message": "Silencing errors is discouraged",
+        "suppress": {
+          "phpcs": {
+            "sniffs": [
+              "Generic.PHP.NoSilencedErrors.Discouraged"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

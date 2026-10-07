@@ -2,17 +2,12 @@
 //! parent's named children, or among those `ofRule` matches, counted from the end with `reverse`.
 
 use super::AstMatcher;
-#[cfg(test)]
+use super::CaptureAnalysis;
 use super::spend_util_step;
-#[cfg(test)]
 use super::util::{THREE_VALUED, UNKNOWN};
-#[cfg(test)]
 use ast_grep_core::Matcher;
-#[cfg(test)]
 use ast_grep_core::meta_var::MetaVarEnv;
-#[cfg(test)]
 use ast_grep_core::{Doc, Node};
-#[cfg(test)]
 use std::borrow::Cow;
 
 /// CSS's `An+B`: a position `index` (1-based) matches where `index = step * n + offset` for some
@@ -50,10 +45,12 @@ pub(crate) struct NthChild {
     pub(crate) position: Position,
     pub(crate) of_rule: Option<AstMatcher>,
     pub(crate) reverse: bool,
+    /// Whether `of_rule` reads and binds no capture (`CaptureAnalysis::mentions`), worked out on
+    /// first use: its verdict at a sibling is then the same for every candidate.
+    pub(crate) capture_free: std::sync::OnceLock<bool>,
 }
 
 impl NthChild {
-    #[cfg(test)]
     pub(super) fn match_node<'t, D: Doc>(
         &self,
         node: Node<'t, D>,
@@ -63,68 +60,102 @@ impl NthChild {
         self.position.holds(index).then_some(node)
     }
 
-    /// Whether `index` (the node's 0-based index among the siblings counted: its parent's named
-    /// children, or those `ofRule` matches; before `reverse`) of `count` counted holds.
-    pub(crate) fn index_holds(&self, index: usize, count: usize) -> bool {
-        let index = if self.reverse {
-            count - 1 - index
-        } else {
-            index
-        };
-        self.position.holds(index)
-    }
-
     /// The node's 0-based index among the counted siblings. Each sibling is probed against a copy
     /// of the bindings, so one sibling's bindings never reject the next; the node's own bindings
     /// under `ofRule` are then committed. A sibling whose verdict is unknown leaves the index unknown.
-    #[cfg(test)]
+    /// Where `ofRule` reads no capture, a parent's siblings are probed once per file (`memo`).
     fn index<'t, D: Doc>(
         &self,
         node: &Node<'t, D>,
         env: &mut Cow<MetaVarEnv<'t, D>>,
     ) -> Option<usize> {
         let parent = node.parent()?;
-        let named = parent.children().filter(|child| child.is_named());
-        let mut siblings = match &self.of_rule {
-            None => named.map(|child| child.node_id()).collect::<Vec<_>>(),
+        let named = || {
+            parent.children().filter(|child| {
+                let named = child.is_named();
+                #[cfg(test)]
+                if named {
+                    NAMED_SIBLING_VISITS.set(NAMED_SIBLING_VISITS.get() + 1);
+                }
+                named
+            })
+        };
+        let siblings = match &self.of_rule {
+            None => super::memo::siblings(0, &parent, || {
+                Some(Siblings {
+                    counted: named().map(|child| child.node_id()).collect(),
+                    unknown: false,
+                })
+            })?,
             Some(rule) => {
                 let three = THREE_VALUED.get();
                 let saved = three && UNKNOWN.replace(false);
-                let mut counted = Vec::new();
-                for child in named {
-                    if !spend_util_step() {
-                        if three {
-                            UNKNOWN.set(saved || UNKNOWN.get());
+                let free = *self
+                    .capture_free
+                    .get_or_init(|| CaptureAnalysis::default().mentions(rule).is_empty());
+                let list = || {
+                    let mut siblings = Siblings {
+                        counted: Vec::new(),
+                        unknown: false,
+                    };
+                    for child in named() {
+                        if !spend_util_step() {
+                            return None;
                         }
-                        return None;
+                        let mut probe = Cow::Borrowed(env.as_ref());
+                        let id = child.node_id();
+                        let matched = super::each::suspended(|| {
+                            rule.match_node_with_env(child, &mut probe).is_some()
+                        });
+                        if matched {
+                            siblings.counted.push(id);
+                        } else if three && UNKNOWN.replace(false) {
+                            siblings.unknown = true;
+                            break;
+                        }
                     }
-                    let mut probe = Cow::Borrowed(env.as_ref());
-                    let id = child.node_id();
-                    let matched = super::each::suspended(|| {
-                        rule.match_node_with_env(child, &mut probe).is_some()
-                    });
-                    if matched {
-                        counted.push(id);
-                    } else if three && UNKNOWN.get() {
+                    Some(siblings)
+                };
+                let listed = if free {
+                    super::memo::siblings(std::ptr::from_ref(self) as usize, &parent, list)
+                } else {
+                    list().map(std::sync::Arc::new)
+                };
+                // The budget ran out: no verdict.
+                let Some(listed) = listed else {
+                    if three {
                         UNKNOWN.set(saved || UNKNOWN.get());
-                        return None;
                     }
+                    return None;
+                };
+                if listed.unknown {
+                    UNKNOWN.set(true);
+                    return None;
                 }
                 if three {
                     UNKNOWN.set(saved);
                 }
-                counted
+                listed
             }
         };
-        if self.reverse {
-            siblings.reverse();
-        }
-        let index = siblings.iter().position(|id| *id == node.node_id())?;
+        let position = siblings.counted.binary_search(&node.node_id()).ok()?;
+        let index = if self.reverse {
+            siblings.counted.len() - 1 - position
+        } else {
+            position
+        };
         if let Some(rule) = &self.of_rule {
             rule.match_node_with_env(node.clone(), env);
         }
         Some(index)
     }
+}
+
+/// A parent's named children counted by `nthChild` (all, or those its `ofRule` matches), by node
+/// id in order; `unknown` where a probe's verdict was.
+pub(super) struct Siblings {
+    pub(super) counted: Vec<usize>,
+    pub(super) unknown: bool,
 }
 
 /// Upstream's `parse_an_b`: white space is ignored; `n`/`N` with an optional signed step, then an
@@ -197,9 +228,24 @@ pub(crate) fn parse_position(input: &str) -> Result<Position, String> {
 }
 
 #[cfg(test)]
+thread_local! {
+    static NAMED_SIBLING_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Named children `nthChild` listed on this thread (`reset_named_sibling_visits` restarts it).
+#[cfg(test)]
+pub(crate) fn named_sibling_visits() -> usize {
+    NAMED_SIBLING_VISITS.get()
+}
+
+#[cfg(test)]
+pub(crate) fn reset_named_sibling_visits() {
+    NAMED_SIBLING_VISITS.set(0);
+}
+
+#[cfg(test)]
 mod tests {
-    use super::{Position, parse_position};
-    use crate::policy_dsl::query::{named_sibling_visits, reset_named_sibling_visits};
+    use super::{Position, named_sibling_visits, parse_position, reset_named_sibling_visits};
     use crate::policy_dsl::test_support::*;
     use serde_json::{Value, json};
 
@@ -322,7 +368,7 @@ mod tests {
             "nthChild": { "position": "2n", "ofRule": { "kind": "identifier" } } });
         let compiled = compile_document_with(
             check_document(json!({ "id": "c", "forbid": { "ast": {
-                "language": "typescript", "rule": rule } }, "finding": finding() })),
+                "language": "typescript", "rule": rule } }, "violation": finding() })),
             &capabilities,
         )
         .unwrap_or_else(|error| panic!("{}", error.reason));
@@ -361,35 +407,35 @@ mod tests {
         for (value, expected) in [
             (
                 json!("2x"),
-                "/checks/0/forbid/ast/rule/nthChild: illegal character `x`",
+                "/clauses/0/forbid/ast/rule/nthChild: illegal character `x`",
             ),
             (
                 json!("n+"),
-                "/checks/0/forbid/ast/rule/nthChild: invalid syntax",
+                "/clauses/0/forbid/ast/rule/nthChild: invalid syntax",
             ),
             (
                 json!(-1),
-                "/checks/0/forbid/ast/rule/nthChild must be a non-negative integer, an An+B string, or { position, ofRule, reverse }",
+                "/clauses/0/forbid/ast/rule/nthChild must be a non-negative integer, an An+B string, or { position, ofRule, reverse }",
             ),
             (
                 json!({ "ofRule": { "kind": "identifier" } }),
-                "/checks/0/forbid/ast/rule/nthChild/position is required",
+                "/clauses/0/forbid/ast/rule/nthChild/position is required",
             ),
             (
                 json!({ "position": 1, "of": {} }),
-                "unknown field `of` at /checks/0/forbid/ast/rule/nthChild",
+                "unknown field `of` at /clauses/0/forbid/ast/rule/nthChild",
             ),
             (
                 json!({ "position": 1, "reverse": 1 }),
-                "/checks/0/forbid/ast/rule/nthChild/reverse must be a boolean",
+                "/clauses/0/forbid/ast/rule/nthChild/reverse must be a boolean",
             ),
             (
                 json!({ "position": "x" }),
-                "/checks/0/forbid/ast/rule/nthChild/position: illegal character `x`",
+                "/clauses/0/forbid/ast/rule/nthChild/position: illegal character `x`",
             ),
             (
                 json!({ "position": 1, "ofRule": { "kinds": "identifier" } }),
-                "unknown field `kinds` at /checks/0/forbid/ast/rule/nthChild/ofRule",
+                "unknown field `kinds` at /clauses/0/forbid/ast/rule/nthChild/ofRule",
             ),
         ] {
             let rule = json!({ "kind": "identifier", "nthChild": value });

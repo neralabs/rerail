@@ -22,16 +22,16 @@
 //
 //   node --import tsx scripts/policy-dsl-reference.mjs examples [--kernel PATH] [--verbose]
 //     Compiles every example of the reference with the native kernel (`PolicyDslRuntime.compile`),
-//     wrapping rule, query, check and define examples into documents. PATH is a built kernel:
+//     wrapping rule, query, clause and define examples into documents. PATH is a built kernel:
 //     `native/*.node`, or a debug build (`target/debug/librerail_native.dylib`), which Node
 //     loads the same way; without it, the addon the package loads (`resolveNativeBindingPath`).
 //     Examples marked `data-kind="fragment"` are fragments on purpose. Reads only;
 //     `npm run test:reference` runs it in `test:all`, after the kernel is built.
 //
-//   node scripts/policy-dsl-reference.mjs locate FEATURE [--suite ID] [--whole check] [--limit N]
+//   node scripts/policy-dsl-reference.mjs locate FEATURE [--suite ID] [--whole clause] [--limit N]
 //     Prints the smallest committed uses of a feature (see `features`), with files and JSON pointers:
 //     the search behind the reference's examples. `features` lists every feature with its count;
-//     `show SUITE:PATH[#PTR]` prints a document's checks, or the value at a pointer.
+//     `show SUITE:PATH[#PTR]` prints a document's clauses, or the value at a pointer.
 //
 // The TSLint ports, bundled policies and the engine's worked examples are read from this checkout.
 // Ruff and ESLint conformance ports are not part of this repository; `--ruff` and `--eslint` add
@@ -47,6 +47,9 @@ import { fileURLToPath } from "node:url";
 const RERAIL = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REFERENCE = join(RERAIL, "docs/policy-dsl-reference.html");
 const CAPABILITIES = join(RERAIL, "policies/executable-policy-dsl/capabilities.json");
+// The rule document format.
+const FORMAT = "rerail.policy/v1";
+const CLAUSE_FORMS = ["forbid", "require_each", "budget", "llm", "define"];
 
 function args(argv) {
   const out = { _: [] };
@@ -97,7 +100,9 @@ function gitJsonFiles(ref, path) {
   return files;
 }
 
-/** The committed policy documents of a suite: JSON files whose `format` is the DSL's. */
+/**
+ * The committed policy documents of a suite: JSON files whose `format` is the DSL's.
+ */
 function documents(suite) {
   const files =
     suite.ref === undefined ? [...jsonFiles(suite.dir)].map(path => [path, readFileSync(path, "utf8")]) : gitJsonFiles(suite.ref, suite.dir);
@@ -109,7 +114,7 @@ function documents(suite) {
     } catch {
       continue;
     }
-    if (doc !== null && typeof doc === "object" && doc.format === "rerail.policy/v1") docs.push({ path, doc });
+    if (isObject(doc) && doc.format === FORMAT) docs.push({ path, doc });
   }
   return docs;
 }
@@ -420,7 +425,7 @@ function walkFinding(walk, finding, pointer) {
   const message = String(finding.message ?? "");
   if (/(?<!\\)\$(?:\$\$)?[A-Z_][A-Z0-9_]*/u.test(message)) walk.add("message.var", pointer, finding);
   if (/(?<!\\)\$(?:\$\$)?\{[A-Z0-9_]+\}/u.test(message)) walk.add("message.braced", pointer, finding);
-  if (finding.each !== undefined) walk.add("finding.each", pointer, finding);
+  if (finding.each !== undefined) walk.add("violation.each", pointer, finding);
   if (typeof finding.fix === "string") walk.add("fix.string", pointer, finding);
   if (isObject(finding.fix)) walk.add(finding.fix.range === "witness.span" ? "fix.object" : "fix.range", pointer, finding);
   walkSuppression(walk, finding, pointer);
@@ -430,11 +435,11 @@ function extract(doc) {
   const walk = new Walk();
   walkOptions(walk, doc, "");
   if (isObject(doc.scope)) walk.add("doc.scope", "", doc);
-  (doc.checks ?? []).forEach((check, index) => {
-    const pointer = at("", "checks", index);
-    for (const form of ["forbid", "require_each", "budget", "llm", "define"]) if (check[form] !== undefined) walk.add(`check.${form}`, pointer, check);
+  (doc.clauses ?? []).forEach((check, index) => {
+    const pointer = at("", "clauses", index);
+    for (const form of CLAUSE_FORMS) if (check[form] !== undefined) walk.add(`clause.${form}`, pointer, check);
     walkQuery(walk, check.forbid, at(pointer, "forbid"));
-    walkFinding(walk, check.finding, at(pointer, "finding"));
+    walkFinding(walk, check.violation, at(pointer, "violation"));
     if (isObject(check.define)) {
       const define = check.define;
       for (const key of ["utils", "options", "config"]) if (define[key] !== undefined) walk.add(`define.${key}`, at(pointer, "define"), define);
@@ -460,10 +465,10 @@ function extract(doc) {
 const any = (...features) => ({ features });
 export const CONSTRUCTS = [
   ["Document", [
-    ["check-forms", "forbid", any("check.forbid")],
-    ["check-forms", "require_each", any("check.require_each")],
-    ["check-forms", "budget", any("check.budget")],
-    ["define", "define", any("check.define")],
+    ["check-forms", "forbid", any("clause.forbid")],
+    ["check-forms", "require_each", any("clause.require_each")],
+    ["check-forms", "budget", any("clause.budget")],
+    ["define", "define", any("clause.define")],
     ["queries", "regex query", any("query.regex.file.content", "query.regex.file.path")],
     ["queries", "fact query", any("query.fact")],
     ["queries", "select_when", any("query.select_when")],
@@ -584,13 +589,13 @@ export const CONSTRUCTS = [
     ["file", "file.path / declaration", any("file.path", "file.declaration")],
     ["file", "file module keys", any("file.module", "file.moduleName", "file.package", "file.inPackage")],
   ]],
-  ["finding", [
+  ["violation", [
     ["finding", "anchor: capture.NAME", any("anchor.capture")],
     ["finding", "anchor: witness.start/end", any("anchor.witness.start", "anchor.witness.end")],
     ["finding", "anchor: file.start", any("anchor.file.start")],
     ["finding", "message $VAR", any("message.var")],
     ["finding", "message ${VAR}", any("message.braced")],
-    ["finding-each", "each", any("finding.each")],
+    ["finding-each", "each", any("violation.each")],
     ["finding-fix", "fix (template)", any("fix.string", "fix.object")],
     ["finding-fix", "fix range", any("fix.range")],
     ["suppress", "suppress.noqa", any("suppress.noqa")],
@@ -713,22 +718,22 @@ function examplesOf(html) {
   return out;
 }
 
-const FINDING = { code: "M13", severity: "warning", anchor: "witness.span", message: "example" };
+const FINDING = { code: "M13", anchor: "witness.span", message: "example" };
 
 function wrap(example) {
   const value = JSON.parse(example.text);
   const kind = example.attrs.kind;
-  const document = checks => ({ format: "rerail.policy/v1", id: "m13-example", revision: 1, checks });
+  const document = clauses => ({ format: FORMAT, id: "m13-example", revision: 1, mode: "steer", clauses });
   if (kind === "document") return value;
-  if (kind === "check") return document([value]);
-  if (kind === "checks") return document(value);
-  // A define reports nothing, so a document needs a check beside it.
-  if (kind === "define") return document([value, { id: "example", forbid: { ast: { language: value.define?.language ?? "typescript", rule: { kind: "comment" } } }, finding: FINDING }]);
-  if (kind === "query") return document([{ id: "example", forbid: { ast: value }, finding: FINDING }]);
+  if (kind === "clause") return document([value]);
+  if (kind === "clauses") return document(value);
+  // A define reports nothing, so a document needs a clause beside it.
+  if (kind === "define") return document([value, { id: "example", forbid: { ast: { language: value.define?.language ?? "typescript", rule: { kind: "comment" } } }, violation: FINDING }]);
+  if (kind === "query") return document([{ id: "example", forbid: { ast: value }, violation: FINDING }]);
   if (kind === "rule") {
     const language = example.attrs.lang;
     if (language !== "python" && language !== "typescript") throw new Error("a rule example needs data-lang");
-    return document([{ id: "example", forbid: { ast: { language, rule: value } }, finding: FINDING }]);
+    return document([{ id: "example", forbid: { ast: { language, rule: value } }, violation: FINDING }]);
   }
   throw new Error(`unknown data-kind ${kind}`);
 }
@@ -775,8 +780,8 @@ function locateHits(options, feature) {
   for (const suite of suites(options)) {
     for (const { path, doc } of documents(suite)) {
       for (const { pointer, owner } of extract(doc).get(feature) ?? []) {
-        const checkPointer = /^\/checks\/\d+/u.exec(pointer)?.[0];
-        const value = options.whole === "check" && checkPointer !== undefined ? doc.checks[Number(checkPointer.slice(8))] : owner;
+        const checkPointer = /^\/clauses\/\d+/u.exec(pointer)?.[0];
+        const value = options.whole === "clause" && checkPointer !== undefined ? doc.clauses[Number(checkPointer.slice(9))] : owner;
         const text = JSON.stringify(value);
         hits.push({ suite: suite.id, path, pointer, size: text.length, text });
       }
@@ -1062,7 +1067,7 @@ function zodKeys(schema, spec) {
 }
 
 /** Where an enum's named value list may be declared: the schema sources and the language tables they import. */
-const ENUM_SOURCES = [...SCHEMA_SOURCES, "src/policy-languages.ts", "src/policy-languages-semantic.ts"];
+const ENUM_SOURCES = [...SCHEMA_SOURCES, "src/policy-languages.ts", "src/policy-languages-semantic.ts", "src/rule-mode.ts"];
 
 /** The string values of an array literal's source, its `...NAME` spreads resolved in `sources`. */
 function arrayValues(sources, list) {
@@ -1294,8 +1299,11 @@ function figures() {
 function show(options) {
   for (const spec of options._.slice(1)) {
     const { value } = loadSource(spec);
-    if (isObject(value) && Array.isArray(value.checks)) {
-      value.checks.forEach((check, index) => console.log(`${spec} /checks/${index} ${check.id} ${Object.keys(check).filter(key => key !== "id" && key !== "finding").join(",")} ${JSON.stringify(check).length} B`));
+    if (isObject(value) && Array.isArray(value.clauses)) {
+      value.clauses.forEach((check, index) => {
+        const forms = Object.keys(check).filter(key => key !== "id" && key !== "violation").join(",");
+        console.log(`${spec} /clauses/${index} ${check.id} ${forms} ${JSON.stringify(check).length} B`);
+      });
     } else console.log(pretty(value));
   }
 }

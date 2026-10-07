@@ -1,0 +1,453 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-jsx-key",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-react 7.37.5 react/jsx-key (default options): an element (not a fragment) without a `key` attribute that is an array literal's element, or that a `.map(fn)` / `.from(x, fn)` callback returns: the arrow's body, a branch of its conditional body, the right side of its logical body, or a return statement directly in the callback's body or in nested if/else branches; never inside a `React.Children.toArray(...)` / `Children.toArray(...)` call.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "keyless-element": {
+            "any": [
+              {
+                "kind": "jsx_element",
+                "has": {
+                  "field": "open_tag",
+                  "has": {
+                    "field": "name",
+                    "regex": "[\\s\\S]"
+                  }
+                }
+              },
+              {
+                "kind": "jsx_self_closing_element"
+              }
+            ]
+          },
+          "has-key-ci": {
+            "any": [
+              {
+                "has": {
+                  "field": "open_tag",
+                  "has": {
+                    "kind": "jsx_attribute",
+                    "has": {
+                      "kind": "property_identifier",
+                      "regex": "^(?i:key)$"
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "kind": "jsx_attribute",
+                  "has": {
+                    "kind": "property_identifier",
+                    "regex": "^(?i:key)$"
+                  }
+                }
+              }
+            ]
+          },
+          "array-element": {
+            "any": [
+              {
+                "inside": {
+                  "kind": "array"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "parenthesized_expression",
+                  "matches": "array-element"
+                }
+              }
+            ]
+          },
+          "to-array-call": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "kind": "member_expression",
+              "all": [
+                {
+                  "has": {
+                    "field": "property",
+                    "regex": "^toArray$"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "object",
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^Children$"
+                      },
+                      {
+                        "kind": "member_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "object",
+                              "kind": "identifier",
+                              "regex": "^React$"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "property",
+                              "regex": "^Children$"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "in-to-array": {
+            "inside": {
+              "stopBy": "end",
+              "matches": "to-array-call"
+            }
+          },
+          "member-call": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "kind": "member_expression"
+            }
+          },
+          "callback-slot": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "nthChild": 1,
+                    "inside": {
+                      "kind": "arguments",
+                      "inside": {
+                        "matches": "member-call",
+                        "has": {
+                          "field": "function",
+                          "has": {
+                            "field": "property",
+                            "regex": "^map$"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "nthChild": 2,
+                    "inside": {
+                      "kind": "arguments",
+                      "inside": {
+                        "matches": "member-call",
+                        "has": {
+                          "field": "function",
+                          "has": {
+                            "field": "property",
+                            "regex": "^from$"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "kind": "parenthesized_expression",
+                  "matches": "callback-slot"
+                }
+              }
+            ]
+          },
+          "callback": {
+            "any": [
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              }
+            ],
+            "matches": "callback-slot"
+          },
+          "callback-body": {
+            "any": [
+              {
+                "inside": {
+                  "field": "body",
+                  "kind": "arrow_function",
+                  "matches": "callback"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "parenthesized_expression",
+                  "matches": "callback-body"
+                }
+              }
+            ]
+          },
+          "callback-branch": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "field": "consequence",
+                      "kind": "ternary_expression",
+                      "matches": "callback-body"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "field": "alternative",
+                      "kind": "ternary_expression",
+                      "matches": "callback-body"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "field": "right",
+                      "kind": "binary_expression",
+                      "has": {
+                        "field": "operator",
+                        "regex": "^(?:&&|\\|\\||\\?\\?)$"
+                      },
+                      "matches": "callback-body"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "kind": "parenthesized_expression",
+                  "matches": "callback-branch"
+                }
+              }
+            ]
+          },
+          "callback-block": {
+            "kind": "statement_block",
+            "inside": {
+              "field": "body",
+              "any": [
+                {
+                  "kind": "arrow_function"
+                },
+                {
+                  "kind": "function_expression"
+                },
+                {
+                  "kind": "generator_function"
+                }
+              ],
+              "matches": "callback"
+            }
+          },
+          "scanned-statement": {
+            "any": [
+              {
+                "kind": "return_statement"
+              },
+              {
+                "kind": "if_statement"
+              }
+            ],
+            "all": [
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "matches": "callback-block"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "statement_block",
+                      "matches": "scanned-branch"
+                    }
+                  },
+                  {
+                    "matches": "scanned-branch"
+                  }
+                ]
+              }
+            ]
+          },
+          "scanned-branch": {
+            "any": [
+              {
+                "inside": {
+                  "field": "consequence",
+                  "kind": "if_statement",
+                  "matches": "scanned-statement"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "else_clause",
+                  "inside": {
+                    "kind": "if_statement",
+                    "matches": "scanned-statement"
+                  }
+                }
+              }
+            ]
+          },
+          "returned": {
+            "any": [
+              {
+                "inside": {
+                  "kind": "return_statement",
+                  "matches": "scanned-statement"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "parenthesized_expression",
+                  "matches": "returned"
+                }
+              }
+            ]
+          },
+          "iterator-element": {
+            "any": [
+              {
+                "matches": "callback-body"
+              },
+              {
+                "matches": "callback-branch"
+              },
+              {
+                "matches": "returned"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "array",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "keyless-element",
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "field": "open_tag",
+                    "has": {
+                      "kind": "jsx_attribute",
+                      "has": {
+                        "kind": "property_identifier",
+                        "regex": "^key$"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "jsx_attribute",
+                    "has": {
+                      "kind": "property_identifier",
+                      "regex": "^key$"
+                    }
+                  }
+                }
+              },
+              {
+                "matches": "array-element"
+              },
+              {
+                "not": {
+                  "matches": "in-to-array"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/jsx-key",
+        "message": "Missing \"key\" prop for element in array",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/jsx-key"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "iterator",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "keyless-element",
+            "all": [
+              {
+                "not": {
+                  "matches": "has-key-ci"
+                }
+              },
+              {
+                "matches": "iterator-element"
+              },
+              {
+                "not": {
+                  "matches": "in-to-array"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/jsx-key",
+        "message": "Missing \"key\" prop for element in iterator",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/jsx-key"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

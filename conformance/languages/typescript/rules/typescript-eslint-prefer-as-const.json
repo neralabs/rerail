@@ -1,0 +1,224 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-prefer-as-const",
+  "revision": 1,
+  "mode": "steer",
+  "description": "typescript-eslint 8.70.1 @typescript-eslint/prefer-as-const, default options. Port of typescript-eslint's `prefer-as-const` rule (https://typescript-eslint.io/rules/prefer-as-const). Flags a literal type that repeats the raw text of the literal it asserts (`x as 'a'`, `<'a'>x`) or annotates (`let v: 'a' = 'a'`, class fields); assertions are fixed to `const`.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "literal-assertion",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "literal_type",
+                "pattern": "$T"
+              },
+              {
+                "matches": "literal-type"
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "kind": "as_expression",
+                      "stopBy": "neighbor",
+                      "has": {
+                        "matches": "value-literal",
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "type_arguments",
+                      "stopBy": "neighbor",
+                      "inside": {
+                        "kind": "type_assertion",
+                        "stopBy": "neighbor",
+                        "has": {
+                          "matches": "value-literal",
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "compare": {
+                  "left": "T",
+                  "op": "eq",
+                  "right": "V"
+                }
+              }
+            ]
+          },
+          "utils": {
+            "literal-type": {
+              "has": {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "number"
+                  },
+                  {
+                    "kind": "true"
+                  },
+                  {
+                    "kind": "false"
+                  }
+                ],
+                "stopBy": "neighbor"
+              }
+            },
+            "value-literal": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "number"
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                }
+              ],
+              "pattern": "$V"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/prefer-as-const",
+        "message": "Expected a `const` instead of a literal type assertion.",
+        "fix": "const",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/prefer-as-const"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "literal-annotation",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "literal_type",
+                "pattern": "$T"
+              },
+              {
+                "matches": "literal-type"
+              },
+              {
+                "inside": {
+                  "kind": "type_annotation",
+                  "stopBy": "neighbor",
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "variable_declarator"
+                      },
+                      {
+                        "kind": "public_field_definition"
+                      }
+                    ],
+                    "stopBy": "neighbor",
+                    "has": {
+                      "matches": "value-literal",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                }
+              },
+              {
+                "compare": {
+                  "left": "T",
+                  "op": "eq",
+                  "right": "V"
+                }
+              }
+            ]
+          },
+          "utils": {
+            "literal-type": {
+              "has": {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "number"
+                  },
+                  {
+                    "kind": "true"
+                  },
+                  {
+                    "kind": "false"
+                  }
+                ],
+                "stopBy": "neighbor"
+              }
+            },
+            "value-literal": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "number"
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                }
+              ],
+              "pattern": "$V"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/prefer-as-const",
+        "message": "Expected a `const` assertion instead of a literal type annotation.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/prefer-as-const"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

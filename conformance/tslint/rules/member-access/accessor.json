@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:member-access",
   "revision": 1,
+  "mode": "steer",
   "description": "Option check-accessor.",
   "scope": {"include": ["**/*"], "exclude": []},
-  "checks": [
+  "clauses": [
     {
       "id": "member",
       "forbid": {
@@ -46,10 +47,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "MEMBER_ACCESS",
-        "severity": "error",
         "message": "The class member must be marked either 'private', 'public', or 'protected'"
       }
     }

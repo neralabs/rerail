@@ -111,8 +111,8 @@ pub(super) fn record_query(
     eprintln!(
         "RERAIL_POLICY_ANCHOR {}",
         json!({
-            "policyId": policy_id,
-            "checkId": check_id,
+            "ruleId": policy_id,
+            "clauseId": check_id,
             "language": crate::policy_dsl::language::label(language),
             "rootKinds": root_kinds.map(|kinds| kinds.into_iter()
                 .map(|id| language.kind_name(id)).collect::<Vec<_>>()),

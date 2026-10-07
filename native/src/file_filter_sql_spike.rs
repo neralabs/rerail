@@ -200,11 +200,7 @@ fn spike_sql_file_filter_indexes() {
     let state = workspace.state.lock().unwrap();
     let policies = &state.policies;
 
-    let nested = repository.join("nera-data-layer");
     let mut paths = tracked(&repository);
-    if nested.join(".git").exists() || nested.join(".git").is_file() {
-        paths.extend(tracked(&nested));
-    }
     paths.sort();
     paths.dedup();
 

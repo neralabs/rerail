@@ -1,18 +1,13 @@
 use super::AstMatcher;
-use super::binding::{binding_node_facts, occurrence_facts};
-#[cfg(test)]
 use super::binding::{match_binding_nodes, match_occurrence};
-use super::facts::{Facts, Target, slot};
 use super::resolve::{file_table, file_usage, table_reading};
-#[cfg(test)]
-use super::util::UNKNOWN;
+use super::util::{THREE_VALUED, UNKNOWN};
 use crate::policy_dsl::language::{Family, GrammarDialect};
 use crate::policy_dsl::scope::options::{DEFAULT_JSX_PRAGMA, LanguageOptions, PythonOptions};
 use crate::policy_dsl::scope::usage::{BindingId, PrivateMember, Usage};
 use crate::policy_dsl::scope::{Form, ScopeKind, ScopeTable, TYPE, VALUE};
 use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{Doc, Node};
-#[cfg(test)]
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -483,7 +478,6 @@ impl Binds {
     /// TypeScript's and PHP's `redefines` over `Binds::others`: some other binding passes the
     /// filters and sub-rules, or, with `every`, each one does. `None` when a fact decides and is
     /// unknown, or a binding the table does not know of might.
-    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     fn redefines_others<'tree, D: Doc>(
         redefines: &Redefines,
@@ -542,7 +536,6 @@ impl Binds {
 
     /// A private name's declaration `index` of `member`: the filters, the sub-rules on its
     /// definition, and `redefines` over the member's other declarations.
-    #[cfg(test)]
     fn match_private<'tree, D: Doc>(
         &self,
         node: Node<'tree, D>,
@@ -580,7 +573,8 @@ impl Binds {
         }
         if let Some(redefines) = self.redefines.as_deref() {
             // The member's other declarations, as TypeScript's variables: some earlier one passes,
-            // or with `every` each other one does. All are of the same class body.
+            // or with `every` each other one does. All are of the same class body. One whose
+            // sub-rules are unknown leaves the answer open unless a later one passes.
             if redefines.same_scope == Some(false) {
                 return None;
             }
@@ -591,6 +585,9 @@ impl Binds {
                     *other < index
                 }
             });
+            let three = THREE_VALUED.get();
+            let saved = three && UNKNOWN.replace(false);
+            let mut open = false;
             let mut found = redefines.every;
             for other in others {
                 let passes = match redefines.filter.private_verdict(member, other, &region) {
@@ -606,6 +603,9 @@ impl Binds {
                 let mut attempt = Cow::Borrowed(trial.as_ref());
                 let matched = passes && match_binding_nodes(&node, nodes, &mut attempt).is_some();
                 if redefines.every && !matched {
+                    if saved {
+                        UNKNOWN.set(true);
+                    }
                     return None;
                 }
                 if matched {
@@ -619,7 +619,12 @@ impl Binds {
                         found = true;
                         break;
                     }
+                } else if three && UNKNOWN.replace(false) {
+                    open = true;
                 }
+            }
+            if three {
+                UNKNOWN.set(saved || (open && !found));
             }
             if !found {
                 return None;
@@ -631,7 +636,6 @@ impl Binds {
         Some(node)
     }
 
-    #[cfg(test)]
     pub(super) fn match_node<'tree, D: Doc>(
         &self,
         node: Node<'tree, D>,
@@ -650,10 +654,14 @@ impl Binds {
         if let Some((member, index)) = usage.private_at(range.start, range.end) {
             return self.match_private(node, env, member, index);
         }
+        let three = THREE_VALUED.get();
+        let saved = three && UNKNOWN.replace(false);
         let mut unknown = false;
         let caller: &MetaVarEnv<'tree, D> = env.as_ref();
         let region = |capture: &str| capture_range(caller, capture);
         for id in usage.named_at(range.start, range.end, node.kind_id()) {
+            // A sub-rule the binding before left unknown is that binding's verdict.
+            unknown |= three && UNKNOWN.replace(false);
             match self.filter.verdict(&table, Some(&usage), id, &region) {
                 Some(true) => {}
                 Some(false) => continue,
@@ -713,219 +721,17 @@ impl Binds {
                     }
                 }
             }
+            if three {
+                UNKNOWN.set(saved);
+            }
             if let Cow::Owned(bound) = trial {
                 *env = Cow::Owned(bound);
             }
             return Some(node);
         }
-        if unknown {
+        if unknown || saved {
             UNKNOWN.set(true);
         }
         None
-    }
-}
-
-/// The query engine's view of `binds` (`facts::slot`): one gate row per binding the node names
-/// (the key of that binding's rows), each binding's nodes for the listed sub-rules, occurrences,
-/// and what `redefines` reads.
-impl Binds {
-    pub(super) fn facts<'tree, D: Doc>(
-        &self,
-        node: Node<'tree, D>,
-        env: &MetaVarEnv<'tree, D>,
-        facts: &mut Facts<'tree, D>,
-    ) {
-        if !self.name_kinds.contains(&node.kind_id()) {
-            return;
-        }
-        let Some(table) = file_table(
-            &node,
-            self.language,
-            table_reading(self.options.as_deref(), self.python.as_deref()),
-        ) else {
-            return;
-        };
-        let Some(usage) = file_usage(&node, &table) else {
-            return;
-        };
-        let range = node.range();
-        let region = |capture: &str| capture_range(env, capture);
-        if let Some((member, index)) = usage.private_at(range.start, range.end) {
-            return self.private_facts(&node, member, index, &region, facts);
-        }
-        let python = self.language == GrammarDialect::Python;
-        for id in usage.named_at(range.start, range.end, node.kind_id()) {
-            match self.filter.verdict(&table, Some(&usage), id, &region) {
-                Some(true) => {}
-                Some(false) => continue,
-                None => {
-                    facts.gate(-1, Target::None);
-                    continue;
-                }
-            }
-            let shadowed = match self.redefines.as_deref().filter(|_| python) {
-                None => None,
-                Some(redefines) => match Self::shadowed(redefines, &table, &usage, id, &region) {
-                    Some(Some(shadowed)) => Some((redefines, shadowed)),
-                    Some(None) => continue,
-                    None => {
-                        facts.gate(-1, Target::None);
-                        continue;
-                    }
-                },
-            };
-            // TypeScript's and PHP's (and Blade's embedded PHP's) other bindings; a PHP binding
-            // that overwrites none fails.
-            let others = match self.redefines.as_deref().filter(|_| !python) {
-                None => None,
-                Some(redefines) => match Self::others(redefines, &table, id) {
-                    Some(others) => Some((redefines, others)),
-                    None if Family::of(self.language).reads_php() => continue,
-                    None => None,
-                },
-            };
-            let key = facts.gate(1, Target::None);
-            let binding = table.binding_of(id);
-            binding_node_facts(
-                &node,
-                [
-                    (&self.site, slot::SITE, binding.site.node),
-                    (&self.value, slot::VALUE, binding.site.value),
-                    (&self.annotation, slot::ANNOTATION, binding.site.annotation),
-                ],
-                key,
-                facts,
-            );
-            if self.occurrence.is_some() {
-                occurrence_facts(&node, usage.occurrences(id), key, facts);
-            }
-            if let Some((redefines, shadowed)) = shadowed {
-                let previous = table.binding_of(shadowed);
-                binding_node_facts(
-                    &node,
-                    [
-                        (&redefines.site, slot::SHADOWED_SITE, previous.site.node),
-                        (
-                            &redefines.value,
-                            slot::SHADOWED_SITE + 1,
-                            previous.site.value,
-                        ),
-                        (
-                            &redefines.annotation,
-                            slot::SHADOWED_SITE + 2,
-                            previous.site.annotation,
-                        ),
-                    ],
-                    key,
-                    facts,
-                );
-            }
-            if let Some((redefines, (others, incomplete))) = others {
-                for (other, admitted) in others {
-                    let flag = if admitted {
-                        match redefines
-                            .filter
-                            .verdict(&table, Some(&usage), other, &region)
-                        {
-                            Some(true) => 1,
-                            Some(false) => 0,
-                            None => -1,
-                        }
-                    } else {
-                        0
-                    };
-                    let pos = facts.push(slot::OTHERS, key, flag, Target::None);
-                    let previous = table.binding_of(other);
-                    binding_node_facts(
-                        &node,
-                        [
-                            (&redefines.site, slot::OTHER_SITE, previous.site.node),
-                            (&redefines.value, slot::OTHER_SITE + 1, previous.site.value),
-                            (
-                                &redefines.annotation,
-                                slot::OTHER_SITE + 2,
-                                previous.site.annotation,
-                            ),
-                        ],
-                        key << slot::OTHER_BITS | pos,
-                        facts,
-                    );
-                }
-                // A binding PHP's dynamic symbol table may have made, after every known one.
-                if incomplete {
-                    facts.push(slot::OTHERS, key, -1, Target::None);
-                }
-            }
-        }
-    }
-
-    /// A private name's declaration `index` of `member` (see `match_private`): one binding.
-    fn private_facts<'tree, D: Doc>(
-        &self,
-        node: &Node<'tree, D>,
-        member: &PrivateMember,
-        index: usize,
-        region: Region<'_>,
-        facts: &mut Facts<'tree, D>,
-    ) {
-        match self.filter.private_verdict(member, index, region) {
-            Some(true) => {}
-            Some(false) => return,
-            None => {
-                facts.gate(-1, Target::None);
-                return;
-            }
-        }
-        let key = facts.gate(1, Target::None);
-        let declaration = &member.declarations[index];
-        binding_node_facts(
-            node,
-            [
-                (&self.site, slot::SITE, Some(declaration.site)),
-                (&self.value, slot::VALUE, declaration.value),
-                (&self.annotation, slot::ANNOTATION, declaration.annotation),
-            ],
-            key,
-            facts,
-        );
-        if self.occurrence.is_some() {
-            occurrence_facts(node, &member.occurrences, key, facts);
-        }
-        let Some(redefines) = self.redefines.as_deref() else {
-            return;
-        };
-        if redefines.same_scope == Some(false) {
-            return;
-        }
-        let others = (0..member.declarations.len()).filter(|other| {
-            if redefines.every {
-                *other != index
-            } else {
-                *other < index
-            }
-        });
-        for other in others {
-            let flag = match redefines.filter.private_verdict(member, other, region) {
-                Some(true) => 2,
-                Some(false) => 0,
-                None => -2,
-            };
-            let pos = facts.push(slot::OTHERS, key, flag, Target::None);
-            let declaration = &member.declarations[other];
-            binding_node_facts(
-                node,
-                [
-                    (&redefines.site, slot::OTHER_SITE, Some(declaration.site)),
-                    (&redefines.value, slot::OTHER_SITE + 1, declaration.value),
-                    (
-                        &redefines.annotation,
-                        slot::OTHER_SITE + 2,
-                        declaration.annotation,
-                    ),
-                ],
-                key << slot::OTHER_BITS | pos,
-                facts,
-            );
-        }
     }
 }

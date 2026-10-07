@@ -80,6 +80,19 @@ pub(crate) enum CompareText {
     Semantic(SemanticText),
 }
 
+/// What one side of an `eq` comparison reads as, independently of the other side
+/// (`Comparison::eq_class`): two bound nodes compare unknown where either class is `Unknown`,
+/// true where both are the same `Text`, and false otherwise.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum EqClass {
+    /// Equal exactly to the nodes of the same text.
+    Text(Vec<u16>),
+    /// Equal to no node: a key or name it does not have.
+    Never,
+    /// Not known: the comparison with any node is unknown.
+    Unknown,
+}
+
 impl CompareOp {
     fn test(self, order: Ordering) -> bool {
         match self {
@@ -202,6 +215,52 @@ impl Comparison {
                         c.to_ascii_lowercase()
                     }
                 })
+                .collect(),
+        }
+    }
+
+    /// Whether `eq_class` decides this comparison between two bound nodes: `eq` under a text mode
+    /// that reads each side alone, in a collation whose equality is that of folded texts (natural
+    /// collation equates texts that differ, such as `01` and `1`).
+    pub(crate) fn classes_decide(&self) -> bool {
+        self.op == CompareOp::Eq
+            && !matches!(
+                self.collation,
+                Collation::Natural | Collation::NaturalFoldLower
+            )
+            && matches!(
+                self.text,
+                CompareText::Source
+                    | CompareText::Unquoted
+                    | CompareText::Semantic(SemanticText::Key | SemanticText::Name)
+            )
+    }
+
+    /// The class of a bound node under a comparison `classes_decide` holds for: `holds` of two
+    /// bound nodes is what their classes say (`EqClass`).
+    pub(crate) fn eq_class<D: Doc>(&self, node: &Node<'_, D>) -> EqClass {
+        match self.text {
+            CompareText::Source | CompareText::Unquoted => {
+                EqClass::Text(self.key(&node.text()).encode_utf16().collect())
+            }
+            CompareText::Semantic(text) => match semantic::name(self, text, node) {
+                None => EqClass::Unknown,
+                Some(None) => EqClass::Never,
+                Some(Some(units)) => EqClass::Text(self.folded_units(units)),
+            },
+            CompareText::Tokens | CompareText::Node | CompareText::Index => {
+                unreachable!("`eq_class` of a comparison `classes_decide` refuses")
+            }
+        }
+    }
+
+    /// UTF-16 code units as `units_order` compares them for equality: as they are, or folded.
+    fn folded_units(&self, units: Vec<u16>) -> Vec<u16> {
+        match self.collation {
+            Collation::Ordinal | Collation::Natural => units,
+            _ => self
+                .fold(&String::from_utf16_lossy(&units))
+                .encode_utf16()
                 .collect(),
         }
     }
@@ -490,7 +549,7 @@ mod tests {
         let mut ast = ast;
         ast["language"] = json!("python");
         let rule = compile_document_with(
-            check_document(json!({ "id": "c", "forbid": { "ast": ast }, "finding": finding() })),
+            check_document(json!({ "id": "c", "forbid": { "ast": ast }, "violation": finding() })),
             &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
         )
         .unwrap_or_else(|error| panic!("{}", error.reason));
@@ -755,7 +814,7 @@ mod tests {
         );
         let reason = rejection(compile_document_with(
             check_document(
-                json!({ "id": "c", "finding": finding(), "forbid": { "ast": { "language": "python", "rule": {
+                json!({ "id": "c", "violation": finding(), "forbid": { "ast": { "language": "python", "rule": {
                 "pattern": "f($A, $B)", "compare": { "left": "A", "op": "eq", "right": "B", "text": "key" },
             } } } }),
             ),
@@ -763,7 +822,7 @@ mod tests {
         ));
         assert_eq!(
             reason,
-            "/checks/0/forbid/ast/rule/compare/text: `key` reads JavaScript and PHP property names; Python has none"
+            "/clauses/0/forbid/ast/rule/compare/text: `key` reads JavaScript and PHP property names; Python has none"
         );
     }
 
@@ -811,7 +870,7 @@ mod tests {
         );
         let reason = rejection(compile_document_with(
             check_document(
-                json!({ "id": "c", "finding": finding(), "forbid": { "ast": { "language": "python", "rule": {
+                json!({ "id": "c", "violation": finding(), "forbid": { "ast": { "language": "python", "rule": {
                 "pattern": "f($A, $B)", "compare": { "left": "A", "op": "eq", "right": "B", "text": "member" },
             } } } }),
             ),
@@ -819,7 +878,7 @@ mod tests {
         ));
         assert_eq!(
             reason,
-            "/checks/0/forbid/ast/rule/compare/text: `member` reads JavaScript and PHP property names; Python has none"
+            "/clauses/0/forbid/ast/rule/compare/text: `member` reads JavaScript and PHP property names; Python has none"
         );
     }
 
@@ -913,15 +972,15 @@ mod tests {
         for (compare, expected) in [
             (
                 json!({ "left": "A", "op": "lt", "right": "B", "text": "structure-hash" }),
-                "/checks/0/forbid/ast/rule/compare/op: `structure-hash` compares for equality only; use eq or ne",
+                "/clauses/0/forbid/ast/rule/compare/op: `structure-hash` compares for equality only; use eq or ne",
             ),
             (
                 json!({ "left": "A", "op": "eq", "right": "B", "text": "structure", "collation": "fold-lower" }),
-                "/checks/0/forbid/ast/rule/compare/collation: `structure` compares structures exactly; use ordinal",
+                "/clauses/0/forbid/ast/rule/compare/collation: `structure` compares structures exactly; use ordinal",
             ),
             (
                 json!({ "left": "A", "op": "eq", "right": "B", "text": "structure-parts" }),
-                "/checks/0/forbid/ast/rule/compare/text: the structural modes compare Python and PHP syntax; use tokens for TypeScript",
+                "/clauses/0/forbid/ast/rule/compare/text: the structural modes compare Python and PHP syntax; use tokens for TypeScript",
             ),
         ] {
             let reason = rejection(compile_typescript_rule(
@@ -960,11 +1019,11 @@ mod tests {
         for (compare, expected) in [
             (
                 json!({ "left": "A", "op": "lt", "right": "B", "text": "tokens" }),
-                "/checks/0/forbid/ast/rule/compare/op: `tokens` compares for equality only; use eq or ne",
+                "/clauses/0/forbid/ast/rule/compare/op: `tokens` compares for equality only; use eq or ne",
             ),
             (
                 json!({ "left": "A", "op": "eq", "right": "B", "text": "tokens", "collation": "fold-lower" }),
-                "/checks/0/forbid/ast/rule/compare/collation: `tokens` compares tokens exactly; use ordinal",
+                "/clauses/0/forbid/ast/rule/compare/collation: `tokens` compares tokens exactly; use ordinal",
             ),
         ] {
             let reason = rejection(compile_typescript_rule(
@@ -1000,11 +1059,11 @@ mod tests {
         for (compare, expected) in [
             (
                 json!({ "left": "A", "op": "lt", "right": "B", "text": "node" }),
-                "/checks/0/forbid/ast/rule/compare/op: `node` compares for equality only; use eq or ne",
+                "/clauses/0/forbid/ast/rule/compare/op: `node` compares for equality only; use eq or ne",
             ),
             (
                 json!({ "left": "A", "op": "eq", "right": "B", "text": "node", "collation": "fold-lower" }),
-                "/checks/0/forbid/ast/rule/compare/collation: `node` compares nodes exactly; use ordinal",
+                "/clauses/0/forbid/ast/rule/compare/collation: `node` compares nodes exactly; use ordinal",
             ),
         ] {
             let reason = rejection(compile_typescript_rule(
@@ -1076,7 +1135,7 @@ mod tests {
             "compare": { "left": "A", "op": "lt", "right": "B", "text": "index", "collation": "natural" } })));
         assert_eq!(
             reason,
-            "/checks/0/forbid/ast/rule/compare/collation: `index` compares positions exactly; use ordinal"
+            "/clauses/0/forbid/ast/rule/compare/collation: `index` compares positions exactly; use ordinal"
         );
     }
 
@@ -1094,7 +1153,7 @@ mod tests {
         let lines = |commute: Value| {
             let result = evaluate_file(&rule(commute), "typescript", "a.ts", source);
             assert_eq!(result["failures"], json!([]), "{result}");
-            result["findings"]
+            result["violations"]
                 .as_array()
                 .expect("findings")
                 .iter()
@@ -1112,15 +1171,15 @@ mod tests {
         for (compare, expected) in [
             (
                 json!({ "left": "A", "op": "eq", "right": "B", "commute": ["||"] }),
-                "/checks/0/forbid/ast/rule/compare/commute: commute applies to text tokens only",
+                "/clauses/0/forbid/ast/rule/compare/commute: commute applies to text tokens only",
             ),
             (
                 json!({ "left": "A", "op": "eq", "right": "B", "text": "tokens", "commute": [] }),
-                "/checks/0/forbid/ast/rule/compare/commute must be a non-empty array of operator texts",
+                "/clauses/0/forbid/ast/rule/compare/commute must be a non-empty array of operator texts",
             ),
             (
                 json!({ "left": "A", "op": "eq", "right": "B", "text": "tokens", "commute": "||" }),
-                "/checks/0/forbid/ast/rule/compare/commute must be a non-empty array of operator texts",
+                "/clauses/0/forbid/ast/rule/compare/commute must be a non-empty array of operator texts",
             ),
         ] {
             let reason = rejection(compile_typescript_rule(

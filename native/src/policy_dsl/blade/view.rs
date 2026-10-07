@@ -37,14 +37,17 @@
 //! What Blade does not compile is not read: `@verbatim` blocks, `{{-- --}}` comments, escaped
 //! `@{{ }}` echoes, `@@` directives and their arguments, and the arguments of directives
 //! `BladeCompiler` 13.34.0 has no `compile*` method for (an application's `Blade::directive` or
-//! `Blade::if`, a package's such as Livewire's). Such a directive with arguments is a marker that
-//! may read and assign every variable, since the application compiles it to PHP the template does
-//! not show; the body of a pair of them (`@name(...) ... @endname`) is read as the template's.
+//! `Blade::if`, a package's such as Livewire's), even where the grammar's error recovery reads one
+//! as a block (`<div>@icon('x')</div>`). Such a directive with arguments is a marker that may read
+//! and assign every variable, since the application compiles it to PHP the template does not
+//! show; the body of a pair of them (`@name(...) ... @endname`) is read as the template's.
 //! A directive's arguments run to the `)` Blade finds with PHP's tokenizer, so one in a comment,
 //! string or heredoc does not end them.
-//! Inside `<script>` and `<style>`, whose text the grammar does not parse (their tags' attributes
-//! it does), echoes and the `@json`, `@js`, `@lang`, `@choice` and `@vite` directives are found as
-//! Blade's compiler finds them.
+//! Blade's compiler does not read HTML, so the view reads what it compiles wherever it stands: the
+//! text of `<script>` and `<style>`, which the grammar does not parse (their tags' attributes it
+//! does), is parsed as a template of its own (a `<script type="text/x-template">` holds directives
+//! and components); echoes in an attribute's name or value, or in text the grammar's error
+//! recovery left unread, are found as Blade's compiler finds them.
 
 use crate::policy_dsl::language::GrammarDialect;
 use ast_grep_language::LanguageExt;
@@ -70,9 +73,46 @@ pub(crate) struct View {
     tree: Tree,
 }
 
-/// Directives whose arguments Blade compiles inside `<script>` and `<style>` text as it does
-/// anywhere else, read there too.
-const RAW_TEXT_DIRECTIVES: &[&str] = &["json", "js", "lang", "choice", "vite"];
+/// Directives Blade compiles to control flow (a condition, a loop, a `@php` block, a guard):
+/// read only as the grammar's structures, never as text.
+const CONTROL: &[&str] = &[
+    "if",
+    "elseif",
+    "unless",
+    "isset",
+    "empty",
+    "auth",
+    "elseAuth",
+    "guest",
+    "elseGuest",
+    "can",
+    "cannot",
+    "canany",
+    "elsecan",
+    "elsecannot",
+    "elsecanany",
+    "env",
+    "production",
+    "error",
+    "session",
+    "context",
+    "hasSection",
+    "sectionMissing",
+    "switch",
+    "case",
+    "break",
+    "continue",
+    "foreach",
+    "forelse",
+    "for",
+    "while",
+    "php",
+    "once",
+    "pushOnce",
+    "prependOnce",
+    "pushIf",
+    "elsePushIf",
+];
 
 /// Directives that pass every variable of the template on (`get_defined_vars()`).
 const PASSES_VARIABLES: &[&str] = &[
@@ -238,6 +278,7 @@ impl View {
             template,
             out: String::new(),
             segments: Vec::new(),
+            loosened: 0,
         };
         emitter.children(root);
         if emitter.segments.is_empty() {
@@ -321,6 +362,8 @@ struct Emitter<'t> {
     template: &'t str,
     out: String,
     segments: Vec<Segment>,
+    /// Where the text `loose` has read ends: a run of attributes is read once, from its first.
+    loosened: usize,
 }
 
 /// An empty template range at `at`.
@@ -331,6 +374,15 @@ fn at(at: usize) -> Range<usize> {
 fn children(node: TsNode<'_>) -> Vec<TsNode<'_>> {
     let mut cursor = node.walk();
     node.children(&mut cursor).collect()
+}
+
+/// Whether an attribute holds only text: no echo or directive the grammar read in it.
+fn plain(node: TsNode<'_>) -> bool {
+    children(node).into_iter().all(|kid| {
+        !kid.is_named()
+            || matches!(kid.kind(), "attribute_name" | "attribute_value")
+            || (kid.kind() == "quoted_attribute_value" && plain(kid))
+    })
 }
 
 /// One parenthesis around a directive's arguments, by its template byte.
@@ -436,13 +488,14 @@ impl<'t> Emitter<'t> {
         self.emit(";", anchor);
     }
 
-    /// An application's directive with arguments (`@name(...)` Blade itself does not compile):
-    /// its arguments are no PHP the template shows, but what the application compiles it to may
-    /// read or assign any variable, so a marker over the directive does (`blade::marker`).
-    fn application_directive(&mut self, directive: TsNode<'_>) {
-        let text = self.text(directive);
-        let start = directive.start_byte() + (text.len() - text.trim_start().len());
-        self.marker(start..directive.end_byte());
+    /// An application's directive with arguments (`@name(...)` Blade itself does not compile) at
+    /// template bytes `directive`: its arguments are no PHP the template shows, but what the
+    /// application compiles it to may read or assign any variable, so a marker over the directive
+    /// does (`blade::marker`).
+    fn application_directive(&mut self, directive: Range<usize>) {
+        let text = &self.template[directive.clone()];
+        let start = directive.start + (text.len() - text.trim_start().len());
+        self.marker(start..directive.end);
     }
 
     fn children(&mut self, node: TsNode<'_>) {
@@ -452,18 +505,39 @@ impl<'t> Emitter<'t> {
 
     /// Nodes in order, a directive with arguments read as one.
     fn sequence(&mut self, kids: &[TsNode<'_>], from: usize) {
+        self.sequence_within(kids, from, None);
+    }
+
+    /// Nodes in order, a directive with arguments read as one. Within an error the grammar
+    /// recovered from (`within`), the bytes no named node holds are text Blade still compiles.
+    fn sequence_within(&mut self, kids: &[TsNode<'_>], from: usize, within: Option<Range<usize>>) {
+        let mut cursor = within.as_ref().map(|within| within.start);
         let mut index = from;
         while index < kids.len() {
             let kid = kids[index];
+            if let Some(at) = cursor {
+                // A token, or PHP the grammar read outside the echo or directive it recovered
+                // from: text, which may hold that echo whole.
+                if !kid.is_named() || matches!(kid.kind(), "php_only" | "parameter") {
+                    index += 1;
+                    continue;
+                }
+                self.loose(at..kid.start_byte().max(at));
+            }
             if matches!(kid.kind(), "directive" | "directive_start")
                 && let Some((open, close, next)) = self.parens(kids, index + 1)
             {
                 self.directive(kid, open, close);
+                cursor = cursor.map(|at| at.max(close.end_byte()));
                 index = next;
                 continue;
             }
             self.node(kid);
+            cursor = cursor.map(|at| at.max(kid.end_byte()));
             index += 1;
+        }
+        if let (Some(at), Some(within)) = (cursor, within) {
+            self.loose(at..within.end.max(at));
         }
     }
 
@@ -478,9 +552,7 @@ impl<'t> Emitter<'t> {
                 let kids = children(node);
                 let name = kids.first().map(|first| self.text(*first));
                 match name {
-                    Some("@pushOnce" | "@prependOnce" | "@pushIf" | "@assets") => {
-                        self.guarded(node)
-                    }
+                    Some("@pushOnce" | "@prependOnce" | "@pushIf") => self.guarded(node),
                     _ => self.sequence(&kids, 0),
                 }
             }
@@ -497,8 +569,17 @@ impl<'t> Emitter<'t> {
                     }
                 }
             }
-            "verbatim" | "comment" | "text" | "keyword" | "doctype" | "entity" | "raw_text"
-            | "directive_end" | "attribute_name" | "attribute_value" | "tag_name" => {}
+            "ERROR" => {
+                let kids = children(node);
+                self.sequence_within(&kids, 0, Some(node.byte_range()));
+            }
+            // Text holds no echo the grammar read, but Blade compiles any it holds: one in an
+            // attribute's name (`x-on:{{ $event }}`) or an HTML comment.
+            "attribute" if plain(node) => self.plain_attributes(node),
+            "text" | "attribute_name" | "attribute_value" => self.loose(node.byte_range()),
+            "comment" if self.text(node).starts_with("<!--") => self.loose(node.byte_range()),
+            "verbatim" | "comment" | "keyword" | "doctype" | "entity" | "raw_text"
+            | "directive_end" | "tag_name" => {}
             _ => self.children(node),
         }
     }
@@ -536,7 +617,16 @@ impl<'t> Emitter<'t> {
             }
             "directive" => {
                 if let Some((open, close, _)) = self.parens(&kids, 1) {
-                    self.copy(open.end_byte()..close.start_byte());
+                    // `@php (...) @endphp` is a block whose PHP is all between them, its
+                    // parentheses too (Blade's `storePhpBlocks`).
+                    let block = self.template[close.end_byte()..]
+                        .trim_start()
+                        .starts_with("@endphp");
+                    if block {
+                        self.copy(open.start_byte()..close.end_byte());
+                    } else {
+                        self.copy(open.end_byte()..close.start_byte());
+                    }
                     self.emit("\n;", at(close.start_byte()));
                 }
             }
@@ -614,11 +704,12 @@ impl<'t> Emitter<'t> {
         let Some(&start) = kids.first() else {
             return;
         };
-        let name = self
-            .text(start)
-            .trim_start()
-            .trim_start_matches('@')
-            .to_owned();
+        let name = self.text(start).trim().trim_start_matches('@').to_owned();
+        if !compiles(&name) {
+            // A pair Blade does not compile (an application's `Blade::if`, a package's) is text
+            // around a body Blade compiles as the template's.
+            return self.unknown_block(&kids);
+        }
         let head = self.parens(&kids, 1);
         let body = head.map_or(1, |(_, _, next)| next);
         let end = kids
@@ -630,15 +721,6 @@ impl<'t> Emitter<'t> {
         } else {
             kids.len()
         };
-        if !compiles(&name) {
-            // A pair Blade does not compile (an application's `Blade::if`, a package's) is text
-            // around a body Blade compiles as the template's.
-            if head.is_some() {
-                self.application_directive(start);
-            }
-            self.sequence(&kids[..stop], body);
-            return;
-        }
         let has_else = kids[body..]
             .iter()
             .any(|kid| kid.kind() == "conditional_keyword");
@@ -689,7 +771,7 @@ impl<'t> Emitter<'t> {
         // `@else` of a `Blade::if` (`@elsefeature(...)`) Blade does not compile: text.
         if !compiles(self.text(directive).trim_start().trim_start_matches('@')) {
             if self.parens(&kids, 1).is_some() {
-                self.application_directive(directive);
+                self.application_directive(directive.byte_range());
             }
             return;
         }
@@ -714,6 +796,9 @@ impl<'t> Emitter<'t> {
         let Some(&start) = kids.first() else {
             return;
         };
+        if !compiles(self.text(start).trim().trim_start_matches('@')) {
+            return self.unknown_block(&kids);
+        }
         let head = self.parens(&kids, 1);
         self.emit("if ", start.byte_range());
         self.condition(
@@ -741,7 +826,10 @@ impl<'t> Emitter<'t> {
         let Some(&start) = kids.first() else {
             return;
         };
-        let name = self.text(start).trim_start_matches('@').to_owned();
+        let name = self.text(start).trim().trim_start_matches('@').to_owned();
+        if !compiles(&name) {
+            return self.unknown_block(&kids);
+        }
         let Some((open, close, body)) = self.parens(&kids, 1) else {
             self.sequence(&kids, 1);
             return;
@@ -847,6 +935,9 @@ impl<'t> Emitter<'t> {
         let Some(&start) = kids.first() else {
             return;
         };
+        if !compiles(self.text(start).trim().trim_start_matches('@')) {
+            return self.unknown_block(&kids);
+        }
         let Some((open, close, body)) = self.parens(&kids, 1) else {
             self.sequence(&kids, 1);
             return;
@@ -908,9 +999,21 @@ impl<'t> Emitter<'t> {
 
     /// A directive with arguments outside Blade's control structures.
     fn directive(&mut self, directive: TsNode<'_>, open: Paren, close: Paren) {
+        self.directive_at(directive.byte_range(), open, close);
+    }
+
+    /// The directive at template bytes `directive` (its `@` and name), with arguments.
+    fn directive_at(&mut self, directive: Range<usize>, open: Paren, close: Paren) {
+        let template = self.template;
         let arguments = open.end_byte()..close.start_byte();
         // A directive the grammar recovered from an error may hold the whitespace before it.
-        let name = &self.text(directive).trim_start()[1..];
+        let name = &template[directive.clone()].trim_start()[1..];
+        let sign = directive.end - name.len() - 1;
+        // Blade's directive pattern (`\B@`): one a word byte precedes (`x_@json(...)`, which the
+        // grammar reads as a directive) is text, which may hold echoes.
+        if sign > 0 && word(template.as_bytes()[sign - 1]) {
+            return self.loose(open.start_byte()..close.end_byte());
+        }
         if !compiles(name) {
             return self.application_directive(directive);
         }
@@ -918,7 +1021,7 @@ impl<'t> Emitter<'t> {
             "use" => return self.use_statement(directive, arguments, close),
             "unset" => {
                 // `unset(args);`
-                self.emit("unset", directive.byte_range());
+                self.emit("unset", directive);
                 self.emit("(", open.byte_range());
                 self.copy(arguments);
                 self.emit(")", close.byte_range());
@@ -929,30 +1032,25 @@ impl<'t> Emitter<'t> {
                 // `@inject('name', service)` is `$name = app(service);`: the marker spans the
                 // directive and the variable's name (`@inject('name`), and the service, after the
                 // first comma, is the call's PHP.
-                let text = &self.template[arguments.clone()];
+                let text = &template[arguments.clone()];
                 let first = text.split(',').next().unwrap_or_default();
                 let name = first.trim_end().trim_end_matches(['\'', '"']);
-                self.marker(directive.start_byte()..arguments.start + name.len());
+                self.marker(directive.start..arguments.start + name.len());
                 let service = text
                     .find(',')
                     .map_or(arguments.end, |comma| arguments.start + comma + 1);
                 return self.call(
-                    directive.byte_range(),
+                    directive,
                     open.byte_range(),
                     close.byte_range(),
                     service..arguments.end,
                 );
             }
-            "props" | "aware" => self.marker(directive.byte_range()),
-            _ if PASSES_VARIABLES.contains(&name) => self.marker(directive.byte_range()),
+            "props" | "aware" => self.marker(directive.clone()),
+            _ if PASSES_VARIABLES.contains(&name) => self.marker(directive.clone()),
             _ => {}
         }
-        self.call(
-            directive.byte_range(),
-            open.byte_range(),
-            close.byte_range(),
-            arguments,
-        );
+        self.call(directive, open.byte_range(), close.byte_range(), arguments);
     }
 
     /// `@name(args)` as a call with no callee spanning the directive, its arguments the template's
@@ -973,7 +1071,7 @@ impl<'t> Emitter<'t> {
 
     /// `@use('A\B', 'C')`: `use A\B as C;`, the name and alias read as Blade reads them (quotes,
     /// parentheses and spaces around them dropped; a `{...}` group keeps its commas).
-    fn use_statement(&mut self, directive: TsNode<'_>, arguments: Range<usize>, close: Paren) {
+    fn use_statement(&mut self, directive: Range<usize>, arguments: Range<usize>, close: Paren) {
         let trim = |range: Range<usize>| -> Range<usize> {
             let text = &self.template[range.clone()];
             let leading = text.len()
@@ -995,7 +1093,7 @@ impl<'t> Emitter<'t> {
         if path.is_empty() {
             return;
         }
-        self.emit("use ", directive.byte_range());
+        self.emit("use ", directive);
         self.copy(path);
         if let Some(alias) = alias.filter(|alias| !alias.is_empty()) {
             self.emit(" as ", at(alias.start));
@@ -1014,9 +1112,33 @@ impl<'t> Emitter<'t> {
                 let name = self.text(*name);
                 name.starts_with("x-") || name.starts_with("x:")
             });
+        // A component's attributes by name, the last of a name winning (Blade reads them into
+        // an array): an earlier one of the same name is not compiled.
+        let template = self.template;
+        let key = |attribute: TsNode<'_>| -> Option<&'t str> {
+            let name = children(attribute)
+                .into_iter()
+                .find(|kid| kid.kind() == "attribute_name")?;
+            let name = &template[name.byte_range()];
+            let name = name
+                .strip_prefix(':')
+                .filter(|rest| !rest.starts_with(':'))
+                .unwrap_or(name);
+            Some(name.trim_start_matches('$'))
+        };
         let mut index = 0;
         while index < kids.len() {
             let kid = kids[index];
+            if component
+                && kid.kind() == "attribute"
+                && let Some(name) = key(kid)
+                && kids[index + 1..]
+                    .iter()
+                    .any(|later| later.kind() == "attribute" && key(*later) == Some(name))
+            {
+                index += 1;
+                continue;
+            }
             if component
                 && kid.kind() == "attribute"
                 && let Some(bound) = self.bound(kid)
@@ -1034,6 +1156,31 @@ impl<'t> Emitter<'t> {
             }
             index += 1;
         }
+    }
+
+    /// An attribute that holds only text, read with the attributes after it that hold only text,
+    /// and the name of the one after them: the grammar may split an echo across them
+    /// (`wire:model.{{ $modifier }}="search"`, `x-on:{{ $event }}.window="@js($id)"`).
+    fn plain_attributes(&mut self, attribute: TsNode<'_>) {
+        let mut end = attribute.end_byte();
+        let mut next = attribute.next_sibling();
+        while let Some(sibling) = next {
+            if sibling.kind() != "attribute" || self.text(sibling).starts_with(':') {
+                break;
+            }
+            if !plain(sibling) {
+                if let Some(name) = children(sibling)
+                    .into_iter()
+                    .find(|kid| kid.kind() == "attribute_name")
+                {
+                    end = name.end_byte();
+                }
+                break;
+            }
+            end = sibling.end_byte();
+            next = sibling.next_sibling();
+        }
+        self.loose(attribute.start_byte()..end);
     }
 
     /// The PHP a component attribute binds: `:name="php"`'s value, `:$name`'s variable.
@@ -1057,85 +1204,148 @@ impl<'t> Emitter<'t> {
         }
     }
 
-    /// `<script>` and `<style>` text: Blade's echoes and the directives Blade compiles there.
+    /// A block the grammar read around a directive `BladeCompiler` does not compile (its error
+    /// recovery's, or a package's block such as `@capture ... @endcapture`, an application's
+    /// `Blade::if`): with arguments, the directive is an application's (`application_directive`);
+    /// what follows them is the template's.
+    fn unknown_block(&mut self, kids: &[TsNode<'_>]) {
+        let head = self.parens(kids, 1);
+        if head.is_some() {
+            self.application_directive(kids[0].byte_range());
+        }
+        let body = head.map_or(1, |(_, _, next)| next);
+        self.sequence(kids, body);
+    }
+
+    /// `<script>` and `<style>` text, which Blade's compiler reads as it reads any template text:
+    /// parsed as a template of its own over those bytes.
     fn raw_text(&mut self, range: Range<usize>) {
+        let point = |at: usize| {
+            let before = &self.template[..at];
+            let row = before.matches('\n').count();
+            let column = before.len() - before.rfind('\n').map_or(0, |newline| newline + 1);
+            tree_sitter::Point { row, column }
+        };
+        let ranges = [tree_sitter::Range {
+            start_byte: range.start,
+            end_byte: range.end,
+            start_point: point(range.start),
+            end_point: point(range.end),
+        }];
+        let mut parser = Parser::new();
+        if range.is_empty()
+            || parser
+                .set_language(&GrammarDialect::Blade.get_ts_language())
+                .is_err()
+            || parser.set_included_ranges(&ranges).is_err()
+        {
+            return;
+        }
+        if let Some(tree) = parser.parse(self.template, None) {
+            self.children(tree.root_node());
+        }
+    }
+
+    /// Echoes, and directives with arguments that compile to a statement, in text the grammar did
+    /// not read as Blade (an attribute's name, an HTML comment, or what its error recovery left),
+    /// found as Blade's compiler finds them. A directive Blade compiles to control flow there is
+    /// not read: the view reads no half of a structure.
+    fn loose(&mut self, range: Range<usize>) {
+        let range = range.start.max(self.loosened)..range.end;
+        if range.is_empty() {
+            return;
+        }
+        self.loosened = range.end;
         let text = &self.template[range.clone()];
         let bytes = text.as_bytes();
         let mut index = 0;
         // Where the last escaped directive (`@@name(...)`) ends: a directive inside it is text.
         let mut escaped_until = 0;
-        while index < bytes.len() {
+        while let Some(found) = text[index..].find(['{', '@']) {
+            index += found;
             let rest = &text[index..];
-            let open = if rest.starts_with("{{--") {
+            if rest.starts_with('@') {
+                let at = range.start + index;
+                // Blade's directive pattern (`\B@`): an `@` no word byte precedes.
+                let after_word = at > 0 && word(self.template.as_bytes()[at - 1]);
+                if !after_word && let Some(end) = escaped_directive(self.template, at, range.end) {
+                    // Blade writes it as text, `@name(...)`; the echoes in it are still echoes.
+                    escaped_until = escaped_until.max(end - range.start);
+                    index += 2;
+                } else if index < escaped_until {
+                    index += 1;
+                } else {
+                    index = self.loose_directive(range.clone(), index);
+                }
+                continue;
+            }
+            let (open, close) = if rest.starts_with("{{--") {
                 // A comment runs to its `--}}`.
                 index += rest.find("--}}").map_or(rest.len(), |end| end + 4);
                 continue;
             } else if rest.starts_with("{!!") {
-                Some(("{!!", "!!}"))
+                ("{!!", "!!}")
             } else if rest.starts_with("{{") {
-                Some(("{{", "}}"))
+                ("{{", "}}")
             } else {
-                None
-            };
-            if let Some((open, close)) = open {
-                let escaped = index > 0 && bytes[index - 1] == b'@';
-                let Some(end) = rest[open.len()..].find(close) else {
-                    break;
-                };
-                let start = range.start + index;
-                let php = start + open.len()..start + open.len() + end;
-                let after = php.end + close.len();
-                if !escaped {
-                    self.echo(start..start + open.len(), php.clone(), php.end..after);
-                }
-                index = after - range.start;
+                index += 1;
                 continue;
+            };
+            let escaped = if index > 0 {
+                bytes[index - 1] == b'@'
+            } else {
+                self.template[..range.start].ends_with('@')
+            };
+            let Some(end) = rest[open.len()..].find(close) else {
+                break;
+            };
+            let start = range.start + index;
+            let php = start + open.len()..start + open.len() + end;
+            let after = php.end + close.len();
+            if !escaped {
+                self.echo(start..start + open.len(), php.clone(), php.end..after);
             }
-            // Blade's directive pattern (`\B@`): an `@` no word byte precedes.
-            if bytes[index] == b'@' && (index == 0 || !word(bytes[index - 1])) {
-                let at = range.start + index;
-                if let Some(end) = escaped_directive(self.template, at, range.end) {
-                    // Blade writes it as text, `@name(...)`; the echoes in it are still echoes.
-                    escaped_until = escaped_until.max(end - range.start);
-                    index += 2;
-                    continue;
-                }
-                if index >= escaped_until
-                    && let Some(call) = self.raw_directive(at, range.end)
-                {
-                    index = call - range.start;
-                    continue;
-                }
-            }
-            index += rest.chars().next().map_or(1, char::len_utf8);
+            index = after - range.start;
         }
     }
 
-    /// A directive in raw text at `start` (its `@`): `@name(args)`, its parentheses balanced as
-    /// `balanced` reads them. Returns where it ends.
-    fn raw_directive(&mut self, start: usize, limit: usize) -> Option<usize> {
-        let text = &self.template[start + 1..limit];
-        let name_length = text.bytes().take_while(|byte| word(*byte)).count();
-        let name = &text[..name_length];
-        if !RAW_TEXT_DIRECTIVES.contains(&name) {
-            return None;
+    /// The directive at `range.start + index` (its `@`) in loose text, read when Blade compiles it
+    /// to a statement (`\B@name(...)`, its arguments balanced as `balanced` reads them). Returns
+    /// the index after it.
+    fn loose_directive(&mut self, range: Range<usize>, index: usize) -> usize {
+        let start = range.start + index;
+        let bytes = self.template.as_bytes();
+        if start > 0 && (word(bytes[start - 1]) || bytes[start - 1] == b'@') {
+            return index + 1;
         }
-        let spaces = text[name_length..]
+        if bytes.get(start + 1) == Some(&b'@') {
+            // `@@name` is Blade's escape for the text `@name`.
+            return index + 2;
+        }
+        let name = self.template[start + 1..range.end]
+            .bytes()
+            .take_while(|byte| word(*byte))
+            .count();
+        let spaces = self.template[start + 1 + name..range.end]
             .bytes()
             .take_while(|byte| *byte == b' ' || *byte == b'\t')
             .count();
-        let open = start + 1 + name_length + spaces;
-        if self.template.as_bytes().get(open) != Some(&b'(') {
-            return None;
+        let open = start + 1 + name + spaces;
+        let directive = &self.template[start + 1..start + 1 + name];
+        if name == 0
+            || bytes.get(open) != Some(&b'(')
+            || CONTROL
+                .iter()
+                .any(|control| control.eq_ignore_ascii_case(directive))
+        {
+            return index + 1 + name;
         }
-        let close = balanced(&self.template[open..limit])? + open;
-        self.call(
-            start..start + 1 + name_length,
-            open..open + 1,
-            close..close + 1,
-            open + 1..close,
-        );
-        Some(close + 1)
+        let Some(close) = balanced(&self.template[open..range.end]).map(|close| open + close)
+        else {
+            return index + 1 + name;
+        };
+        self.directive_at(start..start + 1 + name, Paren(open), Paren(close));
+        close + 1 - range.start
     }
 }
 

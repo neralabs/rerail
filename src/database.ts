@@ -105,10 +105,10 @@ export interface HistoryResetReport {
 
 /**
  * `rerail reset`: delete one repository's execution history in ONE write transaction. Events,
- * work links, policy runs, scan requests, and repository diagnostics of the repository's
- * sessions go; ended sessions go with them. Still-running sessions keep their row and runtime
- * ownership claim so live processes carry on recording. Rules, other repositories' history,
- * policy settings, and presentation preferences are untouched. The file is never unlinked or
+ * work links, audits, audit requests, and repository audits of the repository's sessions go;
+ * ended sessions go with them. Still-running sessions keep their row and runtime ownership
+ * claim so live processes carry on recording. Rules, other repositories' history, audit
+ * settings, and presentation preferences are untouched. The file is never unlinked or
  * rebuilt, so every connection holding it open keeps working.
  */
 export function resetRepositoryHistory(path: string, repositoryId: string): HistoryResetReport {

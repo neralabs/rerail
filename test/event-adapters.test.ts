@@ -15,7 +15,7 @@ describe("lifecycle event adapters", () => {
       error: "exit 1",
     };
     expect(claudeHookEvents(input)).toEqual([{
-      kind: "tool-result",
+      kind: "result",
       eventId: "claude-1:tool-result:tool-1",
       toolCallId: "tool-1",
       sessionId: "claude-1",

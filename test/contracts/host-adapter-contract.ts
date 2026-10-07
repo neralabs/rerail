@@ -6,6 +6,7 @@ import type {
   AdapterSample,
   AdapterSession,
 } from "../../src/adapter-contract.js";
+import { RULE_MODES } from "../../src/rule-mode.js";
 
 export interface PersistedContractEntry {
   sessionId: string;
@@ -47,8 +48,9 @@ export function hostAdapterContract(options: HostAdapterContractOptions): void {
       expect(profile.host).toBeTruthy();
       expect(profile.lifecycleEvents.length).toBeGreaterThanOrEqual(1);
       expect(Object.keys(profile.sampleEvents).sort((left, right) => left.localeCompare(right))).toEqual(["assistant", "tool", "turn", "user"]);
-      expect(Object.keys(profile.delivery).sort((left, right) => left.localeCompare(right))).toEqual(["followUp", "nextTurn", "observe", "steer"]);
-      expect(profile.delivery.observe).toBe("observe");
+      expect(Object.keys(profile.delivery).sort((left, right) => left.localeCompare(right))).toEqual(["block", "log", "steer"]);
+      expect(profile.delivery.log).toBe("observe");
+      expect(profile.delivery.block).toBe(profile.delivery.steer);
       expect(profile.assistantObservation === "streaming" || profile.assistantObservation === "completed").toBe(true);
     });
 
@@ -80,7 +82,7 @@ export function hostAdapterContract(options: HostAdapterContractOptions): void {
       const active = session(driver.profile.host);
       await driver.start(active);
       await driver.emit({
-        kind: "tool-call",
+        kind: "call",
         eventId: "t1",
         toolCallId: "t1",
         sessionId: active.sessionId,
@@ -102,7 +104,7 @@ export function hostAdapterContract(options: HostAdapterContractOptions): void {
       const active = session(driver.profile.host);
       await driver.start(active);
       await driver.emit({
-        kind: "tool-result",
+        kind: "result",
         eventId: "result-string",
         toolCallId: "result-string",
         sessionId: active.sessionId,
@@ -110,7 +112,7 @@ export function hostAdapterContract(options: HostAdapterContractOptions): void {
         output: "plain result",
       });
       await driver.emit({
-        kind: "tool-result",
+        kind: "result",
         eventId: "result-structured",
         toolCallId: "result-structured",
         sessionId: active.sessionId,
@@ -143,7 +145,7 @@ export function hostAdapterContract(options: HostAdapterContractOptions): void {
       cyclic.self = cyclic;
       const malformedEvents: AdapterEvent[] = [
         {
-          kind: "tool-call",
+          kind: "call",
           eventId: "call-cyclic",
           toolCallId: "call-cyclic",
           sessionId: active.sessionId,
@@ -151,7 +153,7 @@ export function hostAdapterContract(options: HostAdapterContractOptions): void {
           input: cyclic,
         },
         {
-          kind: "tool-call",
+          kind: "call",
           eventId: "call-undefined",
           toolCallId: "call-undefined",
           sessionId: active.sessionId,
@@ -159,7 +161,7 @@ export function hostAdapterContract(options: HostAdapterContractOptions): void {
           input: undefined,
         },
         {
-          kind: "tool-result",
+          kind: "result",
           eventId: "result-cyclic",
           toolCallId: "result-cyclic",
           sessionId: active.sessionId,
@@ -167,7 +169,7 @@ export function hostAdapterContract(options: HostAdapterContractOptions): void {
           output: cyclic,
         },
         {
-          kind: "tool-result",
+          kind: "result",
           eventId: "result-undefined",
           toolCallId: "result-undefined",
           sessionId: active.sessionId,
@@ -175,7 +177,7 @@ export function hostAdapterContract(options: HostAdapterContractOptions): void {
           output: undefined,
         },
         {
-          kind: "tool-result",
+          kind: "result",
           eventId: "result-blank",
           toolCallId: "result-blank",
           sessionId: active.sessionId,
@@ -290,11 +292,11 @@ export function hostAdapterContract(options: HostAdapterContractOptions): void {
       expect(driver.deliveries().filter(delivery => delivery.sessionId === second.sessionId)).toEqual([]);
     });
 
-    it("maps every requested delivery explicitly and never emits observe content", async () => {
+    it("maps every rule mode explicitly and never emits log content", async () => {
       const driver = options.create();
       const active = session(driver.profile.host);
       await driver.start(active);
-      for (const requested of ["observe", "steer", "followUp", "nextTurn"] as const) {
+      for (const requested of RULE_MODES) {
         await driver.requestDelivery(active.sessionId, requested, `content:${requested}`);
       }
       expect(driver.deliveries()).toEqual([
@@ -307,20 +309,13 @@ export function hostAdapterContract(options: HostAdapterContractOptions): void {
         },
         {
           sessionId: active.sessionId,
-          requested: "followUp",
-          mechanism: driver.profile.delivery.followUp,
-          content: "content:followUp",
-          ruleIds: [],
-        },
-        {
-          sessionId: active.sessionId,
-          requested: "nextTurn",
-          mechanism: driver.profile.delivery.nextTurn,
-          content: "content:nextTurn",
+          requested: "block",
+          mechanism: driver.profile.delivery.block,
+          content: "content:block",
           ruleIds: [],
         },
       ]);
-      expect(driver.persisted().filter(entry => entry.kind === "delivery")).toHaveLength(4);
+      expect(driver.persisted().filter(entry => entry.kind === "delivery")).toHaveLength(3);
     });
 
     it("replays persisted deduplication state after restart", async () => {

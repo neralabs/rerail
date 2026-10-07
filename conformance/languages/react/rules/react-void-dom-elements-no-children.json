@@ -1,0 +1,493 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-void-dom-elements-no-children",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-react 7.37.5 react/void-dom-elements-no-children: a void DOM element (area, base, br, col, embed, hr, img, input, keygen, link, menuitem, meta, param, source, track, wbr) with children, or with a `children` or `dangerouslySetInnerHTML` attribute (one report each); the same through createElement with an object-literal props argument.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "jsx-children",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "jsx_element",
+            "has": {
+              "field": "open_tag",
+              "has": {
+                "field": "name",
+                "kind": "identifier",
+                "regex": "^(?:area|base|br|col|embed|hr|img|input|keygen|link|menuitem|meta|param|source|track|wbr)$"
+              },
+              "matches": "nonempty-open"
+            }
+          },
+          "utils": {
+            "nonempty-open": {
+              "any": [
+                {
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "kind": "jsx_closing_element"
+                    }
+                  }
+                },
+                {
+                  "layout": {
+                    "after": {
+                      "to": "sibling",
+                      "breaks": {
+                        "min": 1
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/void-dom-elements-no-children",
+        "message": "Void DOM element cannot receive children.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/void-dom-elements-no-children"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "jsx-attribute",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "jsx_element",
+                "has": {
+                  "field": "open_tag",
+                  "matches": "void-with-prop"
+                }
+              },
+              {
+                "kind": "jsx_self_closing_element",
+                "matches": "void-with-prop"
+              }
+            ]
+          },
+          "utils": {
+            "void-with-prop": {
+              "all": [
+                {
+                  "has": {
+                    "field": "name",
+                    "kind": "identifier",
+                    "regex": "^(?:area|base|br|col|embed|hr|img|input|keygen|link|menuitem|meta|param|source|track|wbr)$"
+                  }
+                },
+                {
+                  "has": {
+                    "kind": "jsx_attribute",
+                    "has": {
+                      "kind": "property_identifier",
+                      "regex": "^(?:children|dangerouslySetInnerHTML)$"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/void-dom-elements-no-children",
+        "message": "Void DOM element cannot receive children.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/void-dom-elements-no-children"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create-element-child",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "any": [
+                {
+                  "kind": "member_expression"
+                },
+                {
+                  "kind": "identifier"
+                }
+              ],
+              "matches": "create-element"
+            },
+            "arguments": {
+              "signature": [
+                "type",
+                "props",
+                "child"
+              ],
+              "bind": {
+                "TYPE": "type",
+                "PROPS": "props",
+                "CHILD": "child"
+              },
+              "mode": "estree"
+            }
+          },
+          "utils": {
+            "create-element": {
+              "any": [
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^React$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "regex": "^createElement$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "identifier",
+                  "regex": "^createElement$",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "matches": "react-site"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "react-site": {
+              "any": [
+                {
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "value",
+                    "matches": "react-init"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "import_statement",
+                    "has": {
+                      "field": "source",
+                      "kind": "string",
+                      "value": {
+                        "eq": "react"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "react-init": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^React$"
+                },
+                {
+                  "kind": "member_expression",
+                  "has": {
+                    "field": "object",
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^React$"
+                      },
+                      {
+                        "matches": "require-react"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "matches": "require-react"
+                }
+              ]
+            },
+            "require-react": {
+              "kind": "call_expression",
+              "all": [
+                {
+                  "has": {
+                    "field": "function",
+                    "kind": "identifier",
+                    "regex": "^require$"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "arguments",
+                    "has": {
+                      "kind": "string",
+                      "nthChild": 1,
+                      "value": {
+                        "eq": "react"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "constraints": {
+            "TYPE": {
+              "kind": "string",
+              "value": {
+                "regex": "^(?:area|base|br|col|embed|hr|img|input|keygen|link|menuitem|meta|param|source|track|wbr)$"
+              }
+            },
+            "PROPS": {
+              "kind": "object"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/void-dom-elements-no-children",
+        "message": "Void DOM element cannot receive children.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/void-dom-elements-no-children"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create-element-prop",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "any": [
+                {
+                  "kind": "member_expression"
+                },
+                {
+                  "kind": "identifier"
+                }
+              ],
+              "matches": "create-element"
+            },
+            "arguments": {
+              "signature": [
+                "type",
+                "props"
+              ],
+              "bind": {
+                "TYPE": "type",
+                "PROPS": "props"
+              },
+              "mode": "estree"
+            }
+          },
+          "utils": {
+            "create-element": {
+              "any": [
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^React$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "regex": "^createElement$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "identifier",
+                  "regex": "^createElement$",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "matches": "react-site"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "react-site": {
+              "any": [
+                {
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "value",
+                    "matches": "react-init"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "import_statement",
+                    "has": {
+                      "field": "source",
+                      "kind": "string",
+                      "value": {
+                        "eq": "react"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "react-init": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^React$"
+                },
+                {
+                  "kind": "member_expression",
+                  "has": {
+                    "field": "object",
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^React$"
+                      },
+                      {
+                        "matches": "require-react"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "matches": "require-react"
+                }
+              ]
+            },
+            "require-react": {
+              "kind": "call_expression",
+              "all": [
+                {
+                  "has": {
+                    "field": "function",
+                    "kind": "identifier",
+                    "regex": "^require$"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "arguments",
+                    "has": {
+                      "kind": "string",
+                      "nthChild": 1,
+                      "value": {
+                        "eq": "react"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "constraints": {
+            "TYPE": {
+              "kind": "string",
+              "value": {
+                "regex": "^(?:area|base|br|col|embed|hr|img|input|keygen|link|menuitem|meta|param|source|track|wbr)$"
+              }
+            },
+            "PROPS": {
+              "kind": "object",
+              "has": {
+                "any": [
+                  {
+                    "kind": "pair",
+                    "has": {
+                      "field": "key",
+                      "kind": "property_identifier",
+                      "regex": "^(?:children|dangerouslySetInnerHTML)$"
+                    }
+                  },
+                  {
+                    "kind": "shorthand_property_identifier",
+                    "regex": "^(?:children|dangerouslySetInnerHTML)$"
+                  },
+                  {
+                    "kind": "method_definition",
+                    "has": {
+                      "field": "name",
+                      "kind": "property_identifier",
+                      "regex": "^(?:children|dangerouslySetInnerHTML)$"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/void-dom-elements-no-children",
+        "message": "Void DOM element cannot receive children.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/void-dom-elements-no-children"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

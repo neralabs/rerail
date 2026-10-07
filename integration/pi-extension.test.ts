@@ -3,6 +3,8 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DefaultResourceLoader, SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { isRerailStarted } from "../src/repository-start.js";
+import { startTestRepository } from "../test/support/started-repository.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -29,10 +31,10 @@ describe("installed Pi extension", () => {
     expect(loaded.extensions).toHaveLength(1);
     const extension = loaded.extensions[0];
     expect(extension).toBeDefined();
-    expect(extension!.tools.has("cosine_rules")).toBe(true);
+    expect(extension!.tools.has("conversation_rules")).toBe(true);
     expect(extension!.commands.has("cosine-rules")).toBe(true);
-    expect(extension!.commands.has("rerail-disable")).toBe(true);
-    expect(extension!.commands.has("rerail-enable")).toBe(true);
+    expect(extension!.commands.has("rerail-start")).toBe(true);
+    expect(extension!.commands.has("rerail-stop")).toBe(true);
     expect([...extension!.handlers.keys()]).toEqual(expect.arrayContaining([
       "session_start",
       "session_tree",
@@ -47,9 +49,10 @@ describe("installed Pi extension", () => {
     expect(extension!.handlers.has("session_branch")).toBe(false);
   });
 
-  test("disables a live checkout through the installed slash command", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "rerail-pi-disable-"));
+  test("stops Rerail in a live repository through the installed slash command", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "rerail-pi-stop-"));
     temporaryDirectories.push(cwd);
+    startTestRepository(cwd);
     const loader = new DefaultResourceLoader({
       cwd,
       agentDir: join(cwd, ".pi", "agent"),
@@ -67,7 +70,7 @@ describe("installed Pi extension", () => {
     } as unknown as ExtensionContext;
     await extension.handlers.get("session_start")![0]!({ type: "session_start", reason: "startup" }, context);
     const notices: string[] = [];
-    const command = extension.commands.get("rerail-disable")!;
+    const command = extension.commands.get("rerail-stop")!;
     await command.handler("", {
       ...context,
       hasUI: true,
@@ -78,26 +81,28 @@ describe("installed Pi extension", () => {
         confirm: async () => false,
       },
     } as unknown as Parameters<typeof command.handler>[1]);
-    expect(await readFile(join(cwd, ".rerail", "disabled"), "utf8")).toBe("");
-    expect(notices).toEqual([expect.stringContaining(`Rerail disabled for ${cwd}`)]);
+    expect(isRerailStarted(cwd)).toBe(false);
+    expect(notices).toEqual([expect.stringContaining("○ Rerail is stopped in")]);
     await extension.handlers.get("input")![0]!({ type: "input", text: "This must not be recorded." }, context);
     await extension.handlers.get("session_shutdown")![0]!({ type: "session_shutdown", reason: "quit" }, context);
-  });
+  }, 30_000); // `/rerail-stop` runs the real CLI, a Node process of its own.
 
   test("loads default rule files at session start through the packaged extension's registered tool", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "rerail-pi-rules-"));
     temporaryDirectories.push(cwd);
+    startTestRepository(cwd);
     await mkdir(join(cwd, ".pi"), { recursive: true });
     await writeFile(
-      join(cwd, ".pi", "cosine-rules.json"),
+      join(cwd, ".pi", "conversation-rules.json"),
       JSON.stringify({
         version: 1,
         rules: [{
           id: "checkout",
+          mode: "log",
           reference: "Guest checkout remains available.",
           match: { operator: "gte", threshold: 0.99 },
           sample: { source: "assistant-text", boundary: "message", minimumTokens: 1 },
-          action: { delivery: "observe", content: "Check checkout requirements." },
+          action: { content: "Check checkout requirements." },
         }],
       }),
     );
@@ -128,7 +133,7 @@ describe("installed Pi extension", () => {
       started = true;
       await sessionStart!({ type: "session_start", reason: "startup" }, context);
 
-      const result = await extension.tools.get("cosine_rules")!.definition.execute(
+      const result = await extension.tools.get("conversation_rules")!.definition.execute(
         "call-1",
         { action: "list" },
         undefined,
@@ -148,8 +153,9 @@ describe("installed Pi extension", () => {
   test("rejects malformed configured rule documents when Pi starts the session", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "rerail-pi-invalid-rules-"));
     temporaryDirectories.push(cwd);
+    startTestRepository(cwd);
     await mkdir(join(cwd, ".pi"), { recursive: true });
-    await writeFile(join(cwd, ".pi", "cosine-rules.json"), "{\"version\":1,\"rules\":\"not-an-array\"}");
+    await writeFile(join(cwd, ".pi", "conversation-rules.json"), "{\"version\":1,\"rules\":\"not-an-array\"}");
     const loader = new DefaultResourceLoader({
       cwd,
       agentDir: join(cwd, ".pi", "agent"),

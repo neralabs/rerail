@@ -61,7 +61,6 @@ export interface NativeMemoryProfile {
     mappedBytes: number;
     retainedBytes: number;
   };
-  sqlite: { memoryUsedBytes: number; memoryHighwaterBytes: number; status: number };
   workerPool: { threads: number };
 }
 
@@ -105,6 +104,13 @@ export interface NativeStorageAttachment {
   attached: boolean;
   reason?: string;
 }
+
+/**
+ * The bytes of findings a host reads a whole result in per `resultPageAsync` page. Small, since a page is held three
+ * times while it is read (the JSON, its parse, its validated copy) and V8 keeps what it grew to: 256 KiB pages read
+ * django's 15.5k findings (6.8 MB) with 40 MiB less peak RSS than one 8 MiB page.
+ */
+export const RESULT_PAGE_BYTES = 256 * 1024;
 
 export interface NativePolicyDslWorkspace {
   /**
@@ -196,7 +202,7 @@ export interface NativeBinding {
   validateRegex(pattern: string): void;
   /** Windows only: start a detached process that inherits only NUL stdin and the appended log file; returns its pid. */
   spawnDetached(program: string, args: string[], cwd: string | null, env: Record<string, string>, logPath: string): number;
-  /** The content-store file name this binary's store schema owns (`content-v3.sqlite` at schema floor 17). */
+  /** The content-store file name this binary's store schema owns (`content-v1.sqlite` at store floor 1). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;

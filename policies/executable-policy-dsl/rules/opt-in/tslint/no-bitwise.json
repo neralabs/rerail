@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-bitwise",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-bitwise` rule with its default options (https://palantir.github.io/tslint/rules/no-bitwise/). Disallows bitwise operators (&, |, ^, <<, >>, >>>, their compound assignments, and ~).",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "bitwise-operator",
       "forbid": {
@@ -75,10 +76,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_BITWISE",
-        "severity": "error",
         "message": "Forbidden bitwise operation"
       }
     }

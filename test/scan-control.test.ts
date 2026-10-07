@@ -25,7 +25,7 @@ describe("scan controls", () => {
     const { controls, transcripts } = await fixture();
     controls.updateSettings("a", { scope: "repository", mode: "log" });
     expect(controls.getSettings("a").settings).toEqual({ scope: "repository", mode: "log" });
-    expect(controls.getSettings("b").settings).toEqual({ scope: "touched-files", mode: "resteer" });
+    expect(controls.getSettings("b").settings).toEqual({ scope: "touched-files", mode: "steer" });
     controls.close();
     const reopened = new SqliteScanControlStore(transcripts.path);
     expect(reopened.getSettings("a").settings).toEqual({ scope: "repository", mode: "log" });
@@ -38,14 +38,15 @@ describe("scan controls", () => {
     controls.finishRepositoryDiagnostic("a", "failed-run", "failed", "Evaluation failed");
     transcripts.openSession({ host: "omp", sessionId: "later", cwd: root });
     expect(controls.claimRepositoryDiagnostic("later")).toBe(false);
-    expect(controls.getSettings("later").repositoryDiagnostic).toMatchObject({
+    expect(controls.getSettings("later").repositoryAudit).toMatchObject({
       sessionId: "a",
-      runId: "failed-run",
+      auditId: "failed-run",
       status: "failed",
       error: "Evaluation failed",
     });
     controls.close(); transcripts.close();
   });
+
 
   it("records and interrupts scans without claiming another session's work", async () => {
     const { controls, transcripts } = await fixture();
@@ -60,12 +61,12 @@ describe("scan controls", () => {
     controls.finish(queued.id, "interrupted", ["partial-run"], "Late native completion");
     expect(controls.listScans("a").find(scan => scan.id === queued.id)).toEqual({
       ...interrupted,
-      runIds: ["partial-run"],
+      auditIds: ["partial-run"],
     });
     controls.finish(queued.id, "completed", ["replacement-run"]);
     expect(controls.listScans("a").find(scan => scan.id === queued.id)).toEqual({
       ...interrupted,
-      runIds: ["partial-run"],
+      auditIds: ["partial-run"],
     });
     controls.close(); transcripts.close();
   });
@@ -91,8 +92,8 @@ describe("scan controls", () => {
     });
     expect(controls.claim("a", owner)).toMatchObject({ id: queued.id, status: "running" });
     controls.finish(queued.id, "completed", ["diff-run"]);
-    expect(controls.getSettings("a").repositoryDiagnostic).toMatchObject({
-      runId: "diff-run",
+    expect(controls.getSettings("a").repositoryAudit).toMatchObject({
+      auditId: "diff-run",
       status: "completed",
     });
     controls.close(); transcripts.close();

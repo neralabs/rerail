@@ -3,6 +3,7 @@
 //! JavaScript does not receive connections, SQL, row identifiers, or hash lanes.
 //! The policy runtime will call this module through coarse Rust operations.
 
+mod compression;
 mod connection;
 mod objects;
 mod publication;
@@ -18,6 +19,7 @@ mod snapshots;
 mod tests;
 mod workspaces;
 
+pub(crate) use compression::compress;
 pub use schema::STORE_FILE_NAME;
 
 #[cfg(test)]

@@ -97,8 +97,9 @@ function compile(testCase: UpstreamCase) {
       format: "rerail.policy/v1",
       id: `upstream:${testCase.id}`,
       revision: 1,
+      mode: "block",
       scope: { include: ["**/*"], exclude: [] },
-      checks: [
+      clauses: [
         {
           id: "case",
           forbid: {
@@ -110,7 +111,7 @@ function compile(testCase: UpstreamCase) {
               ...(testCase.languageOptions === undefined ? {} : { languageOptions: testCase.languageOptions }),
             },
           },
-          finding: { anchor: "witness.span", code: "CASE", severity: "error", message: "case" },
+          violation: { anchor: "witness.span", code: "CASE", message: "case" },
         },
       ],
     }),
@@ -124,14 +125,14 @@ const files = (testCase: UpstreamCase) => [{ path: fileName(testCase), language:
 async function rerail(testCase: UpstreamCase, singles: Set<string>): Promise<{ stateless: Match[]; indexed: Match[] }> {
   const compiled = compile(testCase);
   const snapshot = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files: files(testCase) });
-  const stateless = JSON.parse(compiled.evaluate(snapshot, "diagnostic")) as { findings: RerailFinding[] };
+  const stateless = JSON.parse(compiled.evaluate(snapshot, "diagnostic")) as { violations: RerailFinding[] };
   const workspace = new binding.PolicyDslWorkspace();
   try {
     workspace.addPolicy(compiled);
     const payload = JSON.stringify({ revision: 1, files: files(testCase), removed: [] });
     const raw = workspace.tryApply(payload) ?? (await workspace.applyAsync(payload));
-    const indexed = (JSON.parse(raw) as { evaluation: { findings: RerailFinding[] } }).evaluation.findings;
-    return { stateless: rerailMatches(stateless.findings, singles), indexed: rerailMatches(indexed, singles) };
+    const indexed = (JSON.parse(raw) as { evaluation: { violations: RerailFinding[] } }).evaluation.violations;
+    return { stateless: rerailMatches(stateless.violations, singles), indexed: rerailMatches(indexed, singles) };
   } finally {
     workspace.close();
   }
@@ -329,8 +330,9 @@ async function rerailOutput(testCase: OutputCase): Promise<{ stateless: Output[]
       format: "rerail.policy/v1",
       id: `upstream:${testCase.id}`,
       revision: 1,
+      mode: "block",
       scope: { include: ["**/*"], exclude: [] },
-      checks: [{
+      clauses: [{
         id: "case",
         forbid: {
           ast: {
@@ -339,7 +341,7 @@ async function rerailOutput(testCase: OutputCase): Promise<{ stateless: Output[]
             ...(testCase.transform === undefined ? {} : { transform: testCase.transform }),
           },
         },
-        finding: { anchor: "witness.span", code: "CASE", severity: "error", message: testCase.message, fix: testCase.fix },
+        violation: { anchor: "witness.span", code: "CASE", message: testCase.message, fix: testCase.fix },
       }],
     }),
     "json",
@@ -353,14 +355,14 @@ async function rerailOutput(testCase: OutputCase): Promise<{ stateless: Output[]
     replacementRange: `${finding.fix!.span.startByte}-${finding.fix!.span.endByte}`,
   }));
   const snapshot = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files: input });
-  const stateless = JSON.parse(compiled.evaluate(snapshot, "diagnostic")) as { findings: OutputFinding[] };
+  const stateless = JSON.parse(compiled.evaluate(snapshot, "diagnostic")) as { violations: OutputFinding[] };
   const workspace = new binding.PolicyDslWorkspace();
   try {
     workspace.addPolicy(compiled);
     const payload = JSON.stringify({ revision: 1, files: input, removed: [] });
     const raw = workspace.tryApply(payload) ?? (await workspace.applyAsync(payload));
-    const indexed = (JSON.parse(raw) as { evaluation: { findings: OutputFinding[] } }).evaluation.findings;
-    return { stateless: outputs(stateless.findings), indexed: outputs(indexed) };
+    const indexed = (JSON.parse(raw) as { evaluation: { violations: OutputFinding[] } }).evaluation.violations;
+    return { stateless: outputs(stateless.violations), indexed: outputs(indexed) };
   } finally {
     workspace.close();
   }
@@ -460,7 +462,7 @@ interface CompileCase {
 }
 
 const COMPILE_CASES: CompileCase[] = [
-  { id: "repeated-key", language: "python", source: "a\nb\nc\n", query: `{"kind": "identifier", "not": {"regex": "^a$"}, "not": {"regex": "^b$"}}`, upstream: "rejects", rerail: "rejects", rerailError: /^duplicate key `not` at \/checks\/0\/forbid\/ast\/rule/ },
+  { id: "repeated-key", language: "python", source: "a\nb\nc\n", query: `{"kind": "identifier", "not": {"regex": "^a$"}, "not": {"regex": "^b$"}}`, upstream: "rejects", rerail: "rejects", rerailError: /^duplicate key `not` at \/clauses\/0\/forbid\/ast\/rule/ },
   { id: "abstract-kind", language: "typescript", source: "f(a + 1);\n", query: `{"kind": "expression"}`, upstream: "matches-nothing", rerail: "rejects", rerailError: /`expression` is an abstract kind/ },
   { id: "abstract-kind-python", language: "python", source: "f(a + 1)\n", query: `{"kind": "call", "has": {"kind": "primary_expression"}}`, upstream: "matches-nothing", rerail: "rejects", rerailError: /`primary_expression` is an abstract kind/ },
   { id: "python-dollar-name", language: "python", source: "import time\ntime.sleep(1)\ntime.At\n", query: `{"pattern": "time.$At"}`, upstream: "matches-nothing", rerail: "rejects", rerailError: /`\$At` is not a metavariable/ },
@@ -484,9 +486,9 @@ describe(`M6 compile-time decisions against ast-grep ${UPSTREAM_VERSION}`, () =>
     const upstreamResult = upstreamCompile(testCase);
     expect(upstreamResult.error).toBe(testCase.upstream === "rejects");
     expect(upstreamResult.matches > 0).toBe(testCase.upstream === "matches");
-    const source = `{"format": "rerail.policy/v1", "id": "upstream:${testCase.id}", "revision": 1, "scope": {"include": ["**/*"], "exclude": []},
-      "checks": [{"id": "case", "forbid": {"ast": {"language": "${testCase.language}", "rule": ${testCase.query}}},
-      "finding": {"anchor": "witness.span", "code": "CASE", "severity": "error", "message": "case"}}]}`;
+    const source = `{"format": "rerail.policy/v1", "id": "upstream:${testCase.id}", "revision": 1, "mode": "steer", "scope": {"include": ["**/*"], "exclude": []},
+      "clauses": [{"id": "case", "forbid": {"ast": {"language": "${testCase.language}", "rule": ${testCase.query}}},
+      "violation": {"anchor": "witness.span", "code": "CASE", "message": "case"}}]}`;
     if (testCase.rerail === "rejects") {
       expect(() => binding.PolicyDslRuntime.compile(source, "json", capabilities)).toThrow(testCase.rerailError);
       return;
@@ -494,16 +496,16 @@ describe(`M6 compile-time decisions against ast-grep ${UPSTREAM_VERSION}`, () =>
     const compiled = binding.PolicyDslRuntime.compile(source, "json", capabilities);
     const files = [{ path: `compile-${testCase.id}.${testCase.language === "python" ? "py" : "ts"}`, language: testCase.language, source: testCase.source }];
     const snapshot = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files });
-    const found = (JSON.parse(compiled.evaluate(snapshot, "diagnostic")) as { findings: unknown[] }).findings;
+    const found = (JSON.parse(compiled.evaluate(snapshot, "diagnostic")) as { violations: unknown[] }).violations;
     expect(found).toHaveLength(upstreamResult.matches);
   });
 
   it("keeps kindless rules that upstream rejects", () => {
     const testCase: CompileCase = { id: "kindless", language: "python", source: "(1)\n", query: `{"inside": {"kind": "parenthesized_expression"}, "not": {"kind": "integer"}}`, upstream: "rejects", rerail: "agrees" };
     expect(upstreamCompile(testCase).error).toBe(true);
-    const source = `{"format": "rerail.policy/v1", "id": "kindless", "revision": 1, "checks": [{"id": "case",
+    const source = `{"format": "rerail.policy/v1", "id": "kindless", "revision": 1, "mode": "steer", "clauses": [{"id": "case",
       "forbid": {"ast": {"language": "python", "rule": ${testCase.query}}},
-      "finding": {"anchor": "witness.span", "code": "CASE", "severity": "error", "message": "case"}}]}`;
+      "violation": {"anchor": "witness.span", "code": "CASE", "message": "case"}}]}`;
     expect(() => binding.PolicyDslRuntime.compile(source, "json", capabilities)).not.toThrow();
   });
 });

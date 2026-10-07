@@ -1,0 +1,146 @@
+[
+  {
+    "rule": "bladestan-variable-undefined",
+    "source": "fixtures",
+    "path": "skeleton/resources/views/bar.blade.php",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "`{{ $foo + 'bar' }}` reads view data. Bladestan reports `$foo` undefined only where a caller renders the template without it: tests/Rules/Fixture/include_with_parameters.php renders include_with_parameters.blade.php, whose `@include('bar')` (line 3) inlines bar.blade.php with no `foo` (BladeRuleTest: \"Undefined variable: $foo\" at line 9); with-does-not-taint.php and laravel-response-function.php do the same. Rendered by laravel-view-function.php (`view('foo', ['foo' => 'bar'])`, foo.blade.php's `@include('bar')`) the same line has `$foo`. Rerail reads the template alone, where a top-level variable the template does not define is the caller's data and unknown; Bladestan's verdict is about one render's data, not the template."
+  },
+  {
+    "rule": "bladestan-variable-undefined",
+    "source": "fixtures",
+    "path": "skeleton/resources/views/file_with_include.blade.php",
+    "line": 14,
+    "kind": "not-comparable",
+    "evidence": "`{{ $bar }}` reads view data. Bladestan reports `$bar` undefined only in tests/Rules/Fixture/file-with-recursive-include.php, which renders file_with_recursive_include.blade.php, whose `@include('file_with_include', ['foo' => 10, 'baz' => 'foobar'])` inlines this template with no `bar` (BladeRuleTest: \"Undefined variable: $bar\" at line 9); rendered by file-with-include.php (`view('file_with_include', ['foo' => 'bar'])`) the same read is \"might not be defined\". Rerail reads the template alone, where a top-level variable the template does not define is the caller's data and unknown."
+  },
+  {
+    "rule": "tlint-no-json-directive",
+    "source": "fixtures",
+    "path": "NoJsonDirectiveTest/1.blade.php",
+    "line": 5,
+    "kind": "rerail-unknown",
+    "evidence": "tree-sitter-blade reads `@section('content')` after `@extends(...)` with markup in its block as an `ERROR` region from line 3, column 1 to the end of the file (a known grammar gap: a directive's statement form before markup, `@push(...)` after `@extends`). Rerail's AST checks run outside error regions only (the file is `source-partial`), so the directive on line 5 is not read; the template is valid Blade (illuminate/view 13.34.0 compiles it). The `@json(...)` sits in an attribute value Rerail's view reads elsewhere (the bagisto TPs)."
+  },
+  {
+    "rule": "tlint-no-dump-directives",
+    "source": "fixtures",
+    "path": "NoDumpDirectivesTest/1.blade.php",
+    "line": 5,
+    "kind": "rerail-unknown",
+    "evidence": "tree-sitter-blade reads `@section('content')` after `@extends(...)` with markup in its block as an `ERROR` region from line 3, column 1 to the end of the file (a known grammar gap: a directive's statement form before markup, `@push(...)` after `@extends`). Rerail's AST checks run outside error regions only (the file is `source-partial`), so the directive on line 5 is not read; the template is valid Blade (illuminate/view 13.34.0 compiles it)."
+  },
+  {
+    "rule": "tlint-no-dump-directives",
+    "source": "fixtures",
+    "path": "NoDumpDirectivesTest/2.blade.php",
+    "line": 5,
+    "kind": "rerail-unknown",
+    "evidence": "tree-sitter-blade reads `@section('content')` after `@extends(...)` with markup in its block as an `ERROR` region from line 3, column 1 to the end of the file (a known grammar gap: a directive's statement form before markup, `@push(...)` after `@extends`). Rerail's AST checks run outside error regions only (the file is `source-partial`), so the directive on line 5 is not read; the template is valid Blade (illuminate/view 13.34.0 compiles it)."
+  },
+  {
+    "rule": "tlint-no-ray-directive",
+    "source": "fixtures",
+    "path": "NoRayDirectiveTest/1.blade.php",
+    "line": 5,
+    "kind": "rerail-unknown",
+    "evidence": "tree-sitter-blade reads `@section('content')` after `@extends(...)` with markup in its block as an `ERROR` region from line 3, column 1 to the end of the file (a known grammar gap: a directive's statement form before markup, `@push(...)` after `@extends`). Rerail's AST checks run outside error regions only (the file is `source-partial`), so the directive on line 5 is not read; the template is valid Blade (illuminate/view 13.34.0 compiles it)."
+  },
+  {
+    "rule": "blade-parser-debug-directive",
+    "source": "fixtures",
+    "path": "RequiredArgumentsTest/34.blade.php",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "The template is the bare directive `@dd` alone, which tree-sitter-blade reads as an unterminated block directive: an `ERROR` region from line 1, column 1 covers it (a directive the grammar takes for a block opener, a known grammar gap). Rerail's AST checks run outside error regions only (`source-partial`), so the directive is not read."
+  },
+  {
+    "rule": "blade-parser-debug-directive",
+    "source": "fixtures",
+    "path": "RequiredArgumentsTest/35.blade.php",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "The template is the bare directive `@dump` alone, which tree-sitter-blade reads as an unterminated block directive: an `ERROR` region from line 1, column 1 covers it (a directive the grammar takes for a block opener, a known grammar gap). Rerail's AST checks run outside error regions only (`source-partial`), so the directive is not read."
+  },
+  {
+    "rule": "blade-parser-for-else-structure",
+    "source": "fixtures",
+    "path": "RequiredArgumentsTest/51.blade.php",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "The template is the bare directive `@forelse` alone, which tree-sitter-blade reads as an unterminated block directive: an `ERROR` region from line 1, column 1 covers it (a directive the grammar takes for a block opener, a known grammar gap). Rerail's AST checks run outside error regions only (`source-partial`), so the directive is not read."
+  },
+  {
+    "rule": "blade-parser-for-else-structure",
+    "source": "fixtures",
+    "path": "RequiredArgumentsTest/114.blade.php",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "The template is `@forelse($args)` with no `@endforelse`; tree-sitter-blade reads the unterminated loop as an `ERROR` region from line 1, column 1. Rerail's AST checks run outside error regions only (`source-partial`), so the loop is not read. blade-parser reports the missing `@empty` of a loop that is never closed."
+  },
+  {
+    "rule": "blade-parser-for-else-structure",
+    "source": "fixtures",
+    "path": "DebugDirectiveTest/85.blade.php",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "The template is `Lead @forelse($arg) Trail` with no `@endforelse`; tree-sitter-blade closes the loop with a MISSING `directive_end`, an error region from line 1, column 6. Rerail's AST checks run outside error regions only (`source-partial`), so the loop is not read. blade-parser reports the missing `@empty` of a loop that is never closed."
+  },
+  {
+    "rule": "tlint-no-json-directive",
+    "source": "bagisto",
+    "path": "packages/Webkul/Admin/src/Resources/views/catalog/products/edit/types/booking.blade.php",
+    "line": 266,
+    "kind": "upstream-wrong",
+    "evidence": "The line holds two `@json(...)` directives (`x: @json($a) ? @json($b) : {`), and Blade compiles both to `json_encode` echoes (illuminate/view 13.34.0 BladeCompiler::compileJson). tlint 9.7.0 NoJsonDirective::lint runs `preg_match` (first match only) on each line, so it reports the line once; Rerail reports each directive."
+  },
+  {
+    "rule": "tlint-no-json-directive",
+    "source": "bagisto",
+    "path": "packages/Webkul/Admin/src/Resources/views/catalog/products/edit/types/booking/default.blade.php",
+    "line": 513,
+    "kind": "upstream-wrong",
+    "evidence": "The line holds two `@json(...)` directives (`x: @json($a) ? @json($b) : {`), and Blade compiles both to `json_encode` echoes (illuminate/view 13.34.0 BladeCompiler::compileJson). tlint 9.7.0 NoJsonDirective::lint runs `preg_match` (first match only) on each line, so it reports the line once; Rerail reports each directive."
+  },
+  {
+    "rule": "tlint-no-json-directive",
+    "source": "bagisto",
+    "path": "packages/Webkul/Admin/src/Resources/views/catalog/products/edit/types/booking/rental.blade.php",
+    "line": 131,
+    "kind": "upstream-wrong",
+    "evidence": "The line holds two `@json(...)` directives (`x: @json($a) ? @json($b) : {`), and Blade compiles both to `json_encode` echoes (illuminate/view 13.34.0 BladeCompiler::compileJson). tlint 9.7.0 NoJsonDirective::lint runs `preg_match` (first match only) on each line, so it reports the line once; Rerail reports each directive."
+  },
+  {
+    "rule": "tlint-no-json-directive",
+    "source": "bagisto",
+    "path": "packages/Webkul/Admin/src/Resources/views/catalog/products/edit/types/booking/table.blade.php",
+    "line": 195,
+    "kind": "upstream-wrong",
+    "evidence": "The line holds two `@json(...)` directives (`x: @json($a) ? @json($b) : {`), and Blade compiles both to `json_encode` echoes (illuminate/view 13.34.0 BladeCompiler::compileJson). tlint 9.7.0 NoJsonDirective::lint runs `preg_match` (first match only) on each line, so it reports the line once; Rerail reports each directive."
+  },
+  {
+    "rule": "bladestan-variable-undefined",
+    "source": "filament",
+    "path": "packages/tables/resources/views/components/search-field.blade.php",
+    "line": 38,
+    "kind": "upstream-wrong",
+    "evidence": "`$this` is read in a bound attribute of an `<x-filament::input>` component tag (`:attributes=\"(new FilamentComponentAttributeBag)->merge([... 'wire:key' => $this->getId() ...])\"`, reported at the tag's line 38). Bladestan 0.11.7 reports \"Undefined variable: $this\" there, an artifact of the code it inlines a component tag as: a read of `$this` outside a component tag is not reported (chart-widget.blade.php line 211, `@if ($emptyStateActions = $this->getEmptyStateActions())`, in the template whose component attributes on line 204 are). Blade evaluates a bound attribute in the template's own scope (illuminate/view 13.34.0 ComponentTagCompiler compiles it into the `withAttributes([...])` call of the view's code, which PhpEngine::evaluatePath runs inside its method, so `$this` is defined; Livewire renders it with the component bound). Rerail reads `$this` at a template's top level as unknown."
+  },
+  {
+    "rule": "bladestan-variable-undefined",
+    "source": "filament",
+    "path": "packages/widgets/resources/views/chart-widget.blade.php",
+    "line": 204,
+    "kind": "upstream-wrong",
+    "evidence": "`$this` is read in a bound attribute of an `<x-filament::...>` component tag (`:description`, `:heading` and `:icon` of `<x-filament::empty-state>`, each `$this->getEmptyState...()`, all three reported at the tag's line 204). Bladestan 0.11.7 reports \"Undefined variable: $this\" there, an artifact of the code it inlines a component tag as: the same template's read of `$this` outside a component tag on line 211 (`@if ($emptyStateActions = $this->getEmptyStateActions())`) is not reported. Blade evaluates a bound attribute in the template's own scope (illuminate/view 13.34.0 ComponentTagCompiler compiles it into the `withAttributes([...])` call of the view's code, which PhpEngine::evaluatePath runs inside its method, so `$this` is defined; Livewire renders it with the component bound). Rerail reads `$this` at a template's top level as unknown."
+  },
+  {
+    "rule": "bladestan-variable-undefined",
+    "source": "filament",
+    "path": "packages/tables/resources/views/index.blade.php",
+    "line": 217,
+    "kind": "not-comparable",
+    "evidence": "`$getQuery` is view data (Filament's table view receives the `getQuery` closure from its component) read inside an arrow function in a `@php` block: `fn (Builder $query) => $group->groupQuery($query, model: $getQuery()->getModel())`. The template never assigns it, so with the render passing no data PHPStan reads it in the template's scope as \"might not be defined\" and, where the arrow function captures it, as undefined (\"Undefined variable: $getQuery\"). Whether it is defined depends on the caller's data: Rerail reads a variable the template does not define as the caller's data and unknown, in a closure it captures as at the top level."
+  }
+]

@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:number-literal-format",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `number-literal-format` rule with its default options (https://palantir.github.io/tslint/rules/number-literal-format/). Checks that decimal literals begin with '0.' not just '.', have no trailing zeros, no leading zeros, and uppercase hex. Exponent leading-zero and trailing-0 mantissa failures anchor mid-token through named groups in the number's regex.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "leading-0",
       "forbid": {
@@ -42,10 +43,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NUMBER_LITERAL_FORMAT",
-        "severity": "error",
         "message": "Number literal should not have a leading '0'."
       }
     },
@@ -66,10 +66,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NUMBER_LITERAL_FORMAT",
-        "severity": "error",
         "message": "Hexadecimal number literal should be uppercase."
       }
     },
@@ -90,10 +89,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NUMBER_LITERAL_FORMAT",
-        "severity": "error",
         "message": "Number literal should begin with '0.' and not just '.'."
       }
     },
@@ -114,10 +112,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NUMBER_LITERAL_FORMAT",
-        "severity": "error",
         "message": "Number literal should not end in '.'."
       }
     },
@@ -138,10 +135,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.MANTISSA",
         "code": "NUMBER_LITERAL_FORMAT",
-        "severity": "error",
         "message": "Number literal should not have a trailing '0'."
       }
     },
@@ -162,10 +158,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.EXPONENT",
         "code": "NUMBER_LITERAL_FORMAT",
-        "severity": "error",
         "message": "Number literal should not have a leading '0'."
       }
     }

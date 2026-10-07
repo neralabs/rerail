@@ -1,0 +1,114 @@
+[
+  {
+    "rule": "eslint-no-useless-rename",
+    "source": "fixtures",
+    "path": "no-useless-rename/045.js",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "tree-sitter-javascript 0.25.0 does not parse a parenthesized assignment target as an object pattern's property value (`({foo: (foo)} = obj)`, with or without a default or comments inside the parentheses), which ECMAScript allows for a simple assignment target and espree accepts. The file's `{...} = ...` is an ERROR region, so the property the rule reads does not exist in Rerail's tree; the runner lists the file under syntaxErrorFiles (T1 grammar gap, docs/design/rerail-pack-typescript.md)."
+  },
+  {
+    "rule": "eslint-no-useless-rename",
+    "source": "fixtures",
+    "path": "no-useless-rename/064.js",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "tree-sitter-javascript 0.25.0 does not parse a parenthesized assignment target as an object pattern's property value (`({foo: (foo)} = obj)`, with or without a default or comments inside the parentheses), which ECMAScript allows for a simple assignment target and espree accepts. The file's `{...} = ...` is an ERROR region, so the property the rule reads does not exist in Rerail's tree; the runner lists the file under syntaxErrorFiles (T1 grammar gap, docs/design/rerail-pack-typescript.md)."
+  },
+  {
+    "rule": "eslint-no-useless-rename",
+    "source": "fixtures",
+    "path": "no-useless-rename/121.js",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "tree-sitter-javascript 0.25.0 does not parse a parenthesized assignment target as an object pattern's property value (`({foo: (foo)} = obj)`, with or without a default or comments inside the parentheses), which ECMAScript allows for a simple assignment target and espree accepts. The file's `{...} = ...` is an ERROR region, so the property the rule reads does not exist in Rerail's tree; the runner lists the file under syntaxErrorFiles (T1 grammar gap, docs/design/rerail-pack-typescript.md)."
+  },
+  {
+    "rule": "eslint-no-useless-rename",
+    "source": "fixtures",
+    "path": "no-useless-rename/122.js",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "tree-sitter-javascript 0.25.0 does not parse a parenthesized assignment target as an object pattern's property value (`({foo: (foo)} = obj)`, with or without a default or comments inside the parentheses), which ECMAScript allows for a simple assignment target and espree accepts. The file's `{...} = ...` is an ERROR region, so the property the rule reads does not exist in Rerail's tree; the runner lists the file under syntaxErrorFiles (T1 grammar gap, docs/design/rerail-pack-typescript.md)."
+  },
+  {
+    "rule": "eslint-no-useless-rename",
+    "source": "fixtures",
+    "path": "no-useless-rename/123.js",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "tree-sitter-javascript 0.25.0 does not parse a parenthesized assignment target as an object pattern's property value (`({foo: (foo)} = obj)`, with or without a default or comments inside the parentheses), which ECMAScript allows for a simple assignment target and espree accepts. The file's `{...} = ...` is an ERROR region, so the property the rule reads does not exist in Rerail's tree; the runner lists the file under syntaxErrorFiles (T1 grammar gap, docs/design/rerail-pack-typescript.md)."
+  },
+  {
+    "rule": "eslint-no-useless-rename",
+    "source": "fixtures",
+    "path": "no-useless-rename/125.js",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "tree-sitter-javascript 0.25.0 does not parse a parenthesized assignment target as an object pattern's property value (`({foo: (foo)} = obj)`, with or without a default or comments inside the parentheses), which ECMAScript allows for a simple assignment target and espree accepts. The file's `{...} = ...` is an ERROR region, so the property the rule reads does not exist in Rerail's tree; the runner lists the file under syntaxErrorFiles (T1 grammar gap, docs/design/rerail-pack-typescript.md)."
+  },
+  {
+    "rule": "eslint-no-useless-rename",
+    "source": "fixtures",
+    "path": "no-useless-rename/126.js",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "tree-sitter-javascript 0.25.0 does not parse a parenthesized assignment target as an object pattern's property value (`({foo: (foo)} = obj)`, with or without a default or comments inside the parentheses), which ECMAScript allows for a simple assignment target and espree accepts. The file's `{...} = ...` is an ERROR region, so the property the rule reads does not exist in Rerail's tree; the runner lists the file under syntaxErrorFiles (T1 grammar gap, docs/design/rerail-pack-typescript.md)."
+  },
+  {
+    "rule": "eslint-no-unused-private-class-members",
+    "source": "fixtures",
+    "path": "no-unused-private-class-members/054.js",
+    "line": 3,
+    "kind": "rerail-unknown",
+    "evidence": "tree-sitter-javascript 0.25.0 does not apply ASI between class fields without semicolons when the next member starts with `[` or a keyword-named method (`#unused` then `[bar]` or `instanceof() {}`), which espree parses as separate fields per the ECMAScript ASI rules for class elements. The field is inside an ERROR region, so its private name has no declaration in Rerail's scope; the runner lists the file under syntaxErrorFiles (T1 grammar gap, docs/design/rerail-pack-typescript.md)."
+  },
+  {
+    "rule": "eslint-no-unused-private-class-members",
+    "source": "fixtures",
+    "path": "no-unused-private-class-members/055.js",
+    "line": 3,
+    "kind": "rerail-unknown",
+    "evidence": "tree-sitter-javascript 0.25.0 does not apply ASI between class fields without semicolons when the next member starts with `[` or a keyword-named method (`#unused` then `[bar]` or `instanceof() {}`), which espree parses as separate fields per the ECMAScript ASI rules for class elements. The field is inside an ERROR region, so its private name has no declaration in Rerail's scope; the runner lists the file under syntaxErrorFiles (T1 grammar gap, docs/design/rerail-pack-typescript.md)."
+  },
+  {
+    "rule": "eslint-no-unused-private-class-members",
+    "source": "fixtures",
+    "path": "no-unused-private-class-members/056.js",
+    "line": 3,
+    "kind": "rerail-unknown",
+    "evidence": "tree-sitter-javascript 0.25.0 does not apply ASI between class fields without semicolons when the next member starts with `[` or a keyword-named method (`#unused` then `[bar]` or `instanceof() {}`), which espree parses as separate fields per the ECMAScript ASI rules for class elements. The field is inside an ERROR region, so its private name has no declaration in Rerail's scope; the runner lists the file under syntaxErrorFiles (T1 grammar gap, docs/design/rerail-pack-typescript.md)."
+  },
+  {
+    "rule": "typescript-eslint-no-unsafe-function-type",
+    "source": "vscode",
+    "path": "src/vs/code/electron-browser/workbench/workbench.ts",
+    "line": 557,
+    "kind": "rerail-unknown",
+    "evidence": "tree-sitter-typescript 0.23.2 (and upstream HEAD 75b3874) does not parse an import type followed by type arguments (`import('\u2026/window.js').ILoadResult<M, T>`, line 14-16 of the file), so the file has syntax errors and the rule, which reads `resolves` (unsound under error regions), skips it with source-incomplete; the runner lists it under syntaxErrorFiles (T1 grammar gap G1, docs/design/rerail-pack-typescript.md)."
+  },
+  {
+    "rule": "typescript-eslint-no-unsafe-function-type",
+    "source": "vscode",
+    "path": "src/vs/code/electron-browser/workbench/workbench.ts",
+    "line": 570,
+    "kind": "rerail-unknown",
+    "evidence": "tree-sitter-typescript 0.23.2 (and upstream HEAD 75b3874) does not parse an import type followed by type arguments (`import('\u2026/window.js').ILoadResult<M, T>`, line 14-16 of the file), so the file has syntax errors and the rule, which reads `resolves` (unsound under error regions), skips it with source-incomplete; the runner lists it under syntaxErrorFiles (T1 grammar gap G1, docs/design/rerail-pack-typescript.md)."
+  },
+  {
+    "rule": "typescript-eslint-no-unsafe-function-type",
+    "source": "vscode",
+    "path": "src/vs/sessions/electron-browser/sessions.ts",
+    "line": 170,
+    "kind": "rerail-unknown",
+    "evidence": "tree-sitter-typescript 0.23.2 (and upstream HEAD 75b3874) does not parse an import type followed by type arguments (`import('\u2026/window.js').ILoadResult<M, T>`, line 14-16 of the file), so the file has syntax errors and the rule, which reads `resolves` (unsound under error regions), skips it with source-incomplete; the runner lists it under syntaxErrorFiles (T1 grammar gap G1, docs/design/rerail-pack-typescript.md)."
+  },
+  {
+    "rule": "typescript-eslint-no-unsafe-function-type",
+    "source": "vscode",
+    "path": "src/vs/sessions/electron-browser/sessions.ts",
+    "line": 183,
+    "kind": "rerail-unknown",
+    "evidence": "tree-sitter-typescript 0.23.2 (and upstream HEAD 75b3874) does not parse an import type followed by type arguments (`import('\u2026/window.js').ILoadResult<M, T>`, line 14-16 of the file), so the file has syntax errors and the rule, which reads `resolves` (unsound under error regions), skips it with source-incomplete; the runner lists it under syntaxErrorFiles (T1 grammar gap G1, docs/design/rerail-pack-typescript.md)."
+  }
+]

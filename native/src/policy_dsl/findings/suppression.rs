@@ -12,7 +12,6 @@ use crate::policy_dsl::suppress::{
     EslintDirectives, NoqaIndex, PhpcsIndex, PhpstanIndex, PsalmIndex, parent_statement, root,
 };
 use ast_grep_core::{Doc, Node};
-use serde_json::Value;
 
 /// Whether the finding's `suppress` removes a witness: another linter's comments suppress the
 /// finding at its anchor's start. `node` is the witness's node, which places the file.
@@ -29,14 +28,7 @@ pub(crate) fn suppresses<D: Doc>(
     let Some((source, language)) = host(node) else {
         return false;
     };
-    let (span, _) = anchored_span(&finding.anchor, witness);
-    let Some(at) = span
-        .get("startByte")
-        .and_then(Value::as_u64)
-        .map(|at| at as usize)
-    else {
-        return false;
-    };
+    let at = anchored_span(&finding.anchor, witness).0.start_byte;
     let lines = file_lines(source, Terminators::of(language));
     // Compiling checked that the query's family honours each linter `suppress` names.
     match Family::of(language) {

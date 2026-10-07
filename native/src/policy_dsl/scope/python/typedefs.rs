@@ -20,6 +20,7 @@ use super::super::{
 };
 use super::super::{Origin, ScopeKind};
 use super::{Visit, Visitor, named};
+use crate::policy_dsl::identifier::python_identifier;
 use crate::policy_dsl::literal::{SubDoc, annotation, semantic};
 use crate::policy_dsl::module_path::ModulePath;
 use ast_grep_core::{AstGrep, Doc, Node};
@@ -142,9 +143,9 @@ pub(super) fn last_segment<D: Doc>(node: &Node<'_, D>) -> String {
     match node.kind().as_ref() {
         "attribute" => node
             .field("attribute")
-            .map(|attribute| attribute.text().into_owned())
+            .map(|attribute| python_identifier(&attribute).into_owned())
             .unwrap_or_default(),
-        _ => node.text().into_owned(),
+        _ => python_identifier(node).into_owned(),
     }
 }
 
@@ -175,7 +176,7 @@ fn qualified_name<D: Doc>(
     loop {
         match head.kind().as_ref() {
             "attribute" => {
-                tail.push(head.field("attribute")?.text().into_owned());
+                tail.push(python_identifier(&head.field("attribute")?).into_owned());
                 head = head.field("object")?;
             }
             "parenthesized_expression" => {
@@ -192,7 +193,7 @@ fn qualified_name<D: Doc>(
         }
     }
     tail.reverse();
-    let name = head.text();
+    let name = python_identifier(&head);
     let reference = table.reference(&head.range())?;
     let mut segments = match table.resolve(reference, &name) {
         None => {
@@ -721,7 +722,10 @@ impl Classifier<'_> {
             .collect();
         let keyword = |item: &Node<'r, D>| -> Option<String> {
             (item.kind() == "keyword_argument")
-                .then(|| item.field("name").map(|name| name.text().into_owned()))
+                .then(|| {
+                    item.field("name")
+                        .map(|name| python_identifier(&name).into_owned())
+                })
                 .flatten()
         };
         let value = |item: &Node<'r, D>| -> Node<'r, D> {

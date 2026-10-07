@@ -218,9 +218,10 @@ mod tests {
             "format": "rerail.policy/v1",
             "id": "literal-operands",
             "revision": 1,
-            "checks": [{
+            "mode": "steer",
+            "clauses": [{
                 "id": "relation",
-                "finding": finding(),
+                "violation": finding(),
                 "require_each": {
                     "subject": { "evidence": {
                         "as": "row",

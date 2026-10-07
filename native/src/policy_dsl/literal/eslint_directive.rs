@@ -384,13 +384,12 @@ mod tests {
         source: &str,
     ) -> serde_json::Value {
         use crate::policy_dsl::test_support::*;
-        let mut finding = serde_json::json!({ "anchor": anchor, "code": "X", "severity": "error",
-            "message": if anchor == "witness.span" { "x" } else { "$N" } });
+        let mut finding = serde_json::json!({ "anchor": anchor, "code": "X", "message": if anchor == "witness.span" { "x" } else { "$N" } });
         if let Some(each) = each {
             finding["each"] = serde_json::json!(each);
         }
         let compiled = compile_document_with(
-            check_document(serde_json::json!({ "id": "c", "finding": finding,
+            check_document(serde_json::json!({ "id": "c", "violation": finding,
                 "forbid": { "ast": { "language": "typescript", "rule": rule } } })),
             &serde_json::from_str::<serde_json::Value>(CAPABILITIES).expect("capabilities"),
         )
@@ -399,7 +398,7 @@ mod tests {
     }
 
     fn texts(result: &serde_json::Value, source: &str) -> Vec<String> {
-        result["findings"]
+        result["violations"]
             .as_array()
             .expect("findings")
             .iter()

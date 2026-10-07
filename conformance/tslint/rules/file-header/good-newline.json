@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:file-header",
   "revision": 1,
+  "mode": "steer",
   "description": "Header /Copyright \\d{4}/ with enforce-trailing-newline.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "missing-header",
       "forbid": {
@@ -44,10 +45,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.AFTER",
         "code": "FILE_HEADER",
-        "severity": "error",
         "message": "missing file header"
       }
     },
@@ -59,10 +59,9 @@
           "pattern": "\\A(?:/\\*(?:[^*]|\\*[^/])*Copyright \\d{4}(?:[^*]|\\*[^/])*\\*/|//[^\\n]*Copyright \\d{4}[^\\n]*)\\r?\\n[^\\r\\n]"
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.start",
         "code": "FILE_HEADER",
-        "severity": "error",
         "message": "missing new line following the file header"
       }
     }

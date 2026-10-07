@@ -1,0 +1,89 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-self-closing-comp",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-react 7.37.5 react/self-closing-comp (component: true, html: true): an element with a closing tag and no children but whitespace containing a line break; namespaced tags only when lower-case (DOM).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "jsx_opening_element",
+            "any": [
+              {
+                "has": {
+                  "field": "name",
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "member_expression"
+                    }
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "field": "name",
+                  "kind": "jsx_namespace_name",
+                  "regex": "^[a-z]"
+                }
+              }
+            ],
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "jsx_element",
+              "not": {
+                "has": {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "jsx_opening_element"
+                      },
+                      {
+                        "kind": "jsx_closing_element"
+                      },
+                      {
+                        "kind": "jsx_text",
+                        "regex": "^[\\s&&[^\\xA0]]*\\n[\\s&&[^\\xA0]]*$"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/self-closing-comp",
+        "message": "Empty components are self-closing",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/self-closing-comp"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

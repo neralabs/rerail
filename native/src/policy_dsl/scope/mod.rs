@@ -18,12 +18,15 @@ pub(crate) mod usage;
 
 pub(crate) use lookup::Lookup;
 
+use crate::policy_dsl::identifier::{name_in, nfkc};
 use crate::policy_dsl::language::GrammarDialect;
 use crate::policy_dsl::module_path::ModulePath;
 use crate::policy_dsl::value::{Followed, NodeRef};
 use ast_grep_core::{Doc, Node};
 use ast_grep_language::LanguageExt;
-use std::collections::{BTreeSet, HashMap};
+use foldhash::{HashMap, HashMapExt};
+use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::ops::Range;
 use std::sync::{Arc, OnceLock};
 
@@ -593,8 +596,9 @@ impl ScopeTable {
             let Some(name) = text.get(reference.start - base..reference.end - base) else {
                 continue;
             };
-            if let Some(((scope, index), _)) = self.walk(reference, name, true).found {
-                rebound.push((scope, name.to_owned(), index));
+            let name = nfkc(name);
+            if let Some(((scope, index), _)) = self.walk(reference, &name, true).found {
+                rebound.push((scope, name.into_owned(), index));
             }
         }
         for (scope, name, index) in rebound {
@@ -657,26 +661,28 @@ impl ScopeTable {
     }
 
     /// A reference's name: the source text it spans (`text` is the file's from `base`), or the
-    /// text of the annotation it lies in.
+    /// text of the annotation it lies in; a Python name NFKC-normalized, as the table's keys are.
     pub(crate) fn reference_name<'a>(
         &'a self,
         reference: &Reference,
         text: &'a str,
         base: usize,
-    ) -> Option<&'a str> {
-        if reference.start & ANNOTATION_RANGE == 0 {
-            return text.get(reference.start - base..reference.end - base);
-        }
-        let index = (reference.start & !ANNOTATION_RANGE) >> ANNOTATION_SHIFT;
-        let offset = annotation_offset(index);
-        let annotation = self
-            .annotations
-            .iter()
-            .find(|annotation| annotation.tree.offset() == offset)?;
-        annotation
-            .tree
-            .text()
-            .get(reference.start - offset..reference.end - offset)
+    ) -> Option<Cow<'a, str>> {
+        let raw = if reference.start & ANNOTATION_RANGE == 0 {
+            text.get(reference.start - base..reference.end - base)?
+        } else {
+            let index = (reference.start & !ANNOTATION_RANGE) >> ANNOTATION_SHIFT;
+            let offset = annotation_offset(index);
+            let annotation = self
+                .annotations
+                .iter()
+                .find(|annotation| annotation.tree.offset() == offset)?;
+            annotation
+                .tree
+                .text()
+                .get(reference.start - offset..reference.end - offset)?
+        };
+        Some(name_in(self.language, Cow::Borrowed(raw)))
     }
 
     /// Charges each TypeScript write and property mutation to the binding it resolves to.
@@ -1298,11 +1304,15 @@ impl Builder<'_> {
     }
 
     fn bind(&mut self, scope: u32, name: &str, binding: Binding) {
-        self.table.scopes[scope as usize]
-            .bindings
-            .entry(name.into())
-            .or_default()
-            .push(binding);
+        let bindings = &mut self.table.scopes[scope as usize].bindings;
+        // Most names are bound once: a chain starts with room for one binding, and a name already
+        // bound allocates no key.
+        match bindings.get_mut(name) {
+            Some(chain) => chain.push(binding),
+            None => {
+                bindings.insert(name.into(), vec![binding]);
+            }
+        }
     }
 
     fn reference(&mut self, range: Range<usize>, spaces: u8) {

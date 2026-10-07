@@ -5,7 +5,7 @@
 
 use super::names::Name;
 use super::php;
-use super::summary::{CLASS, OPEN, Summary};
+use super::summary::{BASE, CLASS, DECORATED, METACLASS, OPEN, SHADOWED, Summary, UNKNOWN_BASE};
 use crate::policy_dsl::language::Family;
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -95,7 +95,7 @@ pub(crate) struct Seed {
     pub(crate) unknown: Bits,
 }
 
-/// One linked file: its summary, and its definitions' resolved call edges.
+/// One linked file: its summary, its definitions' resolved call edges, and their callers.
 #[derive(Clone, Debug)]
 struct GraphFile {
     path: Arc<str>,
@@ -104,6 +104,10 @@ struct GraphFile {
     edges: Vec<(u32, DefRef)>,
     /// Definitions that call something open.
     open: Vec<u32>,
+    /// The definitions calling each of the file's, in number order:
+    /// `callers[caller_offsets[d]..caller_offsets[d + 1]]`.
+    caller_offsets: Vec<u32>,
+    callers: Vec<DefRef>,
 }
 
 /// A module's entry: the modules it `import *`s, and whether its summary is open (a syntax error
@@ -115,6 +119,7 @@ type Module = (Arc<[Name]>, bool);
 struct Contribution {
     defs: HashMap<Name, Vec<(u32, u8)>>,
     aliases: HashMap<Name, Vec<Name>>,
+    opaque: HashMap<Name, Vec<()>>,
     modules: HashMap<Name, Vec<Module>>,
     supers: HashMap<Name, Vec<(Name, u8)>>,
     children: HashMap<Name, Vec<Name>>,
@@ -140,6 +145,8 @@ impl Contribution {
         for (local, def) in summary.defs.iter().enumerate() {
             let name = summary.interned(def.name);
             match name.family() {
+                // A definition a later binding replaces is no longer what its name denotes.
+                Family::Python if def.flags & SHADOWED != 0 => {}
                 Family::Python => {
                     for name in names(name) {
                         contribution
@@ -168,18 +175,20 @@ impl Contribution {
             }
         }
         for (key, target, kind) in &summary.supers {
-            let (key, target) = (summary.interned(*key), summary.interned(*target));
-            contribution
-                .supers
-                .entry(key.clone())
-                .or_default()
-                .push((target.clone(), *kind));
-            if *kind == php::PARENT {
+            let target = summary.interned(*target);
+            for key in names(summary.interned(*key)) {
                 contribution
-                    .children
-                    .entry(target.clone())
+                    .supers
+                    .entry(key.clone())
                     .or_default()
-                    .push(key.clone());
+                    .push((target.clone(), *kind));
+                if *kind == php::PARENT {
+                    contribution
+                        .children
+                        .entry(target.clone())
+                        .or_default()
+                        .push(key);
+                }
             }
         }
         for (alias, target) in &summary.aliases {
@@ -189,6 +198,11 @@ impl Contribution {
                     .entry(name)
                     .or_default()
                     .push(summary.interned(*target).clone());
+            }
+        }
+        for opaque in &summary.opaque {
+            for name in names(summary.interned(*opaque)) {
+                contribution.opaque.entry(name).or_default().push(());
             }
         }
         let stars = summary
@@ -256,9 +270,179 @@ fn parallel<I: Sync, R: Send>(items: &[I], work: impl Fn(&I) -> R + Sync + Send)
     }
 }
 
+/// What an update changed: the slots whose definitions or edges may have changed (those
+/// replaced or removed, and those calling a name whose link changed), and whether the graph's
+/// shape did (its numbering, a definition's flags or openness, or an edge), without which every
+/// walk over it finds what it did. `touched` holds the definitions whose flags, openness or
+/// edges may have changed, `dropped` those no longer in the graph.
+pub(crate) struct GraphUpdate {
+    pub(crate) slots: Vec<u32>,
+    pub(crate) reshaped: bool,
+    pub(crate) touched: Vec<DefRef>,
+    pub(crate) dropped: Vec<DefRef>,
+}
+
+/// The items in one of two sorted lists but not the other.
+fn sorted_difference<'a>(a: &'a [u32], b: &'a [u32]) -> impl Iterator<Item = &'a u32> {
+    a.iter()
+        .filter(|item| b.binary_search(item).is_err())
+        .chain(b.iter().filter(|item| a.binary_search(item).is_err()))
+}
+
+/// One resolved edge of a file: `(definition, callee definition)`.
+type FileEdge = (u32, DefRef);
+
+/// Records the callers `slot`'s edges lose (`old` but not `new`) and gain (`new` but not `old`),
+/// both sorted, by callee file, and those callers as `touched`; whether any differ.
+fn diff_edges(
+    slot: u32,
+    (old, new): (&[FileEdge], &[FileEdge]),
+    first: &[u32],
+    changes: &mut BTreeMap<u32, CallerChanges>,
+    touched: &mut Vec<DefRef>,
+) -> bool {
+    let (mut old, mut new) = (old.iter().peekable(), new.iter().peekable());
+    let mut differ = false;
+    loop {
+        let (removed, added) = match (old.peek(), new.peek()) {
+            (None, None) => return differ,
+            (Some(a), Some(b)) if a == b => {
+                old.next();
+                new.next();
+                continue;
+            }
+            (Some(a), Some(b)) if a < b => (old.next(), None),
+            (Some(_), None) => (old.next(), None),
+            _ => (None, new.next()),
+        };
+        differ = true;
+        if let Some(&(owner, to)) = removed {
+            let caller = DefRef {
+                file: slot,
+                local: owner,
+            };
+            touched.push(caller);
+            changes
+                .entry(to.file)
+                .or_default()
+                .0
+                .push((to.local, caller));
+        }
+        if let Some(&(owner, to)) = added {
+            let caller = DefRef {
+                file: slot,
+                local: owner,
+            };
+            touched.push(caller);
+            let number = first[slot as usize] + owner;
+            changes
+                .entry(to.file)
+                .or_default()
+                .1
+                .push((to.local, number, caller));
+        }
+    }
+}
+
+/// Lays out `file`'s callers again: those it had but `changes`' removed, merged in number order
+/// with its added ones. Callers kept stay in order: numbers shift with their file's place.
+fn relay_callers(file: &mut GraphFile, first: &[u32], changes: &mut CallerChanges) {
+    let (removals, additions) = changes;
+    removals.sort_unstable();
+    additions.sort_unstable_by_key(|(local, number, _)| (*local, *number));
+    let count = file.summary.defs.len();
+    let number = |def: &DefRef| first[def.file as usize] + def.local;
+    let mut offsets = Vec::with_capacity(count + 1);
+    let mut callers = Vec::with_capacity(file.callers.len() + additions.len());
+    offsets.push(0);
+    let (mut removal, mut addition) = (0, 0);
+    for local in 0..count as u32 {
+        let had = match file.caller_offsets.get(local as usize + 1) {
+            Some(&end) => &file.callers[file.caller_offsets[local as usize] as usize..end as usize],
+            None => &[],
+        };
+        let start = removal;
+        while removals.get(removal).is_some_and(|(at, _)| *at == local) {
+            removal += 1;
+        }
+        let removed = &removals[start..removal];
+        let mut kept = had
+            .iter()
+            .filter(|caller| {
+                removed
+                    .binary_search_by(|(_, removed)| removed.cmp(caller))
+                    .is_err()
+            })
+            .peekable();
+        while let Some(&(at, added, caller)) = additions.get(addition)
+            && at == local
+        {
+            while let Some(caller) = kept.next_if(|caller| number(caller) < added) {
+                callers.push(*caller);
+            }
+            callers.push(caller);
+            addition += 1;
+        }
+        callers.extend(kept);
+        offsets.push(callers.len() as u32);
+    }
+    debug_assert_eq!(
+        addition,
+        additions.len(),
+        "every added caller calls a definition"
+    );
+    file.caller_offsets = offsets;
+    file.callers = callers;
+}
+
+/// Whether a lookup of a name reads an entry `keys` changed: a prefix of it is a key, or it is a
+/// key's parent, whose members a key adds or removes.
+fn reader(keys: &HashSet<Name>) -> impl Fn(&Name) -> bool + '_ {
+    let parents = keys
+        .iter()
+        .filter_map(|key| key.parent().cloned())
+        .collect::<HashSet<_>>();
+    // Such a name shares a key's root: most names are told apart by their root alone, without
+    // walking their lineage.
+    let mut roots = keys
+        .iter()
+        .map(|key| key.root().clone())
+        .collect::<Vec<_>>();
+    roots.sort_unstable();
+    roots.dedup();
+    move |name: &Name| {
+        roots.binary_search(name.root()).is_ok()
+            && (parents.contains(name) || name.lineage().any(|name| keys.contains(name)))
+    }
+}
+
+/// What a Python class contributes to the graph's `subclasses` and `orphans`, and what its
+/// bases' lookups read.
+#[derive(Clone, Debug)]
+struct ClassMemo {
+    /// The workspace classes it derives from directly, by their own names.
+    bases: Vec<Name>,
+    /// A base of it no name denotes.
+    orphan: bool,
+    followed: Box<[Name]>,
+    /// Names a lookup through a star import found no one had named: once one is, the lookup
+    /// may find it.
+    missing: Box<[Box<str>]>,
+}
+
 type Staged = (Arc<str>, u32, Option<Arc<Summary>>, Option<Arc<Summary>>);
 /// A file's resolved edges, and its definitions calling something open.
 type FileEdges = (Vec<(u32, DefRef)>, Vec<u32>);
+/// A callee file's caller changes: `(callee, caller)` removed, and `(callee, caller's number,
+/// caller)` added.
+type CallerChanges = (Vec<(u32, DefRef)>, Vec<(u32, u32, DefRef)>);
+
+// Per-thread so concurrently running tests cannot perturb each other's counts.
+#[cfg(test)]
+thread_local! {
+    /// Definitions whose callers an update laid out again.
+    pub(crate) static RELAID_DEFS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// A linked graph of every summary. Files may be replaced one at a time: only the names whose
 /// link a replacement can change are linked again, and only the files calling them re-resolved.
@@ -272,33 +456,57 @@ pub(crate) struct Graph {
     /// Definitions by qualified name: their index in the file, and flags.
     by_name: Entries<(u32, u8)>,
     aliases: Entries<Name>,
+    /// Python: module and class members bound to a value no name denotes.
+    opaque: Entries<()>,
     modules: Entries<Module>,
     /// PHP: class-likes' parents, traits and interfaces, and trait adaptations, by lowercased
-    /// class (or `class.method`) name.
+    /// class (or `class.method`) name. Python: classes' bases and metaclasses.
     supers: Entries<(Name, u8)>,
-    /// PHP: the classes that extend each class, by lowercased name.
+    /// The classes that extend each class (PHP: by lowercased name; Python: by the name the
+    /// subclass writes its base by).
     children: Entries<Name>,
+    /// Python: each workspace class's direct subclasses, by their definitions' own names.
+    subclasses: HashMap<Name, Vec<Name>>,
+    /// Python: the classes a base of which no name denotes, which may derive from any class.
+    orphans: Vec<Name>,
+    /// Python: each workspace class's contribution to `subclasses` and `orphans`.
+    class_memos: HashMap<Name, ClassMemo>,
     links: HashMap<Name, Memo>,
-    /// Per slot, its first definition's number.
+    /// Linked names by the roots an update's changed names must share to relink them (`reader`):
+    /// each name's own root and those of the names it followed. An entry may be stale (a name
+    /// since unlinked, or no longer following that root): lookups read the name's memo, and the
+    /// index is rebuilt once it holds twice the entries it held when last built.
+    link_roots: HashMap<Name, Vec<Name>>,
+    link_root_entries: usize,
+    link_roots_built: usize,
+    /// Per slot, its first definition's number: definitions are numbered by file path, then in
+    /// the file.
     first: Vec<u32>,
-    /// Per definition: its file's slot, index in the file, and flags.
-    defs: Vec<GraphDef>,
-    /// Call edges, per definition: `edges[offsets[d]..offsets[d + 1]]`.
-    offsets: Vec<u32>,
-    edges: Vec<u32>,
-    /// The same edges reversed, per callee: `callers[caller_offsets[d]..caller_offsets[d + 1]]`,
-    /// in number order.
-    caller_offsets: Vec<u32>,
-    callers: Vec<u32>,
-    /// Definitions that call something unknown, or whose file is open.
-    open: Vec<bool>,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug)]
 struct GraphDef {
     file: u32,
     local: u32,
     flags: u8,
+}
+
+/// The graph laid out by number, for the dense closure.
+#[cfg(test)]
+struct Dense {
+    defs: Vec<GraphDef>,
+    open: Vec<bool>,
+    /// Call edges, per definition: `edges[offsets[d]..offsets[d + 1]]`.
+    offsets: Vec<u32>,
+    edges: Vec<u32>,
+}
+
+#[cfg(test)]
+impl Dense {
+    fn successors(&self, def: u32) -> &[u32] {
+        &self.edges[self.offsets[def as usize] as usize..self.offsets[def as usize + 1] as usize]
+    }
 }
 
 /// Graph size, for measurements.
@@ -352,15 +560,16 @@ impl Graph {
     }
 
     /// Replaces, adds (`Some`) or removes (`None`) files, and numbers the result as `link` would.
-    /// Returns the slots whose definitions or edges may have changed: those replaced or removed,
-    /// and those calling a name whose link changed.
     pub(crate) fn update(
         &mut self,
         changes: impl IntoIterator<Item = (Arc<str>, Option<Arc<Summary>>)>,
-    ) -> Vec<u32> {
+    ) -> GraphUpdate {
         let mut orphans = Vec::new();
         // Each change's slot, and its file's old and new summary.
         let mut staged = Vec::new();
+        // The replaced and removed files as they were linked.
+        let mut previous = HashMap::new();
+        let mut renumber = false;
         for (path, summary) in changes {
             let known = self.paths.get(&path).copied();
             let old = known.and_then(|slot| self.slots[slot as usize].take());
@@ -387,7 +596,13 @@ impl Graph {
                     }
                 },
             };
-            staged.push((path, slot, old.map(|old| old.summary), summary));
+            renumber |= known.is_none() || summary.is_none();
+            let old = old.map(|old| {
+                let summary = Arc::clone(&old.summary);
+                previous.insert(slot, old);
+                summary
+            });
+            staged.push((path, slot, old, summary));
         }
         let contribution = |(path, _, old, new): &Staged| {
             let of = |summary: &Option<Arc<Summary>>| {
@@ -402,7 +617,11 @@ impl Graph {
         // Before anything is linked, no link can go stale.
         let mut keys = (!self.links.is_empty()).then(HashSet::new);
         let mut replaced = Vec::new();
+        let mut resized = Vec::new();
+        let mut reshaped = false;
         let mut removed = Vec::new();
+        let mut touched = Vec::new();
+        let mut dropped = Vec::new();
         for ((path, slot, _, summary), (before, after)) in staged.into_iter().zip(contributions) {
             replace(
                 &mut self.by_name,
@@ -416,6 +635,13 @@ impl Graph {
                 slot,
                 before.aliases,
                 after.aliases,
+                keys.as_mut(),
+            );
+            replace(
+                &mut self.opaque,
+                slot,
+                before.opaque,
+                after.opaque,
                 keys.as_mut(),
             );
             replace(
@@ -442,11 +668,41 @@ impl Graph {
             match summary {
                 Some(summary) => {
                     self.paths.insert(Arc::clone(&path), slot);
+                    // Callers in other files keep calling the definitions they did: links that
+                    // change are resolved again below, and their callers laid out again.
+                    let (caller_offsets, callers) = match previous.get_mut(&slot) {
+                        Some(old) => {
+                            let (old_defs, new_defs) = (&old.summary.defs, &summary.defs);
+                            if old_defs.len() != new_defs.len() {
+                                resized.push(slot);
+                            }
+                            dropped.extend((new_defs.len()..old_defs.len()).map(|local| DefRef {
+                                file: slot,
+                                local: local as u32,
+                            }));
+                            reshaped |= old.summary.open != summary.open
+                                || old_defs.len() != new_defs.len()
+                                || old_defs
+                                    .iter()
+                                    .zip(new_defs.iter())
+                                    .any(|(old, new)| old.flags != new.flags);
+                            (
+                                std::mem::take(&mut old.caller_offsets),
+                                std::mem::take(&mut old.callers),
+                            )
+                        }
+                        None => Default::default(),
+                    };
+                    touched.extend(
+                        (0..summary.defs.len() as u32).map(|local| DefRef { file: slot, local }),
+                    );
                     self.slots[slot as usize] = Some(GraphFile {
                         path,
                         summary,
                         edges: Vec::new(),
                         open: Vec::new(),
+                        caller_offsets,
+                        callers,
                     });
                     replaced.push(slot);
                 }
@@ -454,28 +710,67 @@ impl Graph {
                     self.paths.remove(&path);
                     self.free.push(slot);
                     removed.push(slot);
+                    let count = previous[&slot].summary.defs.len() as u32;
+                    dropped.extend((0..count).map(|local| DefRef { file: slot, local }));
                 }
             }
         }
         // A name links through its own entries, its prefixes', and those of the names it
-        // followed; a class links through its `__init__`.
+        // followed; a followed class through its members' (a lookup in its method resolution
+        // order), a late-bound Python name through its class's subclasses.
+        let linked = keys.is_some();
         let mut keys = keys.unwrap_or_default();
-        let classes = keys
-            .iter()
-            .filter(|key| key.text().ends_with(".__init__"))
-            .filter_map(|key| key.parent().cloned())
-            .collect::<Vec<_>>();
-        keys.extend(classes);
-        let reads = |name: &Name| name.lineage().any(|name| keys.contains(name));
+        let mut orphans_changed = false;
+        if !linked || !keys.is_empty() {
+            let (bases, orphans) = self.python_classes(linked.then_some(&keys));
+            if linked {
+                keys.extend(bases);
+                orphans_changed = orphans;
+            }
+        }
+        let reads = reader(&keys);
+        let is_stale = |name: &Name, memo: &Memo| {
+            reads(name)
+                || memo.followed.iter().any(&reads)
+                || (orphans_changed && name.text().ends_with('^'))
+        };
         let stale = if keys.is_empty() {
             Vec::new()
-        } else {
+        } else if orphans_changed {
             self.links
                 .iter()
-                .filter(|(name, memo)| reads(name) || memo.followed.iter().any(reads))
+                .filter(|(name, memo)| is_stale(name, memo))
                 .map(|(name, _)| name.clone())
                 .collect::<Vec<_>>()
+        } else {
+            // A name `reads` shares a key's root, itself or through a name it followed.
+            let mut roots = keys.iter().map(Name::root).collect::<Vec<_>>();
+            roots.sort_unstable();
+            roots.dedup();
+            let mut seen = HashSet::new();
+            roots
+                .into_iter()
+                .filter_map(|root| self.link_roots.get(root))
+                .flatten()
+                .filter(|name| seen.insert(*name))
+                .filter(|name| {
+                    self.links
+                        .get(*name)
+                        .is_some_and(|memo| is_stale(name, memo))
+                })
+                .cloned()
+                .collect::<Vec<_>>()
         };
+        #[cfg(test)]
+        assert_eq!(
+            stale.iter().collect::<HashSet<_>>(),
+            self.links
+                .iter()
+                .filter(|(name, memo)| !keys.is_empty() && is_stale(name, memo))
+                .map(|(name, _)| name)
+                .collect::<HashSet<_>>(),
+            "the root index finds every stale link"
+        );
         let mut relinked = BTreeSet::new();
         for name in stale {
             let Some(mut memo) = self.links.remove(&name) else {
@@ -488,6 +783,9 @@ impl Graph {
             if memo.users.is_empty() {
                 continue;
             }
+            if memo.followed[..] != followed[..] {
+                self.index_link(&name, &followed);
+            }
             memo.set(link, followed);
             self.links.insert(name, memo);
         }
@@ -496,11 +794,55 @@ impl Graph {
         relinked.extend(replaced);
         let mut relinked = relinked.into_iter().collect::<Vec<_>>();
         let resolved = parallel(&relinked, |slot| self.resolve_edges(*slot));
-        for (&slot, resolved) in relinked.iter().zip(resolved) {
-            if let (Some(file), Some((edges, open))) = (&mut self.slots[slot as usize], resolved) {
-                (file.edges, file.open) = (edges, open);
-            }
+        renumber |= !resized.is_empty();
+        if renumber {
+            self.number();
         }
+        reshaped |= renumber;
+        // Callers per callee file: those of edges a file no longer has, and of its new ones.
+        let mut callers = BTreeMap::<u32, CallerChanges>::new();
+        for (&slot, resolved) in relinked.iter().zip(resolved) {
+            let (Some(file), Some((edges, open))) = (&mut self.slots[slot as usize], resolved)
+            else {
+                continue;
+            };
+            let (old_edges, old_open) = match previous.remove(&slot) {
+                Some(old) => (old.edges, old.open),
+                None => (
+                    std::mem::take(&mut file.edges),
+                    std::mem::take(&mut file.open),
+                ),
+            };
+            for &owner in sorted_difference(&old_open, &open) {
+                touched.push(DefRef {
+                    file: slot,
+                    local: owner,
+                });
+                reshaped = true;
+            }
+            reshaped |= diff_edges(
+                slot,
+                (&old_edges, &edges),
+                &self.first,
+                &mut callers,
+                &mut touched,
+            );
+            (file.edges, file.open) = (edges, open);
+        }
+        // What remains was removed: none of its edges remain.
+        for (slot, old) in previous {
+            diff_edges(
+                slot,
+                (&old.edges, &[]),
+                &self.first,
+                &mut callers,
+                &mut touched,
+            );
+        }
+        for slot in resized {
+            callers.entry(slot).or_default();
+        }
+        self.relay(callers);
         // A name no file calls any more is linked again if one does.
         for name in orphans {
             if self
@@ -511,11 +853,53 @@ impl Graph {
                 self.links.remove(&name);
             }
         }
-        self.number();
+        if linked {
+            self.compact_link_roots();
+        } else {
+            self.link_roots_built = self.link_root_entries;
+        }
         relinked.extend(removed);
         relinked.sort_unstable();
         relinked.dedup();
-        relinked
+        GraphUpdate {
+            slots: relinked,
+            reshaped,
+            touched,
+            dropped,
+        }
+    }
+
+    /// Lays out again the callers of the files `changes` names, keeping each list in number
+    /// order.
+    fn relay(&mut self, changes: BTreeMap<u32, CallerChanges>) {
+        let mut jobs = changes
+            .into_iter()
+            .filter_map(|(slot, changes)| Some((slot, self.slots[slot as usize].take()?, changes)))
+            .collect::<Vec<_>>();
+        #[cfg(test)]
+        RELAID_DEFS.with(|count| {
+            count.set(
+                count.get()
+                    + jobs
+                        .iter()
+                        .map(|(_, file, _)| file.summary.defs.len())
+                        .sum::<usize>(),
+            )
+        });
+        let first = &self.first;
+        if jobs.len() < 64 {
+            for (_, file, changes) in &mut jobs {
+                relay_callers(file, first, changes);
+            }
+        } else {
+            crate::WORK_POOL.install(|| {
+                jobs.par_iter_mut()
+                    .for_each(|(_, file, changes)| relay_callers(file, first, changes))
+            });
+        }
+        for (slot, file, _) in jobs {
+            self.slots[slot as usize] = Some(file);
+        }
     }
 
     /// Links what the files in `slots` call, and records them as its users.
@@ -551,6 +935,7 @@ impl Graph {
                 followed: Box::default(),
                 users: Vec::new(),
             };
+            self.index_link(&name, &followed);
             memo.set(link, followed);
             self.links.insert(name, memo);
         }
@@ -563,6 +948,38 @@ impl Graph {
                 memo.users.push(*slot);
             }
         }
+    }
+
+    /// Indexes `name`, which follows `followed`, under the roots a change must share to relink it.
+    fn index_link(&mut self, name: &Name, followed: &[Name]) {
+        let mut roots = std::iter::once(name)
+            .chain(followed)
+            .map(Name::root)
+            .collect::<Vec<_>>();
+        roots.sort_unstable();
+        roots.dedup();
+        self.link_root_entries += roots.len();
+        for root in roots {
+            self.link_roots
+                .entry(root.clone())
+                .or_default()
+                .push(name.clone());
+        }
+    }
+
+    /// Rebuilds the root index once stale entries may outnumber current ones.
+    fn compact_link_roots(&mut self) {
+        if self.link_root_entries <= 2 * self.link_roots_built.max(self.links.len()) + 1024 {
+            return;
+        }
+        self.link_roots.clear();
+        self.link_root_entries = 0;
+        let links = std::mem::take(&mut self.links);
+        for (name, memo) in &links {
+            self.index_link(name, &memo.followed);
+        }
+        self.links = links;
+        self.link_roots_built = self.link_root_entries;
     }
 
     /// `slot`'s definitions' edges and the definitions calling something open, from the links of
@@ -593,94 +1010,62 @@ impl Graph {
         }
     }
 
-    /// Numbers definitions by file path and lays out their edges.
+    /// Numbers definitions by file path: each file's first number. Definitions keep their place
+    /// in their file, so a file's own numbers shift by the definitions before it.
     fn number(&mut self) {
-        self.first = vec![0; self.slots.len()];
-        self.defs.clear();
+        self.first.resize(self.slots.len(), 0);
+        let mut next = 0;
         for &slot in self.paths.values() {
-            self.first[slot as usize] = self.defs.len() as u32;
+            self.first[slot as usize] = next;
             let file = self.slots[slot as usize]
                 .as_ref()
                 .expect("a path's file is linked");
-            self.defs.extend(
-                file.summary
-                    .defs
-                    .iter()
-                    .enumerate()
-                    .map(|(local, def)| GraphDef {
-                        file: slot,
-                        local: local as u32,
-                        flags: def.flags,
-                    }),
-            );
+            next += file.summary.defs.len() as u32;
         }
-        self.open = self.defs.iter().map(|def| def.flags & OPEN != 0).collect();
-        self.offsets = vec![0; self.defs.len() + 1];
-        self.edges.clear();
-        let mut targets = Vec::new();
-        for &slot in self.paths.values() {
-            let file = self.slots[slot as usize]
-                .as_ref()
-                .expect("a path's file is linked");
-            let base = self.first[slot as usize];
-            if file.summary.open {
-                let end = base as usize + file.summary.defs.len();
-                self.open[base as usize..end].fill(true);
-            }
-            for owner in &file.open {
-                self.open[(base + owner) as usize] = true;
-            }
-            let mut edges = file.edges.iter().peekable();
-            for owner in 0..file.summary.defs.len() as u32 {
-                targets.clear();
-                while let Some((_, to)) = edges.next_if(|(from, _)| *from == owner) {
-                    targets.push(self.first[to.file as usize] + to.local);
-                }
-                targets.sort_unstable();
-                self.edges.extend_from_slice(&targets);
-                self.offsets[(base + owner) as usize + 1] = self.edges.len() as u32;
-            }
-        }
-        // Callers per callee, in number order: counted, then filled caller by caller.
-        let mut starts = vec![0u32; self.defs.len() + 1];
-        for &to in &self.edges {
-            starts[to as usize + 1] += 1;
-        }
-        for index in 1..starts.len() {
-            starts[index] += starts[index - 1];
-        }
-        let mut fill = starts.clone();
-        let mut callers = vec![0; self.edges.len()];
-        for from in 0..self.defs.len() as u32 {
-            for &to in self.successors(from) {
-                callers[fill[to as usize] as usize] = from;
-                fill[to as usize] += 1;
-            }
-        }
-        self.callers = callers;
-        self.caller_offsets = starts;
     }
 
-    #[cfg(test)]
     fn number_of(&self, def: DefRef) -> u32 {
         self.first[def.file as usize] + def.local
     }
 
-    /// `def`'s number, while its file is linked and holds it.
-    fn numbered(&self, def: DefRef) -> Option<u32> {
-        let file = self.slots.get(def.file as usize)?.as_ref()?;
-        (def.local < file.summary.defs.len() as u32)
-            .then(|| self.first[def.file as usize] + def.local)
+    /// Whether `def`'s file is linked and holds it.
+    pub(crate) fn holds(&self, def: DefRef) -> bool {
+        self.slots
+            .get(def.file as usize)
+            .and_then(Option::as_ref)
+            .is_some_and(|file| (def.local as usize) < file.summary.defs.len())
     }
 
-    pub(crate) fn def_ref(&self, number: u32) -> DefRef {
-        let GraphDef { file, local, .. } = self.defs[number as usize];
-        DefRef { file, local }
+    /// Whether `def` calls something unknown, or its file is open.
+    pub(crate) fn is_open(&self, def: DefRef) -> bool {
+        let file = self.slots[def.file as usize]
+            .as_ref()
+            .expect("a linked definition's file is linked");
+        file.summary.open
+            || file.summary.defs[def.local as usize].flags & OPEN != 0
+            || file.open.binary_search(&def.local).is_ok()
     }
 
-    fn callers_of(&self, def: u32) -> &[u32] {
-        let range = self.caller_offsets[def as usize]..self.caller_offsets[def as usize + 1];
-        &self.callers[range.start as usize..range.end as usize]
+    /// The definitions `def` calls.
+    pub(crate) fn callees_of(&self, def: DefRef) -> impl Iterator<Item = DefRef> + '_ {
+        let edges = self.file_edges(def.file);
+        let start = edges.partition_point(|(owner, _)| *owner < def.local);
+        edges[start..]
+            .iter()
+            .take_while(move |(owner, _)| *owner == def.local)
+            .map(|(_, to)| *to)
+    }
+
+    pub(crate) fn callers_of(&self, def: DefRef) -> &[DefRef] {
+        let Some(file) = self.slots[def.file as usize].as_ref() else {
+            return &[];
+        };
+        match file.caller_offsets.get(def.local as usize + 1) {
+            Some(&end) => {
+                &file.callers[file.caller_offsets[def.local as usize] as usize..end as usize]
+            }
+            None => &[],
+        }
     }
 
     /// The definitions `allow` lets a chain pass that reach one of `seeds` through definitions it
@@ -690,26 +1075,23 @@ impl Graph {
     pub(crate) fn reach(&self, seeds: &[DefRef], allow: impl Fn(u8) -> bool) -> Region {
         let mut starts = seeds
             .iter()
-            .filter_map(|def| self.numbered(*def))
-            .filter(|def| allow(self.defs[*def as usize].flags))
+            .filter(|def| self.holds(**def) && allow(self.flags(**def)))
+            .map(|def| (self.number_of(*def), *def))
             .collect::<Vec<_>>();
         starts.sort_unstable();
         starts.dedup();
         let mut region = Region::with_capacity(starts.len());
         let mut queue = std::collections::VecDeque::with_capacity(starts.len());
-        for start in starts {
-            region.insert(self.def_ref(start), Hop::Seed);
+        for (_, start) in starts {
+            region.insert(start, Hop::Seed);
             queue.push_back(start);
         }
-        while let Some(def) = queue.pop_front() {
-            let callee = self.def_ref(def);
-            for &caller in self.callers_of(def) {
-                if !allow(self.defs[caller as usize].flags) {
+        while let Some(callee) = queue.pop_front() {
+            for &caller in self.callers_of(callee) {
+                if !allow(self.flags(caller)) {
                     continue;
                 }
-                if let std::collections::hash_map::Entry::Vacant(entry) =
-                    region.entry(self.def_ref(caller))
-                {
+                if let std::collections::hash_map::Entry::Vacant(entry) = region.entry(caller) {
                     entry.insert(Hop::Via(callee));
                     queue.push_back(caller);
                 }
@@ -722,18 +1104,18 @@ impl Graph {
     /// definitions it lets pass.
     pub(crate) fn upward(
         &self,
-        sources: impl IntoIterator<Item = u32>,
+        sources: impl IntoIterator<Item = DefRef>,
         allow: impl Fn(u8) -> bool,
     ) -> HashSet<DefRef> {
         let mut found = HashSet::new();
         let mut stack = sources
             .into_iter()
-            .filter(|def| allow(self.defs[*def as usize].flags))
+            .filter(|def| allow(self.flags(*def)))
             .collect::<Vec<_>>();
-        stack.retain(|def| found.insert(self.def_ref(*def)));
+        stack.retain(|def| found.insert(*def));
         while let Some(def) = stack.pop() {
             for &caller in self.callers_of(def) {
-                if allow(self.defs[caller as usize].flags) && found.insert(self.def_ref(caller)) {
+                if allow(self.flags(caller)) && found.insert(caller) {
                     stack.push(caller);
                 }
             }
@@ -742,36 +1124,78 @@ impl Graph {
     }
 
     /// The definitions that call something unknown, or whose file is open.
-    pub(crate) fn open_defs(&self) -> impl Iterator<Item = u32> + '_ {
-        (0..self.defs.len() as u32).filter(|def| self.open[*def as usize])
-    }
-
-    /// The numbers of `slot`'s definitions.
-    pub(crate) fn file_defs(&self, slot: u32) -> std::ops::Range<u32> {
-        match self.slots.get(slot as usize).and_then(Option::as_ref) {
-            Some(file) => {
-                let first = self.first[slot as usize];
-                first..first + file.summary.defs.len() as u32
-            }
-            None => 0..0,
-        }
-    }
-
-    /// The files calling one of `defs`.
-    pub(crate) fn calling(&self, defs: &HashSet<DefRef>) -> Vec<Arc<str>> {
-        let calls = |file: &&GraphFile| {
-            file.summary.targets.iter().any(|target| {
-                self.links
-                    .get(file.summary.interned(*target))
-                    .is_some_and(|memo| memo.defs.iter().any(|def| defs.contains(def)))
-            })
-        };
+    pub(crate) fn open_defs(&self) -> impl Iterator<Item = DefRef> + '_ {
         self.slots
             .iter()
-            .flatten()
-            .filter(calls)
-            .map(|file| Arc::clone(&file.path))
-            .collect()
+            .enumerate()
+            .filter_map(|(slot, file)| Some((slot as u32, file.as_ref()?)))
+            .flat_map(|(slot, file)| {
+                let mut calls_open = file.open.iter().copied().peekable();
+                file.summary
+                    .defs
+                    .iter()
+                    .zip(0..)
+                    .filter(move |(def, local)| {
+                        let calls_open = calls_open.next_if_eq(local).is_some();
+                        file.summary.open || def.flags & OPEN != 0 || calls_open
+                    })
+                    .map(move |(_, local)| DefRef { file: slot, local })
+            })
+    }
+
+    /// `slot`'s definitions.
+    pub(crate) fn file_defs(&self, slot: u32) -> impl Iterator<Item = DefRef> {
+        let count = self
+            .slots
+            .get(slot as usize)
+            .and_then(Option::as_ref)
+            .map_or(0, |file| file.summary.defs.len() as u32);
+        (0..count).map(move |local| DefRef { file: slot, local })
+    }
+
+    /// The files calling one of `defs`: the users of every name linking to one. Every name a
+    /// file calls is linked, with the file among its users.
+    pub(crate) fn calling(&self, defs: &HashSet<DefRef>) -> Vec<Arc<str>> {
+        let mut wanted = defs.iter().copied().collect::<Vec<_>>();
+        wanted.sort_unstable();
+        let mut slots = self
+            .links
+            .values()
+            .filter(|memo| {
+                memo.defs
+                    .iter()
+                    .any(|def| wanted.binary_search(def).is_ok())
+            })
+            .flat_map(|memo| memo.users.iter().copied())
+            .collect::<Vec<_>>();
+        slots.sort_unstable();
+        slots.dedup();
+        let files = slots
+            .into_iter()
+            .filter_map(|slot| Some(Arc::clone(&self.slots.get(slot as usize)?.as_ref()?.path)))
+            .collect::<Vec<_>>();
+        #[cfg(test)]
+        {
+            let scanned = self
+                .slots
+                .iter()
+                .flatten()
+                .filter(|file| {
+                    file.summary.targets.iter().any(|target| {
+                        self.links
+                            .get(file.summary.interned(*target))
+                            .is_some_and(|memo| memo.defs.iter().any(|def| defs.contains(def)))
+                    })
+                })
+                .map(|file| Arc::clone(&file.path))
+                .collect::<BTreeSet<_>>();
+            assert_eq!(
+                files.iter().cloned().collect::<BTreeSet<_>>(),
+                scanned,
+                "link users name every calling file"
+            );
+        }
+        files
     }
 
     /// The linked file at `path`.
@@ -845,9 +1269,14 @@ impl Graph {
     pub(crate) fn stats(&self) -> GraphStats {
         let mut stats = GraphStats {
             files: self.paths.len(),
-            defs: self.defs.len(),
-            edges: self.edges.len(),
-            open_defs: self.open.iter().filter(|open| **open).count(),
+            defs: self.def_count(),
+            edges: self
+                .slots
+                .iter()
+                .flatten()
+                .map(|file| file.edges.len())
+                .sum(),
+            open_defs: self.open_defs().count(),
             ..GraphStats::default()
         };
         for file in self.slots.iter().flatten() {
@@ -864,14 +1293,76 @@ impl Graph {
         stats
     }
 
+    /// The graph laid out by number: definitions, openness and call edges.
+    #[cfg(test)]
+    fn dense(&self) -> Dense {
+        let mut defs = Vec::new();
+        for &slot in self.paths.values() {
+            let file = self.slots[slot as usize]
+                .as_ref()
+                .expect("a path's file is linked");
+            defs.extend(
+                file.summary
+                    .defs
+                    .iter()
+                    .zip(0..)
+                    .map(|(def, local)| GraphDef {
+                        file: slot,
+                        local,
+                        flags: def.flags,
+                    }),
+            );
+        }
+        let mut open = vec![false; defs.len()];
+        for def in self.open_defs() {
+            open[self.number_of(def) as usize] = true;
+        }
+        let mut offsets = vec![0];
+        let mut edges = Vec::new();
+        for def in &defs {
+            let file = self.slots[def.file as usize].as_ref().expect("linked");
+            let mut targets = file
+                .edges
+                .iter()
+                .filter(|(owner, _)| *owner == def.local)
+                .map(|(_, to)| self.number_of(*to))
+                .collect::<Vec<_>>();
+            targets.sort_unstable();
+            edges.extend(targets);
+            offsets.push(edges.len() as u32);
+        }
+        Dense {
+            defs,
+            open,
+            offsets,
+            edges,
+        }
+    }
+
+    /// Each definition's callers, by number, in number order.
+    #[cfg(test)]
+    pub(crate) fn caller_numbers(&self) -> Vec<Vec<u32>> {
+        self.dense()
+            .defs
+            .iter()
+            .map(|def| {
+                let def = DefRef {
+                    file: def.file,
+                    local: def.local,
+                };
+                self.callers_of(def)
+                    .iter()
+                    .map(|caller| self.number_of(*caller))
+                    .collect()
+            })
+            .collect()
+    }
+
     #[cfg(test)]
     /// Strongly connected components in reverse topological order: callees first.
     pub(crate) fn components(&self) -> Vec<Vec<u32>> {
-        tarjan(self.defs.len(), |def| self.successors(def))
-    }
-
-    fn successors(&self, def: u32) -> &[u32] {
-        &self.edges[self.offsets[def as usize] as usize..self.offsets[def as usize + 1] as usize]
+        let dense = self.dense();
+        tarjan(dense.defs.len(), |def| dense.successors(def))
     }
 
     /// What `name` links to, and the names linking it followed.
@@ -994,7 +1485,7 @@ impl Graph {
     }
 
     /// A linked definition's flags.
-    fn flags(&self, def: DefRef) -> u8 {
+    pub(crate) fn flags(&self, def: DefRef) -> u8 {
         let file = self.slots[def.file as usize]
             .as_ref()
             .expect("a linked definition's file is linked");
@@ -1083,25 +1574,18 @@ impl Graph {
         }
     }
 
+    /// Links a Python callee name: what the name itself names (`member`), else the member of the
+    /// longest prefix something names: an alias to follow, a class whose method resolution order
+    /// gives the attribute, a function or value whose attribute is set at run time (unknown), or a
+    /// module whose member this is. A late-bound name (`pkg.C.m^`, `pkg.C.^` for `cls()`) is the
+    /// class's and every workspace subclass's.
     fn link_python(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Link {
-        if let Some(entries) = self.by_name.get(name) {
-            let mut defs = Vec::new();
-            for (file, (local, flags)) in entries {
-                let def = DefRef {
-                    file: *file,
-                    local: *local,
-                };
-                self.callable(def, *flags, name, &mut defs);
-            }
-            defs.sort_unstable_by_key(|def| self.path_order(*def));
-            return Link { defs, open: false };
+        if name.text().ends_with('^') {
+            return self.link_late_python(name, hops, followed);
         }
-        if let Some(entries) = self.aliases.get(name) {
-            let targets = entries.iter().map(|(_, target)| target.clone());
-            return self.union(targets.collect(), hops, followed);
+        if let Some(link) = self.member(name, hops, followed) {
+            return link;
         }
-        // The longest prefix something names: an alias to follow, a definition whose attribute
-        // this is, or a module whose member this is.
         for prefix in name.lineage().skip(1) {
             let rest = &name.text()[prefix.text().len()..];
             if let Some(entries) = self.aliases.get(prefix) {
@@ -1114,16 +1598,22 @@ impl Graph {
                     return self.union(targets, hops, followed);
                 }
             }
-            if self.by_name.contains_key(prefix) {
-                // An attribute of a function or class no definition names: an inherited method or
-                // an attribute set at run time. The static graph has no edge for it.
-                return Link::default();
+            if let Some(entries) = self.by_name.get(prefix) {
+                let attribute = &rest[1..];
+                if !attribute.contains('.')
+                    && entries.iter().all(|(_, (_, flags))| flags & CLASS != 0)
+                {
+                    return self.class_member(prefix, attribute, hops, followed);
+                }
+                return OPEN_LINK;
+            }
+            if self.opaque.contains_key(prefix) {
+                return OPEN_LINK;
             }
             if let Some(entries) = self.modules.get(prefix) {
-                // A member of a workspace module that neither a definition nor an alias gives: a
-                // value the module assigns (its call has no static callee, like `obj.m()`), or a
-                // submodule's. Only a star import can bind it to a definition, and only an open
-                // summary can hide one.
+                // A member of a workspace module that neither a definition, an alias nor another
+                // binding gives: a submodule's. Only a star import can bind it to a definition,
+                // and only an open summary can hide one.
                 let stars = entries
                     .iter()
                     .flat_map(|(_, (stars, _))| stars.iter())
@@ -1138,6 +1628,411 @@ impl Graph {
         }
         // Outside the workspace: the standard library, installed packages, builtins.
         Link::default()
+    }
+
+    /// What `name` itself names: its functions, what instantiating its class runs, what it
+    /// aliases, and whether a binding of it is a value no name denotes or a decorator's. `None`
+    /// where nothing does.
+    fn member(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Option<Link> {
+        let defs = self.by_name.get(name);
+        let aliases = self.aliases.get(name);
+        let opaque = self.opaque.contains_key(name);
+        if defs.is_none() && aliases.is_none() && !opaque {
+            return None;
+        }
+        let mut link = Link {
+            defs: Vec::new(),
+            open: opaque,
+        };
+        let mut class = false;
+        for (file, (local, flags)) in defs.into_iter().flatten() {
+            link.open |= flags & DECORATED != 0;
+            if flags & CLASS == 0 {
+                link.defs.push(DefRef {
+                    file: *file,
+                    local: *local,
+                });
+            } else {
+                class = true;
+            }
+        }
+        if class {
+            link.extend(self.instantiate(name, hops + 1, followed));
+        }
+        if let Some(entries) = aliases {
+            let targets = entries.iter().map(|(_, target)| target.clone()).collect();
+            link.extend(self.union(targets, hops, followed));
+        }
+        link.defs.sort_unstable_by_key(|def| self.path_order(*def));
+        link.defs.dedup();
+        Some(link)
+    }
+
+    /// A late-bound name, `pkg.C.m^` (`self.m()`, `cls.m()`) or `pkg.C.^` (`cls()`): the class's
+    /// method (instantiation) and every workspace subclass's. Unknown where a class whose base
+    /// no name denotes, which may derive from `C`, defines the method.
+    fn link_late_python(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Link {
+        let Some(class) = name.parent() else {
+            return OPEN_LINK;
+        };
+        let text = name.text();
+        let attribute = &text[class.text().len() + 1..text.len() - 1];
+        let lookup = |class: &Name, followed: &mut Vec<Name>| {
+            if attribute.is_empty() {
+                self.instantiate(class, hops + 1, followed)
+            } else {
+                self.class_member(class, attribute, hops + 1, followed)
+            }
+        };
+        let mut link = lookup(class, followed);
+        let mut seen = HashSet::from([class.clone()]);
+        let mut pending = vec![class.clone()];
+        while let Some(next) = pending.pop() {
+            for child in self.subclasses.get(&next).into_iter().flatten() {
+                if seen.insert(child.clone()) {
+                    link.extend(lookup(child, followed));
+                    pending.push(child.clone());
+                }
+            }
+        }
+        let methods: &[&str] = if attribute.is_empty() {
+            &["__new__", "__init__"]
+        } else {
+            &[attribute]
+        };
+        for orphan in &self.orphans {
+            followed.push(orphan.clone());
+            link.open |= methods.iter().any(|method| {
+                Name::get(&format!("{}.{method}", orphan.text())).is_some_and(|member| {
+                    self.by_name.contains_key(&member)
+                        || self.aliases.contains_key(&member)
+                        || self.opaque.contains_key(&member)
+                })
+            });
+        }
+        link.defs.sort_unstable_by_key(|def| self.path_order(*def));
+        link.defs.dedup();
+        link
+    }
+
+    /// What calling class `class` runs: `__new__` and `__init__` as its method resolution order
+    /// gives them (`object`'s run nothing of the workspace), and a workspace metaclass's
+    /// `__call__`.
+    fn instantiate(&self, class: &Name, hops: u32, followed: &mut Vec<Name>) -> Link {
+        let Some(order) = self.mro(class, hops, followed) else {
+            return OPEN_LINK;
+        };
+        let mut link = Link::default();
+        for method in ["__new__", "__init__"] {
+            if let Some(found) = self.lookup(&order, method, hops, followed) {
+                link.extend(found);
+            }
+        }
+        for entry in &order {
+            let Mro::Workspace(class) = entry else {
+                continue;
+            };
+            for (_, (meta, kind)) in self.supers.get(class).into_iter().flatten() {
+                if *kind != METACLASS {
+                    continue;
+                }
+                match self.class_of(meta, hops + 1, followed) {
+                    Some(Mro::External(_)) => {}
+                    Some(Mro::Workspace(meta)) => match self.mro(&meta, hops + 1, followed) {
+                        Some(meta) => {
+                            if let Some(found) = self.lookup(&meta, "__call__", hops, followed) {
+                                link.extend(found);
+                            }
+                        }
+                        None => link.open = true,
+                    },
+                    None => link.open = true,
+                }
+            }
+        }
+        link
+    }
+
+    /// Attribute `attribute` of class `class`, as its method resolution order gives it; unknown
+    /// where no workspace class of it defines the attribute (an instance's attribute, one set at
+    /// run time, another module's class's).
+    fn class_member(
+        &self,
+        class: &Name,
+        attribute: &str,
+        hops: u32,
+        followed: &mut Vec<Name>,
+    ) -> Link {
+        self.mro(class, hops, followed)
+            .and_then(|order| self.lookup(&order, attribute, hops, followed))
+            .unwrap_or(OPEN_LINK)
+    }
+
+    /// The first class of `order` that defines `attribute`, linked; unknown as well where a class
+    /// before it is another module's, which may define it. `None` where no workspace class does.
+    fn lookup(
+        &self,
+        order: &[Mro],
+        attribute: &str,
+        hops: u32,
+        followed: &mut Vec<Name>,
+    ) -> Option<Link> {
+        let mut uncertain = false;
+        for entry in order {
+            match entry {
+                Mro::Workspace(class) => {
+                    let Some(member) = Name::get(&format!("{}.{attribute}", class.text())) else {
+                        continue;
+                    };
+                    if let Some(mut link) = self.member(&member, hops + 1, followed) {
+                        followed.push(member);
+                        link.open |= uncertain;
+                        return Some(link);
+                    }
+                }
+                Mro::External(_) => uncertain = true,
+            }
+        }
+        None
+    }
+
+    /// Class `class`'s method resolution order (C3), its workspace classes by name and others'
+    /// as `External`. `None` where it is unknown: the name is no one workspace class, a base no
+    /// name denotes, an inconsistent order.
+    fn mro(&self, class: &Name, hops: u32, followed: &mut Vec<Name>) -> Option<Vec<Mro>> {
+        if hops > MAX_HOPS {
+            return None;
+        }
+        followed.push(class.clone());
+        let [(_, (_, flags))] = self.by_name.get(class)?.as_slice() else {
+            return None;
+        };
+        if flags & CLASS == 0 {
+            return None;
+        }
+        let mut bases = Vec::new();
+        for (_, (target, kind)) in self.supers.get(class).into_iter().flatten() {
+            match *kind {
+                BASE => bases.push(self.class_of(target, hops + 1, followed)?),
+                UNKNOWN_BASE => return None,
+                _ => {}
+            }
+        }
+        let mut sequences = Vec::with_capacity(bases.len() + 1);
+        for base in &bases {
+            sequences.push(match base {
+                Mro::Workspace(base) => self.mro(base, hops + 1, followed)?,
+                external => vec![external.clone()],
+            });
+        }
+        sequences.push(bases);
+        let mut order = vec![Mro::Workspace(class.clone())];
+        order.extend(c3(sequences)?);
+        Some(order)
+    }
+
+    /// The class `name` denotes as a base: a workspace class, through aliases and star imports;
+    /// another module's (`External`); `None` where it may be any value.
+    fn class_of(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Option<Mro> {
+        self.class_noting(name, hops, followed, &mut Vec::new())
+    }
+
+    /// `class_of`, noting in `missing` the names a star import was looked through for that no
+    /// one has named yet.
+    fn class_noting(
+        &self,
+        name: &Name,
+        hops: u32,
+        followed: &mut Vec<Name>,
+        missing: &mut Vec<Box<str>>,
+    ) -> Option<Mro> {
+        if hops > MAX_HOPS {
+            return None;
+        }
+        followed.push(name.clone());
+        if let Some(entries) = self.by_name.get(name) {
+            return entries
+                .iter()
+                .all(|(_, (_, flags))| flags & CLASS != 0)
+                .then(|| Mro::Workspace(name.clone()));
+        }
+        if self.opaque.contains_key(name) {
+            return None;
+        }
+        let only = |entries: &[(u32, Name)]| {
+            let (_, first) = entries.first()?;
+            entries
+                .iter()
+                .all(|(_, target)| target == first)
+                .then(|| first.clone())
+        };
+        if let Some(entries) = self.aliases.get(name) {
+            return self.class_noting(&only(entries)?, hops + 1, followed, missing);
+        }
+        for prefix in name.lineage().skip(1) {
+            let rest = &name.text()[prefix.text().len()..];
+            if let Some(entries) = self.aliases.get(prefix)
+                && let Some(target) = only(entries).filter(|target| target != prefix)
+            {
+                let renamed = Name::new(&format!("{}{rest}", target.text()));
+                return self.class_noting(&renamed, hops + 1, followed, missing);
+            }
+            if self.by_name.contains_key(prefix) || self.opaque.contains_key(prefix) {
+                return None;
+            }
+            if let Some(entries) = self.modules.get(prefix) {
+                // Only a star import binds a workspace module's member no binding gives.
+                return entries
+                    .iter()
+                    .flat_map(|(_, (stars, _))| stars.iter())
+                    .find_map(|star| {
+                        let text = format!("{}{rest}", star.text());
+                        let Some(starred) = Name::get(&text) else {
+                            missing.push(text.into_boxed_str());
+                            return None;
+                        };
+                        match self.class_noting(&starred, hops + 1, followed, missing)? {
+                            Mro::Workspace(class) => Some(Mro::Workspace(class)),
+                            Mro::External(_) => None,
+                        }
+                    });
+            }
+        }
+        Some(Mro::External(name.clone()))
+    }
+
+    /// Python: each class's subclasses and the orphan classes, by text.
+    #[cfg(test)]
+    pub(crate) fn hierarchy(&self) -> (BTreeMap<String, Vec<String>>, Vec<String>) {
+        let text = |names: &[Name]| names.iter().map(|name| name.text().to_owned()).collect();
+        (
+            self.subclasses
+                .iter()
+                .map(|(class, children)| (class.text().to_owned(), text(children)))
+                .collect(),
+            text(&self.orphans),
+        )
+    }
+
+    /// Brings each workspace class's contribution to `subclasses` and `orphans` up to date: every
+    /// class before anything is linked, else those whose lookups read one of `keys`. Returns the
+    /// classes whose subclasses changed, and whether the orphans did.
+    fn python_classes(&mut self, keys: Option<&HashSet<Name>>) -> (Vec<Name>, bool) {
+        let classes = match keys {
+            None => {
+                self.class_memos.clear();
+                self.subclasses.clear();
+                self.orphans.clear();
+                self.supers.keys().cloned().collect::<Vec<_>>()
+            }
+            Some(keys) => {
+                let reads = reader(keys);
+                let mut classes = self
+                    .class_memos
+                    .iter()
+                    .filter(|(class, memo)| {
+                        reads(class)
+                            || memo.followed.iter().any(&reads)
+                            || memo.missing.iter().any(|text| Name::get(text).is_some())
+                    })
+                    .map(|(class, _)| class.clone())
+                    .collect::<HashSet<_>>();
+                classes.extend(
+                    keys.iter()
+                        .filter(|key| self.supers.contains_key(*key))
+                        .cloned(),
+                );
+                classes.into_iter().collect()
+            }
+        };
+        let memos = parallel(&classes, |class| self.python_class(class));
+        let mut bases = HashSet::new();
+        let mut orphans_changed = false;
+        fn by_text(class: &Name) -> impl FnMut(&Name) -> std::cmp::Ordering + '_ {
+            move |other| other.text().cmp(class.text())
+        }
+        for (class, memo) in classes.into_iter().zip(memos) {
+            let (new_bases, new_orphan) = memo.as_ref().map_or((Vec::new(), false), |memo| {
+                (memo.bases.clone(), memo.orphan)
+            });
+            let old = match memo {
+                Some(memo) => self.class_memos.insert(class.clone(), memo),
+                None => self.class_memos.remove(&class),
+            };
+            let (old_bases, old_orphan) =
+                old.map_or((Vec::new(), false), |old| (old.bases, old.orphan));
+            for base in old_bases.iter().filter(|base| !new_bases.contains(base)) {
+                if let Some(children) = self.subclasses.get_mut(base)
+                    && let Ok(at) = children.binary_search_by(by_text(&class))
+                {
+                    children.remove(at);
+                    if children.is_empty() {
+                        self.subclasses.remove(base);
+                    }
+                    bases.insert(base.clone());
+                }
+            }
+            for base in new_bases.iter().filter(|base| !old_bases.contains(base)) {
+                let children = self.subclasses.entry(base.clone()).or_default();
+                if let Err(at) = children.binary_search_by(by_text(&class)) {
+                    children.insert(at, class.clone());
+                    bases.insert(base.clone());
+                }
+            }
+            if old_orphan != new_orphan {
+                orphans_changed = true;
+                match self.orphans.binary_search_by(by_text(&class)) {
+                    Ok(at) => {
+                        self.orphans.remove(at);
+                    }
+                    Err(at) => self.orphans.insert(at, class),
+                }
+            }
+        }
+        (bases.into_iter().collect(), orphans_changed)
+    }
+
+    /// What workspace class `class` contributes to `subclasses` and `orphans`, if it is one.
+    fn python_class(&self, class: &Name) -> Option<ClassMemo> {
+        let entries = self.supers.get(class)?;
+        // A class is keyed by its module's name and by its path's: index it once.
+        if class.family() != Family::Python || self.own_name(class).as_ref() != Some(class) {
+            return None;
+        }
+        let mut memo = ClassMemo {
+            bases: Vec::new(),
+            orphan: false,
+            followed: Box::default(),
+            missing: Box::default(),
+        };
+        let (mut followed, mut missing) = (Vec::new(), Vec::new());
+        for (_, (target, kind)) in entries {
+            match *kind {
+                BASE => match self.class_noting(target, 0, &mut followed, &mut missing) {
+                    Some(Mro::Workspace(base)) => {
+                        if let Some(base) = self.own_name(&base)
+                            && !memo.bases.contains(&base)
+                        {
+                            memo.bases.push(base);
+                        }
+                    }
+                    Some(Mro::External(_)) => {}
+                    None => memo.orphan = true,
+                },
+                UNKNOWN_BASE => memo.orphan = true,
+                _ => {}
+            }
+        }
+        memo.followed = followed.into_boxed_slice();
+        memo.missing = missing.into_boxed_slice();
+        Some(memo)
+    }
+
+    /// The name the definition `name` links to gives itself (its module's, not its path's).
+    fn own_name(&self, name: &Name) -> Option<Name> {
+        let (slot, (local, _)) = self.by_name.get(name)?.first()?;
+        let summary = &self.slots[*slot as usize].as_ref()?.summary;
+        Some(summary.interned(summary.defs[*local as usize].name).clone())
     }
 
     fn union(&self, names: Vec<Name>, hops: u32, followed: &mut Vec<Name>) -> Link {
@@ -1160,30 +2055,57 @@ impl Graph {
             .expect("a linked definition's file is linked");
         (&file.path, def.local)
     }
+}
 
-    /// What calling definition `def` (named `name`) runs: the function itself, or a class's
-    /// `__init__`.
-    fn callable(&self, def: DefRef, flags: u8, name: &Name, defs: &mut Vec<DefRef>) {
-        if flags & CLASS == 0 {
-            defs.push(def);
-            return;
-        }
-        let Some(init) = Name::get(&format!("{}.__init__", name.text())) else {
-            return;
-        };
-        if let Some(entries) = self.by_name.get(&init) {
-            defs.extend(
-                entries
-                    .iter()
-                    .filter(|(_, (_, flags))| flags & CLASS == 0)
-                    .map(|(file, (local, _))| DefRef {
-                        file: *file,
-                        local: *local,
-                    }),
-            );
-        }
+/// A link that may be to anything.
+const OPEN_LINK: Link = Link {
+    defs: Vec::new(),
+    open: true,
+};
+
+impl Link {
+    fn extend(&mut self, other: Link) {
+        self.defs.extend(other.defs);
+        self.open |= other.open;
     }
+}
 
+/// A class in a Python method resolution order: one the workspace defines, by name, or another
+/// module's, whose attributes are unknown here.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Mro {
+    Workspace(Name),
+    External(Name),
+}
+
+/// C3's merge of `sequences` (each base's order, then the bases); `None` where no order is
+/// consistent, where Python raises `TypeError`.
+fn c3(mut sequences: Vec<Vec<Mro>>) -> Option<Vec<Mro>> {
+    let mut order = Vec::new();
+    loop {
+        sequences.retain(|sequence| !sequence.is_empty());
+        if sequences.is_empty() {
+            return Some(order);
+        }
+        let head = sequences
+            .iter()
+            .map(|sequence| &sequence[0])
+            .find(|head| {
+                !sequences
+                    .iter()
+                    .any(|sequence| sequence[1..].contains(head))
+            })?
+            .clone();
+        for sequence in &mut sequences {
+            if sequence[0] == head {
+                sequence.remove(0);
+            }
+        }
+        order.push(head);
+    }
+}
+
+impl Graph {
     #[cfg(test)]
     /// Every term's closure over `terms` terms. `seed` gives each definition's own answer;
     /// `through` gives, per definition flags, the terms a chain may pass through it for. Each
@@ -1195,9 +2117,10 @@ impl Graph {
         through: impl Fn(u8) -> Bits,
         terms: usize,
     ) -> Closure {
-        let count = self.defs.len();
+        let dense = self.dense();
+        let count = dense.defs.len();
         debug_assert_eq!(seeds.len(), count);
-        let allow = self
+        let allow = dense
             .defs
             .iter()
             .map(|def| through(def.flags))
@@ -1214,7 +2137,8 @@ impl Graph {
                 }
             }
         };
-        for (index, component) in self.components().into_iter().enumerate() {
+        let components = tarjan(count, |def| dense.successors(def));
+        for (index, component) in components.into_iter().enumerate() {
             for def in &component {
                 member[*def as usize] = index as u32;
             }
@@ -1223,8 +2147,8 @@ impl Graph {
                 let d = *def as usize;
                 let mut r = seeds[d].matched & allow[d];
                 record(&mut next, d, r, SEED_HOP);
-                let mut o = seeds[d].unknown | if self.open[d] { Bits::MAX } else { 0 };
-                for to in self.successors(*def) {
+                let mut o = seeds[d].unknown | if dense.open[d] { Bits::MAX } else { 0 };
+                for to in dense.successors(*def) {
                     if member[*to as usize] != index as u32 {
                         let gained = reach[*to as usize] & allow[d] & !r;
                         record(&mut next, d, gained, *to);
@@ -1235,14 +2159,14 @@ impl Graph {
                 reach[d] = r;
                 open[d] = o & allow[d];
             }
-            if component.len() > 1 || self.successors(component[0]).contains(&component[0]) {
+            if component.len() > 1 || dense.successors(component[0]).contains(&component[0]) {
                 let mut changed = true;
                 while changed {
                     changed = false;
                     for def in &component {
                         let d = *def as usize;
                         let (mut r, mut o) = (reach[d], open[d]);
-                        for to in self.successors(*def) {
+                        for to in dense.successors(*def) {
                             if member[*to as usize] == index as u32 {
                                 let gained = reach[*to as usize] & allow[d] & !r;
                                 record(&mut next, d, gained, *to);
@@ -1331,8 +2255,7 @@ impl Graph {
     /// Whether `from` calls `to`.
     #[cfg(test)]
     pub(crate) fn calls(&self, from: DefRef, to: DefRef) -> bool {
-        let to = self.number_of(to);
-        self.successors(self.number_of(from)).contains(&to)
+        self.file_edges(from.file).contains(&(from.local, to))
     }
 
     /// The dense closure's chain from definition `def`.
@@ -1351,13 +2274,30 @@ impl Graph {
 
     #[cfg(test)]
     pub(crate) fn def_count(&self) -> usize {
-        self.defs.len()
+        self.paths
+            .values()
+            .filter_map(|slot| self.summary_of(*slot))
+            .map(|summary| summary.defs.len())
+            .sum()
+    }
+
+    /// The definition numbered `number`.
+    #[cfg(test)]
+    pub(crate) fn def_ref(&self, number: u32) -> DefRef {
+        self.paths
+            .values()
+            .map(|&slot| DefRef {
+                file: slot,
+                local: number.wrapping_sub(self.first[slot as usize]),
+            })
+            .find(|def| self.holds(*def))
+            .expect("a definition has every number below the count")
     }
 
     #[cfg(test)]
     /// Definition `def`'s file path and index in its summary.
     pub(crate) fn def_file(&self, def: u32) -> (&Arc<str>, &Arc<Summary>, u32) {
-        let GraphDef { file, local, .. } = self.defs[def as usize];
+        let DefRef { file, local } = self.def_ref(def);
         let file = self.slots[file as usize]
             .as_ref()
             .expect("a numbered definition's file is linked");

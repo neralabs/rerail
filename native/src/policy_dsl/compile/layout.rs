@@ -146,7 +146,7 @@ mod tests {
                 json!({ "kind": "identifier", "layout": layout }),
             ))
         };
-        let at = "/checks/0/forbid/ast/rule/layout";
+        let at = "/clauses/0/forbid/ast/rule/layout";
         for (layout, expected) in [
             (
                 json!({}),
@@ -216,25 +216,25 @@ mod tests {
             reject(
                 json!({ "rule": { "pattern": "f($A)", "not": { "pattern": "g($B)" }, "layout": { "before": gap("B") } } })
             ),
-            "/checks/0/forbid/ast/rule/layout/before/to: `$B` is never bound where this layout runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
+            "/clauses/0/forbid/ast/rule/layout/before/to: `$B` is never bound where this layout runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
         );
         assert_eq!(
             reject(json!({ "rule": { "pattern": "f($$$A)", "layout": { "after": gap("A") } } })),
-            "/checks/0/forbid/ast/rule/layout/after/to: `$$$A` captures a node list; a gap runs to a single node"
+            "/clauses/0/forbid/ast/rule/layout/after/to: `$$$A` captures a node list; a gap runs to a single node"
         );
         assert_eq!(
             reject(
                 json!({ "rule": { "pattern": "f($A)", "layout": { "after": gap("T") } },
                 "transform": { "T": { "substring": { "source": "$A", "startChar": 1 } } } })
             ),
-            "/checks/0/forbid/ast/rule/layout/after/to: `$T` is a transform variable, text; to reads a node"
+            "/clauses/0/forbid/ast/rule/layout/after/to: `$T` is a transform variable, text; to reads a node"
         );
         compiled(
             json!({ "rule": { "kind": "identifier", "follows": { "pattern": "$P" }, "layout": { "before": gap("P") } } }),
         );
         // A parsed tree has no lines of its own.
         let python = check_document(
-            json!({ "id": "c", "finding": finding(), "forbid": { "ast": { "language": "python",
+            json!({ "id": "c", "violation": finding(), "forbid": { "ast": { "language": "python",
             "rule": { "kind": "string", "parse": { "grammar": "percentFormat", "has": { "kind": "placeholder", "layout": { "span": { "eq": 0 } } } } } } } }),
         );
         assert_eq!(
@@ -242,7 +242,7 @@ mod tests {
                 python,
                 &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities")
             )),
-            "/checks/0/forbid/ast/rule/parse/has/layout: `layout` is not supported inside parse (percentFormat trees)"
+            "/clauses/0/forbid/ast/rule/parse/has/layout: `layout` is not supported inside parse (percentFormat trees)"
         );
     }
 }

@@ -114,8 +114,8 @@ describe("the single main instance", () => {
     const home = await temporaryDirectory();
     vi.stubEnv("HOME", home);
     vi.stubEnv("USERPROFILE", home);
-    const mainStore = join(mainContentStoreDirectory(), "content-v3.sqlite");
-    const checkoutStore = join(home, "checkout", ".rerail", "content-v3.sqlite");
+    const mainStore = join(mainContentStoreDirectory(), "content-v1.sqlite");
+    const checkoutStore = join(home, "checkout", ".rerail", "content-v1.sqlite");
 
     expect(() => assertContentStoreOwner(mainStore)).toThrow(/belongs to the main Rerail daemon/);
     assertContentStoreOwner(checkoutStore);

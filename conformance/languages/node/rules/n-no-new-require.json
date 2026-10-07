@@ -1,0 +1,50 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-no-new-require",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-n 18.4.1 n/no-new-require: `new` whose callee is the identifier `require` (upstream reads the name only, no scope).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "new_expression",
+            "has": {
+              "field": "constructor",
+              "kind": "identifier",
+              "regex": "^require$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/no-new-require",
+        "message": "Unexpected use of new with require.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/no-new-require"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

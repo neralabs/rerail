@@ -347,7 +347,7 @@ impl SyntaxErrors {
     pub(super) fn partial_message(&self, lines: &LineTable) -> String {
         let (line, column) = lines.point(self.regions[0].start);
         format!(
-            "file has syntax errors; AST checks ran outside {} error region(s), first at line {}, column {}",
+            "file has syntax errors; AST clauses ran outside {} error region(s), first at line {}, column {}",
             self.regions.len(),
             line + 1,
             column + 1
@@ -403,13 +403,13 @@ mod tests {
         let debugger = compile_typescript_rule(json!({ "kind": "debugger_statement" }))
             .expect("rule compiles");
         let result = evaluate_file(&debugger, "typescript", "open.ts", source);
-        assert_eq!(result["findings"][0]["span"]["startLine"], 1, "{result}");
+        assert_eq!(result["violations"][0]["span"]["startLine"], 1, "{result}");
         assert_eq!(result["failures"][0]["code"], "source-partial", "{result}");
         let function = compile_typescript_rule(json!({ "kind": "function_declaration" }))
             .expect("rule compiles");
         let result = evaluate_file(&function, "typescript", "open.ts", source);
         assert_eq!(
-            result["findings"],
+            result["violations"],
             json!([]),
             "the declaration spans the MISSING token"
         );
@@ -508,7 +508,7 @@ mod tests {
             "open.ts",
             "debugger;\nfunction f( {\n",
         );
-        assert_eq!(result["findings"][0]["span"]["startLine"], 0, "{result}");
+        assert_eq!(result["violations"][0]["span"]["startLine"], 0, "{result}");
         assert_eq!(result["failures"][0]["code"], "source-partial", "{result}");
 
         // A rule that is `Never` as a whole in the plain dialect has no matcher there at all.
@@ -520,7 +520,7 @@ mod tests {
             "open.ts",
             "debugger;\nfunction f( {\n",
         );
-        assert_eq!(result["findings"], json!([]), "{result}");
+        assert_eq!(result["violations"], json!([]), "{result}");
     }
 
     #[test]
@@ -531,15 +531,16 @@ mod tests {
             &compiled,
             "typescript",
             "api.test.ts",
-            "const m = importOriginal<typeof import(\"./api\")>();\ndebugger;\n",
+            // A missing comma, which TypeScript rejects too: the ERROR stays whatever the grammar fixes.
+            "const m = importOriginal(1 load(\"./api\"));\ndebugger;\n",
         );
         assert_eq!(result["status"], "failed", "{result}");
         assert_eq!(
-            result["findings"].as_array().map(Vec::len),
+            result["violations"].as_array().map(Vec::len),
             Some(1),
             "{result}"
         );
-        assert_eq!(result["findings"][0]["span"]["startLine"], 1, "{result}");
+        assert_eq!(result["violations"][0]["span"]["startLine"], 1, "{result}");
         assert_eq!(
             result["failures"].as_array().map(Vec::len),
             Some(1),
@@ -557,9 +558,9 @@ mod tests {
             &unsound,
             "typescript",
             "api.test.ts",
-            "const m = importOriginal<typeof import(\"./api\")>();\ndebugger;\n",
+            "const m = importOriginal(1 load(\"./api\"));\ndebugger;\n",
         );
-        assert_eq!(result["findings"], json!([]), "{result}");
+        assert_eq!(result["violations"], json!([]), "{result}");
         assert_eq!(
             result["failures"][0]["code"], "source-incomplete",
             "{result}"
@@ -661,7 +662,7 @@ mod tests {
         );
         let source = "f();\nf(;\nf();\n";
         let result = evaluate_file(&compiled, "typescript", "a.ts", source);
-        assert_eq!(result["findings"], json!([]), "{result}");
+        assert_eq!(result["violations"], json!([]), "{result}");
         assert_eq!(
             result["failures"][0]["code"], "source-incomplete",
             "{result}"
@@ -726,7 +727,7 @@ mod tests {
             "each caller capture can be unbound when the outward relation is swallowed by syntax errors"
         );
         let result = evaluate_file(&compiled, "typescript", "a.ts", "a();\na(;\na();\n");
-        assert_eq!(result["findings"], json!([]), "{result}");
+        assert_eq!(result["violations"], json!([]), "{result}");
         assert_eq!(
             result["failures"][0]["code"], "source-incomplete",
             "{result}"

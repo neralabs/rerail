@@ -72,7 +72,7 @@ export function sinceFor(range = ui.range) {
 const RANGE_LABEL = { 0: "today", 7: "last 7 days", 30: "last 30 days" };
 export const rangeLabel = () => RANGE_LABEL[ui.range] ?? "since install";
 
-const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, evaluations: 0, rerails: 0 };
+const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, rerails: 0 };
 export const activityOf = id => data.activity[id] ?? NONE;
 export const activityAllOf = id => data.activityAll[id] ?? NONE;
 export const isMeasured = id => activityOf(id).measured !== false;
@@ -86,8 +86,8 @@ export const rulesArray = () => [...data.rules.values()];
 export function matches(stored) {
   const id = stored.rule.id, origin = stored.catalogOrigin;
   const f = ui.filter;
-  if (f === "added" && origin !== "local") return false;
-  if (f === "preset" && origin !== "bundled") return false;
+  if (f === "added" && origin !== "user") return false;
+  if (f === "preset" && origin !== "rerail") return false;
   if (f === "on" && !stored.enabled) return false;
   if (f === "off" && stored.enabled) return false;
   if (f === "fired" && fires(id) === 0) return false;

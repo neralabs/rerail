@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-unused-expression",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-unused-expression` rule with its default options (https://palantir.github.io/tslint/rules/no-unused-expression/). Disallows expression statements (and comma/void/ternary operands) whose value is discarded unless they are calls, assignments, increments, delete, await or yield. TSLint's checking walk is modelled with recursive utils: `checked-*` is where the walk evaluates a node in checking mode, `unused-*` what it returns there, strict/lax being allowFastNullChecks off/on. Options: default",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "unused-expression",
       "forbid": {
@@ -808,10 +809,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_UNUSED_EXPRESSION",
-        "severity": "error",
         "message": "unused expression, expected an assignment or function call"
       }
     }

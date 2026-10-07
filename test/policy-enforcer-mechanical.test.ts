@@ -19,6 +19,7 @@ import type { PolicyDeliveryMetadata } from "../src/executable-policy.js";
 import { NativeExecutablePolicyEnforcer, pythonModulePath, SOURCE_LANGUAGES } from "../src/executable-policy-enforcer.js";
 import { bootstrapPolicyDslCatalog, bundledPolicyDslDirectory } from "../src/policy-dsl-catalog.js";
 import { policyRuleSchema } from "../src/policy-schema.js";
+import type { RuleMode } from "../src/rule-mode.js";
 import { SqliteRuleStore } from "../src/rule-store.js";
 import { rerailOraclesDirectory } from "./oracles.js";
 import { gateStorageAttachments } from "./storage-attach-gate.js";
@@ -37,17 +38,17 @@ afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, {
 
 function needlePolicy(revision: number, pattern = "NEEDLE", code = "NEEDLE") {
   return policyRuleSchema.parse({
-    format: "rerail.policy/v1", id: "test:needle", revision,
+    format: "rerail.policy/v1", id: "test:needle", revision, mode: "block",
     scope: { include: ["api/**/*.py"], exclude: [] },
-    checks: [{ id: "needle", finding: { code, severity: "error", anchor: "witness.span", message: `No ${pattern}` }, forbid: { regex: { pattern, source: "file.content" } } }],
+    clauses: [{ id: "needle", violation: { code, anchor: "witness.span", message: `No ${pattern}` }, forbid: { regex: { pattern, source: "file.content" } } }],
   });
 }
 
-function severityPolicy(id: string, pattern: string, severity: "advisory" | "error") {
+function modePolicy(id: string, pattern: string, mode: RuleMode) {
   return policyRuleSchema.parse({
-    format: "rerail.policy/v1", id, revision: 1,
+    format: "rerail.policy/v1", id, revision: 1, mode,
     scope: { include: ["api/**/*.py"], exclude: [] },
-    checks: [{ id: "match", finding: { code: pattern, severity, anchor: "witness.span", message: `No ${pattern}` }, forbid: { regex: { pattern, source: "file.content" } } }],
+    clauses: [{ id: "match", violation: { code: pattern, anchor: "witness.span", message: `No ${pattern}` }, forbid: { regex: { pattern, source: "file.content" } } }],
   });
 }
 
@@ -76,10 +77,10 @@ function runForPath(runs: ReadonlyMap<string, PolicyRunInput & { result?: Policy
 
 function consolePolicy(revision: number) {
   return policyRuleSchema.parse({
-    format: "rerail.policy/v1", id: "test:console", revision,
+    format: "rerail.policy/v1", id: "test:console", revision, mode: "block",
     scope: { include: ["web/**/*.ts", "web/**/*.tsx"], exclude: [] },
-    checks: [{
-      id: "console", finding: { code: "CONSOLE", severity: "error", anchor: "witness.span", message: "No console output" },
+    clauses: [{
+      id: "console", violation: { code: "CONSOLE", anchor: "witness.span", message: "No console output" },
       forbid: { ast: { language: "typescript", rule: { pattern: "console.log($ARG)" } } },
     }],
   });
@@ -87,7 +88,7 @@ function consolePolicy(revision: number) {
 
 async function fixture({ policies = [needlePolicy(1)], ...options }: {
   scope?: "repository" | "touched-files" | "ai-output";
-  mode?: "resteer" | "log";
+  mode?: "steer" | "log";
   executions?: PolicyExecutionRecorder;
   policies?: readonly ReturnType<typeof policyRuleSchema.parse>[];
 } = {}) {
@@ -175,7 +176,7 @@ async function repositoryScan(workspaceRoot: string): Promise<{ status: string |
     const result = runs.get(runId!)?.result;
     return {
       status: result?.status,
-      paths: (result?.findings ?? []).map(finding => finding.path ?? "").toSorted(),
+      paths: (result?.violations ?? []).map(finding => finding.path ?? "").toSorted(),
       failures: (result?.failures ?? []).map(failure => `${failure.path ?? ""} ${failure.code}`).toSorted(),
     };
   } finally {
@@ -386,9 +387,10 @@ describe("mechanical executable policy regressions", () => {
     const { recorder, runs } = recordingRuns();
     const policy = policyRuleSchema.parse({
       format: "rerail.policy/v1", id: "test:module", revision: 1,
+      mode: "steer",
       scope: { include: ["api/**/*.py"], exclude: [] },
-      checks: [{
-        id: "suppress", finding: { code: "SUPPRESS", severity: "error", anchor: "witness.span", message: "suppress()" },
+      clauses: [{
+        id: "suppress", violation: { code: "SUPPRESS", anchor: "witness.span", message: "suppress()" },
         forbid: { ast: { language: "python", rule: { kind: "identifier", resolves: { import: ["api.pkg.contextlib.suppress"] } } } },
       }],
     });
@@ -407,7 +409,7 @@ describe("mechanical executable policy regressions", () => {
       await settled(enforcer);
       expect(runForPath(runs, "api/pkg/contextlib.py")?.result).toMatchObject({
         status: "completed",
-        findings: [expect.objectContaining({ code: "SUPPRESS", span: expect.objectContaining({ startLine: 1 }) })],
+        violations: [expect.objectContaining({ code: "SUPPRESS", span: expect.objectContaining({ startLine: 1 }) })],
         failures: [],
       });
     } finally { await enforcer.close(); catalog.close(); }
@@ -438,7 +440,7 @@ describe("mechanical executable policy regressions", () => {
       await Promise.all([accepted, closing]);
       const executions = new SqlitePolicyExecutionStore(defaultRerailDatabasePath());
       try {
-        expect(executions.list({ sessionId: "closing-during-storage" }).runs).toEqual(expect.arrayContaining([
+        expect(executions.list({ sessionId: "closing-during-storage" }).audits).toEqual(expect.arrayContaining([
           expect.objectContaining({ paths: ["api/staging.py"], status: "interrupted", catalogRevision: null, ruleRevisions: [] }),
         ]));
       } finally { executions.close(); }
@@ -481,7 +483,7 @@ describe("mechanical executable policy regressions", () => {
       await enforcer.evaluateGeneratedEdits("coalesce", { revision: 1, checkpoints: ["edit"], edits: [{ path: "api/a.py", language: "python", generatedText: "safe()\n" }] });
       await enforcer.evaluateGeneratedEdits("coalesce", { revision: 2, checkpoints: ["edit"], edits: [{ path: "api/a.py", language: "python", generatedText: "NEEDLE\n" }] });
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
-      expect((await settled(enforcer)).findings).toEqual([expect.objectContaining({ path: "api/a.py", code: "NEEDLE" })]);
+      expect((await settled(enforcer)).violations).toEqual([expect.objectContaining({ path: "api/a.py", code: "NEEDLE" })]);
     } finally { await enforcer.close(); catalog.close(); }
   });
 
@@ -519,12 +521,12 @@ describe("mechanical executable policy regressions", () => {
     } finally { await enforcer.close(); catalog.close(); }
   });
 
-  it("credits a steer to the distinct rules whose non-advisory findings it rendered", async () => {
+  it("credits a steer to the distinct rules whose steer and block findings it rendered", async () => {
     const { root, catalog, enforcer, requestDelivery } = await fixture({
       policies: [
-        severityPolicy("test:alpha", "ALPHA", "error"),
-        severityPolicy("test:beta", "BETA", "error"),
-        severityPolicy("test:gamma", "GAMMA", "advisory"),
+        modePolicy("test:alpha", "ALPHA", "block"),
+        modePolicy("test:beta", "BETA", "steer"),
+        modePolicy("test:gamma", "GAMMA", "log"),
       ],
     });
     try {
@@ -535,14 +537,35 @@ describe("mechanical executable policy regressions", () => {
         checkpoints: ["edit"],
         edits: [{ path: "api/a.py", language: "python", generatedText: "ALPHA\nBETA\nALPHA\nGAMMA\n" }],
       });
-      await settled(enforcer);
+      const status = await settled(enforcer);
 
+      expect(new Set(status.violations.map(finding => `${finding.ruleId}:${finding.mode}`)))
+        .toEqual(new Set(["test:alpha:block", "test:beta:steer", "test:gamma:log"]));
+      expect(status.disposition).toBe("steer");
       expect(requestDelivery).toHaveBeenCalledTimes(1);
       const [, , content, metadata] = requestDelivery.mock.calls[0]!;
       expect(metadata?.ruleIds).toEqual(["test:alpha", "test:beta"]);
       expect(content).toContain("ALPHA");
       expect(content).toContain("BETA");
       expect(content).not.toContain("GAMMA");
+    } finally { await enforcer.close(); catalog.close(); }
+  });
+
+  it("records a log rule's findings without steering", async () => {
+    const { root, catalog, enforcer, requestDelivery } = await fixture({ policies: [modePolicy("test:gamma", "GAMMA", "log")] });
+    try {
+      await writeFile(join(root, "api", "a.py"), "GAMMA\n");
+      await enforcer.openWorkspace("log-only");
+      await enforcer.evaluateGeneratedEdits("log-only", {
+        revision: 1,
+        checkpoints: ["edit"],
+        edits: [{ path: "api/a.py", language: "python", generatedText: "GAMMA\n" }],
+      });
+      const status = await settled(enforcer);
+
+      expect(status.violations).toEqual([expect.objectContaining({ ruleId: "test:gamma", mode: "log" })]);
+      expect(status.disposition).toBe("continue");
+      expect(requestDelivery).not.toHaveBeenCalled();
     } finally { await enforcer.close(); catalog.close(); }
   });
 
@@ -560,13 +583,13 @@ describe("mechanical executable policy regressions", () => {
           generatedText: "# π\nNEEDLE_new_one\nNEEDLE_old\nNEEDLE_new_two\n",
         }],
       });
-      expect((await settled(enforcer)).findings.map(finding => finding.span?.startLine)).toEqual([1, 3]);
+      expect((await settled(enforcer)).violations.map(finding => finding.span?.startLine)).toEqual([1, 3]);
       expect(requestDelivery).toHaveBeenCalledTimes(1);
     } finally { await enforcer.close(); catalog.close(); }
   });
 
   it("settles a repository-scope scan triggered by a generated edit", async () => {
-    const { root, catalog, enforcer, requestDelivery } = await fixture({ scope: "repository", mode: "resteer" });
+    const { root, catalog, enforcer, requestDelivery } = await fixture({ scope: "repository", mode: "steer" });
     try {
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
       await enforcer.openWorkspace("repository-edit");
@@ -601,7 +624,7 @@ describe("mechanical executable policy regressions", () => {
       const [runId] = await enforcer.scan("git-repository-scan", { scope: "repository", mode: "log" });
       expect(runs.get(runId!)?.result).toMatchObject({
         status: "failed",
-        findings: [
+        violations: [
           expect.objectContaining({ path: "api/a.py", code: "NEEDLE" }),
           expect.objectContaining({ path: "api/ignored.py", code: "NEEDLE" }),
         ],
@@ -615,8 +638,9 @@ describe("mechanical executable policy regressions", () => {
     const { recorder, runs } = recordingRuns();
     const anywhere = policyRuleSchema.parse({
       format: "rerail.policy/v1", id: "test:anywhere", revision: 1,
+      mode: "steer",
       scope: { include: ["src/**/*"], exclude: [] },
-      checks: [{ id: "needle", finding: { code: "NEEDLE", severity: "error", anchor: "witness.span", message: "No NEEDLE" }, forbid: { regex: { pattern: "NEEDLE", source: "file.content" } } }],
+      clauses: [{ id: "needle", violation: { code: "NEEDLE", anchor: "witness.span", message: "No NEEDLE" }, forbid: { regex: { pattern: "NEEDLE", source: "file.content" } } }],
     });
     const { root, catalog, enforcer } = await fixture({ executions: recorder, policies: [anywhere] });
     const paths = [...SOURCE_LANGUAGES.keys()].map((extension) => `src/file${extension}`).toSorted();
@@ -628,7 +652,7 @@ describe("mechanical executable policy regressions", () => {
       execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
       await enforcer.openWorkspace("all-languages");
       const [runId] = await enforcer.scan("all-languages", { scope: "repository", mode: "log" });
-      expect(runs.get(runId!)?.result?.findings?.map((finding) => finding.path).toSorted()).toEqual(paths);
+      expect(runs.get(runId!)?.result?.violations?.map((finding) => finding.path).toSorted()).toEqual(paths);
     } finally { await enforcer.close(); catalog.close(); }
   });
 
@@ -666,8 +690,8 @@ describe("mechanical executable policy regressions", () => {
           scope: "repository",
           result: {
             status: "failed",
-            findings: [],
-            failures: [expect.objectContaining({ checkId: "scan", code: "adapter-error", stage: "scan", message: "injected index failure" })],
+            violations: [],
+            failures: [expect.objectContaining({ clauseId: "scan", code: "adapter-error", stage: "scan", message: "injected index failure" })],
           },
         });
       }
@@ -687,7 +711,7 @@ describe("mechanical executable policy regressions", () => {
       const edits = Array.from({ length: 12 }, (_, index) => ({ path: `api/generated-${index}.py`, language: "python" as const, generatedText: source }));
       await enforcer.evaluateGeneratedEdits("spool", { revision: 1, checkpoints: ["edit"], edits });
       await settled(enforcer);
-      expect((await settled(enforcer)).findings).toHaveLength(12);
+      expect((await settled(enforcer)).violations).toHaveLength(12);
     } finally { await enforcer.close(); catalog.close(); }
   }, 60_000);
 
@@ -709,7 +733,7 @@ describe("mechanical executable policy regressions", () => {
 
       expect(runForPath(runs, "web/App.tsx")?.result).toMatchObject({
         status: "completed",
-        findings: [expect.objectContaining({ code: "CONSOLE", path: "web/App.tsx" })],
+        violations: [expect.objectContaining({ code: "CONSOLE", path: "web/App.tsx" })],
         failures: [],
       });
     } finally { await enforcer.close(); catalog.close(); }
@@ -718,11 +742,11 @@ describe("mechanical executable policy regressions", () => {
   it("steers with the anchored location, interpolated message, and suggested fix", async () => {
     const { recorder, runs } = recordingRuns();
     const fixing = policyRuleSchema.parse({
-      format: "rerail.policy/v1", id: "test:logger", revision: 1,
+      format: "rerail.policy/v1", id: "test:logger", revision: 1, mode: "block",
       scope: { include: ["web/**/*.tsx"], exclude: [] },
-      checks: [{
+      clauses: [{
         id: "logger",
-        finding: { code: "LOGGER", severity: "error", anchor: "capture.ARG", message: "Log $ARG through the logger", fix: "logger.info($ARG)" },
+        violation: { code: "LOGGER", anchor: "capture.ARG", message: "Log $ARG through the logger", fix: "logger.info($ARG)" },
         forbid: { ast: { language: "typescript", rule: { pattern: "console.log($ARG)" } } },
       }],
     });
@@ -746,7 +770,7 @@ describe("mechanical executable policy regressions", () => {
         "  Suggested fix: replace 2:3-2:20 with `logger.info(user)`",
       ].join("\n"));
       expect(runForPath(runs, "web/App.tsx")?.result).toMatchObject({
-        findings: [expect.objectContaining({ fix: { span: expect.objectContaining({ startLine: 1, startColumn: 2 }), text: "logger.info(user)" } })],
+        violations: [expect.objectContaining({ fix: { span: expect.objectContaining({ startLine: 1, startColumn: 2 }), text: "logger.info(user)" } })],
       });
       // The fix is a suggestion only: the source on disk is untouched.
       expect(await readFile(join(root, "web", "App.tsx"), "utf8")).toBe(source);
@@ -779,7 +803,7 @@ describe("mechanical executable policy regressions", () => {
       expect(run).toMatchObject({
         catalogRevision: catalog.status.version,
         ruleRevisions: [{ ruleId: "test:needle", revision: 2 }],
-        result: { status: "completed", findings: [expect.objectContaining({ code: "FRESH", path: "api/queued.py" })] },
+        result: { status: "completed", violations: [expect.objectContaining({ code: "FRESH", path: "api/queued.py" })] },
       });
     } finally { await enforcer.close(); catalog.close(); }
   });
@@ -816,7 +840,7 @@ describe("mechanical executable policy regressions", () => {
       expect(runForPath(runs, "api/both.py")).toMatchObject({
         catalogRevision: catalog.status.version,
         ruleRevisions: [{ ruleId: "test:needle", revision: 3 }],
-        result: { status: "completed", findings: [expect.objectContaining({ code: "THREE", path: "api/both.py" })] },
+        result: { status: "completed", violations: [expect.objectContaining({ code: "THREE", path: "api/both.py" })] },
       });
     } finally {
       for (const workspace of attachments.workspaces) workspace.release();
@@ -880,7 +904,7 @@ describe("mechanical executable policy regressions", () => {
     try {
       await enforcer.openWorkspace("single-read");
       const [runId] = await enforcer.scan("single-read", { scope: "repository", mode: "log" });
-      expect(runs.get(runId!)?.result?.findings).toEqual([expect.objectContaining({ path: "api/once.py", code: "NEEDLE" })]);
+      expect(runs.get(runId!)?.result?.violations).toEqual([expect.objectContaining({ path: "api/once.py", code: "NEEDLE" })]);
       expect(reads.mock.calls.filter(([path]) => path === source)).toHaveLength(0);
     } finally {
       reads.mockRestore();
@@ -965,7 +989,7 @@ describe("mechanical executable policy regressions", () => {
         edits: [{ path: "api/a.py", language: "python", generatedText: "NEEDLE\n" }],
       });
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
-      expect((await settled(enforcer)).findings).toEqual([expect.objectContaining({ path: "api/a.py", code: "NEEDLE" })]);
+      expect((await settled(enforcer)).violations).toEqual([expect.objectContaining({ path: "api/a.py", code: "NEEDLE" })]);
       expect(runForPath(runs, "api/a.py")?.result).toMatchObject({ status: "completed", failures: [] });
     } finally {
       await restore();
@@ -992,7 +1016,7 @@ describe("mechanical executable policy regressions", () => {
       const [runId] = await enforcer.scan("busy-store-completion", { scope: "repository", mode: "log" });
       expect(runs.get(runId!)?.result).toMatchObject({
         status: "completed",
-        findings: [expect.objectContaining({ path: "api/a.py", code: "NEEDLE" })],
+        violations: [expect.objectContaining({ path: "api/a.py", code: "NEEDLE" })],
         failures: [],
       });
       expect(completedDirectories()).toBeGreaterThan(before);
@@ -1022,7 +1046,7 @@ describe("mechanical executable policy regressions", () => {
       expect(completedDirectories()).toBe(before);
       expect(runs.get(runId!)?.result).toMatchObject({
         status: "completed",
-        findings: [expect.objectContaining({ path: "api/a.py", code: "NEEDLE" })],
+        violations: [expect.objectContaining({ path: "api/a.py", code: "NEEDLE" })],
         failures: [],
       });
     } finally {
@@ -1126,7 +1150,7 @@ describe("mechanical executable policy regressions", () => {
 
 const completedApply = JSON.stringify({
   revision: 1,
-  evaluation: { status: "completed", findings: [], failures: [], coverage: [], metrics: { files: 0, visitedNodes: 0, witnesses: 0 } },
+  evaluation: { status: "completed", violations: [], failures: [], coverage: [], metrics: { files: 0, visitedNodes: 0, witnesses: 0 } },
 });
 
 /** A native workspace double that serves result pages from `page` and reports each apply to `onApply`. */
@@ -1159,7 +1183,7 @@ function nativeWorkspaces(...workspaces: NativePolicyDslWorkspace[]) {
 
 /** A result page that never finishes before `limit` pages. */
 function openPage(cursor: number, limit: number, done = false): string {
-  return JSON.stringify({ revision: 1, cursor: cursor + 1, done: done || cursor + 1 >= limit, findings: [], failures: [], coverage: [], bytes: 0 });
+  return JSON.stringify({ revision: 1, cursor: cursor + 1, done: done || cursor + 1 >= limit, violations: [], failures: [], coverage: [], bytes: 0 });
 }
 
 describe("result paging", () => {
@@ -1247,6 +1271,36 @@ describe("result paging", () => {
       await enforcer.scan("page-yield", { scope: "touched-files", mode: "log", paths: ["api/page.py"] });
       expect(pages).toEqual([0, 1]);
       expect(runs.get("run-1")?.result?.status).toBe("completed");
+    } finally {
+      binding.mockRestore();
+      await enforcer.close();
+      catalog.close();
+    }
+  });
+
+  it("rejects a scan whose later result page holds a malformed violation", async () => {
+    const { recorder, runs } = recordingRuns();
+    const { root, catalog, enforcer } = await fixture({ executions: recorder });
+    const finding = {
+      id: "finding-1", ruleId: "test:needle", clauseId: "needle", code: "NEEDLE", mode: "steer",
+      message: "needle", path: "api/page.py", captures: {}, variables: {},
+    };
+    const session = pagingWorkspace(() => { throw new Error("the session workspace is never paged"); });
+    const scan = pagingWorkspace((cursor) => JSON.stringify({
+      revision: 1, cursor: cursor + 1, done: cursor === 1, failures: [], coverage: [], bytes: 0,
+      // The first page is valid; the second's violation has a mode the contract does not allow.
+      violations: [cursor === 0 ? finding : { ...finding, id: "finding-2", mode: "fatal" }],
+    }));
+    const binding = nativeWorkspaces(session, scan);
+    try {
+      await writeFile(join(root, "api", "page.py"), "safe()\n");
+      await enforcer.openWorkspace("page-malformed");
+      await enforcer.scan("page-malformed", { scope: "touched-files", mode: "log", paths: ["api/page.py"] });
+      expect(runs.get("run-1")?.result).toEqual({
+        status: "failed",
+        violations: [],
+        failures: [expect.objectContaining({ clauseId: "scan", code: "adapter-error", stage: "scan" })],
+      });
     } finally {
       binding.mockRestore();
       await enforcer.close();

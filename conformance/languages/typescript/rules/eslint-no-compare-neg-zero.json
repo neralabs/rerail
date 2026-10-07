@@ -1,0 +1,99 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-no-compare-neg-zero",
+  "revision": 1,
+  "mode": "steer",
+  "description": "ESLint 10.11.0 no-compare-neg-zero, default options. Port of ESLint's `no-compare-neg-zero` rule (https://eslint.org/docs/latest/rules/no-compare-neg-zero). Flags a comparison with `-0` (a unary minus applied to a numeric literal whose value is 0). Scope only matters to ESLint's Object.is suggestion, which is not a fix.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "compare-neg-zero",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "binary_expression",
+            "all": [
+              {
+                "has": {
+                  "regex": "^(>|>=|<|<=|==|===|!=|!==)$",
+                  "pattern": "$$OP"
+                }
+              },
+              {
+                "has": {
+                  "matches": "neg-zero"
+                }
+              }
+            ]
+          },
+          "utils": {
+            "zero": {
+              "any": [
+                {
+                  "kind": "number",
+                  "regex": "^(?:(?:0[0_]*(?:\\.[0_]*)?|\\.0[0_]*)(?:[eE][+-]?[0-9_]+)?|0[xXoObB]0[0_]*)$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "zero"
+                  }
+                }
+              ]
+            },
+            "neg-zero": {
+              "any": [
+                {
+                  "kind": "unary_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "regex": "^-$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "matches": "zero"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "neg-zero"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-compare-neg-zero",
+        "message": "Do not use the '$$OP' operator to compare against -0.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-compare-neg-zero"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

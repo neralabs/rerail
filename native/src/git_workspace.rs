@@ -20,7 +20,7 @@ use std::{
     os::unix::fs::MetadataExt,
 };
 
-const BUILTIN_IGNORE: &[u8] = b".git/\n.nera/\nnode_modules/\ntarget/\ntmp/\n__pycache__/\n";
+const BUILTIN_IGNORE: &[u8] = b".git/\nnode_modules/\ntarget/\ntmp/\n__pycache__/\n";
 /// The extensions of the files the host evaluates (`SOURCE_LANGUAGES` in
 /// executable-policy-enforcer.ts): dialect sources and the text files regex checks read.
 const SOURCE_SUFFIXES: &[&str] = &[
@@ -30,7 +30,6 @@ const SOURCE_SUFFIXES: &[&str] = &[
 ];
 const STATUS_EXCLUDES: &[&str] = &[
     ":(glob,exclude)**/.git/**",
-    ":(glob,exclude)**/.nera/**",
     ":(glob,exclude)**/node_modules/**",
     ":(glob,exclude)**/target/**",
     ":(glob,exclude)**/tmp/**",

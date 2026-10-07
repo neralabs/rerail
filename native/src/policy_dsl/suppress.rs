@@ -345,6 +345,8 @@ impl EslintDirectives {
 #[cfg(test)]
 mod eslint;
 mod noqa;
+#[cfg(test)]
+mod php_corpus_tests;
 mod phpcs;
 mod phpstan;
 mod psalm;
@@ -364,7 +366,7 @@ mod tests {
         } else {
             "identifier"
         };
-        check_document(json!({ "id": "c", "finding": finding,
+        check_document(json!({ "id": "c", "violation": finding,
             "forbid": { "ast": { "language": language, "rule": { "kind": kind } } } }))
     }
 
@@ -377,7 +379,7 @@ mod tests {
 
     #[test]
     fn suppress_is_checked_and_opt_in_per_linter() {
-        let at = "/checks/0/finding/suppress";
+        let at = "/clauses/0/violation/suppress";
         for (language, suppress, expected) in [
             (
                 "typescript",
@@ -517,11 +519,11 @@ mod tests {
             );
         }
         let mut regex = document("typescript", json!({ "eslint": { "rules": ["strict"] } }));
-        regex["checks"][0]["forbid"] =
+        regex["clauses"][0]["forbid"] =
             json!({ "regex": { "source": "file.content", "pattern": "x" } });
         assert_eq!(
             rejection(compile(regex)),
-            format!("{at}: suppress removes an ast query's findings")
+            format!("{at}: suppress removes an ast query's violations")
         );
         for (language, suppress) in [
             (

@@ -78,7 +78,7 @@ function unrepairable(prefix: string, abi: NodeAbi, detail: string): Error {
   return new Error(
     `${SQLITE_PACKAGE_NAME} in ${prefix} cannot load under Node ${abi.node} (ABI ${abi.modules}) and npm rebuild did not fix it.\n` +
     `${detail}\n` +
-    `Check that the rebuild can download or compile the binding for this Node, then run rerail start again; ` +
+    `Check that the rebuild can download or compile the binding for this Node, then run rerail daemon start again; ` +
     `or reinstall Rerail with npx @neralabs/rerail setup.`,
   );
 }
@@ -86,7 +86,7 @@ function unrepairable(prefix: string, abi: NodeAbi, detail: string): Error {
 /**
  * Probe the SQLite binding the daemon will load, rebuild it for the running Node when it fails, and re-probe.
  *
- * Runs in the launcher, before the daemon process exists: `rerail start`, and the autostart it spawns, can then
+ * Runs in the launcher, before the daemon process exists: `rerail daemon start`, and the autostart it spawns, can then
  * report an unrepairable binding to whoever ran them instead of leaving the daemon to fail in `daemon.log`.
  */
 export async function ensureSqlite(packageRoot: string, options: SqliteRepairOptions = {}): Promise<SqliteRepairResult> {

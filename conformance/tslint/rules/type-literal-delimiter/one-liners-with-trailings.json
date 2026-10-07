@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:type-literal-delimiter",
   "revision": 1,
+  "mode": "steer",
   "description": "type-literal-delimiter with singleLine always.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "comma",
       "forbid": {
@@ -36,10 +37,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TYPE_LITERAL_DELIMITER",
-        "severity": "error",
         "message": "Expected type literal to use ';' instead of ','."
       }
     },
@@ -96,10 +96,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.LAST",
         "code": "TYPE_LITERAL_DELIMITER",
-        "severity": "error",
         "message": "Expected type literal to use ';' to separate members."
       }
     }

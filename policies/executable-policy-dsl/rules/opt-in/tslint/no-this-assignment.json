@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-this-assignment",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-this-assignment` rule with its default options (https://palantir.github.io/tslint/rules/no-this-assignment/). Disallows assigning `this` (or destructuring it) into a local variable.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "this-assignment",
       "forbid": {
@@ -45,10 +46,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_THIS_ASSIGNMENT",
-        "severity": "error",
         "message": "Assigning `this` reference to local variable not allowed."
       }
     }

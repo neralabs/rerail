@@ -140,7 +140,7 @@ async function routeKernelEvent(
     let runtime = state.runtimes.get(runtimeKey);
     if (runtime === undefined) {
       if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
-      runtime = new RerailRuntime({ ...runtimeOptions, autostart: false });
+      runtime = new RerailRuntime({ ...runtimeOptions, autostart: false, startGate: true });
       state.runtimes.set(runtimeKey, runtime);
     }
     if (event.kind === "session-start") {

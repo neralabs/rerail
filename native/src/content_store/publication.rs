@@ -8,7 +8,7 @@ use super::rows::{hash_params, validate_relative_path};
 use super::{
     CODEC_ZSTD, CandidateCheck, ContentStore, HashKey, MAX_PUBLICATION_BATCH,
     OverlayFilePublication, PublicationResult, STRING_CHECK_KEY, STRING_PATH, SourceId, StoreError,
-    StoreResult, StoredFile, TapeId, WorkspaceId,
+    StoreResult, StoredFile, TapeId, WorkspaceId, compress,
 };
 use crate::WORK_POOL;
 #[cfg(test)]
@@ -17,7 +17,6 @@ use rayon::prelude::*;
 use rusqlite::limits::Limit;
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::io::Cursor;
 use std::time::{Duration, Instant};
 
 #[cfg(test)]
@@ -136,22 +135,12 @@ impl ContentStore {
                     |((publication, source_hash, tape_hash), (source_id, tape_id))| {
                         let source_frame = source_id
                             .is_none()
-                            .then(|| {
-                                zstd::stream::encode_all(
-                                    Cursor::new(publication.source),
-                                    self.compression_level,
-                                )
-                            })
+                            .then(|| compress(publication.source, self.compression_level))
                             .transpose()?;
                         let tape_frame = publication
                             .tape
                             .filter(|_| tape_id.is_none())
-                            .map(|payload| {
-                                zstd::stream::encode_all(
-                                    Cursor::new(payload.bytes),
-                                    self.compression_level,
-                                )
-                            })
+                            .map(|payload| compress(payload.bytes, self.compression_level))
                             .transpose()?;
                         Ok((
                             publication,
@@ -406,7 +395,7 @@ impl ContentStore {
                     ));
                 }
                 execute_relationship_pass(&transaction, &relationship_pass)?;
-                let statement_count = relationship_pass.statements.len();
+                let statement_count = relationship_pass.statement_count();
                 if cancelled() {
                     return Err(StoreError::Invalid(
                         "overlay publication was cancelled".to_owned(),
@@ -531,19 +520,13 @@ fn prepare_missing_object_frames(
         prepared.iter_mut().zip(stored_objects)
     {
         if source_id.is_none() && source_frame.is_none() {
-            *source_frame = Some(zstd::stream::encode_all(
-                Cursor::new(publication.source),
-                compression_level,
-            )?);
+            *source_frame = Some(compress(publication.source, compression_level)?);
         }
         if let Some(tape) = publication.tape
             && tape_id.is_none()
             && tape_frame.is_none()
         {
-            *tape_frame = Some(zstd::stream::encode_all(
-                Cursor::new(tape.bytes),
-                compression_level,
-            )?);
+            *tape_frame = Some(compress(tape.bytes, compression_level)?);
         }
     }
     Ok(())

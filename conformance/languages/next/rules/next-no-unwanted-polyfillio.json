@@ -1,0 +1,191 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-no-unwanted-polyfillio",
+  "revision": 1,
+  "mode": "steer",
+  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-unwanted-polyfillio: a <script> (or the first local name an import from next/script binds) with a plain string src on a polyfill.io host whose first features parameter lists a feature Next.js already polyfills.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "jsx_opening_element"
+                  },
+                  {
+                    "kind": "jsx_self_closing_element"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "has": {
+                      "field": "name",
+                      "kind": "identifier",
+                      "regex": "^script$"
+                    }
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "field": "name",
+                          "kind": "identifier",
+                          "pattern": "$N"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "program",
+                          "stopBy": "end",
+                          "has": {
+                            "kind": "import_statement",
+                            "all": [
+                              {
+                                "has": {
+                                  "field": "source",
+                                  "kind": "string",
+                                  "value": {
+                                    "eq": "next/script"
+                                  }
+                                }
+                              },
+                              {
+                                "has": {
+                                  "kind": "import_clause",
+                                  "any": [
+                                    {
+                                      "has": {
+                                        "kind": "identifier",
+                                        "nthChild": 1,
+                                        "pattern": "$N"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "kind": "namespace_import",
+                                        "nthChild": 1,
+                                        "has": {
+                                          "kind": "identifier",
+                                          "pattern": "$N"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "kind": "named_imports",
+                                        "nthChild": 1,
+                                        "has": {
+                                          "kind": "import_specifier",
+                                          "nthChild": 1,
+                                          "any": [
+                                            {
+                                              "has": {
+                                                "field": "alias",
+                                                "pattern": "$N"
+                                              }
+                                            },
+                                            {
+                                              "all": [
+                                                {
+                                                  "not": {
+                                                    "has": {
+                                                      "field": "alias",
+                                                      "kind": "identifier"
+                                                    }
+                                                  }
+                                                },
+                                                {
+                                                  "has": {
+                                                    "field": "name",
+                                                    "pattern": "$N"
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "any": [
+                    {
+                      "kind": "jsx_attribute"
+                    },
+                    {
+                      "kind": "jsx_expression"
+                    }
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "kind": "jsx_attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "kind": "property_identifier",
+                        "regex": "^src$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "kind": "string",
+                        "value": {
+                          "regex": "^(?:https://cdn\\.polyfill\\.io/v2/|https://polyfill\\.io/v3/|https://polyfill-fastly\\.net/|https://polyfill-fastly\\.io/|https://cdnjs\\.cloudflare\\.com/polyfill/)[^?#]*\\?(?:[^&#]*&)*features=(?:[^&#]*?(?:,|%2[Cc]))?(?:Array\\.prototype\\.(?:@|%40)(?:@|%40)iterator|Array\\.prototype\\.at|Array\\.prototype\\.copyWithin|Array\\.prototype\\.fill|Array\\.prototype\\.find|Array\\.prototype\\.findIndex|Array\\.prototype\\.flatMap|Array\\.prototype\\.flat|Array\\.from|Array\\.prototype\\.includes|Array\\.of|Function\\.prototype\\.name|fetch|Map|Number\\.EPSILON|Number\\.Epsilon|Number\\.isFinite|Number\\.isNaN|Number\\.isInteger|Number\\.isSafeInteger|Number\\.MAX_SAFE_INTEGER|Number\\.MIN_SAFE_INTEGER|Number\\.parseFloat|Number\\.parseInt|Object\\.assign|Object\\.entries|Object\\.fromEntries|Object\\.getOwnPropertyDescriptor|Object\\.getOwnPropertyDescriptors|Object\\.hasOwn|Object\\.is|Object\\.keys|Object\\.values|Reflect|Set|Symbol|Symbol\\.asyncIterator|String\\.prototype\\.codePointAt|String\\.prototype\\.endsWith|String\\.fromCodePoint|String\\.prototype\\.includes|String\\.prototype\\.(?:@|%40)(?:@|%40)iterator|String\\.prototype\\.padEnd|String\\.prototype\\.padStart|String\\.prototype\\.repeat|String\\.raw|String\\.prototype\\.startsWith|String\\.prototype\\.trimEnd|String\\.prototype\\.trimStart|URL|URL\\.prototype\\.toJSON|URLSearchParams|WeakMap|WeakSet|Promise|Promise\\.prototype\\.finally|es2015|es2016|es2017|es2018|es2019|es5|es6|es7)(?:(?:,|%2[Cc])|&|#|$)"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/no-unwanted-polyfillio",
+        "message": "No duplicate polyfills from Polyfill.io are allowed. See: https://nextjs.org/docs/messages/no-unwanted-polyfillio",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/no-unwanted-polyfillio"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

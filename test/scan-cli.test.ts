@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { policyControlsResponseSchema } from "../src/api/operations.js";
 import { RerailDaemon } from "../src/daemon.js";
@@ -14,6 +14,7 @@ import { runScanCommand } from "../src/scan-cli.js";
 import { SqliteScanControlStore } from "../src/scan-control.js";
 import { scanRequestSchema } from "../src/scan-control-schema.js";
 import { registerRerailCommands, type RerailCommandHost } from "../src/rerail-command.js";
+import { isRerailStarted, workspaceStartState } from "../src/repository-start.js";
 
 const fixtures: Array<{ root: string; runtime: RerailRuntime; daemon: RerailDaemon }> = [];
 afterEach(async () => {
@@ -37,11 +38,11 @@ async function fixture(createPolicyEvaluator?: RerailRuntimeOptions["createPolic
   const database = join(home, "rerail.sqlite");
   const rules = openScopedRuleCatalog(root, database);
   rules.upsertPolicy({
-    format: "rerail.policy/v1", id: "test:no-print", revision: 1,
+    format: "rerail.policy/v1", id: "test:no-print", revision: 1, mode: "block",
     scope: { include: ["api/**/*.py"], exclude: [] },
-    checks: [{
+    clauses: [{
       id: "no-print",
-      finding: { code: "PRINT", severity: "error", anchor: "witness.span", message: "Use logging" },
+      violation: { code: "PRINT", anchor: "witness.span", message: "Use logging" },
       forbid: { regex: { pattern: "\\bprint\\(", source: "file.content" } },
     }],
   });
@@ -82,16 +83,15 @@ function selections(...values: Array<string | undefined>) {
 
 
 describe("rerail scan and settings CLI", () => {
-  it("disables and re-enables this checkout through slash commands", async () => {
+  it("starts, stops, and restarts this repository through slash commands", async () => {
     const { root } = await fixture();
+    const name = basename(root);
     const commands = new Map<string, Parameters<RerailCommandHost["registerCommand"]>[1]>();
-    let detached = 0;
     let reattached = 0;
     const notices: string[] = [];
     registerRerailCommands({ registerCommand(name, command) { commands.set(name, command); } }, {
       packageRoot: resolve("."),
       cwd: () => root,
-      detach: async () => { detached += 1; },
       reattach: async () => { reattached += 1; },
     });
     const ui = {
@@ -101,16 +101,29 @@ describe("rerail scan and settings CLI", () => {
       confirm: async () => false,
     };
 
-    await commands.get("rerail-disable")!.handler("", { ui });
-    expect(await readFile(join(root, ".rerail", "disabled"), "utf8")).toBe("");
-    expect(detached).toBe(1);
-    expect(notices.at(-1)).toContain(`Rerail disabled for ${root}`);
+    // Stopping a repository that was never set up leaves it unset, so a later start still sets it up.
+    await commands.get("rerail-stop")!.handler("", { ui });
+    expect(notices.at(-1)).toBe(`○ Rerail has not been started in ${name}, so there is nothing to stop. Start it with /rerail-start.`);
+    expect(workspaceStartState(root)).toBe("never");
 
-    await commands.get("rerail-enable")!.handler("", { ui });
-    await expect(readFile(join(root, ".rerail", "disabled"))).rejects.toMatchObject({ code: "ENOENT" });
-    expect(reattached).toBe(1);
-    expect(notices.at(-1)).toBe(`Rerail enabled for ${root}.`);
-  });
+    await commands.get("rerail-start")!.handler("", { ui });
+    expect(notices.at(-1)).toMatch(new RegExp(`^● Rerail is on in ${name}\\. \\d+ rules are on\\.$`, "u"));
+    expect(isRerailStarted(root)).toBe(true);
+
+    await commands.get("rerail-stop")!.handler("", { ui });
+    expect(isRerailStarted(root)).toBe(false);
+    expect(notices.at(-1)).toBe([
+      `○ Rerail is stopped in ${name}. No rules run here, and nothing is logged.`,
+      "  Start it again with /rerail-start.",
+      "  To turn off only one rule instead, say “turn that rule off”.",
+    ].join("\n"));
+
+    await commands.get("rerail-start")!.handler("", { ui });
+    expect(notices.at(-1)).toMatch(/rules are on, as you left them\.$/u);
+    expect(isRerailStarted(root)).toBe(true);
+    // Every command rebuilds the runtime, which attaches only where Rerail is started.
+    expect(reattached).toBe(4);
+  }, 60_000);
 
   it("edits persisted settings interactively from a compiled Bun host", async () => {
     const { root, home, daemon } = await fixture();
@@ -132,7 +145,7 @@ describe("rerail scan and settings CLI", () => {
         },
       });
       expect(errors).toEqual([]);
-      const settings = policyControlsResponseSchema.parse(await (await fetch(new URL("/api/sessions/s1/policy-settings", daemon.url))).json());
+      const settings = policyControlsResponseSchema.parse(await (await fetch(new URL("/api/sessions/s1/audit-settings", daemon.url))).json());
       expect(settings.settings).toEqual({ scope: "repository", mode: "log" });
     } finally {
       process.execPath = originalExecutable;
@@ -158,9 +171,9 @@ describe("rerail scan and settings CLI", () => {
       ui.select = selections(undefined);
       await commands.get("rerail-scan")!.handler("", { ui });
       expect(errors).toEqual([]);
-      const settings = policyControlsResponseSchema.parse(await (await fetch(new URL("/api/sessions/s1/policy-settings", daemon.url))).json());
-      expect(settings.settings).toEqual({ scope: "touched-files", mode: "resteer" });
-      expect(await (await fetch(new URL("/api/sessions/s1/scans", daemon.url))).json()).toEqual({ scans: [] });
+      const settings = policyControlsResponseSchema.parse(await (await fetch(new URL("/api/sessions/s1/audit-settings", daemon.url))).json());
+      expect(settings.settings).toEqual({ scope: "touched-files", mode: "steer" });
+      expect(await (await fetch(new URL("/api/sessions/s1/audit-requests", daemon.url))).json()).toEqual({ auditRequests: [] });
     } finally { vi.unstubAllEnvs(); }
   }, 15_000);
 
@@ -179,13 +192,13 @@ describe("rerail scan and settings CLI", () => {
         },
       });
       expect(errors).toEqual([]);
-      expect(await (await fetch(new URL("/api/policy-runs?sessionId=s1", daemon.url))).json()).toMatchObject({
-        runs: expect.arrayContaining([expect.objectContaining({
-          paths: ["api/clean file.py"], mode: "log", status: "completed", findings: [], failures: [],
+      expect(await (await fetch(new URL("/api/audits?sessionId=s1", daemon.url))).json()).toMatchObject({
+        audits: expect.arrayContaining([expect.objectContaining({
+          paths: ["api/clean file.py"], mode: "log", status: "completed", violations: [], failures: [],
         })]),
       });
-      const settings = policyControlsResponseSchema.parse(await (await fetch(new URL("/api/sessions/s1/policy-settings", daemon.url))).json());
-      expect(settings.settings.mode).toBe("resteer");
+      const settings = policyControlsResponseSchema.parse(await (await fetch(new URL("/api/sessions/s1/audit-settings", daemon.url))).json());
+      expect(settings.settings.mode).toBe("steer");
     } finally { vi.unstubAllEnvs(); }
   }, 15_000);
   it("runs one log-only repository diagnostic for the workspace and exposes it to later sessions", async () => {
@@ -194,7 +207,7 @@ describe("rerail scan and settings CLI", () => {
       openWorkspace: async () => undefined,
       updateSettings: () => undefined,
       acceptsPath: () => true,
-      evaluateGeneratedEdits: async () => ({ revision: 0, disposition: "continue", findings: [], failures: [] }),
+      evaluateGeneratedEdits: async () => ({ revision: 0, disposition: "continue", violations: [], failures: [] }),
       scan: async (sessionId, input) => {
         automaticScans.push({ sessionId, scope: input.scope, mode: input.mode });
         const runId = options.executions.start({
@@ -207,18 +220,18 @@ describe("rerail scan and settings CLI", () => {
           ruleRevisions: [],
           paths: [],
         });
-        options.executions.finish(runId, { status: "completed", findings: [], failures: [] });
+        options.executions.finish(runId, { status: "completed", violations: [], failures: [] });
         return [runId];
       },
       interrupt: () => undefined,
       close: async () => undefined,
     }));
     await expect.poll(() => automaticScans).toEqual([{ sessionId: "s1", scope: "repository", mode: "log" }]);
-    const firstControls = await (await fetch(new URL("/api/sessions/s1/policy-settings", daemon.url))).json();
+    const firstControls = await (await fetch(new URL("/api/sessions/s1/audit-settings", daemon.url))).json();
     expect(firstControls).toMatchObject({
-      repositoryDiagnostic: { status: "completed" },
-      repositoryDiagnosticRun: {
-        sessionId: "s1", scope: "repository", mode: "log", findings: [], failures: [],
+      repositoryAudit: { status: "completed" },
+      repositoryAuditRecord: {
+        sessionId: "s1", scope: "repository", mode: "log", violations: [], failures: [],
       },
     });
 
@@ -228,10 +241,10 @@ describe("rerail scan and settings CLI", () => {
       session: { host: "omp", sessionId: "s2", cwd: root },
     });
     expect(automaticScans).toEqual([{ sessionId: "s1", scope: "repository", mode: "log" }]);
-    expect(await (await fetch(new URL("/api/sessions/s2/policy-settings", daemon.url))).json()).toMatchObject({
-      settings: { scope: "touched-files", mode: "resteer" },
-      repositoryDiagnostic: { status: "completed" },
-      repositoryDiagnosticRun: { sessionId: "s1", scope: "repository", mode: "log" },
+    expect(await (await fetch(new URL("/api/sessions/s2/audit-settings", daemon.url))).json()).toMatchObject({
+      settings: { scope: "touched-files", mode: "steer" },
+      repositoryAudit: { status: "completed" },
+      repositoryAuditRecord: { sessionId: "s1", scope: "repository", mode: "log" },
     });
   });
 
@@ -246,12 +259,12 @@ describe("rerail scan and settings CLI", () => {
     expect(code).toBe(0);
     const scan = scanRequestSchema.parse(JSON.parse(output));
     expect(scan).toMatchObject({ status: "completed", mode: "log", error: null });
-    const response = await fetch(new URL("/api/policy-runs?sessionId=s1", daemon.url));
-    expect(await response.json()).toMatchObject({ runs: expect.arrayContaining([
-      expect.objectContaining({ runId: scan.runIds[0], scope: "touched-files", mode: "log", status: "completed", findings: [], failures: [] }),
+    const response = await fetch(new URL("/api/audits?sessionId=s1", daemon.url));
+    expect(await response.json()).toMatchObject({ audits: expect.arrayContaining([
+      expect.objectContaining({ auditId: scan.auditIds[0], scope: "touched-files", mode: "log", status: "completed", violations: [], failures: [] }),
     ]) });
-    const settings = policyControlsResponseSchema.parse(await (await fetch(new URL("/api/sessions/s1/policy-settings", daemon.url))).json());
-    expect(settings.settings.mode).toBe("resteer");
+    const settings = policyControlsResponseSchema.parse(await (await fetch(new URL("/api/sessions/s1/audit-settings", daemon.url))).json());
+    expect(settings.settings.mode).toBe("steer");
   });
 
   it("reports an empty Git diff without starting a policy run", async () => {
@@ -262,7 +275,7 @@ describe("rerail scan and settings CLI", () => {
     });
     expect(code).toBe(1);
     const scan = scanRequestSchema.parse(JSON.parse(output));
-    expect(scan).toMatchObject({ status: "failed", runIds: [], error: expect.stringMatching(/no changed files/i) });
+    expect(scan).toMatchObject({ status: "failed", auditIds: [], error: expect.stringMatching(/no changed files/i) });
   });
 
   it("interrupts scans and closes the transcript despite undiscovered source edits", async () => {
@@ -309,7 +322,7 @@ describe("rerail scan and settings CLI", () => {
     let completion: Promise<readonly unknown[]> | undefined;
     try {
       await runtime.ingest({
-        kind: "tool-call", eventId: "write-start", sessionId: "s1",
+        kind: "call", eventId: "write-start", sessionId: "s1",
         toolCallId: "write", toolName: "write", input: { path: "api/clean.py" },
       });
       const scan = controls.requestScan("s1", { scope: "repository" });
@@ -317,20 +330,20 @@ describe("rerail scan and settings CLI", () => {
       controls.updateSettings("s1", { mode: "log" });
       await writeFile(join(root, "api/clean.py"), "print('new edit')\n");
       completion = runtime.ingest({
-        kind: "tool-result", eventId: "write-finished", sessionId: "s1",
+        kind: "result", eventId: "write-finished", sessionId: "s1",
         toolCallId: "write", toolName: "write", output: "written",
       });
       await expect.poll(async () => {
         const response = await fetch(new URL("/api/sessions/s1/events", daemon.url));
         return await response.json();
-      }).toMatchObject({ events: expect.arrayContaining([expect.objectContaining({ kind: "tool-result" })]) });
+      }).toMatchObject({ events: expect.arrayContaining([expect.objectContaining({ kind: "result" })]) });
       gate.resolve();
       await completion;
       const delivered = await runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId: "s1", text: "done" });
       expect(delivered).toEqual([]);
-      expect(await (await fetch(new URL("/api/policy-runs?sessionId=s1", daemon.url))).json()).toMatchObject({
-        runs: expect.arrayContaining([expect.objectContaining({
-          scope: "touched-files", mode: "log", findings: expect.arrayContaining([expect.objectContaining({ code: "PRINT" })]),
+      expect(await (await fetch(new URL("/api/audits?sessionId=s1", daemon.url))).json()).toMatchObject({
+        audits: expect.arrayContaining([expect.objectContaining({
+          scope: "touched-files", mode: "log", violations: expect.arrayContaining([expect.objectContaining({ code: "PRINT" })]),
         })]),
       });
     } finally {

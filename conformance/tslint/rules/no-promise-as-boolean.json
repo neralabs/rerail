@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-promise-as-boolean",
   "revision": 1,
+  "mode": "steer",
   "description": "Syntactic under-approximation: `new Promise(...)` / `x.then(...)` used as a condition or as an operand of !, &&, ||, ?:. Deciding whether an arbitrary expression is Promise-typed needs the type checker.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "promise-literal-as-boolean",
       "forbid": {
@@ -96,10 +97,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_PROMISE_AS_BOOLEAN",
-        "severity": "error",
         "message": "Promises are not allowed as boolean."
       }
     }

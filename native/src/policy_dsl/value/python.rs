@@ -1,9 +1,10 @@
-//! Python values (tree-sitter-python 0.23): literals as CPython reads them, and the operators and
+//! Python values (tree-sitter-python 0.25): literals as CPython reads them, and the operators and
 //! builtin constructors over them folded as CPython evaluates them.
 
 mod ops;
 
 use super::{BigInt, ContainerKind, Context, MAX_INT_BITS, MAX_STRING_BYTES, Value, int_to_float};
+use crate::policy_dsl::identifier::python_identifier;
 use ast_grep_core::{Doc, Node};
 
 /// Decodes `node` to its value; `Unknown` for anything that is not a literal this knows.
@@ -55,10 +56,10 @@ fn decode_node<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 /// A name's value through its binding (`value.follow`). A list, set or dict may be mutated
 /// anywhere, so only its kind carries over, not its length or emptiness.
 fn follow<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
-    let Some(followed) = context.follow(node.range(), &node.text()) else {
+    let Some(followed) = context.follow(node.range(), &python_identifier(node)) else {
         return Value::Unknown;
     };
-    let Some(target) = followed.value.find(node.root().root()) else {
+    let Some(target) = followed.value.find_near(node.root().root(), node) else {
         return Value::Unknown;
     };
     match decode(&target, context) {
@@ -79,7 +80,7 @@ fn follow<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 }
 
 /// Expressions: the subtypes of the grammar's `expression` and `primary_expression` supertypes
-/// (tree-sitter-python 0.23.6 `node-types.json`), and bare tuples. Only an expression has a value;
+/// (tree-sitter-python 0.25.0 `node-types.json`), and bare tuples. Only an expression has a value;
 /// on any other node (a statement, a keyword argument, punctuation) every value predicate fails.
 pub(crate) const EXPRESSION_KINDS: &[&str] = &[
     "as_pattern",
@@ -569,7 +570,7 @@ fn call<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     if function.kind() != "identifier" || arguments.kind() != "argument_list" {
         return Value::Unknown;
     }
-    let name = function.text();
+    let name = python_identifier(&function);
     let builtin = [
         "bool", "int", "float", "str", "bytes", "tuple", "list", "set", "dict",
     ];

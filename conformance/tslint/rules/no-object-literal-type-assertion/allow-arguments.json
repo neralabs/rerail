@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-object-literal-type-assertion",
   "revision": 1,
+  "mode": "steer",
   "description": "no-object-literal-type-assertion with allow-arguments: assertions used directly as call/new arguments are allowed.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "object-literal-assertion",
       "forbid": {
@@ -74,10 +75,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_OBJECT_LITERAL_TYPE_ASSERTION",
-        "severity": "error",
         "message": "Type assertion on object literals is forbidden, use a type annotation instead."
       }
     }

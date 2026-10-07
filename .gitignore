@@ -9,3 +9,4 @@ target/
 coverage/
 .DS_Store
 .rerail/
+/tmp/

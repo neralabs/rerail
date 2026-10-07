@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) type QueryPlan = query::select_when::Plan<CheckId>;
 
-/// A global `forbid` query's statement; each regex or AST leaf becomes a synthetic check whose
+/// A global `forbid` query's plan; each regex or AST leaf becomes a synthetic check whose
 /// witnesses are recorded as evidence. A leaf under an `exists` side only answers whether it has a
 /// witness: reporting configuration is dropped from it, and its evaluation in a file stops at the
 /// first witness.
@@ -204,7 +204,7 @@ impl<'a> EvidenceLeaves<'a> {
     }
 
     fn partition(&self, leaf: usize, position: usize) -> (&'a str, &'a Partition) {
-        self.leaves[leaf].read.borrow().rows[position].expect("the statement read this row")
+        self.leaves[leaf].read.borrow().rows[position].expect("the answer read this row")
     }
 }
 
@@ -338,14 +338,9 @@ pub(super) fn evaluate_global(
             evaluation.failures.append(&mut result.failures);
             evaluation.metrics.witnesses += result.metrics.witnesses;
         } else {
-            // Every other kind has a plan (`add_policy`): an `llm` check, which runs no statement.
-            let mut result = evaluate_checks(
-                policy,
-                &query::PolicyStatements::default(),
-                snapshot,
-                "diagnostic",
-                std::slice::from_ref(check),
-            )?;
+            // Every other kind has a plan (`add_policy`): an `llm` check, which matches nothing.
+            let mut result =
+                evaluate_checks(policy, snapshot, "diagnostic", std::slice::from_ref(check))?;
             evaluation.findings.append(&mut result.findings);
             evaluation.failures.append(&mut result.failures);
             evaluation.metrics.witnesses += result.metrics.witnesses;

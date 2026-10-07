@@ -35,7 +35,7 @@ export function codexHookEvents(input: CodexHookInput): readonly AdapterEvent[] 
   if (hook === "PreToolUse") {
     const toolUseId = requiredText(input, "tool_use_id");
     return [{
-      kind: "tool-call",
+      kind: "call",
       eventId: `${sessionId}:tool-call:${toolUseId}`,
       toolCallId: toolUseId,
       sessionId,
@@ -47,7 +47,7 @@ export function codexHookEvents(input: CodexHookInput): readonly AdapterEvent[] 
   if (hook === "PostToolUse") {
     const toolUseId = requiredText(input, "tool_use_id");
     return [{
-      kind: "tool-result",
+      kind: "result",
       eventId: `${sessionId}:tool-result:${toolUseId}`,
       toolCallId: toolUseId,
       sessionId,

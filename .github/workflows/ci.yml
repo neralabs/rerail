@@ -28,7 +28,9 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
-          # fixtures/ is a private submodule until launch; github.token can only read this repository.
+          # fixtures/ is the private rerail-fixtures submodule until launch, and github.token can only read
+          # this repository, so FIXTURES_READ_TOKEN (read access to rerail-fixtures) fetches it. Once the
+          # fixtures repository is public, github.token is enough and the secret can be deleted.
           submodules: recursive
           token: ${{ secrets.FIXTURES_READ_TOKEN || github.token }}
 

@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:triple-equals",
   "revision": 1,
+  "mode": "steer",
   "description": "Requires === and !==; allows == / != against null (allow-null-check).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "loose-eq",
       "forbid": {
@@ -42,10 +43,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TRIPLE_EQUALS",
-        "severity": "error",
         "message": "== should be ==="
       }
     },
@@ -81,10 +81,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TRIPLE_EQUALS",
-        "severity": "error",
         "message": "!= should be !=="
       }
     }

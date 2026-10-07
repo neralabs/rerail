@@ -248,9 +248,9 @@ impl WorkspaceIndexTask {
             .map_err(|_| invalid("policy workspace is unavailable"))
     }
 
-    /// The host's file label for `path`: the longest extension the host lists of its basename
-    /// (`.blade.php` before `.php`), as the host's `languageOfPath` reads it. The basename must
-    /// be longer than that extension: a file named only by one (`.php`) has none.
+    /// The host's file label for `path`: its longest extension the host lists (`.blade.php`
+    /// before `.php`) with a nonempty name before it, as the host's `languageOfPath` reads it: a
+    /// file named only `.php` has no extension, and `.blade.php` is a `.php` file named `.blade`.
     pub(super) fn source_language(&self, path: &str) -> Option<String> {
         let name = std::path::Path::new(path)
             .file_name()?
@@ -603,7 +603,7 @@ impl Task for WorkspaceIndexTask {
                 }),
             };
             let mut output: Value =
-                serde_json::from_str(&apply.apply_with_slot()?).map_err(json_error)?;
+                serde_json::from_str(&apply.apply_with_slot()?.text).map_err(json_error)?;
             output["evaluation"].take()
         };
         let mut state = self.lock()?;
@@ -628,5 +628,41 @@ impl Task for WorkspaceIndexTask {
     fn resolve(&mut self, _env: Env, output: String) -> Result<String> {
         check_closed(&self.closed)?;
         Ok(output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The index routes a name as the host's `languageOfPath` does: the longest listed extension
+    /// with a nonempty name before it, case-insensitively.
+    #[test]
+    fn source_language_routes_php_and_blade_as_the_host_does() {
+        let mut task = WorkspaceIndexTask::for_test(
+            Arc::new(Mutex::new(WorkspaceState::default())),
+            Arc::new(AtomicBool::new(false)),
+            u32::MAX,
+        );
+        task.options.source_languages = [(".php", "php"), (".blade.php", "blade")]
+            .into_iter()
+            .map(|(extension, label)| (extension.to_owned(), label.to_owned()))
+            .collect();
+        for (path, expected) in [
+            ("a.php", Some("php")),
+            ("app/Http/Kernel.php", Some("php")),
+            ("A.PHP", Some("php")),
+            ("resources/views/page.blade.php", Some("blade")),
+            ("deep/nested/dir/Page.Blade.PHP", Some("blade")),
+            ("archive.v1.blade.php", Some("blade")),
+            ("blade.php", Some("php")),
+            ("x.blade.php.bak", None),
+            ("page.phtml", None),
+            (".php", None),
+            ("dir/.php", None),
+            (".blade.php", Some("php")),
+        ] {
+            assert_eq!(task.source_language(path).as_deref(), expected, "{path}");
+        }
     }
 }

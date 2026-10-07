@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { readPresentation, readRulesPage } from "./session-presentation.js";
 import { nodeExecutable, openPage, type PageOpening } from "./daemon-control.js";
 import { policyControlsSchema } from "./scan-control-schema.js";
-import { disableRerail, enableRerail } from "./checkout-control.js";
 import type { PolicyControls, PolicySettings } from "./scan-control-schema.js";
 import { resolveRerailWorkspaceRoute, rerailDevLauncher } from "./dev-routing.js";
 
@@ -36,13 +35,15 @@ export interface RerailCommandOptions {
   detach?(): Promise<void>;
   /** Rebuild the runtime afterwards; runs whether or not the action succeeded. */
   reattach?(): Promise<void>;
+  /** A database configured in place of the Rerail home's; start and stop change it, as the extension's gate reads it. */
+  databasePath?(): string | undefined;
 }
 
 /** Bytes of combined stdout+stderr kept for the notification; the rest is dropped. */
 const OUTPUT_CAP = 10 * 1024 * 1024;
 
 const LAUNCHER_COMMANDS = [
-  { name: "rerail-status", description: "Show checkout disablement or Rerail daemon and installed version status", argv: ["status"] },
+  { name: "rerail-status", description: "Show whether Rerail is on in this repo, and the daemon and installed version", argv: ["status"] },
   { name: "rerail-check", description: "Check for a Rerail update without installing it", argv: ["update", "check"] },
   { name: "rerail-update", description: "Install the latest Rerail version", argv: ["update"] },
   { name: "rerail-rollback", description: "Restore the previously installed Rerail version", argv: ["update", "rollback"] },
@@ -56,7 +57,7 @@ interface PolicyChoice<Value extends string = PolicySettings[keyof PolicySetting
 
 const MODES: readonly PolicyChoice<PolicySettings["mode"]>[] = [
   { value: "log", label: "log — Record diagnostics without steering the agent" },
-  { value: "resteer", label: "resteer — Record diagnostics and send findings to the agent" },
+  { value: "steer", label: "steer — Record diagnostics and send findings to the agent" },
 ];
 const SCOPES: readonly PolicyChoice<PolicySettings["scope"]>[] = [
   { value: "repository", label: "repository — All eligible files in this workspace" },
@@ -92,13 +93,14 @@ interface LauncherResult {
   stderr: string;
 }
 
-async function runLauncher(options: RerailCommandOptions, args: readonly string[]): Promise<LauncherResult> {
+/** `hostArgs` apply only to the installed CLI: a development workspace's container has its own Rerail home. */
+async function runLauncher(options: RerailCommandOptions, args: readonly string[], hostArgs: readonly string[] = []): Promise<LauncherResult> {
   const route = await resolveRerailWorkspaceRoute(options.cwd());
   let workspace;
   if (route.kind === "workspace") workspace = route.instance;
   else if (route.kind === "disabled") workspace = route;
   const launcher = workspace === undefined
-    ? { command: nodeExecutable(), args: [join(options.packageRoot, "dist", "cli.js"), ...args], cwd: options.cwd() }
+    ? { command: nodeExecutable(), args: [join(options.packageRoot, "dist", "cli.js"), ...args, ...hostArgs], cwd: options.cwd() }
     : { ...rerailDevLauncher(workspace, args), cwd: workspace.workspaceRoot };
   const child = spawn(launcher.command, launcher.args, { cwd: launcher.cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
   const { promise, resolve, reject } = Promise.withResolvers<LauncherResult>();
@@ -184,23 +186,20 @@ export function registerRerailCommands(pi: RerailCommandHost, options: RerailCom
     ctx.ui.notify(openingNotice(presentation.url, await openPage(presentation.url)), "info");
   });
 
-  register("rerail-disable", "Disable Rerail for this checkout", async ctx => {
-    const cwd = options.cwd();
-    const marker = await disableRerail(cwd);
-    await options.detach?.();
-    ctx.ui.notify(`Rerail disabled for ${cwd}. Remove ${marker} or run /rerail-enable to resume it.`, "info");
-  });
-  register("rerail-enable", "Enable Rerail for this checkout", async ctx => {
-    const cwd = options.cwd();
-    const marker = await enableRerail(cwd);
-    try {
-      await options.reattach?.();
-    } catch (error) {
-      await disableRerail(cwd);
-      throw new Error(`could not resume Rerail; ${marker} was restored: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    ctx.ui.notify(`Rerail enabled for ${cwd}.`, "info");
-  });
+  // Start and stop run the launcher, so the CLI owns the wording; without a terminal it addresses the coding agent's user.
+  const repositoryCommands = [
+    { name: "rerail-start", description: "Start Rerail in this checkout, setting the repo up the first time", argv: ["start"] },
+    { name: "rerail-stop", description: "Stop Rerail in this checkout; rules and history are kept", argv: ["stop"] },
+  ];
+  for (const command of repositoryCommands) {
+    register(command.name, command.description, async ctx => {
+      const database = options.databasePath?.();
+      const result = await runLauncher(options, command.argv, database === undefined ? [] : ["--database", database]);
+      // Re-attaching attaches the runtime where Rerail is started, and leaves only the "not on here" footer where it is not.
+      if (result.code === 0) await options.reattach?.();
+      ctx.ui.notify((result.stdout + result.stderr).trim() || `/${command.name} exited with code ${result.code}.`, result.code === 0 ? "info" : "error");
+    });
+  }
 
   for (const command of LAUNCHER_COMMANDS) {
     register(command.name, command.description, async ctx => {

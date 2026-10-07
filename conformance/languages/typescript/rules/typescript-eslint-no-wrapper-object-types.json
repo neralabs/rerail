@@ -1,0 +1,568 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-no-wrapper-object-types",
+  "revision": 1,
+  "mode": "steer",
+  "description": "typescript-eslint 8.70.1 @typescript-eslint/no-wrapper-object-types, default options. Port of typescript-eslint's `no-wrapper-object-types` rule (https://typescript-eslint.io/rules/no-wrapper-object-types). Flags type references, `implements` and interface `extends` naming BigInt/Boolean/Number/Object/String/Symbol when the name `resolves` to no file-local type binding. Type references are fixed to the lowercase primitive.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "type-bigint",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "type_identifier",
+            "resolves": {
+              "global": [
+                "BigInt"
+              ]
+            },
+            "not": {
+              "matches": "heritage"
+            }
+          },
+          "utils": {
+            "heritage": {
+              "inside": {
+                "any": [
+                  {
+                    "kind": "implements_clause"
+                  },
+                  {
+                    "kind": "extends_type_clause"
+                  }
+                ],
+                "stopBy": "neighbor"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-wrapper-object-types",
+        "message": "Prefer using the primitive `bigint` as a type name, rather than the upper-cased `BigInt`.",
+        "fix": "bigint",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-wrapper-object-types"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "type-boolean",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "type_identifier",
+            "resolves": {
+              "global": [
+                "Boolean"
+              ]
+            },
+            "not": {
+              "matches": "heritage"
+            }
+          },
+          "utils": {
+            "heritage": {
+              "inside": {
+                "any": [
+                  {
+                    "kind": "implements_clause"
+                  },
+                  {
+                    "kind": "extends_type_clause"
+                  }
+                ],
+                "stopBy": "neighbor"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-wrapper-object-types",
+        "message": "Prefer using the primitive `boolean` as a type name, rather than the upper-cased `Boolean`.",
+        "fix": "boolean",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-wrapper-object-types"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "type-number",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "type_identifier",
+            "resolves": {
+              "global": [
+                "Number"
+              ]
+            },
+            "not": {
+              "matches": "heritage"
+            }
+          },
+          "utils": {
+            "heritage": {
+              "inside": {
+                "any": [
+                  {
+                    "kind": "implements_clause"
+                  },
+                  {
+                    "kind": "extends_type_clause"
+                  }
+                ],
+                "stopBy": "neighbor"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-wrapper-object-types",
+        "message": "Prefer using the primitive `number` as a type name, rather than the upper-cased `Number`.",
+        "fix": "number",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-wrapper-object-types"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "type-object",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "type_identifier",
+            "resolves": {
+              "global": [
+                "Object"
+              ]
+            },
+            "not": {
+              "matches": "heritage"
+            }
+          },
+          "utils": {
+            "heritage": {
+              "inside": {
+                "any": [
+                  {
+                    "kind": "implements_clause"
+                  },
+                  {
+                    "kind": "extends_type_clause"
+                  }
+                ],
+                "stopBy": "neighbor"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-wrapper-object-types",
+        "message": "Prefer using the primitive `object` as a type name, rather than the upper-cased `Object`.",
+        "fix": "object",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-wrapper-object-types"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "type-string",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "type_identifier",
+            "resolves": {
+              "global": [
+                "String"
+              ]
+            },
+            "not": {
+              "matches": "heritage"
+            }
+          },
+          "utils": {
+            "heritage": {
+              "inside": {
+                "any": [
+                  {
+                    "kind": "implements_clause"
+                  },
+                  {
+                    "kind": "extends_type_clause"
+                  }
+                ],
+                "stopBy": "neighbor"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-wrapper-object-types",
+        "message": "Prefer using the primitive `string` as a type name, rather than the upper-cased `String`.",
+        "fix": "string",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-wrapper-object-types"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "type-symbol",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "type_identifier",
+            "resolves": {
+              "global": [
+                "Symbol"
+              ]
+            },
+            "not": {
+              "matches": "heritage"
+            }
+          },
+          "utils": {
+            "heritage": {
+              "inside": {
+                "any": [
+                  {
+                    "kind": "implements_clause"
+                  },
+                  {
+                    "kind": "extends_type_clause"
+                  }
+                ],
+                "stopBy": "neighbor"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-wrapper-object-types",
+        "message": "Prefer using the primitive `symbol` as a type name, rather than the upper-cased `Symbol`.",
+        "fix": "symbol",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-wrapper-object-types"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "heritage-bigint",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "type_identifier",
+            "resolves": {
+              "global": [
+                "BigInt"
+              ]
+            },
+            "matches": "heritage"
+          },
+          "utils": {
+            "heritage": {
+              "inside": {
+                "any": [
+                  {
+                    "kind": "implements_clause"
+                  },
+                  {
+                    "kind": "extends_type_clause"
+                  }
+                ],
+                "stopBy": "neighbor"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-wrapper-object-types",
+        "message": "Prefer using the primitive `bigint` as a type name, rather than the upper-cased `BigInt`.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-wrapper-object-types"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "heritage-boolean",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "type_identifier",
+            "resolves": {
+              "global": [
+                "Boolean"
+              ]
+            },
+            "matches": "heritage"
+          },
+          "utils": {
+            "heritage": {
+              "inside": {
+                "any": [
+                  {
+                    "kind": "implements_clause"
+                  },
+                  {
+                    "kind": "extends_type_clause"
+                  }
+                ],
+                "stopBy": "neighbor"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-wrapper-object-types",
+        "message": "Prefer using the primitive `boolean` as a type name, rather than the upper-cased `Boolean`.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-wrapper-object-types"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "heritage-number",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "type_identifier",
+            "resolves": {
+              "global": [
+                "Number"
+              ]
+            },
+            "matches": "heritage"
+          },
+          "utils": {
+            "heritage": {
+              "inside": {
+                "any": [
+                  {
+                    "kind": "implements_clause"
+                  },
+                  {
+                    "kind": "extends_type_clause"
+                  }
+                ],
+                "stopBy": "neighbor"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-wrapper-object-types",
+        "message": "Prefer using the primitive `number` as a type name, rather than the upper-cased `Number`.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-wrapper-object-types"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "heritage-object",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "type_identifier",
+            "resolves": {
+              "global": [
+                "Object"
+              ]
+            },
+            "matches": "heritage"
+          },
+          "utils": {
+            "heritage": {
+              "inside": {
+                "any": [
+                  {
+                    "kind": "implements_clause"
+                  },
+                  {
+                    "kind": "extends_type_clause"
+                  }
+                ],
+                "stopBy": "neighbor"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-wrapper-object-types",
+        "message": "Prefer using the primitive `object` as a type name, rather than the upper-cased `Object`.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-wrapper-object-types"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "heritage-string",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "type_identifier",
+            "resolves": {
+              "global": [
+                "String"
+              ]
+            },
+            "matches": "heritage"
+          },
+          "utils": {
+            "heritage": {
+              "inside": {
+                "any": [
+                  {
+                    "kind": "implements_clause"
+                  },
+                  {
+                    "kind": "extends_type_clause"
+                  }
+                ],
+                "stopBy": "neighbor"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-wrapper-object-types",
+        "message": "Prefer using the primitive `string` as a type name, rather than the upper-cased `String`.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-wrapper-object-types"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "heritage-symbol",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "type_identifier",
+            "resolves": {
+              "global": [
+                "Symbol"
+              ]
+            },
+            "matches": "heritage"
+          },
+          "utils": {
+            "heritage": {
+              "inside": {
+                "any": [
+                  {
+                    "kind": "implements_clause"
+                  },
+                  {
+                    "kind": "extends_type_clause"
+                  }
+                ],
+                "stopBy": "neighbor"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-wrapper-object-types",
+        "message": "Prefer using the primitive `symbol` as a type name, rather than the upper-cased `Symbol`.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-wrapper-object-types"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -117,7 +117,6 @@ section.group{margin-bottom:24px}
 .badge.new{background:var(--info-subtle);color:var(--info-foreground)}
 .badge.mine{background:var(--success-subtle);color:var(--success-foreground)}
 .badge.preset{background:var(--warning-subtle);color:var(--warning-foreground)}
-.badge.synced{background:var(--accent);color:var(--accent-foreground)}
 .badge.on{background:var(--success-subtle);color:var(--success-foreground)}
 .rside{grid-column:3;grid-row:1 / span 2;display:grid;grid-template-columns:96px 64px auto;gap:0 20px;align-items:center;justify-self:end}
 .count{font-size:13px;color:var(--muted-foreground);white-space:nowrap;text-align:right}

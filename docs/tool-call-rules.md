@@ -34,15 +34,17 @@ matters) at the same time. A structural rule states the command itself.
 ```json
 {
   "id": "oss:no-force-push",
+  "mode": "steer",
   "match": { "field": "input.command", "regex": "\\bgit\\s+push\\b[^\\n]*\\s--force(?:\\s|=|$)" },
   "sample": { "source": "tool:Bash", "boundary": "tool-call" },
-  "action": { "delivery": "steer", "content": "Do not force-push: it rewrites published history. Ask the user first." },
+  "action": { "content": "Do not force-push: it rewrites published history. Ask the user first." },
   "repeat": { "mode": "always" }
 }
 ```
 
 | Part | What it does |
 | --- | --- |
+| `mode` | `log` only records a match; `steer` tells the agent; `block` is stored as the intent to stop the call and, until block enforcement lands, is delivered exactly like `steer`. |
 | `match` | A condition: one `field` plus exactly one of `regex`, `eq`, `contains` — or `all` / `any` / `not` over conditions. |
 | `sample.source` | Which tool's calls to read: `tool:Bash` for one tool, `tool:*` for every tool. |
 | `sample.boundary` | Always `tool-call` for a rule that reads `tool.name` or `input`. |
@@ -317,18 +319,18 @@ npx vitest run test/tool-call-rules.test.ts
 
 **3. Measure noise before blocking.** `candidate-rules/oss-tool-rules/` checks each pattern against
 the commands your own repository already sanctions (scripts, CI, docs). A rule that matches
-sanctioned commands — `rm -rf` in a cleanup script — should steer, not block, until it is narrowed.
+sanctioned commands — `rm -rf` in a cleanup script — should use `mode: "steer"`, not `"block"`, until it is narrowed.
 
-**4. Install it** with the daemon running (`rerail start`):
+**4. Install it** with the daemon running (`rerail daemon start`):
 
 ```sh
 curl -X PUT http://127.0.0.1:4737/api/rules/oss:no-force-push \
   -H 'content-type: application/json' \
-  -d "{\"kind\": \"cosine\", \"enabled\": true, \"rule\": $(cat no-force-push.json)}"
+  -d "{\"kind\": \"conversation\", \"enabled\": true, \"rule\": $(cat no-force-push.json)}"
 ```
 
 The body is validated before it is stored, regex included; an invalid rule is rejected with
-`400 invalid-request`. (Structural rules are stored under the `cosine` kind for now.)
+`400 invalid-request`. (Structural rules are stored under the `conversation` kind for now.)
 
 ## Errors you will meet
 
@@ -356,5 +358,5 @@ The body is validated before it is stored, regex included; an invalid rule is re
 - [ ] `(?i)` only where the tool ignores case (SQL, not git flags).
 - [ ] Shells from every host named in `tool.name`, or the rule bound to the one tool it targets.
 - [ ] At least one FLAG case, one near-miss PASS case, and one tool-result PASS case, run through the kernel.
-- [ ] Noise checked against the repository's own sanctioned commands before the rule blocks.
+- [ ] Noise checked against the repository's own sanctioned commands before `mode` is set to `block`.
 - [ ] `repeat` set to `always`, and an `action.content` that says what to do instead.
