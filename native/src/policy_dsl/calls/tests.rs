@@ -1366,9 +1366,15 @@ fn corpus() {
         }
     }
     paths.sort();
+    // jemalloc's counter; Windows uses the system allocator, which keeps none.
     let allocated = || {
-        let _ = tikv_jemalloc_ctl::epoch::advance();
-        tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) as f64 / (1 << 20) as f64
+        #[cfg(not(windows))]
+        {
+            let _ = tikv_jemalloc_ctl::epoch::advance();
+            tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) as f64 / (1 << 20) as f64
+        }
+        #[cfg(windows)]
+        0.0
     };
     let (mut parse, mut table_time, mut extract, mut bytes) = (0u128, 0u128, 0u128, 0usize);
     let start_mib = allocated();

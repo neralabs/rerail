@@ -40,11 +40,6 @@ serde_yaml_ng = "=0.10.0"
 sha2 = "0.10"
 tree-sitter-language = "=0.1.8"
 tokenizers = { version = "0.21.4", default-features = false, features = ["fancy-regex"] }
-# The addon is dlopen'ed by Node; glibc can't fit jemalloc's initial-exec TLS in its static block.
-tikv-jemallocator = { version = "=0.6.0", features = ["disable_initial_exec_tls"] }
-tikv-jemalloc-ctl = { version = "=0.6.0", features = ["stats"] }
-# Tree-sitter's allocator (`lib.rs`): the same jemalloc, linked by tikv-jemallocator.
-tikv-jemalloc-sys = { version = "=0.6.1", default-features = false }
 tree-sitter = "=0.27.0"
 # CPython's identifier normalization (NFKC, PEP 3131), which Ruff applies to Python names too.
 unicode-normalization = "=0.1.25"
@@ -52,6 +47,14 @@ zstd = "=0.13.3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.189"
+
+# jemalloc does not build for MSVC targets; Windows keeps the system allocator (`lib.rs`).
+[target.'cfg(not(windows))'.dependencies]
+# The addon is dlopen'ed by Node; glibc can't fit jemalloc's initial-exec TLS in its static block.
+tikv-jemallocator = { version = "=0.6.0", features = ["disable_initial_exec_tls"] }
+tikv-jemalloc-ctl = { version = "=0.6.0", features = ["stats"] }
+# Tree-sitter's allocator (`lib.rs`): the same jemalloc, linked by tikv-jemallocator.
+tikv-jemalloc-sys = { version = "=0.6.1", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Threading"] }

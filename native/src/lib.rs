@@ -17,9 +17,12 @@ use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSa
 use std::path::Path;
 use std::sync::LazyLock;
 
+// jemalloc does not build for MSVC targets; Windows keeps the system allocator.
+#[cfg(not(windows))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+#[cfg(not(windows))]
 union JemallocConf {
     byte: &'static u8,
     character: &'static std::ffi::c_char,
@@ -29,6 +32,7 @@ union JemallocConf {
 // decay cost a tenth of the data-layer benchmark's CPU in mmap/munmap); every apply purges them
 // when it ends and again once its response is freed (`purge_allocator_pages`), so nothing dirty
 // is kept at rest.
+#[cfg(not(windows))]
 #[allow(non_upper_case_globals)]
 #[unsafe(export_name = "_rjem_malloc_conf")]
 pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
@@ -41,6 +45,7 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 /// Tree-sitter allocates through jemalloc, as Rust does: a parse allocates many small subtrees,
 /// which the system allocator served at 10% of the parse. Installed when the addon loads, before
 /// any Tree-sitter call; like Tree-sitter's own allocator, these abort when allocation fails.
+#[cfg(not(windows))]
 #[napi_derive::module_init]
 fn install_tree_sitter_allocator() {
     use std::ffi::c_void;
@@ -148,9 +153,11 @@ pub fn process_session_id(pid: i32) -> Result<Option<i32>> {
 }
 
 /// Process-global native allocator counters for benchmark attribution. SQLite keeps no memory
-/// statistics (`SQLITE_DEFAULT_MEMSTATUS=0`, `.cargo/config.toml`), so it reports none.
+/// statistics (`SQLITE_DEFAULT_MEMSTATUS=0`, `.cargo/config.toml`), so it reports none, and
+/// neither does the Windows system allocator: its counters read zero.
 #[napi]
 pub fn native_memory_profile() -> String {
+    #[cfg(not(windows))]
     let allocator = {
         let _ = tikv_jemalloc_ctl::epoch::advance();
         serde_json::json!({
@@ -161,6 +168,14 @@ pub fn native_memory_profile() -> String {
             "retainedBytes": tikv_jemalloc_ctl::stats::retained::read().unwrap_or(0),
         })
     };
+    #[cfg(windows)]
+    let allocator = serde_json::json!({
+        "allocatedBytes": 0,
+        "activeBytes": 0,
+        "residentBytes": 0,
+        "mappedBytes": 0,
+        "retainedBytes": 0,
+    });
     serde_json::json!({
         "allocator": allocator,
         "workerPool": {
@@ -176,6 +191,7 @@ pub(crate) fn release_allocator_memory() {
     // release reclaimable page-cache memory.
     unsafe { rusqlite::ffi::sqlite3_release_memory(i32::MAX) };
     // Background threads, where available, decay pages between applies too.
+    #[cfg(not(windows))]
     let _ = tikv_jemalloc_ctl::background_thread::write(true);
     purge_allocator_pages();
 }
@@ -184,6 +200,7 @@ pub(crate) fn release_allocator_memory() {
 pub(crate) fn purge_allocator_pages() {
     // SAFETY: arena.4096 is jemalloc's all-arenas selector; purge reads and writes no value, so
     // jemalloc requires null value pointers (`raw::write` passes a non-null one and is refused).
+    #[cfg(not(windows))]
     unsafe {
         tikv_jemalloc_sys::mallctl(
             c"arena.4096.purge".as_ptr(),
@@ -380,7 +397,7 @@ impl CosineKernel {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 mod tests {
     use tikv_jemalloc_ctl::{epoch, raw};
     use tikv_jemalloc_sys::{MALLOCX_ARENA, MALLOCX_TCACHE_NONE, dallocx, mallocx};
