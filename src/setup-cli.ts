@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, realpath, rename } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { RERAIL_DATABASE_FILE } from "./database.js";
 import { lookupDaemon, startDaemon, stopDaemon } from "./daemon-control.js";
 import { parseArguments, parsePort } from "./daemon.js";
@@ -124,6 +125,9 @@ function backupRoot(now = new Date()): string {
 
 /** Rules and every repository's history, with their SQLite sidecars. */
 const BACKED_UP_DATABASES = ["", "-wal", "-shm"].map(suffix => `${RERAIL_DATABASE_FILE}${suffix}`);
+/** How long a database move waits for Windows to release a lock: 40 attempts, 250 ms apart. */
+const LOCKED_MOVE_ATTEMPTS = 40;
+const LOCKED_MOVE_RETRY_MS = 250;
 
 /**
  * After the coding agents are disconnected, nothing reopens the database: stop the daemon, then
@@ -148,11 +152,20 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
   }
   await mkdir(target, { recursive: true, mode: 0o700 });
   for (const name of listed) {
-    try {
-      await rename(join(home, name), join(target, name));
-    } catch (error) {
-      // A sidecar SQLite removed between the listing and the move holds nothing the main file lacks.
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT" && /-(wal|shm)$/u.test(name))) throw error;
+    // Windows keeps a file locked for a moment after the process holding it has exited (and an
+    // antivirus scan can hold it too), so a locked move is retried briefly before giving up.
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await rename(join(home, name), join(target, name));
+        break;
+      } catch (error) {
+        const code = error instanceof Error && "code" in error ? error.code : undefined;
+        // A sidecar SQLite removed between the listing and the move holds nothing the main file lacks.
+        if (code === "ENOENT" && /-(wal|shm)$/u.test(name)) break;
+        const locked = process.platform === "win32" && (code === "EBUSY" || code === "EPERM" || code === "EACCES");
+        if (!locked || attempt === LOCKED_MOVE_ATTEMPTS) throw error;
+        await sleep(LOCKED_MOVE_RETRY_MS);
+      }
     }
   }
   process.stdout.write(`Backup: ${target} holds your rules and history. Install Rerail again and restore this backup to get them back.\n`);
