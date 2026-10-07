@@ -1,0 +1,52 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:completed-docs",
+  "revision": 1,
+  "description": "constructors, exempt when @see matches #<digits>.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "checks": [
+    {
+      "id": "constructors",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "all": [{ "matches": "ctor" }, { "inside": { "kind": "class_body" } }] },
+              {
+                "not": {
+                  "any": [
+                    { "matches": "documented" },
+                    {
+                      "inside": { "kind": "class_body", "has": { "all": [{ "matches": "ctor" }, { "matches": "documented" }] } }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "follows": { "kind": "comment", "all": [{ "regex": "^/\\*\\*" }, { "regex": "\\*\\s*@see\\s\\s*#\\d+\\s" }] }
+                }
+              }
+            ]
+          },
+          "utils": {
+            "documented": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } },
+            "ctor": {
+              "all": [
+                { "any": [{ "kind": "method_definition" }, { "kind": "method_signature" }] },
+                { "has": { "kind": "property_identifier", "regex": "^constructor$" } }
+              ]
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for constructors."
+      }
+    }
+  ]
+}

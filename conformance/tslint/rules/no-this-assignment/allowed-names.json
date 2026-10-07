@@ -1,0 +1,46 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-this-assignment",
+  "revision": 1,
+  "description": "no-this-assignment with allowed-names [^start].",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "this-assignment",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "variable_declarator"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "this"
+                }
+              },
+              {
+                "not": {
+                  "regex": "^start"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_THIS_ASSIGNMENT",
+        "severity": "error",
+        "message": "Assigning `this` reference to local variable not allowed."
+      }
+    }
+  ]
+}

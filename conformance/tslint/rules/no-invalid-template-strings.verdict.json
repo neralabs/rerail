@@ -1,0 +1,22 @@
+{
+  "verdict": "BLOCKED",
+  "primitive": "regex-ast-context",
+  "secondary": [
+    "fixture-artifact"
+  ],
+  "reason": "A named group in the string_fragment's own regex (capture.INTERPOLATION) anchors each finding at its `${`, wherever it sits in the fragment (repaired 11/12). The regex runs once per witness, so a fragment holding two interpolations reports only the first: one finding per regex match inside a string needs content-regex matches kept by their enclosing AST node (regex-ast-context). Raw, the fixture's accidental extra `)` puts one interpolation inside an error region.",
+  "evidence": [
+    {
+      "variant": ".",
+      "file": "test.ts.lint",
+      "line": 27,
+      "why": "`\"${() => {}} ${abc}\"`: one fragment holds both interpolations, so the second (col 14) is missed"
+    },
+    {
+      "variant": ".",
+      "file": "test.ts.lint",
+      "line": 13,
+      "why": "`...AlwaysHasData('\\\\\\\\${c}'))))` has one `)` too many; the finding at 13:97 is inside the error region (source-partial); the repaired fixture recovers it"
+    }
+  ]
+}

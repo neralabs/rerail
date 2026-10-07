@@ -1,0 +1,89 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:file-name-casing",
+  "revision": 1,
+  "description": "Regex-keyed config: pascal.?case -> PascalCase, tsx$ -> kebab-case, .* -> camelCase. Approximation: later keys do not exclude names containing pascal.?case.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "pascal-key",
+      "forbid": {
+        "select_when": {
+          "select": {
+            "regex": {
+              "source": "file.path",
+              "pattern": "\\A(?:.*/)?(?:[a-z][^/]*$|[^/]*[_-][^/]*$)"
+            }
+          },
+          "exists": {
+            "regex": {
+              "source": "file.path",
+              "pattern": "(?i)pascal.?case"
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.start",
+        "code": "FILE_NAME_CASING",
+        "severity": "error",
+        "message": "File name must be PascalCase"
+      }
+    },
+    {
+      "id": "tsx-kebab",
+      "forbid": {
+        "select_when": {
+          "select": {
+            "regex": {
+              "source": "file.path",
+              "pattern": "\\A(?:.*/)?[^/]*[A-Z_][^/]*$"
+            }
+          },
+          "exists": {
+            "regex": {
+              "source": "file.path",
+              "pattern": "(?i)tsx$"
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.start",
+        "code": "FILE_NAME_CASING",
+        "severity": "error",
+        "message": "File name must be kebab-case"
+      }
+    },
+    {
+      "id": "default-camel",
+      "forbid": {
+        "select_when": {
+          "select": {
+            "regex": {
+              "source": "file.path",
+              "pattern": "\\A(?:.*/)?(?:[A-Z][^/]*$|[^/]*[_-][^/]*$)"
+            }
+          },
+          "exists": {
+            "regex": {
+              "source": "file.path",
+              "pattern": "(?i)(?:\\A[^/]{0,2}|(?:[^t]..|t[^s].|ts[^x]))$"
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.start",
+        "code": "FILE_NAME_CASING",
+        "severity": "error",
+        "message": "File name must be camelCase"
+      }
+    }
+  ]
+}

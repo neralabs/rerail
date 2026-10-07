@@ -1,0 +1,117 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-tautology-expression",
+  "revision": 1,
+  "description": "Port of TSLint's `no-tautology-expression` rule with its default options (https://palantir.github.io/tslint/rules/no-tautology-expression/). Flags relational/equality/logical comparisons whose two sides are the same literal, identifier or property access (or two boolean / two null literals).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "checks": [
+    {
+      "id": "tautology",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "binary_expression"
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "pattern": "$A < $A"
+                          },
+                          {
+                            "pattern": "$A > $A"
+                          },
+                          {
+                            "pattern": "$A <= $A"
+                          },
+                          {
+                            "pattern": "$A >= $A"
+                          },
+                          {
+                            "pattern": "$A == $A"
+                          },
+                          {
+                            "pattern": "$A === $A"
+                          },
+                          {
+                            "pattern": "$A != $A"
+                          },
+                          {
+                            "pattern": "$A !== $A"
+                          },
+                          {
+                            "pattern": "$A && $A"
+                          },
+                          {
+                            "pattern": "$A || $A"
+                          }
+                        ]
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "string"
+                            },
+                            {
+                              "kind": "number"
+                            },
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "member_expression"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "regex": "^(?:true|false)\\s*(?:<=|>=|===|!==|==|!=|<|>|&&|\\|\\|)\\s*(?:true|false)$"
+                  },
+                  {
+                    "regex": "^null\\s*(?:<=|>=|===|!==|==|!=|<|>|&&|\\|\\|)\\s*null$"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_TAUTOLOGY_EXPRESSION",
+        "severity": "error",
+        "message": "Both sides of this equality comparison are the same, so the expression is either a tautology or a contradiction."
+      }
+    }
+  ]
+}

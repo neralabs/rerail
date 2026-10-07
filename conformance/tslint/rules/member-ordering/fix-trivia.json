@@ -1,0 +1,528 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:member-ordering",
+  "revision": 1,
+  "description": "Options [{\"order\": \"fields-first\", \"alphabetize\": true}]. One check. Rank: a member of rank i fails when an earlier sibling member of the same body is ranked after i (TSLint compares with the last non-failing member, which holds the highest rank seen so far). Alphabetize: that member also holds the greatest name of its rank so far, so a member that does not fail by rank fails when an earlier member of its rank has a greater name (lower-cased, string names unquoted, a computed name sorting first): a follows walk whose rule compares the two names. A getter fails after its same-named setter. Rank failures bind no $NAME, so they anchor at the member; alphabetical ones at its name.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "checks": [
+    {
+      "id": "member-rank",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "inside": {"any": [{"kind": "class_body"}, {"kind": "interface_body"}, {"kind": "object_type"}]},
+            "any": [{"matches": "rank-fails"}, {"not": {"matches": "rank-fails"}, "matches": "alphabetize"}]
+          },
+          "utils": {
+            "rank-public-static-field": {"all": [{"matches": "public"}, {"matches": "static"}], "matches": "field"},
+            "rank-protected-static-field": {
+              "all": [{"matches": "protected"}, {"matches": "static"}],
+              "matches": "field"
+            },
+            "rank-private-static-field": {"all": [{"matches": "private"}, {"matches": "static"}], "matches": "field"},
+            "rank-public-instance-field": {
+              "all": [{"matches": "public", "not": {"matches": "static"}}, {"matches": "field"}]
+            },
+            "rank-protected-instance-field": {
+              "all": [{"matches": "protected", "not": {"matches": "static"}}, {"matches": "field"}]
+            },
+            "rank-private-instance-field": {
+              "all": [{"matches": "private", "not": {"matches": "static"}}, {"matches": "field"}]
+            },
+            "rank-constructor": {"matches": "constructor"},
+            "rank-public-static-accessor": {
+              "all": [{"matches": "public"}, {"matches": "static"}],
+              "matches": "accessor"
+            },
+            "rank-protected-static-accessor": {
+              "all": [{"matches": "protected"}, {"matches": "static"}],
+              "matches": "accessor"
+            },
+            "rank-private-static-accessor": {
+              "all": [{"matches": "private"}, {"matches": "static"}],
+              "matches": "accessor"
+            },
+            "rank-public-static-method": {"all": [{"matches": "public"}, {"matches": "static"}], "matches": "method"},
+            "rank-protected-static-method": {
+              "all": [{"matches": "protected"}, {"matches": "static"}],
+              "matches": "method"
+            },
+            "rank-private-static-method": {"all": [{"matches": "private"}, {"matches": "static"}], "matches": "method"},
+            "rank-public-instance-accessor": {
+              "all": [{"matches": "public", "not": {"matches": "static"}}, {"matches": "accessor"}]
+            },
+            "rank-protected-instance-accessor": {
+              "all": [{"matches": "protected", "not": {"matches": "static"}}, {"matches": "accessor"}]
+            },
+            "rank-private-instance-accessor": {
+              "all": [{"matches": "private", "not": {"matches": "static"}}, {"matches": "accessor"}]
+            },
+            "rank-public-instance-method": {
+              "all": [{"matches": "public", "not": {"matches": "static"}}, {"matches": "method"}]
+            },
+            "rank-protected-instance-method": {
+              "all": [{"matches": "protected", "not": {"matches": "static"}}, {"matches": "method"}]
+            },
+            "after-public-static-field": {
+              "any": [
+                {
+                  "any": [{"not": {"matches": "public"}, "matches": "static"}, {"not": {"matches": "static"}}],
+                  "matches": "field"
+                },
+                {"matches": "constructor"},
+                {"matches": "accessor"},
+                {"matches": "method"}
+              ]
+            },
+            "after-protected-static-field": {
+              "any": [
+                {
+                  "any": [{"all": [{"matches": "private"}, {"matches": "static"}]}, {"not": {"matches": "static"}}],
+                  "matches": "field"
+                },
+                {"matches": "constructor"},
+                {"matches": "accessor"},
+                {"matches": "method"}
+              ]
+            },
+            "after-private-static-field": {
+              "any": [
+                {"not": {"matches": "static"}, "matches": "field"},
+                {"matches": "constructor"},
+                {"matches": "accessor"},
+                {"matches": "method"}
+              ]
+            },
+            "after-public-instance-field": {
+              "any": [
+                {"all": [{"not": {"matches": "public"}}, {"not": {"matches": "static"}}], "matches": "field"},
+                {"matches": "constructor"},
+                {"matches": "accessor"},
+                {"matches": "method"}
+              ]
+            },
+            "after-protected-instance-field": {
+              "any": [
+                {"all": [{"matches": "private", "not": {"matches": "static"}}, {"matches": "field"}]},
+                {"matches": "constructor"},
+                {"matches": "accessor"},
+                {"matches": "method"}
+              ]
+            },
+            "after-private-instance-field": {
+              "any": [{"matches": "constructor"}, {"matches": "accessor"}, {"matches": "method"}]
+            },
+            "after-constructor": {"any": [{"matches": "accessor"}, {"matches": "method"}]},
+            "after-public-static-accessor": {
+              "any": [
+                {
+                  "any": [{"not": {"matches": "public"}, "matches": "static"}, {"not": {"matches": "static"}}],
+                  "matches": "accessor"
+                },
+                {"matches": "method"}
+              ]
+            },
+            "after-protected-static-accessor": {
+              "any": [
+                {
+                  "any": [{"all": [{"matches": "private"}, {"matches": "static"}]}, {"not": {"matches": "static"}}],
+                  "matches": "accessor"
+                },
+                {"matches": "method"}
+              ]
+            },
+            "after-private-static-accessor": {
+              "any": [{"not": {"matches": "static"}, "matches": "accessor"}, {"matches": "method"}]
+            },
+            "after-public-static-method": {
+              "any": [
+                {"not": {"matches": "static"}, "matches": "accessor"},
+                {
+                  "any": [{"not": {"matches": "public"}, "matches": "static"}, {"not": {"matches": "static"}}],
+                  "matches": "method"
+                }
+              ]
+            },
+            "after-protected-static-method": {
+              "any": [
+                {"not": {"matches": "static"}, "matches": "accessor"},
+                {
+                  "any": [{"all": [{"matches": "private"}, {"matches": "static"}]}, {"not": {"matches": "static"}}],
+                  "matches": "method"
+                }
+              ]
+            },
+            "after-private-static-method": {
+              "any": [
+                {"not": {"matches": "static"}, "matches": "accessor"},
+                {"not": {"matches": "static"}, "matches": "method"}
+              ]
+            },
+            "after-public-instance-accessor": {
+              "any": [
+                {"all": [{"not": {"matches": "public"}}, {"not": {"matches": "static"}}], "matches": "accessor"},
+                {"not": {"matches": "static"}, "matches": "method"}
+              ]
+            },
+            "after-protected-instance-accessor": {
+              "any": [
+                {"all": [{"matches": "private", "not": {"matches": "static"}}, {"matches": "accessor"}]},
+                {"not": {"matches": "static"}, "matches": "method"}
+              ]
+            },
+            "after-private-instance-accessor": {"not": {"matches": "static"}, "matches": "method"},
+            "after-public-instance-method": {
+              "all": [{"not": {"matches": "public"}}, {"not": {"matches": "static"}}],
+              "matches": "method"
+            },
+            "after-protected-instance-method": {
+              "all": [{"matches": "private", "not": {"matches": "static"}}, {"matches": "method"}]
+            },
+            "static": {"has": {"regex": "^static$", "not": {"kind": "property_identifier"}}},
+            "private": {"has": {"kind": "accessibility_modifier", "regex": "^private$"}},
+            "protected": {"has": {"kind": "accessibility_modifier", "regex": "^protected$"}},
+            "public": {"not": {"has": {"kind": "accessibility_modifier", "regex": "^(?:private|protected)$"}}},
+            "function-initializer": {"has": {"any": [{"kind": "arrow_function"}, {"kind": "function_expression"}]}},
+            "method-like": {
+              "any": [
+                {"kind": "method_definition"},
+                {"kind": "method_signature"},
+                {"kind": "abstract_method_signature"}
+              ]
+            },
+            "field": {
+              "any": [
+                {"kind": "property_signature"},
+                {"kind": "public_field_definition", "not": {"matches": "function-initializer"}}
+              ]
+            },
+            "constructor": {
+              "any": [
+                {"kind": "construct_signature"},
+                {
+                  "any": [
+                    {"kind": "method_definition"},
+                    {"kind": "method_signature", "inside": {"kind": "class_body"}}
+                  ],
+                  "has": {"kind": "property_identifier", "regex": "^constructor$"}
+                }
+              ]
+            },
+            "accessor": {
+              "has": {"regex": "^(?:get|set)$", "not": {"kind": "property_identifier"}},
+              "matches": "method-like"
+            },
+            "method": {
+              "any": [
+                {"kind": "public_field_definition", "matches": "function-initializer"},
+                {"not": {"any": [{"matches": "constructor"}, {"matches": "accessor"}]}, "matches": "method-like"}
+              ]
+            },
+            "rank-private-instance-method": {
+              "all": [{"matches": "private", "not": {"matches": "static"}}, {"matches": "method"}]
+            },
+            "rank-fails": {
+              "any": [
+                {
+                  "matches": "rank-public-static-field",
+                  "follows": {"stopBy": "end", "matches": "after-public-static-field"}
+                },
+                {
+                  "matches": "rank-protected-static-field",
+                  "follows": {"stopBy": "end", "matches": "after-protected-static-field"}
+                },
+                {
+                  "matches": "rank-private-static-field",
+                  "follows": {"stopBy": "end", "matches": "after-private-static-field"}
+                },
+                {
+                  "matches": "rank-public-instance-field",
+                  "follows": {"stopBy": "end", "matches": "after-public-instance-field"}
+                },
+                {
+                  "matches": "rank-protected-instance-field",
+                  "follows": {"stopBy": "end", "matches": "after-protected-instance-field"}
+                },
+                {
+                  "matches": "rank-private-instance-field",
+                  "follows": {"stopBy": "end", "matches": "after-private-instance-field"}
+                },
+                {"matches": "rank-constructor", "follows": {"stopBy": "end", "matches": "after-constructor"}},
+                {
+                  "matches": "rank-public-static-accessor",
+                  "follows": {"stopBy": "end", "matches": "after-public-static-accessor"}
+                },
+                {
+                  "matches": "rank-protected-static-accessor",
+                  "follows": {"stopBy": "end", "matches": "after-protected-static-accessor"}
+                },
+                {
+                  "matches": "rank-private-static-accessor",
+                  "follows": {"stopBy": "end", "matches": "after-private-static-accessor"}
+                },
+                {
+                  "matches": "rank-public-static-method",
+                  "follows": {"stopBy": "end", "matches": "after-public-static-method"}
+                },
+                {
+                  "matches": "rank-protected-static-method",
+                  "follows": {"stopBy": "end", "matches": "after-protected-static-method"}
+                },
+                {
+                  "matches": "rank-private-static-method",
+                  "follows": {"stopBy": "end", "matches": "after-private-static-method"}
+                },
+                {
+                  "matches": "rank-public-instance-accessor",
+                  "follows": {"stopBy": "end", "matches": "after-public-instance-accessor"}
+                },
+                {
+                  "matches": "rank-protected-instance-accessor",
+                  "follows": {"stopBy": "end", "matches": "after-protected-instance-accessor"}
+                },
+                {
+                  "matches": "rank-private-instance-accessor",
+                  "follows": {"stopBy": "end", "matches": "after-private-instance-accessor"}
+                },
+                {
+                  "matches": "rank-public-instance-method",
+                  "follows": {"stopBy": "end", "matches": "after-public-instance-method"}
+                },
+                {
+                  "matches": "rank-protected-instance-method",
+                  "follows": {"stopBy": "end", "matches": "after-protected-instance-method"}
+                }
+              ]
+            },
+            "name": {
+              "any": [
+                {"kind": "property_identifier"},
+                {"kind": "string"},
+                {"kind": "number"},
+                {"kind": "computed_property_name"},
+                {"kind": "private_property_identifier"}
+              ],
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "any": [
+                    {"kind": "property_identifier"},
+                    {"kind": "string"},
+                    {"kind": "number"},
+                    {"kind": "computed_property_name"},
+                    {"kind": "private_property_identifier"}
+                  ]
+                }
+              }
+            },
+            "plain-name": {
+              "matches": "name",
+              "any": [{"kind": "property_identifier"}, {"kind": "string"}, {"kind": "number"}]
+            },
+            "computed-name": {
+              "matches": "name",
+              "any": [{"kind": "computed_property_name"}, {"kind": "private_property_identifier"}]
+            },
+            "getter": {"matches": "accessor", "has": {"regex": "^get$", "not": {"kind": "property_identifier"}}},
+            "setter": {"matches": "accessor", "has": {"regex": "^set$", "not": {"kind": "property_identifier"}}},
+            "out-of-order": {
+              "all": [
+                {"has": {"matches": "plain-name", "pattern": "$PREV"}},
+                {
+                  "any": [
+                    {
+                      "all": [
+                        {"not": {"compare": {"left": "COMPUTED", "op": "eq", "right": "COMPUTED"}}},
+                        {
+                          "compare": {
+                            "left": "PREV",
+                            "op": "gt",
+                            "right": "NAME",
+                            "collation": "fold-lower",
+                            "text": "unquoted"
+                          }
+                        }
+                      ]
+                    },
+                    {"compare": {"left": "COMPUTED", "op": "eq", "right": "COMPUTED"}},
+                    {
+                      "all": [
+                        {"matches": "setter"},
+                        {"compare": {"left": "GETTER", "op": "eq", "right": "GETTER"}},
+                        {
+                          "compare": {
+                            "left": "PREV",
+                            "op": "eq",
+                            "right": "NAME",
+                            "collation": "fold-lower",
+                            "text": "unquoted"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "alphabetize": {
+              "all": [
+                {"has": {"matches": "name", "pattern": "$NAME"}},
+                {
+                  "any": [
+                    {"has": {"matches": "computed-name"}, "pattern": "$COMPUTED"},
+                    {"not": {"has": {"matches": "computed-name"}}}
+                  ]
+                },
+                {"any": [{"matches": "getter", "pattern": "$GETTER"}, {"not": {"matches": "getter"}}]},
+                {
+                  "any": [
+                    {
+                      "matches": "rank-public-static-field",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-public-static-field"}, {"matches": "out-of-order"}]
+                      }
+                    },
+                    {
+                      "matches": "rank-protected-static-field",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-protected-static-field"}, {"matches": "out-of-order"}]
+                      }
+                    },
+                    {
+                      "matches": "rank-private-static-field",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-private-static-field"}, {"matches": "out-of-order"}]
+                      }
+                    },
+                    {
+                      "matches": "rank-public-instance-field",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-public-instance-field"}, {"matches": "out-of-order"}]
+                      }
+                    },
+                    {
+                      "matches": "rank-protected-instance-field",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-protected-instance-field"}, {"matches": "out-of-order"}]
+                      }
+                    },
+                    {
+                      "matches": "rank-private-instance-field",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-private-instance-field"}, {"matches": "out-of-order"}]
+                      }
+                    },
+                    {
+                      "matches": "rank-constructor",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-constructor"}, {"matches": "out-of-order"}]
+                      }
+                    },
+                    {
+                      "matches": "rank-public-static-accessor",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-public-static-accessor"}, {"matches": "out-of-order"}]
+                      }
+                    },
+                    {
+                      "matches": "rank-protected-static-accessor",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-protected-static-accessor"}, {"matches": "out-of-order"}]
+                      }
+                    },
+                    {
+                      "matches": "rank-private-static-accessor",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-private-static-accessor"}, {"matches": "out-of-order"}]
+                      }
+                    },
+                    {
+                      "matches": "rank-public-static-method",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-public-static-method"}, {"matches": "out-of-order"}]
+                      }
+                    },
+                    {
+                      "matches": "rank-protected-static-method",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-protected-static-method"}, {"matches": "out-of-order"}]
+                      }
+                    },
+                    {
+                      "matches": "rank-private-static-method",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-private-static-method"}, {"matches": "out-of-order"}]
+                      }
+                    },
+                    {
+                      "matches": "rank-public-instance-accessor",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-public-instance-accessor"}, {"matches": "out-of-order"}]
+                      }
+                    },
+                    {
+                      "matches": "rank-protected-instance-accessor",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-protected-instance-accessor"}, {"matches": "out-of-order"}]
+                      }
+                    },
+                    {
+                      "matches": "rank-private-instance-accessor",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-private-instance-accessor"}, {"matches": "out-of-order"}]
+                      }
+                    },
+                    {
+                      "matches": "rank-public-instance-method",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-public-instance-method"}, {"matches": "out-of-order"}]
+                      }
+                    },
+                    {
+                      "matches": "rank-protected-instance-method",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-protected-instance-method"}, {"matches": "out-of-order"}]
+                      }
+                    },
+                    {
+                      "matches": "rank-private-instance-method",
+                      "follows": {
+                        "stopBy": "end",
+                        "all": [{"matches": "rank-private-instance-method"}, {"matches": "out-of-order"}]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "capture.NAME",
+        "code": "MEMBER_ORDERING",
+        "severity": "error",
+        "message": "Member declaration out of order: after a member of a later-ranked category, or by name ($NAME after $PREV)."
+      }
+    }
+  ]
+}

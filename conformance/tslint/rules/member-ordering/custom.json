@@ -1,0 +1,61 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:member-ordering",
+  "revision": 1,
+  "description": "Options [{\"order\": [\"public-static-method\", \"private-instance-field\"]}]; alphabetize is not ported (needs comparison of two captured names). One check: a member of rank i fails when an earlier sibling member of the same body is ranked after i (TSLint compares with the last non-failing member, which holds the highest rank seen so far).",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "checks": [
+    {
+      "id": "member-rank",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "inside": {"any": [{"kind": "class_body"}, {"kind": "interface_body"}, {"kind": "object_type"}]},
+            "matches": "rank-public-static-method",
+            "follows": {"stopBy": "end", "matches": "after-public-static-method"}
+          },
+          "utils": {
+            "rank-public-static-method": {"all": [{"matches": "public"}, {"matches": "static"}], "matches": "method"},
+            "after-public-static-method": {"all": [{"matches": "private", "not": {"matches": "static"}}, {"matches": "field"}]},
+            "static": {"has": {"regex": "^static$", "not": {"kind": "property_identifier"}}},
+            "private": {"has": {"kind": "accessibility_modifier", "regex": "^private$"}},
+            "public": {"not": {"has": {"kind": "accessibility_modifier", "regex": "^(?:private|protected)$"}}},
+            "function-initializer": {"has": {"any": [{"kind": "arrow_function"}, {"kind": "function_expression"}]}},
+            "method-like": {
+              "any": [{"kind": "method_definition"}, {"kind": "method_signature"}, {"kind": "abstract_method_signature"}]
+            },
+            "field": {
+              "any": [
+                {"kind": "property_signature"},
+                {"kind": "public_field_definition", "not": {"matches": "function-initializer"}}
+              ]
+            },
+            "constructor": {
+              "any": [
+                {"kind": "construct_signature"},
+                {
+                  "any": [{"kind": "method_definition"}, {"kind": "method_signature", "inside": {"kind": "class_body"}}],
+                  "has": {"kind": "property_identifier", "regex": "^constructor$"}
+                }
+              ]
+            },
+            "accessor": {"has": {"regex": "^(?:get|set)$", "not": {"kind": "property_identifier"}}, "matches": "method-like"},
+            "method": {
+              "any": [
+                {"kind": "public_field_definition", "matches": "function-initializer"},
+                {"not": {"any": [{"matches": "constructor"}, {"matches": "accessor"}]}, "matches": "method-like"}
+              ]
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "MEMBER_ORDERING",
+        "severity": "error",
+        "message": "Member declaration not allowed after a member of a later-ranked category."
+      }
+    }
+  ]
+}

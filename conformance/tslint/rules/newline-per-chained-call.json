@@ -1,0 +1,184 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:newline-per-chained-call",
+  "revision": 1,
+  "description": "Each chained method call after a call must start on a new line (member/subscript chain unrolled 5 levels).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "same-line-chain",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "regex": "^\\.$"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "kind": "member_expression"
+                    },
+                    {
+                      "regex": "[^\\s][ \\t]*\\.\\s*[\\w$#]+$"
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call_expression"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "call_expression"
+                          },
+                          {
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "member_expression"
+                                  },
+                                  {
+                                    "kind": "subscript_expression"
+                                  }
+                                ]
+                              },
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "any": [
+                                    {
+                                      "kind": "call_expression"
+                                    },
+                                    {
+                                      "all": [
+                                        {
+                                          "any": [
+                                            {
+                                              "kind": "member_expression"
+                                            },
+                                            {
+                                              "kind": "subscript_expression"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "has": {
+                                            "stopBy": "neighbor",
+                                            "any": [
+                                              {
+                                                "kind": "call_expression"
+                                              },
+                                              {
+                                                "all": [
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "kind": "member_expression"
+                                                      },
+                                                      {
+                                                        "kind": "subscript_expression"
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "has": {
+                                                      "stopBy": "neighbor",
+                                                      "any": [
+                                                        {
+                                                          "kind": "call_expression"
+                                                        },
+                                                        {
+                                                          "all": [
+                                                            {
+                                                              "any": [
+                                                                {
+                                                                  "kind": "member_expression"
+                                                                },
+                                                                {
+                                                                  "kind": "subscript_expression"
+                                                                }
+                                                              ]
+                                                            },
+                                                            {
+                                                              "has": {
+                                                                "stopBy": "neighbor",
+                                                                "any": [
+                                                                  {
+                                                                    "kind": "call_expression"
+                                                                  },
+                                                                  {
+                                                                    "all": [
+                                                                      {
+                                                                        "any": [
+                                                                          {
+                                                                            "kind": "member_expression"
+                                                                          },
+                                                                          {
+                                                                            "kind": "subscript_expression"
+                                                                          }
+                                                                        ]
+                                                                      },
+                                                                      {
+                                                                        "has": {
+                                                                          "stopBy": "neighbor",
+                                                                          "any": [
+                                                                            {
+                                                                              "kind": "call_expression"
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      }
+                                                                    ]
+                                                                  }
+                                                                ]
+                                                              }
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NEWLINE_PER_CHAINED_CALL",
+        "severity": "error",
+        "message": "When chaining calls, put method calls on new lines."
+      }
+    }
+  ]
+}

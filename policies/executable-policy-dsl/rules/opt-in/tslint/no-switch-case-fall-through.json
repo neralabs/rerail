@@ -1,0 +1,776 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-switch-case-fall-through",
+  "revision": 1,
+  "description": "Port of TSLint's `no-switch-case-fall-through` rule with its default options (https://palantir.github.io/tslint/rules/no-switch-case-fall-through/). Flags a case/default clause reached by fall-through from a non-empty previous clause that does not end control flow (tsutils endsControlFlow without a checker, as recursive utils) and has no trailing `falls through` comment.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "checks": [
+    {
+      "id": "fall-through",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "switch_case"
+                  },
+                  {
+                    "kind": "switch_default"
+                  }
+                ]
+              },
+              {
+                "matches": "falls-into"
+              },
+              {
+                "has": {
+                  "pattern": "$$KW",
+                  "regex": "^(case|default)$"
+                }
+              }
+            ]
+          },
+          "utils": {
+            "if-true": {
+              "has": {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "kind": "true"
+                }
+              }
+            },
+            "if-false": {
+              "has": {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "kind": "false"
+                }
+              }
+            },
+            "no-loop-exit": {
+              "not": {
+                "has": {
+                  "any": [
+                    {
+                      "matches": "collects-break"
+                    },
+                    {
+                      "matches": "collects-continue"
+                    }
+                  ]
+                }
+              }
+            },
+            "ends": {
+              "any": [
+                {
+                  "kind": "return_statement"
+                },
+                {
+                  "kind": "throw_statement"
+                },
+                {
+                  "kind": "break_statement"
+                },
+                {
+                  "kind": "continue_statement"
+                },
+                {
+                  "kind": "statement_block",
+                  "has": {
+                    "matches": "ends"
+                  }
+                },
+                {
+                  "kind": "if_statement",
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "matches": "if-true"
+                        },
+                        {
+                          "has": {
+                            "follows": {
+                              "kind": "parenthesized_expression"
+                            },
+                            "matches": "ends"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "matches": "if-false"
+                        },
+                        {
+                          "has": {
+                            "kind": "else_clause",
+                            "has": {
+                              "matches": "ends"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "not": {
+                        "any": [
+                          {
+                            "matches": "if-true"
+                          },
+                          {
+                            "matches": "if-false"
+                          }
+                        ]
+                      },
+                      "all": [
+                        {
+                          "has": {
+                            "follows": {
+                              "kind": "parenthesized_expression"
+                            },
+                            "matches": "ends"
+                          }
+                        },
+                        {
+                          "has": {
+                            "kind": "else_clause",
+                            "has": {
+                              "matches": "ends"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "while_statement",
+                  "all": [
+                    {
+                      "matches": "if-true"
+                    },
+                    {
+                      "has": {
+                        "matches": "ends"
+                      }
+                    },
+                    {
+                      "matches": "no-loop-exit"
+                    }
+                  ]
+                },
+                {
+                  "kind": "for_statement",
+                  "any": [
+                    {
+                      "has": {
+                        "kind": "true",
+                        "precedes": {
+                          "regex": "^;$"
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "kind": "empty_statement",
+                        "not": {
+                          "follows": {
+                            "regex": "^\\($"
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "all": [
+                    {
+                      "has": {
+                        "matches": "ends"
+                      }
+                    },
+                    {
+                      "matches": "no-loop-exit"
+                    }
+                  ]
+                },
+                {
+                  "kind": "do_statement",
+                  "all": [
+                    {
+                      "has": {
+                        "matches": "ends"
+                      }
+                    },
+                    {
+                      "matches": "no-loop-exit"
+                    }
+                  ]
+                },
+                {
+                  "kind": "switch_statement",
+                  "has": {
+                    "kind": "switch_body",
+                    "has": {
+                      "kind": "switch_default"
+                    },
+                    "all": [
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "switch_case"
+                            },
+                            {
+                              "kind": "switch_default"
+                            }
+                          ],
+                          "matches": "clause-ends",
+                          "precedes": {
+                            "matches": "body-close"
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "switch_case"
+                              },
+                              {
+                                "kind": "switch_default"
+                              }
+                            ],
+                            "has": {
+                              "matches": "collects-break",
+                              "not": {
+                                "follows": {
+                                  "stopBy": "end",
+                                  "matches": "ends"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "try_statement",
+                  "any": [
+                    {
+                      "has": {
+                        "kind": "finally_clause",
+                        "has": {
+                          "kind": "statement_block",
+                          "matches": "ends"
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "kind": "statement_block",
+                        "matches": "ends"
+                      },
+                      "any": [
+                        {
+                          "not": {
+                            "has": {
+                              "kind": "catch_clause"
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "kind": "catch_clause",
+                            "has": {
+                              "kind": "statement_block",
+                              "matches": "ends"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "labeled_statement",
+                  "has": {
+                    "matches": "ends"
+                  },
+                  "not": {
+                    "all": [
+                      {
+                        "has": {
+                          "kind": "statement_identifier",
+                          "pattern": "$LABEL"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "end",
+                          "any": [
+                            {
+                              "kind": "break_statement"
+                            },
+                            {
+                              "kind": "continue_statement"
+                            }
+                          ],
+                          "has": {
+                            "kind": "statement_identifier",
+                            "pattern": "$LABEL"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "clause-ends": {
+              "has": {
+                "matches": "ends"
+              }
+            },
+            "body-close": {
+              "any": [
+                {
+                  "regex": "^\\}$"
+                },
+                {
+                  "kind": "comment",
+                  "precedes": {
+                    "matches": "body-close"
+                  }
+                }
+              ]
+            },
+            "collects-break": {
+              "any": [
+                {
+                  "kind": "break_statement",
+                  "not": {
+                    "has": {
+                      "kind": "statement_identifier"
+                    }
+                  }
+                },
+                {
+                  "kind": "statement_block",
+                  "has": {
+                    "matches": "collects-break",
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "matches": "ends"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "labeled_statement",
+                  "has": {
+                    "matches": "collects-break"
+                  }
+                },
+                {
+                  "kind": "if_statement",
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "matches": "if-true"
+                        },
+                        {
+                          "has": {
+                            "follows": {
+                              "kind": "parenthesized_expression"
+                            },
+                            "matches": "collects-break"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "matches": "if-false"
+                        },
+                        {
+                          "has": {
+                            "kind": "else_clause",
+                            "has": {
+                              "matches": "collects-break"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "not": {
+                        "any": [
+                          {
+                            "matches": "if-true"
+                          },
+                          {
+                            "matches": "if-false"
+                          }
+                        ]
+                      },
+                      "any": [
+                        {
+                          "has": {
+                            "follows": {
+                              "kind": "parenthesized_expression"
+                            },
+                            "matches": "collects-break"
+                          }
+                        },
+                        {
+                          "has": {
+                            "kind": "else_clause",
+                            "has": {
+                              "matches": "collects-break"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "try_statement",
+                  "any": [
+                    {
+                      "has": {
+                        "kind": "finally_clause",
+                        "has": {
+                          "kind": "statement_block",
+                          "matches": "ends"
+                        }
+                      },
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "finally_clause",
+                            "has": {
+                              "kind": "statement_block",
+                              "matches": "collects-break"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "kind": "finally_clause",
+                          "has": {
+                            "kind": "statement_block",
+                            "matches": "ends"
+                          }
+                        }
+                      },
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "statement_block",
+                            "matches": "collects-break"
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "catch_clause"
+                              },
+                              {
+                                "kind": "finally_clause"
+                              }
+                            ],
+                            "has": {
+                              "kind": "statement_block",
+                              "matches": "collects-break"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "collects-continue": {
+              "any": [
+                {
+                  "kind": "continue_statement",
+                  "not": {
+                    "has": {
+                      "kind": "statement_identifier"
+                    }
+                  }
+                },
+                {
+                  "kind": "statement_block",
+                  "has": {
+                    "matches": "collects-continue",
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "matches": "ends"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "labeled_statement",
+                  "has": {
+                    "matches": "collects-continue"
+                  }
+                },
+                {
+                  "kind": "if_statement",
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "matches": "if-true"
+                        },
+                        {
+                          "has": {
+                            "follows": {
+                              "kind": "parenthesized_expression"
+                            },
+                            "matches": "collects-continue"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "matches": "if-false"
+                        },
+                        {
+                          "has": {
+                            "kind": "else_clause",
+                            "has": {
+                              "matches": "collects-continue"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "not": {
+                        "any": [
+                          {
+                            "matches": "if-true"
+                          },
+                          {
+                            "matches": "if-false"
+                          }
+                        ]
+                      },
+                      "any": [
+                        {
+                          "has": {
+                            "follows": {
+                              "kind": "parenthesized_expression"
+                            },
+                            "matches": "collects-continue"
+                          }
+                        },
+                        {
+                          "has": {
+                            "kind": "else_clause",
+                            "has": {
+                              "matches": "collects-continue"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "try_statement",
+                  "any": [
+                    {
+                      "has": {
+                        "kind": "finally_clause",
+                        "has": {
+                          "kind": "statement_block",
+                          "matches": "ends"
+                        }
+                      },
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "finally_clause",
+                            "has": {
+                              "kind": "statement_block",
+                              "matches": "collects-continue"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "kind": "finally_clause",
+                          "has": {
+                            "kind": "statement_block",
+                            "matches": "ends"
+                          }
+                        }
+                      },
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "statement_block",
+                            "matches": "collects-continue"
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "catch_clause"
+                              },
+                              {
+                                "kind": "finally_clause"
+                              }
+                            ],
+                            "has": {
+                              "kind": "statement_block",
+                              "matches": "collects-continue"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "switch_statement",
+                  "has": {
+                    "kind": "switch_body",
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "switch_case"
+                        },
+                        {
+                          "kind": "switch_default"
+                        }
+                      ],
+                      "has": {
+                        "matches": "collects-continue",
+                        "not": {
+                          "follows": {
+                            "stopBy": "end",
+                            "matches": "ends"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "falls-into": {
+              "follows": {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "kind": "switch_case"
+                          },
+                          {
+                            "kind": "switch_default"
+                          }
+                        ]
+                      },
+                      {
+                        "has": {
+                          "not": {
+                            "kind": "comment"
+                          },
+                          "follows": {
+                            "stopBy": "end",
+                            "regex": "^:$"
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "matches": "clause-ends"
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "kind": "comment",
+                            "regex": "(?i)^/[/*]\\s*falls through\\b",
+                            "not": {
+                              "precedes": {
+                                "stopBy": "end",
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "comment",
+                    "not": {
+                      "regex": "(?i)^/[/*]\\s*falls through\\b"
+                    },
+                    "matches": "falls-into"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "capture.KW",
+        "code": "NO_SWITCH_CASE_FALL_THROUGH",
+        "severity": "error",
+        "message": "expected a 'break' before '$KW'"
+      }
+    }
+  ]
+}

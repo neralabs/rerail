@@ -1,0 +1,84 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:unnecessary-bind",
+  "revision": 1,
+  "description": "Flags `function(){}.bind(this)` (no extra args, not a generator, name not self-referenced) \u2014 the untyped TSLint behaviour.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "function-bind",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "call_expression"
+              },
+              {
+                "pattern": "$F.bind(this)"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "member_expression",
+                  "regex": "\\.\\s*bind$",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "parenthesized_expression",
+                        "has": {
+                          "kind": "function_expression",
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "public_field_definition",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "decorator"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "pattern": "function $N($$$P) { $$$A $N($$$R); $$$B }.bind(this)"
+                    },
+                    {
+                      "pattern": "(function $N($$$P) { $$$A $N($$$R); $$$B }).bind(this)"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "UNNECESSARY_BIND",
+        "severity": "error",
+        "message": "Don't bind `this` without arguments as a scope to a function. Use an arrow lambda instead."
+      }
+    }
+  ]
+}

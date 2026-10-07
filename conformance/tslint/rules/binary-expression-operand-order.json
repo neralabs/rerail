@@ -1,0 +1,58 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:binary-expression-operand-order",
+  "revision": 1,
+  "description": "A literal should be on the right-hand side of a binary expression (text-regex approximation of the left/right operand split).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "literal-left",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "binary_expression"
+              },
+              {
+                "regex": "^(?:(?:\\(\\s*)*(?:(?:\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*')|(?:-?\\s*(?:\\d[\\w.]*|\\.\\d[\\w.]*)|(?:true|false|null|undefined)\\b))(?:\\s*\\))*\\s*(?:===|!==|==|!=|<=|>=|<|>|&&|\\|\\||\\?\\?|&|\\||\\^|\\*|instanceof\\b)|(?:(?:\\(\\s*)*(?:-?\\s*(?:\\d[\\w.]*|\\.\\d[\\w.]*)|(?:true|false|null|undefined)\\b)(?:\\s*\\))*|(?:\\(\\s*)+(?:\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*')(?:\\s*\\))+)\\s*\\+)\\s*[^<>=&|*?\\s]"
+              },
+              {
+                "not": {
+                  "regex": "^(?:\\(\\s*)*(?:(?:\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*')|(?:-?\\s*(?:\\d[\\w.]*|\\.\\d[\\w.]*)|(?:true|false|null|undefined)\\b))(?:\\s*\\))*\\s*\\S+\\s*(?:\\(\\s*)*(?:(?:\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*')|(?:-?\\s*(?:\\d[\\w.]*|\\.\\d[\\w.]*)|(?:true|false|null|undefined)\\b))(?:\\s*\\))*$"
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "kind": "binary_expression"
+                      },
+                      {
+                        "regex": "^(?:\\(\\s*)*(?:(?:\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*')|(?:-?\\s*(?:\\d[\\w.]*|\\.\\d[\\w.]*)|(?:true|false|null|undefined)\\b))(?:\\s*\\))*"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "BINARY_EXPRESSION_OPERAND_ORDER",
+        "severity": "error",
+        "message": "Literal expression should be on the right-hand side of a binary expression."
+      }
+    }
+  ]
+}

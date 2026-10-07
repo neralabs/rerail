@@ -1,0 +1,116 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-void-expression",
+  "revision": 1,
+  "description": "no-void-expression with ignore-arrow-function-shorthand (syntactic approximation, console.* only).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "void-expression",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "call_expression"
+              },
+              {
+                "pattern": "console.$M($$$A)"
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "expression_statement"
+                          },
+                          {
+                            "kind": "ternary_expression"
+                          },
+                          {
+                            "kind": "arrow_function"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "binary_expression",
+                        "any": [
+                          {
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "any": [
+                                {
+                                  "kind": "expression_statement"
+                                },
+                                {
+                                  "kind": "ternary_expression"
+                                },
+                                {
+                                  "kind": "arrow_function"
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "binary_expression",
+                        "any": [
+                          {
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "binary_expression",
+                              "any": [
+                                {
+                                  "inside": {
+                                    "stopBy": "neighbor",
+                                    "any": [
+                                      {
+                                        "kind": "expression_statement"
+                                      },
+                                      {
+                                        "kind": "ternary_expression"
+                                      },
+                                      {
+                                        "kind": "arrow_function"
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_VOID_EXPRESSION",
+        "severity": "error",
+        "message": "Expression has type `void`. Put it on its own line as a statement."
+      }
+    }
+  ]
+}

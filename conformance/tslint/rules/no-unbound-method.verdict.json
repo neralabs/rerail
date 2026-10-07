@@ -1,0 +1,30 @@
+{
+  "verdict": "INFEASIBLE",
+  "primitive": "type-checker",
+  "secondary": [],
+  "needs": [
+    "symbol-resolution",
+    "expression-type"
+  ],
+  "reason": "The checker question is 'does this property access resolve (getSymbolAtLocation -> valueDeclaration) to a MethodDeclaration / MethodSignature, static or not?'. TSLint's isSafeUse positions port exactly: calls, tagged templates, chained access, non-|| binaries, conditions, `!`, whitelisted callers, typeof/delete options, JSX attributes in a separate check. The port finds 33/33 with 7 FP, and every FP is a function-typed PROPERTY or a static method under ignore-static. On real code this doc flags every property read passed as an argument, so it is a measurement, not a usable lint. Checker APIs: getSymbolAtLocation(property access) -> valueDeclaration kind and static modifier (:180-181). Resolving `c.method` needs the receiver's type to find the member.",
+  "evidence": [
+    {
+      "variant": "default",
+      "file": "test.tsx.lint",
+      "line": 10,
+      "why": "`[0].forEach(c.property);` is valid because `property: () => void` is a property; line 8 `[0].forEach(c.method);` is the same syntax and is flagged because `method(x)` is a method"
+    },
+    {
+      "variant": "default",
+      "file": "test.tsx.lint",
+      "line": 22,
+      "why": "`i.bar;` is valid (`bar: () => void` property signature); `i.foo;` (line 21) is flagged (method signature)"
+    },
+    {
+      "variant": "ignore-static",
+      "file": "test.tsx.lint",
+      "line": 37,
+      "why": "`Validators.required` is allowed only because its declaration has the `static` modifier"
+    }
+  ]
+}

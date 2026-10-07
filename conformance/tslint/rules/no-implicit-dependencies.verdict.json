@@ -1,0 +1,34 @@
+{
+  "verdict": "BLOCKED",
+  "primitive": "cross-file",
+  "secondary": [
+    "fixture-artifact"
+  ],
+  "reason": "The rule reads the NEAREST package.json. The port covers the syntactic half: bare module specifiers of import, export-from, import-equals-require, require() and import() that are not node builtins. The dependency allow-list is HARDCODED from the fixture's root package.json, with one override per option config. That is a port of the fixture, not of the rule, and the P/R above reflects it. Subdirectories with their own package.json show why it cannot generalize. Also (error-tolerant-parse): the whitelist fixtures use `import * from 'x'`, which is invalid.",
+  "evidence": [
+    {
+      "variant": "default",
+      "file": "nested-package/test.ts.lint",
+      "line": 2,
+      "why": "`import foo from 'foo'` is a failure here because nested-package/package.json lists only baz. The same line passes in default/test.ts.lint. Identical syntax gives different verdicts depending on another file"
+    },
+    {
+      "variant": "default",
+      "file": "bom/test.ts.lint",
+      "line": 1,
+      "why": "`typescript` must be flagged because bom/package.json has empty dependencies"
+    },
+    {
+      "variant": "default",
+      "file": "malformed/tets.ts.lint",
+      "line": 1,
+      "why": "`foo` must be flagged because malformed/package.json does not parse"
+    },
+    {
+      "variant": "whitelist",
+      "file": "test.ts.lint",
+      "line": 3,
+      "why": "`import * from 'src/a'` is invalid syntax, so the kernel reports source-incomplete for the file"
+    }
+  ]
+}

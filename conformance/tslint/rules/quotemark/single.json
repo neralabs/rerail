@@ -1,0 +1,38 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:quotemark",
+  "revision": 1,
+  "description": "Enforces single-quoted string literals.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "single",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "string"
+              },
+              {
+                "regex": "^\""
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "QUOTEMARK",
+        "severity": "error",
+        "message": "\" should be '"
+      }
+    }
+  ]
+}

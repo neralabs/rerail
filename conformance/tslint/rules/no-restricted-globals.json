@@ -1,0 +1,128 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-restricted-globals",
+  "revision": 1,
+  "description": "Flags references to the restricted global names name, length, event, badGlobal (the option list of the TSLint fixture; the DSL has no options and TSLint's default list is empty). Local declarations/imports that shadow a restricted name are NOT resolved: that needs a scope graph.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "restricted-global-reference",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "regex": "^(?:name|length|event|badGlobal)$"
+              },
+              {
+                "not": {
+                  "all": [
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "import_specifier"
+                          },
+                          {
+                            "kind": "namespace_import"
+                          },
+                          {
+                            "kind": "import_clause"
+                          },
+                          {
+                            "kind": "function_declaration"
+                          },
+                          {
+                            "kind": "generator_function_declaration"
+                          },
+                          {
+                            "kind": "required_parameter"
+                          },
+                          {
+                            "kind": "optional_parameter"
+                          },
+                          {
+                            "kind": "formal_parameters"
+                          },
+                          {
+                            "kind": "rest_pattern"
+                          },
+                          {
+                            "kind": "array_pattern"
+                          },
+                          {
+                            "kind": "catch_clause"
+                          },
+                          {
+                            "kind": "class_declaration"
+                          },
+                          {
+                            "kind": "interface_declaration"
+                          },
+                          {
+                            "kind": "type_alias_declaration"
+                          },
+                          {
+                            "kind": "enum_declaration"
+                          },
+                          {
+                            "kind": "internal_module"
+                          },
+                          {
+                            "kind": "module"
+                          },
+                          {
+                            "kind": "labeled_statement"
+                          },
+                          {
+                            "kind": "break_statement"
+                          },
+                          {
+                            "kind": "continue_statement"
+                          },
+                          {
+                            "kind": "pair_pattern"
+                          },
+                          {
+                            "kind": "object_assignment_pattern"
+                          },
+                          {
+                            "kind": "variable_declarator"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "not": {
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "^=$"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_RESTRICTED_GLOBALS",
+        "severity": "error",
+        "message": "Unexpected use of a restricted global variable. Use a local parameter or variable instead."
+      }
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-var-requires",
+  "revision": 1,
+  "description": "Disallows `require()` calls outside `import x = require()` at the top scope.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "require-call",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "pattern": "require($$$ARGS)"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "method_definition"
+                      },
+                      {
+                        "kind": "class_declaration"
+                      },
+                      {
+                        "kind": "class"
+                      },
+                      {
+                        "kind": "abstract_class_declaration"
+                      },
+                      {
+                        "kind": "pair"
+                      },
+                      {
+                        "kind": "parenthesized_expression"
+                      },
+                      {
+                        "kind": "internal_module"
+                      },
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "kind": "interface_declaration"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_VAR_REQUIRES",
+        "severity": "error",
+        "message": "require statement not part of an import statement"
+      }
+    }
+  ]
+}

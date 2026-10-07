@@ -1,0 +1,5 @@
+# Cargo reads this when it runs under rerail/ (npm scripts, the release workflow, rerail-dev).
+# A clean Windows install has no Visual C++ runtime, and a kernel linked against
+# VCRUNTIME140.dll fails to load there with "The specified module could not be found".
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

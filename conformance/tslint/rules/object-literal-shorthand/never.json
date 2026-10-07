@@ -1,0 +1,85 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:object-literal-shorthand",
+  "revision": 1,
+  "description": "Disallows shorthand properties and methods in object literals (never).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "shorthand-property",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "shorthand_property_identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier_pattern"
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "OBJECT_LITERAL_SHORTHAND",
+        "severity": "error",
+        "message": "Shorthand property and method assignments have been disallowed."
+      }
+    },
+    {
+      "id": "shorthand-method",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "property_identifier"
+                  },
+                  {
+                    "kind": "computed_property_name"
+                  },
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "number"
+                  },
+                  {
+                    "kind": "private_property_identifier"
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "method_definition",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "object"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "OBJECT_LITERAL_SHORTHAND",
+        "severity": "error",
+        "message": "Shorthand property and method assignments have been disallowed."
+      }
+    }
+  ]
+}

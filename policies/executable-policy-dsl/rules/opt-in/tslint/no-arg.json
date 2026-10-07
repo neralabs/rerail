@@ -1,0 +1,46 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-arg",
+  "revision": 1,
+  "description": "Port of TSLint's `no-arg` rule with its default options (https://palantir.github.io/tslint/rules/no-arg/). Disallows use of arguments.callee.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "checks": [
+    {
+      "id": "arguments-callee",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "pattern": "arguments.callee"
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_ARG",
+        "severity": "error",
+        "message": "Access to arguments.callee is forbidden"
+      }
+    }
+  ]
+}

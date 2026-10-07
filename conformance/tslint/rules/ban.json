@@ -1,0 +1,306 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:ban",
+  "revision": 1,
+  "description": "Bans specific functions/methods. TSLint's default bans nothing (an empty doc does not compile), so this doc ports the fixture's option list.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "ban-function",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "pattern": "xit"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call_expression"
+                    }
+                  },
+                  {
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "pattern": "fit"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call_expression"
+                    }
+                  },
+                  {
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "pattern": "xdescribe"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call_expression"
+                    }
+                  },
+                  {
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "pattern": "fdescribe"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call_expression"
+                    }
+                  },
+                  {
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "BAN",
+        "severity": "error",
+        "message": "Calls to this function are not allowed."
+      }
+    },
+    {
+      "id": "ban-window-toString",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "pattern": "window.toString"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "call_expression"
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "kind": "arguments"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "BAN",
+        "severity": "error",
+        "message": "Calls to 'window.toString' are not allowed."
+      }
+    },
+    {
+      "id": "ban-lodash-map",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "pattern": "_.map"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "call_expression"
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "kind": "arguments"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "BAN",
+        "severity": "error",
+        "message": "Calls to '_.map' are not allowed."
+      }
+    },
+    {
+      "id": "ban-lodash-filter",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "pattern": "_.filter"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "call_expression"
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "kind": "arguments"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "BAN",
+        "severity": "error",
+        "message": "Calls to '_.filter' are not allowed. Use the native JavaScript 'myArray.filter' instead."
+      }
+    },
+    {
+      "id": "ban-forEach",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "pattern": "$O.forEach"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "call_expression"
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "kind": "arguments"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "BAN",
+        "severity": "error",
+        "message": "Calls to '*.forEach' are not allowed. Use a regular for loop instead."
+      }
+    },
+    {
+      "id": "ban-chai-assert-equal",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "pattern": "chai.assert.equal"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "call_expression"
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "kind": "arguments"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "BAN",
+        "severity": "error",
+        "message": "Calls to 'chai.assert.equal' are not allowed. Use 'strictEqual' instead."
+      }
+    },
+    {
+      "id": "ban-id-toString",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "pattern": "$O._id.toString"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "call_expression"
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "kind": "arguments"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "BAN",
+        "severity": "error",
+        "message": "Calls to '*._id.toString' are not allowed. Use 'toHexString' instead."
+      }
+    }
+  ]
+}

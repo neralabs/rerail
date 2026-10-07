@@ -1,0 +1,71 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-import-side-effect",
+  "revision": 1,
+  "description": "Port of TSLint's `no-import-side-effect` rule with its default options (https://palantir.github.io/tslint/rules/no-import-side-effect/). Avoid import statements with side-effect (`import 'x'`).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "checks": [
+    {
+      "id": "side-effect-import",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "import_statement"
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "import_clause"
+                      },
+                      {
+                        "kind": "import_require_clause"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "program"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_IMPORT_SIDE_EFFECT",
+        "severity": "error",
+        "message": "import with explicit side-effect"
+      }
+    }
+  ]
+}

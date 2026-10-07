@@ -1,0 +1,175 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-unbound-method",
+  "revision": 1,
+  "description": "Syntactic approximation: flags a property access used as a value where `this` would be lost (argument, || operand, ternary branch, statement, template substitution, return, delete, JSX attribute). Cannot tell methods from function-valued properties.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "unbound-position",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "member_expression"
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "this"
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "binary_expression",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^\\|\\|$"
+                      },
+                      "any": [
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "arguments"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "all": [
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "ternary_expression"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^\\?$"
+                            }
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^:$"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "expression_statement"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "template_substitution"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "return_statement"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "non_null_expression",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "return_statement"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "unary_expression",
+                      "regex": "^delete\\b"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_UNBOUND_METHOD",
+        "severity": "error",
+        "message": "Avoid referencing unbound methods which may cause unintentional scoping of 'this'."
+      }
+    },
+    {
+      "id": "unbound-position-jsx",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "member_expression"
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "this"
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "jsx_expression",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "jsx_attribute"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_UNBOUND_METHOD",
+        "severity": "error",
+        "message": "Avoid referencing unbound methods which may cause unintentional scoping of 'this'."
+      }
+    }
+  ]
+}

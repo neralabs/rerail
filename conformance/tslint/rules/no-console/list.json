@@ -1,0 +1,38 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-console",
+  "revision": 1,
+  "description": "Bans console.dir/error/log/warn (option list variant).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "console-access",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "pattern": "console.$M"
+              },
+              {
+                "regex": "^console\\.(dir|error|log|warn)$"
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_CONSOLE",
+        "severity": "error",
+        "message": "Calls to 'console.<method>' are not allowed."
+      }
+    }
+  ]
+}

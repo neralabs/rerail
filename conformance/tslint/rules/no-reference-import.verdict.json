@@ -1,0 +1,13 @@
+{
+  "verdict": "BLOCKED",
+  "primitive": "regex-capture-metavar",
+  "reason": "The rule flags `/// <reference types=\"x\" />` only when x is also the specifier of a static import in the same file. Shared metavariable bindings (M2) do not reach it: x lives inside a comment token, and a metavariable binds whole nodes, never a regex capture, so the directive's name cannot be joined with an import's string. New token regex-capture-metavar: a regex capture group that binds a metavariable. The port flags every reference-types directive in a file that has any import (select_when gate); the directive regex is line-anchored and the finding sits on the name through a named group (capture.NAME).",
+  "evidence": [
+    {
+      "variant": ".",
+      "file": "ts240.d.ts.lint",
+      "line": 2,
+      "why": "`/// <reference types=\"bar\" />`: no import of \"bar\", but the file imports other modules, so the gate passes and the port reports a false positive"
+    }
+  ]
+}

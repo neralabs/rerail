@@ -1,0 +1,989 @@
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { constants, existsSync } from "node:fs";
+import {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  readFile,
+  readlink,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { promisify } from "node:util";
+import {
+  isClaudeStatusLine,
+  readClaudeStatusRegistration,
+  readClaudeStatusSettingsPaths,
+  writeClaudeStatusRegistration,
+  type ClaudeStatusRegistration,
+  type ClaudeStatusLine,
+} from "./claude-status-store.js";
+import { stableJsonText } from "./stable-json.js";
+
+export type Harness = "omp" | "pi" | "claude-code" | "codex" | "cursor";
+
+export const HARNESSES: readonly Harness[] = ["omp", "pi", "claude-code", "codex", "cursor"];
+
+export interface RegistrationOptions {
+  /** Installed package root containing package.json, dist/ and hooks/. */
+  root: string;
+  /**
+   * Package root to read packaged templates (skills) from when `root` is a
+   * link that does not exist yet, as in `install --root <checkout> --dry-run`.
+   * Registrations are still rendered against `root`. Defaults to `root`.
+   */
+  templateRoot?: string;
+  home?: string;
+  nodePath?: string;
+  harnesses?: readonly Harness[];
+  projectDir?: string;
+  /** Native project settings context; omitted for global-only programmatic registration. */
+  workspaceDir?: string;
+  dryRun?: boolean;
+  /** Test seam for platform-specific command quoting and directory links. */
+  platform?: NodeJS.Platform;
+}
+
+export interface RegistrationChange {
+  harness: Harness;
+  path: string;
+  action: "created" | "updated" | "unchanged" | "skipped";
+  detail: string;
+}
+
+export interface RegistrationReport {
+  changes: RegistrationChange[];
+  notes: string[];
+}
+
+type JsonObject = Record<string, unknown>;
+type Mode = "register" | "unregister";
+
+interface Context {
+  mode: Mode;
+  root: string;
+  templateRoot: string;
+  packageRoots: Map<string, Promise<boolean>>;
+  home: string;
+  nodePath: string;
+  dryRun: boolean;
+  platform: NodeJS.Platform;
+}
+
+interface TextFile {
+  exists: boolean;
+  text: string;
+  mode: number;
+}
+
+interface JsonFile {
+  exists: boolean;
+  value: JsonObject;
+  mode: number;
+}
+
+/** One harness mutation: what would change, plus the write that performs it (undefined when nothing to do or dry run). */
+interface Plan {
+  change: RegistrationChange;
+  apply?: (() => Promise<void>) | undefined;
+}
+
+const CONFIG_DIRS: Record<Harness, string> = {
+  omp: join(".omp", "agent"),
+  pi: join(".pi", "agent"),
+  "claude-code": ".claude",
+  codex: ".codex",
+  cursor: ".cursor",
+};
+
+const PROJECT_DIRS: Record<Harness, string> = {
+  omp: ".omp",
+  pi: ".pi",
+  "claude-code": ".claude",
+  codex: ".codex",
+  cursor: ".cursor",
+};
+
+export const CLAUDE_HOOK_EVENTS: readonly string[] = [
+  "SessionStart",
+  "SessionEnd",
+  "UserPromptSubmit",
+  "MessageDisplay",
+  "PreToolUse",
+  "PostToolUse",
+  "PostToolUseFailure",
+  "Stop",
+  "StopFailure",
+];
+const CLAUDE_TOOL_EVENTS: readonly string[] = ["PreToolUse", "PostToolUse", "PostToolUseFailure"];
+
+export const CODEX_HOOK_EVENTS: readonly string[] = [
+  "SessionStart",
+  "UserPromptSubmit",
+  "PreToolUse",
+  "PostToolUse",
+  "Stop",
+];
+const CODEX_TOOL_EVENTS: readonly string[] = ["PostToolUse"];
+
+/** Mirrors the events wired in hooks/cursor.json. */
+export const CURSOR_HOOK_EVENTS: readonly string[] = [
+  "sessionStart",
+  "sessionEnd",
+  "beforeSubmitPrompt",
+  "afterAgentResponse",
+  "preToolUse",
+  "postToolUse",
+  "postToolUseFailure",
+  "stop",
+];
+
+/** The `dist` entry exec-form hooks start; see src/hook-launcher.ts. */
+const HOOK_LAUNCHER = "hook-launcher.js";
+
+const EMPTY_RULES_DOCUMENT: JsonObject = { version: 1, rules: [] };
+
+function isObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isMissing(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function assertInside(path: string, container: string, label: string): void {
+  const rel = relative(container, path);
+  if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new Error(`Refusing to write ${path}: outside ${label} ${container}`);
+  }
+}
+
+function shellArgument(value: string, platform: NodeJS.Platform): string {
+  if (platform === "win32") return `"${value.replaceAll("%", "%%")}"`;
+  return /^[\w./:@+=-]+$/.test(value) ? value : `"${value.replace(/(["\\$`])/g, "\\$1")}"`;
+}
+
+/** `<recorded node> <root>/dist/<executable>`, both quoted for the platform's shell. */
+function directCommand(context: Context, executable: string): string {
+  return `${shellArgument(context.nodePath, context.platform)} ${shellArgument(join(context.root, "dist", executable), context.platform)}`;
+}
+
+async function isRerailPackageRoot(context: Context, root: string): Promise<boolean> {
+  if (root === context.root || root === join(context.home, ".rerail", "current")) return true;
+  let verified = context.packageRoots.get(root);
+  if (verified === undefined) {
+    verified = readFile(join(root, "package.json"), "utf8").then(text => {
+      const value: unknown = JSON.parse(text);
+      return isObject(value) && value.name === "@neralabs/rerail";
+    }).catch(() => false);
+    context.packageRoots.set(root, verified);
+  }
+  return verified;
+}
+
+function unquoteShellWord(word: string, windows = false): string {
+  const value = word.replace(/^"|"$/gu, "");
+  return windows ? value.replaceAll("%%", "%") : value.replace(/\\(["\\$`])/gu, "$1");
+}
+
+interface HookTarget {
+  nodePath: string;
+  script: string;
+}
+
+/** Node and hook script of a generated shell-form entry: direct, the POSIX `sh` fallback, or the Windows `cmd` fallback. */
+function shellHookTarget(context: Context, command: string, executable: string): HookTarget | undefined {
+  const fallbackPrefix = `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' `;
+  const windowsFallback = /^cmd \/d \/c "if exist ("[^"]+") \(\1 ("[^"]+")\) else \(node \2\)"$/u.exec(command);
+  let direct = windowsFallback === null ? command : `${windowsFallback[1]} ${windowsFallback[2]}`;
+  if (command.startsWith(fallbackPrefix)) direct = command.slice(fallbackPrefix.length);
+  const windows = context.platform === "win32";
+  const words = direct.match(windows ? /"[^"]+"/gu : /"(?:\\["\\$`]|[^"\\$`])*"|[\w./:@+=-]+/gu);
+  if (words?.length !== 2 || words.join(" ") !== direct) return undefined;
+  const target = { nodePath: unquoteShellWord(words[0]!, windows), script: unquoteShellWord(words[1]!, windows) };
+  const recorded = { ...context, root: dirname(dirname(target.script)), nodePath: target.nodePath };
+  return hookCommand(recorded, executable) === command || directCommand(recorded, executable) === command ? target : undefined;
+}
+
+/** Node and hook script of a generated exec-form entry: `node <dist>/hook-launcher.js <recorded node> <dist>/<hook>`. */
+function execHookTarget(command: string, args: unknown): HookTarget | undefined {
+  if (command !== "node" || !Array.isArray(args) || args.length !== 3 || !args.every(arg => typeof arg === "string")) return undefined;
+  const [launcher, nodePath, script] = args as [string, string, string];
+  return basename(launcher) === HOOK_LAUNCHER && dirname(launcher) === dirname(script) ? { nodePath, script } : undefined;
+}
+
+/**
+ * Recognize only generated entries — the exec-form hook launcher or a direct or fallback shell launcher — never
+ * arbitrary compound shell commands.
+ */
+async function isRerailHookEntry(context: Context, entry: JsonObject, executable: string): Promise<boolean> {
+  const { command, args } = entry;
+  if (typeof command !== "string") return false;
+  const target = args === undefined ? shellHookTarget(context, command, executable) : execHookTarget(command, args);
+  if (target === undefined) return false;
+  const { nodePath, script } = target;
+  if (!/^node(?:\.exe)?$/iu.test(nodePath.split(/[\\/]/u).at(-1)!) || !isAbsolute(script) || basename(script) !== executable) return false;
+  const root = dirname(dirname(script));
+  return context.mode === "unregister" ? root === context.root : isRerailPackageRoot(context, root);
+}
+
+/**
+ * Runs the node recorded at registration, falling back to node from PATH once that binary is gone —
+ * an nvm upgrade removes it and would otherwise break every hook silently. Recorded first (the order
+ * the launcher shim uses) keeps the version deterministic when a project `.nvmrc` puts an older node
+ * on PATH. The POSIX form execs only inside the test, so a non-zero hook exit never re-runs the hook
+ * through the fallback; `exec` also leaves stdio alone, so hook input still arrives on stdin.
+ */
+function hookCommand(context: Context, executable: string): string {
+  const node = shellArgument(context.nodePath, context.platform);
+  const hook = shellArgument(join(context.root, "dist", executable), context.platform);
+  if (context.platform === "win32") return `cmd /d /c "if exist ${node} (${node} ${hook}) else (node ${hook})"`;
+  return `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' ${node} ${hook}`;
+}
+
+/**
+ * The same recorded-first, PATH-fallback order without a shell, for hosts that spawn exec-form hooks directly:
+ * `node` from PATH starts `hook-launcher.js`, which hands the hook to the recorded node while that binary exists.
+ */
+function hookExecEntry(context: Context, executable: string): JsonObject {
+  const dist = join(context.root, "dist");
+  return { type: "command", command: "node", args: [join(dist, HOOK_LAUNCHER), context.nodePath, join(dist, executable)] };
+}
+
+/** The Claude Code slash command that runs the launcher through the same node and package root as the hooks. */
+function claudeCommandText(context: Context): string {
+  const command = directCommand(context, "cli.js");
+  // One grant per subcommand the body may run; `Bash(<cli> *)` would also cover `start`, `stop`, `mcp`, ...
+  const allowed = ["status", "session *", "disable", "enable", "update *", "reset", "scan *", "settings *"]
+    .map(subcommand => `Bash(${command} ${subcommand})`)
+    .join(", ");
+  return [
+    "---",
+    "description: Rerail session status and launcher — enable, disable, update, reset, scan, settings",
+    `allowed-tools: ${allowed}`,
+    "---",
+    "",
+    "Show Rerail for this exact session when `$ARGUMENTS` is empty. Otherwise `$ARGUMENTS` is a complete Rerail CLI command: `status`, `disable`, `enable`, `update check`, `update`, `update rollback`, `reset`, `scan ...`, or `settings ...`. Map `check` to `update check` and `rollback` to `update rollback`.",
+    "",
+    "`disable` persists a checkout-local `.rerail/disabled` marker. It stops event recording, policy evaluation, steering, and daemon autostart for this checkout without stopping the shared daemon. `enable` removes the marker.",
+    "",
+    "A `scan` or `settings` invocation MUST include `--session <session-id>` explicitly; use the exact session identity, never guess a latest session. The session may belong to any repository recorded in the Rerail database.",
+    "",
+    "Run exactly one command and report its output verbatim:",
+    "",
+    "Default (no arguments):",
+    "",
+    "```sh",
+    `${command} session claude-code '\${CLAUDE_SESSION_ID}'`,
+    "```",
+    "",
+    "Explicit launcher action:",
+    "",
+    "```sh",
+    `${command} ${"$ARGUMENTS"}`,
+    "```",
+    "",
+    "Do not run anything else. If the command fails, show the error and stop.",
+    "",
+  ].join("\n");
+}
+
+type PromptCommandHarness = "claude-code" | "cursor";
+type CheckoutCommandAction = "disable" | "enable";
+type PageCommand = "ui" | "session";
+type PromptCommand = "rerail" | CheckoutCommandAction | PageCommand;
+
+/** Cursor prompt commands cannot see the conversation id, so only Claude Code gets `/rerail` and `/rerail-session`. */
+const PROMPT_COMMANDS: Record<PromptCommandHarness, readonly PromptCommand[]> = {
+  "claude-code": ["rerail", "disable", "enable", "ui", "session"],
+  cursor: ["disable", "enable", "ui"],
+};
+
+function checkoutSlashCommandText(context: Context, harness: PromptCommandHarness, action: CheckoutCommandAction): string {
+  const command = `${directCommand(context, "cli.js")} ${action}`;
+  const description = `${action === "disable" ? "Disable" : "Enable"} Rerail for the current checkout`;
+  const body = [
+    `${description}.`,
+    "",
+    "Run exactly one command and report its output verbatim:",
+    "",
+    "```sh",
+    command,
+    "```",
+    "",
+    "Do not run anything else. If the command fails, show the error and stop.",
+    "",
+  ];
+  return harness === "claude-code"
+    ? ["---", `description: ${description}`, `allowed-tools: Bash(${command})`, "---", "", ...body].join("\n")
+    : body.join("\n");
+}
+
+/**
+ * Opens a Rerail page as a tab in the window the agent runs in before falling back to the desktop
+ * browser. The CLI's own opener is Orca-first (`openPage`), so the command never needs an `orca`
+ * grant; Cursor's built-in browser is the one in-window path the CLI cannot reach, and only the
+ * Cursor variant of the prompt is read by an agent that has it. The URL is read first so the
+ * fallback is the only step that launches anything.
+ */
+function pageCommandText(context: Context, harness: PromptCommandHarness, page: PageCommand): string {
+  const cli = directCommand(context, "cli.js");
+  const session = `${cli} session claude-code '\${CLAUDE_SESSION_ID}'`;
+  const description = page === "ui" ? "Open the Rerail rules page for this checkout" : "Open this session's Rerail page";
+  const printCommand = page === "ui" ? `${cli} ui --print` : session;
+  const openCommand = page === "ui" ? `${cli} ui` : `${session} --open`;
+  const body = [
+    `${description}.`,
+    "",
+    "Get the URL without opening anything. Run exactly this and read the URL from its output:",
+    "",
+    "```sh",
+    printCommand,
+    "```",
+    "",
+    page === "ui"
+      ? "If the command fails, show the error and stop."
+      : "The last line of the output is the URL. If there is no URL line, show the text and stop. If the command fails, show the error and stop.",
+    "",
+    "Open the URL as a tab in this window before reaching for the desktop browser, in this order:",
+    "",
+    ...(harness === "claude-code"
+      ? [`- Under Orca (\`ORCA_TAB_ID\` set): run \`${openCommand}\`. It opens the page as a tab in the Orca window and falls back to the desktop browser on its own.`]
+      : []),
+    "- In Cursor with a built-in browser tool: navigate that browser to the URL — it opens as a tab in the Cursor window.",
+    `- Otherwise let the CLI open the desktop browser: \`${openCommand}\`.`,
+    "",
+    "Report the URL and where it was opened. Do not run anything else.",
+    "",
+  ];
+  if (harness !== "claude-code") return body.join("\n");
+  const allowed = page === "ui" ? `Bash(${printCommand}), Bash(${openCommand})` : `Bash(${cli} session claude-code *)`;
+  return ["---", `description: ${description}`, `allowed-tools: ${allowed}`, "---", "", ...body].join("\n");
+}
+
+function promptCommandText(context: Context, harness: PromptCommandHarness, command: PromptCommand): string {
+  switch (command) {
+    case "rerail":
+      return claudeCommandText(context);
+    case "disable":
+    case "enable":
+      return checkoutSlashCommandText(context, harness, command);
+    case "ui":
+    case "session":
+      return pageCommandText(context, harness, command);
+  }
+}
+
+function describe(context: Context, detail: string): string {
+  return context.dryRun ? `${detail} (dry run)` : detail;
+}
+
+async function readTextFile(path: string): Promise<TextFile> {
+  try {
+    return { exists: true, text: await readFile(path, "utf8"), mode: (await stat(path)).mode & 0o777 };
+  } catch (error) {
+    if (isMissing(error)) return { exists: false, text: "", mode: 0o644 };
+    throw error;
+  }
+}
+
+async function readJsonFile(path: string): Promise<JsonFile> {
+  const { exists, text, mode } = await readTextFile(path);
+  if (!exists || text.trim() === "") return { exists, value: {}, mode };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`Cannot parse JSON in ${path}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!isObject(parsed)) throw new Error(`Expected a JSON object at the top level of ${path}`);
+  return { exists: true, value: parsed, mode };
+}
+
+/**
+ * The file a write to `path` must land in: the end of any symlink chain, so a user-managed link
+ * (dotfiles) survives and its target receives the content. A dangling chain resolves to the file
+ * the last link names, which the write then creates.
+ */
+async function resolveWriteTarget(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if (!isMissing(error)) throw error;
+  }
+  let target = path;
+  for (let hops = 0; hops < 40; hops += 1) {
+    let link: string;
+    try {
+      if (!(await lstat(target)).isSymbolicLink()) return target;
+      link = await readlink(target);
+    } catch (error) {
+      if (isMissing(error)) return target;
+      throw error;
+    }
+    target = resolve(dirname(target), link);
+  }
+  throw new Error(`Too many levels of symbolic links resolving ${path}`);
+}
+
+/** Backs up the file behind `path` (only when it already exists) and replaces it via temp file + rename beside it. */
+async function writeTextFile(path: string, text: string, existing: { exists: boolean; mode: number }): Promise<void> {
+  const target = await resolveWriteTarget(path);
+  const directory = dirname(target);
+  await mkdir(directory, { recursive: true });
+  if (existing.exists) {
+    const backup = `${target}.${new Date().toISOString().replace(/[:.]/g, "-")}.${randomUUID()}.bak`;
+    await copyFile(target, backup, constants.COPYFILE_EXCL);
+    await chmod(backup, 0o600);
+  }
+  const temp = join(directory, `.${randomUUID()}.tmp`);
+  await writeFile(temp, text, { mode: existing.mode });
+  await chmod(temp, existing.mode);
+  if (process.platform === "win32" && existing.exists) await rm(target, { force: true });
+  await rename(temp, target);
+}
+
+function planMutation(
+  context: Context, harness: Harness, path: string, action: RegistrationChange["action"], detail: string, apply: () => Promise<void>,
+): Plan {
+  return {
+    change: { harness, path, action, detail: describe(context, detail) },
+    apply: context.dryRun ? undefined : apply,
+  };
+}
+
+async function planJsonFile(
+  harness: Harness,
+  path: string,
+  context: Context,
+  detail: string,
+  transform: (value: JsonObject) => JsonObject | Promise<JsonObject>,
+): Promise<Plan> {
+  assertInside(path, context.home, "home");
+  const existing = await readJsonFile(path);
+  const next = await transform(structuredClone(existing.value));
+  if (stableJsonText(existing.value) === stableJsonText(next)) {
+    const reason = context.mode === "register" ? "already in place" : "nothing to remove";
+    return { change: { harness, path, action: "unchanged", detail: `${detail}: ${reason}` } };
+  }
+  return planMutation(context, harness, path, existing.exists ? "updated" : "created", detail,
+    () => writeTextFile(path, `${JSON.stringify(next, null, 2)}\n`, existing));
+}
+
+function hooksObject(value: JsonObject, path: string): JsonObject {
+  if (value.hooks === undefined) return {};
+  if (!isObject(value.hooks)) throw new Error(`Cannot register rerail hooks: "hooks" in ${path} is not an object`);
+  return value.hooks;
+}
+
+async function stripHookCommands(entries: unknown[], context: Context, executable: string): Promise<unknown[]> {
+  const kept: unknown[] = [];
+  for (const entry of entries) {
+    if (!(isObject(entry) && await isRerailHookEntry(context, entry, executable))) kept.push(entry);
+  }
+  return kept;
+}
+
+async function stripHookGroups(groups: unknown[], context: Context, executable: string): Promise<unknown[]> {
+  const kept: unknown[] = [];
+  for (const group of groups) {
+    if (!isObject(group) || !Array.isArray(group.hooks)) {
+      kept.push(group);
+      continue;
+    }
+    const commands = await stripHookCommands(group.hooks, context, executable);
+    if (commands.length === group.hooks.length) kept.push(group);
+    else if (commands.length > 0) kept.push({ ...group, hooks: commands });
+  }
+  return kept;
+}
+
+/** Preserve malformed and originally empty events; drop only events emptied by removing Rerail. */
+async function stripHookEvents(hooks: JsonObject, context: Context, executable: string, grouped = true): Promise<JsonObject> {
+  const next: JsonObject = {};
+  for (const [event, entries] of Object.entries(hooks)) {
+    if (!Array.isArray(entries)) {
+      next[event] = entries;
+      continue;
+    }
+    const kept = await (grouped ? stripHookGroups(entries, context, executable) : stripHookCommands(entries, context, executable));
+    if (kept.length > 0 || kept.length === entries.length) next[event] = kept;
+  }
+  return next;
+}
+
+function addHookGroups(
+  hooks: JsonObject,
+  events: readonly string[],
+  toolEvents: readonly string[],
+  entry: JsonObject,
+  path: string,
+): JsonObject {
+  for (const event of events) {
+    const groups = hooks[event] ?? [];
+    if (!Array.isArray(groups))
+      throw new Error(`Cannot register rerail hooks: hooks.${event} in ${path} is not an array`);
+    hooks[event] = [...groups, toolEvents.includes(event) ? { matcher: "", hooks: [entry] } : { hooks: [entry] }];
+  }
+  return hooks;
+}
+
+function withHooks(value: JsonObject, hooks: JsonObject): JsonObject {
+  const next = { ...value };
+  const keepEmpty = isObject(value.hooks) && Object.keys(value.hooks).length === 0;
+  if (Object.keys(hooks).length > 0 || keepEmpty) next.hooks = hooks;
+  else delete next.hooks;
+  return next;
+}
+
+async function updateGroupedHooks(
+  value: JsonObject, path: string, context: Context, events: readonly string[], toolEvents: readonly string[], executable: string,
+  entry: JsonObject,
+): Promise<JsonObject> {
+  const hooks = await stripHookEvents(hooksObject(value, path), context, executable);
+  if (context.mode === "register") addHookGroups(hooks, events, toolEvents, entry, path);
+  return withHooks(value, hooks);
+}
+
+function planGroupedHooks(
+  harness: Harness,
+  path: string,
+  context: Context,
+  events: readonly string[],
+  toolEvents: readonly string[],
+  executable: string,
+  label: string,
+): Promise<Plan> {
+  const detail =
+    context.mode === "register"
+      ? `register rerail hooks for ${events.length} ${label} events`
+      : `remove rerail hooks from ${label} settings`;
+  const entry = { type: "command", command: hookCommand(context, executable) };
+  return planJsonFile(harness, path, context, detail, value => updateGroupedHooks(value, path, context, events, toolEvents, executable, entry));
+}
+
+function composedClaudeStatus(previous: ClaudeStatusLine | null | undefined, command: string): ClaudeStatusLine {
+  return { ...previous, type: "command", command, refreshInterval: previous?.refreshInterval ?? 5 };
+}
+
+function registerClaudeStatus(
+  context: Context, path: string, next: JsonObject, statusLine: ClaudeStatusLine | undefined,
+  inherited: ClaudeStatusLine | undefined, registration: ClaudeStatusRegistration | undefined,
+): ClaudeStatusRegistration {
+  const command = directCommand(context, "claude-status.js")
+    + (path === join(context.home, ".claude", "settings.json") ? "" : ` ${shellArgument(path, context.platform)}`);
+  const ownsStatus = registration !== undefined && statusLine?.command === registration.installedCommand;
+  const previous = statusLine ?? inherited;
+  if (!ownsStatus && previous !== undefined && (previous.command === command || isClaudeStatusWrapper(previous.command))) {
+    throw new Error(`Cannot preserve the existing rerail status line in ${path}: registration ownership is missing`);
+  }
+  const previousInherited = ownsStatus ? registration.previousInherited : statusLine === undefined && inherited !== undefined;
+  next.statusLine = composedClaudeStatus(previous, command);
+  return {
+    settingsPath: path, installedRoot: context.root, installedCommand: command,
+    previous: ownsStatus ? registration.previous : previous ?? null,
+    ...(previousInherited ? { previousInherited: true } : {}),
+  };
+}
+
+function restoreClaudeStatus(next: JsonObject, statusLine: ClaudeStatusLine | undefined, registration: ClaudeStatusRegistration): void {
+  if (statusLine?.command !== registration.installedCommand) return;
+  const installedStatus = composedClaudeStatus(registration.previous, registration.installedCommand);
+  if (registration.previous === null || (registration.previousInherited && stableJsonText(statusLine) === stableJsonText(installedStatus))) {
+    delete next.statusLine;
+    return;
+  }
+  const restored: ClaudeStatusLine = { ...statusLine, type: registration.previous.type, command: registration.previous.command };
+  if (statusLine.refreshInterval === installedStatus.refreshInterval) {
+    if (registration.previous.refreshInterval === undefined) delete restored.refreshInterval;
+    else restored.refreshInterval = registration.previous.refreshInterval;
+  }
+  next.statusLine = restored;
+}
+
+/** Global hooks and statusLine share one preflight and atomic settings replacement. */
+async function planClaudeSettings(
+  context: Context,
+  path = join(context.home, ".claude", "settings.json"),
+  inherited?: ClaudeStatusLine,
+): Promise<Plan> {
+  const global = path === join(context.home, ".claude", "settings.json");
+  const existing = await readJsonFile(path);
+  const registration = readClaudeStatusRegistration(context.home, path);
+  const statusLine = existing.value.statusLine;
+  if (statusLine !== undefined && !isClaudeStatusLine(statusLine)) {
+    throw new Error(`Cannot register rerail status line: "statusLine" in ${path} is not a command specification`);
+  }
+  if (context.mode === "register" && registration !== undefined) {
+    context.packageRoots.set(registration.installedRoot, Promise.resolve(true));
+  }
+  // Claude Code runs shell-form hooks through Git Bash on Windows, which rewrites `cmd /d /c` into drive paths;
+  // cmd then reads the hook's JSON from stdin as commands. Exec form (`args`) spawns node with no shell.
+  const hookEntry = context.platform === "win32"
+    ? hookExecEntry(context, "claude-hook.js")
+    : { type: "command", command: hookCommand(context, "claude-hook.js") };
+  const next = global
+    ? await updateGroupedHooks(existing.value, path, context, CLAUDE_HOOK_EVENTS, CLAUDE_TOOL_EVENTS, "claude-hook.js", hookEntry)
+    : { ...existing.value };
+  let nextRegistration: ClaudeStatusRegistration | undefined = registration;
+  if (context.mode === "register") {
+    nextRegistration = registerClaudeStatus(context, path, next, statusLine, inherited, registration);
+  } else if (registration?.installedRoot === context.root) {
+    restoreClaudeStatus(next, statusLine, registration);
+    nextRegistration = undefined;
+  }
+  const settingsChanged = stableJsonText(existing.value) !== stableJsonText(next);
+  const ownershipChanged = stableJsonText(registration ?? {}) !== stableJsonText(nextRegistration ?? {});
+  let detail = context.mode === "register" ? "compose the project Claude Code status line" : "restore the project Claude Code status line";
+  if (global) detail = context.mode === "register"
+    ? `register rerail hooks for ${CLAUDE_HOOK_EVENTS.length} Claude Code events and compose the status line`
+    : "remove rerail hooks and restore the Claude Code status line";
+  if (!settingsChanged && !ownershipChanged) {
+    return { change: { harness: "claude-code", path, action: "unchanged", detail: `${detail}: already in place` } };
+  }
+  return planMutation(context, "claude-code", path, existing.exists ? "updated" : "created", detail, async () => {
+    const writeSettings = async (): Promise<void> => {
+      if (settingsChanged) await writeTextFile(path, `${JSON.stringify(next, null, 2)}\n`, existing);
+    };
+    if (ownershipChanged) await writeClaudeStatusRegistration(context.home, nextRegistration, writeSettings, path);
+    else await writeSettings();
+  });
+}
+
+/** Recognize the generated executable shape even when its old package/ownership is gone. */
+function isClaudeStatusWrapper(command: string): boolean {
+  const words = command.match(/"(?:\\.|[^"\\])*"|[\w./:@+=-]+/gu);
+  if (words === null || (words.length !== 2 && words.length !== 3) || words.join(" ") !== command) return false;
+  return /^node(?:\.exe)?$/iu.test(unquoteShellWord(words[0]!).split(/[\\/]/u).at(-1)!)
+    && unquoteShellWord(words[1]!).split(/[\\/]/u).at(-1) === "claude-status.js";
+}
+
+const execGit = promisify(execFile);
+
+/** Claude uses the safe main-checkout root for local settings, but shared settings stay at cwd. */
+async function claudeLocalDirectory(workspaceDir: string, context: Context): Promise<string> {
+  if (context.platform === "win32" || process.getuid === undefined) return workspaceDir;
+  let root: string;
+  try {
+    // rev-parse rejects non-repositories/bare repositories; Git also enforces safe.directory.
+    await execGit("git", ["rev-parse", "--show-toplevel"], { cwd: workspaceDir });
+    const { stdout } = await execGit("git", ["worktree", "list", "--porcelain", "-z"], { cwd: workspaceDir });
+    const first = stdout.split("\0", 1)[0];
+    if (first === undefined || !first.startsWith("worktree ")) return workspaceDir;
+    root = await realpath(first.slice("worktree ".length));
+  } catch {
+    return workspaceDir;
+  }
+  if (root === await realpath(context.home).catch(() => context.home)) return workspaceDir;
+  const uid = process.getuid();
+  for (const path of [root, join(root, ".git"), join(root, ".claude")]) {
+    try {
+      if ((await lstat(path)).uid !== uid || (await stat(path)).uid !== uid) return workspaceDir;
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+    }
+  }
+  return root;
+}
+
+async function planClaudeProjectSettings(workspace: string, context: Context): Promise<Plan[]> {
+  const workspaceDir = await realpath(resolve(workspace));
+  const localDir = await claudeLocalDirectory(workspaceDir, context);
+  const localPaths = [...new Set([
+    join(localDir, ".claude", "settings.local.json"),
+    join(workspaceDir, ".claude", "settings.local.json"),
+  ])];
+  if (context.mode === "unregister") {
+    const plans: Plan[] = [];
+    for (const path of localPaths) {
+      if (readClaudeStatusRegistration(context.home, path) !== undefined) plans.push(await planClaudeSettings(context, path));
+    }
+    return plans;
+  }
+  // User-local predecessors win; generated inherited wrappers resolve cwd inheritance on every invocation.
+  for (const path of localPaths) {
+    const existing = await readJsonFile(path);
+    if (existing.value.statusLine !== undefined) return [await planClaudeSettings(context, path)];
+  }
+  const sharedPath = join(workspaceDir, ".claude", "settings.json");
+  const shared = await readJsonFile(sharedPath);
+  if (shared.value.statusLine === undefined || workspaceDir === await realpath(context.home).catch(() => context.home)) return [];
+  if (!isClaudeStatusLine(shared.value.statusLine)) {
+    throw new Error(`Cannot register rerail status line: "statusLine" in ${sharedPath} is not a command specification`);
+  }
+  return [await planClaudeSettings(context, localPaths[0]!, shared.value.statusLine)];
+}
+
+function planCursor(context: Context): Promise<Plan> {
+  const path = join(context.home, ".cursor", "hooks.json");
+  const command = hookCommand(context, "cursor-hook.js");
+  const detail =
+    context.mode === "register"
+      ? `register rerail hooks for ${CURSOR_HOOK_EVENTS.length} Cursor events`
+      : "remove rerail hooks from Cursor hooks.json";
+  return planJsonFile("cursor", path, context, detail, async (value) => {
+    const hooks = await stripHookEvents(hooksObject(value, path), context, "cursor-hook.js", false);
+    if (context.mode === "register") {
+      for (const event of CURSOR_HOOK_EVENTS) {
+        const entries = hooks[event] ?? [];
+        if (!Array.isArray(entries))
+          throw new Error(`Cannot register rerail hooks: hooks.${event} in ${path} is not an array`);
+        hooks[event] = [...entries, { command }];
+      }
+    }
+    return { ...value, version: typeof value.version === "number" ? value.version : 1, hooks };
+  });
+}
+
+function planPi(context: Context): Promise<Plan> {
+  const agentDir = join(context.home, ".pi", "agent");
+  const path = join(agentDir, "settings.json");
+  const detail =
+    context.mode === "register" ? `register ${context.root} in Pi packages` : "remove rerail from Pi packages";
+  return planJsonFile("pi", path, context, detail, async (value) => {
+    const packages = value.packages ?? [];
+    if (!Array.isArray(packages))
+      throw new Error(`Cannot register rerail package: "packages" in ${path} is not an array`);
+    const kept: unknown[] = [];
+    for (const entry of packages as unknown[]) {
+      const root = typeof entry === "string" ? resolve(agentDir, entry) : undefined;
+      if (root !== undefined && (context.mode === "register" ? await isRerailPackageRoot(context, root) : root === context.root)) continue;
+      kept.push(entry);
+    }
+    if (context.mode === "register") kept.push(context.root);
+    const next = { ...value };
+    if (kept.length > 0 || (Array.isArray(value.packages) && value.packages.length === 0)) next.packages = kept;
+    else delete next.packages;
+    return next;
+  });
+}
+
+async function planOmp(context: Context): Promise<Plan> {
+  const path = join(context.home, ".omp", "agent", "extensions", "rerail");
+  assertInside(path, context.home, "home");
+  let kind: "missing" | "symlink" | "other";
+  try {
+    kind = (await lstat(path)).isSymbolicLink() ? "symlink" : "other";
+  } catch (error) {
+    if (!isMissing(error)) throw error;
+    kind = "missing";
+  }
+  const canonicalRoot = await realpath(context.root).catch(() => context.root);
+  let target: string | undefined;
+  if (kind === "symlink") {
+    try {
+      target = await realpath(path);
+    } catch {
+      target = resolve(dirname(path), await readlink(path));
+    }
+  }
+  const unchanged = (detail: string): Plan => ({ change: { harness: "omp", path, action: "unchanged", detail } });
+
+  if (context.mode === "register") {
+    if (kind === "other") throw new Error(`Refusing to replace ${path}: it exists and is not a symlink`);
+    if (target === canonicalRoot) return unchanged(`symlink to ${context.root}: already in place`);
+    const detail =
+      kind === "symlink" ? `repoint symlink from ${target} to ${context.root}` : `symlink to ${context.root}`;
+    return planMutation(context, "omp", path, kind === "symlink" ? "updated" : "created", detail, async () => {
+      await mkdir(dirname(path), { recursive: true });
+      if (kind === "symlink") await unlink(path);
+      await symlink(context.root, path, context.platform === "win32" ? "junction" : undefined);
+    });
+  }
+
+  if (kind === "missing") return unchanged("no symlink: nothing to remove");
+  if (kind === "other") return unchanged("not a symlink: left in place");
+  if (target !== canonicalRoot) return unchanged(`symlink points at ${target}: left in place`);
+  return planMutation(context, "omp", path, "updated", `remove symlink to ${context.root}`, () => unlink(path));
+}
+
+/** The immutable stdio bridge selects the checkout-local MCP endpoint from its launch cwd. */
+export const RERAIL_MCP_SERVER_NAME = "rerail";
+
+function planOmpMcp(context: Context): Promise<Plan> {
+  const path = join(context.home, ".omp", "agent", "mcp.json");
+  const detail =
+    context.mode === "register"
+      ? `register the ${RERAIL_MCP_SERVER_NAME} MCP bridge`
+      : `remove the ${RERAIL_MCP_SERVER_NAME} MCP bridge`;
+  return planJsonFile("omp", path, context, detail, (value) => {
+    const servers = value.mcpServers === undefined ? {} : value.mcpServers;
+    if (!isObject(servers))
+      throw new Error(`Cannot register rerail MCP server: "mcpServers" in ${path} is not an object`);
+    const { [RERAIL_MCP_SERVER_NAME]: _previous, ...kept } = servers;
+    const next: JsonObject =
+      context.mode === "register"
+        ? {
+          ...kept,
+          [RERAIL_MCP_SERVER_NAME]: {
+            command: context.nodePath,
+            args: [join(context.root, "dist", "cli.js"), "mcp-bridge"],
+          },
+        }
+        : kept;
+    if (Object.keys(next).length === 0 && !isObject(value.mcpServers)) return value;
+    return { ...value, mcpServers: next };
+  });
+}
+
+async function planCodexSkill(context: Context): Promise<Plan> {
+  const path = join(context.home, ".codex", "skills", "rerail", "SKILL.md");
+  assertInside(path, context.home, "home");
+  const existing = await readTextFile(path);
+  const marker = "<!-- Managed by @neralabs/rerail -->";
+  const owned = existing.text.includes(marker);
+  if (existing.exists && !owned) {
+    return { change: { harness: "codex", path, action: "unchanged", detail: "user-owned Rerail skill: left in place" } };
+  }
+  if (context.mode === "unregister") {
+    if (!owned || !existing.text.includes(join(context.root, "dist", "cli.js"))) {
+      return { change: { harness: "codex", path, action: "unchanged", detail: "no skill from this Rerail installation to remove" } };
+    }
+    return planMutation(context, "codex", path, "updated", "remove the Rerail skill", () => unlink(path));
+  }
+  const template = await readFile(join(context.templateRoot, "skills", "rerail", "SKILL.md"), "utf8");
+  if (!template.includes("RERAIL_COMMAND")) throw new Error("Packaged Rerail skill is missing its command placeholder");
+  const text = `${template.replaceAll("RERAIL_COMMAND", directCommand(context, "cli.js")).trimEnd()}\n\n${marker}\n`;
+  if (existing.text === text) {
+    return { change: { harness: "codex", path, action: "unchanged", detail: "Rerail skill: already in place" } };
+  }
+  return planMutation(context, "codex", path, existing.exists ? "updated" : "created", "register the Rerail session skill",
+    () => writeTextFile(path, text, existing));
+}
+
+/** Prompt commands share root ownership checks, atomic installation, and conservative removal. */
+async function planPromptCommand(context: Context, harness: PromptCommandHarness, command: PromptCommand): Promise<Plan> {
+  const name = command === "rerail" ? "rerail" : `rerail-${command}`;
+  const path = join(context.home, CONFIG_DIRS[harness], "commands", `${name}.md`);
+  assertInside(path, context.home, "home");
+  const existing = await readTextFile(path);
+  const unchanged = (detail: string): Plan => ({ change: { harness, path, action: "unchanged", detail } });
+  if (context.mode === "register") {
+    const text = promptCommandText(context, harness, command);
+    if (existing.exists && existing.text === text) return unchanged(`/${name} command: already in place`);
+    return planMutation(context, harness, path, existing.exists ? "updated" : "created", `register the /${name} command`,
+      () => writeTextFile(path, text, existing));
+  }
+  if (!existing.exists) return unchanged(`no /${name} command: nothing to remove`);
+  if (!existing.text.includes(join(context.root, "dist", "cli.js")))
+    return unchanged(`/${name} command is not rerail's: left in place`);
+  return planMutation(context, harness, path, "updated", `remove the /${name} command`, () => unlink(path));
+}
+
+function planHarness(harness: Harness, context: Context): Promise<Plan> {
+  switch (harness) {
+    case "omp":
+      return planOmp(context);
+    case "pi":
+      return planPi(context);
+    case "claude-code":
+      return planClaudeSettings(context);
+    case "codex":
+      return planGroupedHooks(
+        harness,
+        join(context.home, ".codex", "hooks.json"),
+        context,
+        CODEX_HOOK_EVENTS,
+        CODEX_TOOL_EVENTS,
+        "codex-hook.js",
+        "Codex",
+      );
+    case "cursor":
+      return planCursor(context);
+  }
+}
+
+function planProjectRules(harness: Harness, projectDir: string, context: Context): Plan {
+  const path = join(projectDir, PROJECT_DIRS[harness], "cosine-rules.json");
+  assertInside(path, projectDir, "project directory");
+  if (existsSync(path)) return { change: { harness, path, action: "unchanged", detail: "existing rules file kept" } };
+  return planMutation(context, harness, path, "created", "seed empty cosine-rules.json",
+    () => writeTextFile(path, `${JSON.stringify(EMPTY_RULES_DOCUMENT, null, 2)}\n`, { exists: false, mode: 0o644 }));
+}
+
+/** Harnesses whose user config directory exists under `home`. */
+export function detectHarnesses(home: string = homedir()): Harness[] {
+  const base = resolve(home);
+  return HARNESSES.filter((harness) => existsSync(join(base, CONFIG_DIRS[harness])));
+}
+
+async function run(options: RegistrationOptions, mode: Mode): Promise<RegistrationReport> {
+  const home = resolve(options.home ?? homedir());
+  const root = resolve(options.root);
+  const context: Context = {
+    mode,
+    root,
+    templateRoot: options.templateRoot === undefined ? root : resolve(options.templateRoot),
+    packageRoots: new Map(),
+    home,
+    nodePath: options.nodePath ?? process.execPath,
+    dryRun: options.dryRun === true,
+    platform: options.platform ?? process.platform,
+  };
+  const selected = new Set(options.harnesses ?? detectHarnesses(home));
+  const projectDir = options.projectDir === undefined ? undefined : resolve(options.projectDir);
+  const plans: Plan[] = [];
+
+  // Plan every harness before touching anything so a malformed config aborts with nothing written.
+  for (const harness of HARNESSES) {
+    if (!selected.has(harness)) {
+      plans.push({
+        change: {
+          harness,
+          path: join(home, CONFIG_DIRS[harness]),
+          action: "skipped",
+          detail: options.harnesses === undefined ? "config directory not found" : "not selected",
+        },
+      });
+      continue;
+    }
+    plans.push(await planHarness(harness, context));
+    if (harness === "omp") plans.push(await planOmpMcp(context));
+    if (harness === "claude-code" && options.workspaceDir !== undefined) {
+      plans.push(...await planClaudeProjectSettings(options.workspaceDir, context));
+    }
+    if (harness === "claude-code") {
+      for (const path of readClaudeStatusSettingsPaths(home)) {
+        if (plans.some(plan => plan.change.path === path)) continue;
+        const registration = readClaudeStatusRegistration(home, path);
+        const statusLine = (await readJsonFile(path)).value.statusLine;
+        if (mode === "unregister" || (isClaudeStatusLine(statusLine) && statusLine.command === registration?.installedCommand)) {
+          plans.push(await planClaudeSettings(context, path));
+        }
+      }
+    }
+    if (harness === "codex") plans.push(await planCodexSkill(context));
+    if (harness === "claude-code" || harness === "cursor") {
+      for (const command of PROMPT_COMMANDS[harness]) plans.push(await planPromptCommand(context, harness, command));
+    }
+    if (mode === "register" && projectDir !== undefined) plans.push(planProjectRules(harness, projectDir, context));
+  }
+  for (const plan of plans) await plan.apply?.();
+  const changes = plans.map((plan) => plan.change);
+
+  const notes: string[] = [];
+  if (changes.some((change) => change.action === "created" || change.action === "updated")) {
+    notes.push("Harness sessions pick up registration changes when they next start.");
+  }
+  if (mode === "register" && selected.has("codex")) {
+    notes.push("Codex only runs trusted hooks: open Codex and run /hooks to trust the rerail hook.");
+  }
+  return { changes, notes };
+}
+
+export function registerHarnesses(options: RegistrationOptions): Promise<RegistrationReport> {
+  return run(options, "register");
+}
+
+export function unregisterHarnesses(options: RegistrationOptions): Promise<RegistrationReport> {
+  return run(options, "unregister");
+}

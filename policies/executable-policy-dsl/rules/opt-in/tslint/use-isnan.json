@@ -1,0 +1,69 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:use-isnan",
+  "revision": 1,
+  "description": "Port of TSLint's `use-isnan` rule with its default options (https://palantir.github.io/tslint/rules/use-isnan/). Enforces use of isNaN() instead of comparing to NaN.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "checks": [
+    {
+      "id": "nan-comparison",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "binary_expression"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^(==|!=|===|!==|<|>|<=|>=)$"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "regex": "^NaN$"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "USE_ISNAN",
+        "severity": "error",
+        "message": "Found an invalid comparison for NaN"
+      }
+    }
+  ]
+}

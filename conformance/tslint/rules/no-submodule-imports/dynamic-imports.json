@@ -1,0 +1,81 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-submodule-imports",
+  "revision": 1,
+  "description": "no-submodule-imports with whitelist @angular/core, rxjs.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "submodule-import",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "string"
+              },
+              {
+                "regex": "^[\"'](?:@[^/\"']+/[^/\"']+|[^./@\"'][^/\"']*)/"
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "import_statement"
+                        },
+                        {
+                          "kind": "export_statement"
+                        },
+                        {
+                          "kind": "import_require_clause"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call_expression",
+                        "any": [
+                          {
+                            "pattern": "import($$$A)"
+                          },
+                          {
+                            "pattern": "require($$$A)"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "regex": "^[\"'](?:@angular/core|rxjs)(?:/|[\"'])"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_SUBMODULE_IMPORTS",
+        "severity": "error",
+        "message": "Submodule import paths from this package are disallowed; import from the root instead"
+      }
+    }
+  ]
+}

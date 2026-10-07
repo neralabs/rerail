@@ -1,0 +1,6 @@
+{
+  "name": "rerail",
+  "description": "Persistent semantic monitoring, rule delivery, and workspace tools for Cursor",
+  "license": "MIT",
+  "hooks": "./hooks/cursor.json"
+}

@@ -1,0 +1,60 @@
+[package]
+name = "omp-cosine-rules-native"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+policy-profile = []
+bench-backends = ["dep:metal"]
+[dependencies]
+ast-grep-core = "=0.45.3"
+ast-grep-language = { version = "=0.45.3", default-features = false, features = ["tree-sitter-javascript", "tree-sitter-php", "tree-sitter-python", "tree-sitter-typescript"] }
+gix = { version = "=0.84.0", default-features = false, features = ["status", "parallel", "sha1", "sha256"] }
+globset = "=0.4.18"
+model2vec-rs = { version = "0.2.1", default-features = false, features = ["fancy-regex", "local-only"] }
+napi = { version = "3.0", default-features = false, features = ["napi8", "dyn-symbols"] }
+napi-derive = "3.0"
+indexmap = "=2.14.1"
+num-bigint = "=0.4.6"
+num-integer = "=0.1.47"
+num-traits = "=0.2.19"
+parking_lot = { version = "0.12", features = ["arc_lock"] }
+rayon = "=1.11.0"
+serde = { version = "1.0", features = ["derive"] }
+fancy-regex = "=0.14.0"
+regex = "=1.13.1"
+regex-syntax = "=0.8.11"
+rusqlite = { version = "=0.40.2", features = ["bundled", "functions", "hooks", "limits", "vtab"] }
+serde_json = "1.0"
+serde_yaml_ng = "=0.10.0"
+sha2 = "0.10"
+tree-sitter-language = "=0.1.8"
+tokenizers = { version = "0.21.4", default-features = false, features = ["fancy-regex"] }
+# The addon is dlopen'ed by Node; glibc can't fit jemalloc's initial-exec TLS in its static block.
+tikv-jemallocator = { version = "=0.6.0", features = ["disable_initial_exec_tls"] }
+tikv-jemalloc-ctl = { version = "=0.6.0", features = ["stats"] }
+tree-sitter = "=0.27.0"
+zstd = "=0.13.3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.189"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = { version = "0.33.0", optional = true }
+
+[dev-dependencies]
+ast-grep-language = { version = "=0.45.3", default-features = false, features = ["builtin-parser"] }
+
+[build-dependencies]
+cc = "=1.4.4"
+napi-build = "2.2"
+sha2 = "0.10"
+# Generates the Blade parser from its vendored grammar.json; no QuickJS, as no grammar.js is read.
+tree-sitter-generate = { version = "=0.27.0", default-features = false }

@@ -1,0 +1,32 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:typedef",
+  "revision": 1,
+  "description": "Requires type definitions for: array-destructuring.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "checks": [
+    {
+      "id": "array-destructuring",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "array_pattern",
+            "not": {"follows": {"stopBy": "neighbor", "regex": "^=$"}},
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "variable_declarator",
+              "not": {"has": {"stopBy": "neighbor", "kind": "type_annotation"}}
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "TYPEDEF",
+        "severity": "error",
+        "message": "expected array-destructuring to have a typedef"
+      }
+    }
+  ]
+}

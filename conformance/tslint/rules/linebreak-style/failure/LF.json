@@ -1,0 +1,29 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:linebreak-style",
+  "revision": 1,
+  "description": "Enforces CRLF line endings.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "lf-line",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?m)^[^\\r\\n]*\\n"
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "LINEBREAK_STYLE",
+        "severity": "error",
+        "message": "Expected linebreak to be 'CRLF'"
+      }
+    }
+  ]
+}

@@ -1,0 +1,314 @@
+import { execFileSync } from "node:child_process";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { RerailRuntime } from "../src/runtime.js";
+import { seedContractPolicyForRoot } from "./contract-policy.js";
+import { decodeRerailEventFrame } from "../src/event-protocol.js";
+import type { AdapterDelivery } from "../src/adapter-contract.js";
+
+
+const originalRerailHome = process.env.RERAIL_HOME;
+afterEach(() => {
+  if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
+  else process.env.RERAIL_HOME = originalRerailHome;
+});
+async function policySteers(runtime: RerailRuntime, sessionId: string, initial: readonly AdapterDelivery[], paths: string[]): Promise<AdapterDelivery[]> {
+  const deliveries = [...initial];
+  let poll = 0;
+  const steers = () => deliveries.filter(delivery => delivery.requested === "steer" && delivery.content.includes("CURSOR_EXECUTE"));
+  await expect.poll(async () => {
+    if (paths.every(path => steers().some(delivery => delivery.content.includes(path)))) return [];
+    deliveries.push(...await runtime.ingest({
+      kind: "user-prompt", eventId: `policy-poll:${++poll}`, sessionId, text: "continue",
+    }));
+    return paths.filter(path => !steers().some(delivery => delivery.content.includes(path)));
+  }, { timeout: 10_000, interval: 10 }).toEqual([]);
+  return steers();
+}
+
+// This suite crosses the production event seam with the actual native model,
+// compiled policy catalog, filesystem, and session persistence. No test doubles.
+describe("shared harness kernel", () => {
+  it("runs cosine matching and committed-edit policy enforcement in an OMP session", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-kernel-harness-"));
+    process.env.RERAIL_HOME = join(root, "home");
+    seedContractPolicyForRoot(root);
+    let runtime: RerailRuntime | undefined;
+    try {
+      await mkdir(join(root, ".omp"));
+      await mkdir(join(root, "api"));
+      await writeFile(
+        join(root, ".omp", "cosine-rules.json"),
+        JSON.stringify({
+          version: 1,
+          rules: [
+            {
+              id: "require-transaction-guidance",
+              reference: "Preserve database transaction atomicity",
+              match: { operator: "gte", threshold: 0.95 },
+              sample: { source: "user-input", boundary: "message" },
+              action: { delivery: "steer", content: "COSINE: preserve transaction atomicity" },
+              repeat: { mode: "once" },
+            },
+          ],
+        }),
+      );
+      await writeFile(join(root, "api", "route.py"), "def route():\n    return 1\n");
+      runtime = new RerailRuntime({ storageRoot: join(root, ".rerail", "sessions"), workspaceRoot: root, modelPath: resolve("model") });
+      const session = { host: "omp" as const, sessionId: "shared-kernel", cwd: root };
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      const cosine = await runtime.ingest({
+        kind: "user-prompt",
+        eventId: "prompt",
+        sessionId: session.sessionId,
+        text: "Preserve database transaction atomicity",
+      });
+      expect(cosine.filter(delivery => delivery.requested === "steer")).toEqual([
+        {
+          sessionId: session.sessionId,
+          requested: "steer",
+          mechanism: "native-queue",
+          content: "COSINE: preserve transaction atomicity",
+          // Cosine matches are not policy steering: re-rail attribution only credits policy rules (NER-1525 Q22).
+          ruleIds: [],
+        },
+      ]);
+      await runtime.ingest({
+        kind: "tool-call",
+        toolCallId: "write-route",
+        eventId: "write-start",
+        sessionId: session.sessionId,
+        toolName: "write",
+        input: { path: "api/route.py" },
+      });
+      await writeFile(join(root, "api", "route.py"), 'def route(cursor):\n    cursor.execute("SELECT 1")\n');
+      const policy = await runtime.ingest({
+        kind: "tool-result",
+        toolCallId: "write-route",
+        eventId: "write-end",
+        sessionId: session.sessionId,
+        toolName: "write",
+        output: { ok: true },
+      });
+      expect(await policySteers(runtime, session.sessionId, policy, ["api/route.py"])).toEqual([
+        expect.objectContaining({ requested: "steer", mechanism: "native-queue", content: expect.stringContaining("CURSOR_EXECUTE") }),
+      ]);
+      const repeated = await runtime.ingest({
+        kind: "user-prompt",
+        eventId: "prompt-again",
+        sessionId: session.sessionId,
+        text: "Preserve database transaction atomicity",
+      });
+      expect(repeated.filter(delivery => delivery.requested === "steer")).toEqual([]);
+      await runtime.ingest({ kind: "session-end", eventId: "end", sessionId: session.sessionId });
+    } finally {
+      await runtime?.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+  it("correlates out-of-order results by tool call identity, not tool name", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-kernel-correlation-"));
+    process.env.RERAIL_HOME = join(root, "home");
+    seedContractPolicyForRoot(root);
+    let runtime: RerailRuntime | undefined;
+    try {
+      await mkdir(join(root, "api"));
+      await writeFile(join(root, "api", "first.py"), "value = 1\n");
+      await writeFile(join(root, "api", "second.py"), "value = 2\n");
+      runtime = new RerailRuntime({ storageRoot: join(root, ".rerail", "sessions"), workspaceRoot: root, modelPath: resolve("model") });
+      const session = { host: "claude-code" as const, sessionId: "correlation", cwd: root };
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      for (const [toolCallId, path] of [
+        ["first", "api/first.py"],
+        ["second", "api/second.py"],
+      ]) {
+        const { event } = decodeRerailEventFrame(
+          JSON.stringify({
+            event: {
+              kind: "tool-call",
+              eventId: `call:${toolCallId}`,
+              toolCallId,
+              sessionId: session.sessionId,
+              toolName: "write",
+              input: { path },
+            },
+          }),
+        );
+        await runtime.ingest(event);
+      }
+      await writeFile(join(root, "api", "second.py"), 'cursor.execute("SELECT 1")\n');
+      const { event } = decodeRerailEventFrame(
+        JSON.stringify({
+          event: {
+            kind: "tool-result",
+            eventId: "result:second",
+            toolCallId: "second",
+            sessionId: session.sessionId,
+            toolName: "write",
+            output: { ok: true },
+          },
+        }),
+      );
+      const deliveries = await runtime.ingest(event);
+      const steers = await policySteers(runtime, session.sessionId, deliveries, ["api/second.py"]);
+      expect(steers.every(delivery => !delivery.content.includes("api/first.py"))).toBe(true);
+    } finally {
+      await runtime?.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+  it("reconciles shell-written files at the command boundary and finds nothing new at the turn checkpoint", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-kernel-shell-"));
+    process.env.RERAIL_HOME = join(root, "home");
+    seedContractPolicyForRoot(root);
+    let runtime: RerailRuntime | undefined;
+    try {
+      await mkdir(join(root, "api"));
+      await writeFile(join(root, "api/route.py"), "def route():\n    return 1\n");
+      runtime = new RerailRuntime({ storageRoot: join(root, ".rerail/sessions"), workspaceRoot: root, modelPath: resolve("model") });
+      const session = { host: "codex" as const, sessionId: "shell", cwd: root };
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      await runtime.ingest({
+        kind: "tool-call",
+        eventId: "call:shell",
+        toolCallId: "shell",
+        sessionId: session.sessionId,
+        toolName: "Bash",
+        input: { command: "write route" },
+      });
+      execFileSync(
+        process.execPath,
+        [
+          "-e",
+          "require('node:fs').writeFileSync('api/route.py', 'def route(cursor):\\n    cursor.execute(\"SELECT 1\")\\n')",
+        ],
+        { cwd: root },
+      );
+      // The command result reconciles the shell write and carries its diagnostic.
+      const boundary = await runtime.ingest({
+        kind: "tool-result",
+        eventId: "result:shell",
+        toolCallId: "shell",
+        sessionId: session.sessionId,
+        toolName: "Bash",
+        output: "",
+      });
+      const steers = await policySteers(runtime, session.sessionId, boundary, ["api/route.py"]);
+      expect(steers).toHaveLength(1);
+      // The turn checkpoint sees the file already observed and reports nothing again.
+      const turn = await runtime.ingest({
+        kind: "turn-end",
+        eventId: "turn",
+        sessionId: session.sessionId,
+        text: "Changed route.",
+      });
+      expect(turn.filter(delivery => delivery.content.includes("CURSOR_EXECUTE"))).toEqual([]);
+    } finally {
+      await runtime?.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+  it("discards unfinished assistant text when the harness aborts its stream", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-kernel-abort-"));
+    process.env.RERAIL_HOME = join(root, "home");
+    seedContractPolicyForRoot(root);
+    let runtime: RerailRuntime | undefined;
+    try {
+      await mkdir(join(root, ".pi"));
+      await writeFile(
+        join(root, ".pi/cosine-rules.json"),
+        JSON.stringify({
+          version: 1,
+          rules: [
+            {
+              id: "unfinished",
+              reference: "Preserve database transaction atomicity",
+              match: { operator: "gte", threshold: 0.95 },
+              sample: { source: "assistant-text", boundary: "message", minimumTokens: 1 },
+              action: { delivery: "steer", content: "UNFINISHED" },
+              repeat: { mode: "always" },
+            },
+          ],
+        }),
+      );
+      runtime = new RerailRuntime({ storageRoot: join(root, ".rerail/sessions"), workspaceRoot: root, modelPath: resolve("model") });
+      const session = { host: "pi" as const, sessionId: "abort", cwd: root };
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      await runtime.ingest({
+        kind: "assistant-delta",
+        eventId: "delta",
+        sessionId: session.sessionId,
+        messageId: "message",
+        delta: "Preserve database transaction atomicity",
+        final: false,
+      });
+      const { event } = decodeRerailEventFrame(
+        JSON.stringify({
+          event: {
+            kind: "assistant-abort",
+            eventId: "abort",
+            sessionId: session.sessionId,
+            messageId: "message",
+          },
+        }),
+      );
+      await runtime.ingest(event);
+      expect(
+        await runtime.ingest({
+          kind: "assistant-delta",
+          eventId: "final",
+          sessionId: session.sessionId,
+          messageId: "message",
+          delta: "",
+          final: true,
+        }),
+      ).toEqual([]);
+    } finally {
+      await runtime?.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+  it("delivers current findings for concurrent tool results without losing either edit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-kernel-concurrent-"));
+    process.env.RERAIL_HOME = join(root, "home");
+    seedContractPolicyForRoot(root);
+    let runtime: RerailRuntime | undefined;
+    try {
+      await mkdir(join(root, "api"));
+      for (const name of ["first", "second"])
+        await writeFile(join(root, `api/${name}.py`), "def route():\n    return 1\n");
+      runtime = new RerailRuntime({ storageRoot: join(root, ".rerail/sessions"), workspaceRoot: root, modelPath: resolve("model") });
+      const session = { host: "omp" as const, sessionId: "concurrent", cwd: root };
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      for (const name of ["first", "second"]) {
+        await runtime.ingest({
+          kind: "tool-call",
+          eventId: `call:${name}`,
+          toolCallId: name,
+          sessionId: session.sessionId,
+          toolName: "write",
+          input: { path: `api/${name}.py` },
+        });
+        await writeFile(join(root, `api/${name}.py`), "def route(cursor):\n    cursor.execute('SELECT 1')\n");
+      }
+      const deliveries = await Promise.all(
+        ["first", "second"].map((name) =>
+          runtime!.ingest({
+            kind: "tool-result",
+            eventId: `result:${name}`,
+            toolCallId: name,
+            sessionId: session.sessionId,
+            toolName: "write",
+            output: "written",
+          }),
+        ),
+      );
+      await policySteers(runtime, session.sessionId, deliveries.flat(), ["api/first.py", "api/second.py"]);
+    } finally {
+      await runtime?.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+});

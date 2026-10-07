@@ -1,0 +1,25 @@
+{
+  "verdict": "INFEASIBLE",
+  "primitive": "type-checker",
+  "secondary": [],
+  "needs": [
+    "expression-type",
+    "overload-resolution",
+    "compiler-options"
+  ],
+  "reason": "Needs 'is typeof X === \"t\" (or X === null/undefined) always true or always false given X's static type and strictNullChecks?'. The port handles only literal operands, whose type is known from syntax. Every fixture uses get<T>() with the type argument deciding the answer. Checker APIs: getTypeAtLocation of the typeof/=== operand (:100) and typeToString; strictNullChecks (:67). Every fixture line is `get<T>()`, i.e. the instantiated return type of a generic call.",
+  "evidence": [
+    {
+      "variant": "strict-null-checks",
+      "file": "test.ts.lint",
+      "line": 5,
+      "why": "`typeof get<boolean>() === \"undefined\"` is always false only because T=boolean; `get<boolean | undefined>()` (line 10) is fine"
+    },
+    {
+      "variant": "no-strict-null-checks",
+      "file": "test.ts.lint",
+      "line": 1,
+      "why": "the same kind of code gives no failures without strictNullChecks: the answer depends on compiler options"
+    }
+  ]
+}

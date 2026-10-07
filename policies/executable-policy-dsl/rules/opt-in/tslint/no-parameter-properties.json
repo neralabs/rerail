@@ -1,0 +1,73 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-parameter-properties",
+  "revision": 1,
+  "description": "Port of TSLint's `no-parameter-properties` rule with its default options (https://palantir.github.io/tslint/rules/no-parameter-properties/). Disallows parameter properties in class constructors.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "checks": [
+    {
+      "id": "no-parameter-properties",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "required_parameter"
+                  },
+                  {
+                    "kind": "optional_parameter"
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "accessibility_modifier"
+                    },
+                    {
+                      "kind": "override_modifier"
+                    },
+                    {
+                      "regex": "^readonly$"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_PARAMETER_PROPERTIES",
+        "severity": "error",
+        "message": "Property cannot be declared in the constructor"
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+[workspace]
+members = ["native"]
+resolver = "2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+# Never strip through rustc: on Xcode 27 the linker-side strip rewrites LINKEDIT so
+# dyld rejects the cdylib ("mis-aligned LINKEDIT string pool"). Unstripped costs ~1 MB.
+strip = "none"

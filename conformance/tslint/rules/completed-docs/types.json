@@ -1,0 +1,583 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:completed-docs",
+  "revision": 1,
+  "description": "All categories listed as strings (no tag exemptions).",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "checks": [
+    {
+      "id": "classes-internal",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "any": [{ "kind": "class_declaration" }, { "kind": "abstract_class_declaration" }] },
+              { "not": { "inside": { "kind": "export_statement" } } },
+              { "not": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for classes."
+      }
+    },
+    {
+      "id": "classes-exported",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "kind": "export_statement" },
+              { "has": { "any": [{ "kind": "class_declaration" }, { "kind": "abstract_class_declaration" }] } },
+              { "not": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for exported classes."
+      }
+    },
+    {
+      "id": "enums-internal",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "kind": "enum_declaration" },
+              { "not": { "inside": { "kind": "export_statement" } } },
+              { "not": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for enums."
+      }
+    },
+    {
+      "id": "enums-exported",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "kind": "export_statement" },
+              { "has": { "kind": "enum_declaration" } },
+              { "not": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for exported enums."
+      }
+    },
+    {
+      "id": "enum-members",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "any": [{ "kind": "property_identifier" }, { "kind": "enum_assignment" }] },
+              { "inside": { "kind": "enum_body", "inside": { "kind": "enum_declaration" } } },
+              { "not": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for enum members."
+      }
+    },
+    {
+      "id": "functions-internal",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "matches": "fn" },
+              { "not": { "inside": { "kind": "export_statement" } } },
+              {
+                "not": {
+                  "any": [
+                    { "matches": "documented" },
+                    {
+                      "all": [
+                        { "matches": "fn-named" },
+                        { "inside": { "has": { "all": [{ "matches": "fn-named" }, { "matches": "documented" }] } } }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": {
+            "documented": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } },
+            "fn": {
+              "any": [
+                { "kind": "function_declaration" },
+                { "kind": "function_signature" },
+                { "kind": "generator_function_declaration" }
+              ]
+            },
+            "fn-named": {
+              "any": [
+                { "all": [{ "matches": "fn" }, { "has": { "kind": "identifier", "pattern": "$FN" } }] },
+                { "kind": "export_statement", "has": { "matches": "fn-named" } }
+              ]
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for functions."
+      }
+    },
+    {
+      "id": "functions-exported",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "kind": "export_statement" },
+              { "has": { "matches": "fn" } },
+              {
+                "not": {
+                  "any": [
+                    { "matches": "documented" },
+                    {
+                      "all": [
+                        { "matches": "fn-named" },
+                        { "inside": { "has": { "all": [{ "matches": "fn-named" }, { "matches": "documented" }] } } }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": {
+            "documented": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } },
+            "fn": {
+              "any": [
+                { "kind": "function_declaration" },
+                { "kind": "function_signature" },
+                { "kind": "generator_function_declaration" }
+              ]
+            },
+            "fn-named": {
+              "any": [
+                { "all": [{ "matches": "fn" }, { "has": { "kind": "identifier", "pattern": "$FN" } }] },
+                { "kind": "export_statement", "has": { "matches": "fn-named" } }
+              ]
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for exported functions."
+      }
+    },
+    {
+      "id": "interfaces-internal",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "kind": "interface_declaration" },
+              { "not": { "inside": { "kind": "export_statement" } } },
+              { "not": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for interfaces."
+      }
+    },
+    {
+      "id": "interfaces-exported",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "kind": "export_statement" },
+              { "has": { "kind": "interface_declaration" } },
+              { "not": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for exported interfaces."
+      }
+    },
+    {
+      "id": "methods",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "matches": "method" },
+              {
+                "not": {
+                  "any": [
+                    { "matches": "documented" },
+                    {
+                      "all": [
+                        { "has": { "kind": "property_identifier", "pattern": "$MN" } },
+                        {
+                          "inside": {
+                            "kind": "class_body",
+                            "has": {
+                              "all": [
+                                { "matches": "method" },
+                                { "has": { "kind": "property_identifier", "pattern": "$MN" } },
+                                { "matches": "documented" }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": {
+            "documented": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } },
+            "method": {
+              "all": [
+                {
+                  "any": [
+                    { "kind": "method_definition", "inside": { "kind": "class_body" } },
+                    { "kind": "method_signature" },
+                    { "kind": "abstract_method_signature" }
+                  ]
+                },
+                { "not": { "has": { "regex": "^[gs]et$", "not": { "kind": "property_identifier" } } } },
+                { "not": { "has": { "kind": "property_identifier", "regex": "^constructor$" } } }
+              ]
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for methods."
+      }
+    },
+    {
+      "id": "namespaces-internal",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "any": [{ "kind": "internal_module" }, { "kind": "module" }] },
+              { "not": { "inside": { "kind": "export_statement" } } },
+              {
+                "not": {
+                  "any": [
+                    { "matches": "documented" },
+                    { "inside": { "kind": "expression_statement", "matches": "documented" } }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": { "documented": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for namespaces."
+      }
+    },
+    {
+      "id": "namespaces-exported",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "kind": "export_statement" },
+              { "has": { "any": [{ "kind": "internal_module" }, { "kind": "module" }] } },
+              { "not": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for exported namespaces."
+      }
+    },
+    {
+      "id": "properties",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [{ "kind": "public_field_definition" }, { "kind": "property_signature" }, { "matches": "accessor" }]
+              },
+              {
+                "not": {
+                  "any": [
+                    { "matches": "documented" },
+                    {
+                      "all": [
+                        { "matches": "accessor" },
+                        { "has": { "kind": "property_identifier", "pattern": "$AN" } },
+                        {
+                          "inside": {
+                            "has": {
+                              "all": [
+                                { "matches": "accessor" },
+                                { "has": { "kind": "property_identifier", "pattern": "$AN" } },
+                                { "matches": "documented" }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": {
+            "documented": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } },
+            "accessor": {
+              "all": [
+                {
+                  "any": [
+                    { "kind": "method_definition", "inside": { "kind": "class_body" } },
+                    { "kind": "method_signature" },
+                    { "kind": "abstract_method_signature" }
+                  ]
+                },
+                { "has": { "regex": "^[gs]et$", "not": { "kind": "property_identifier" } } }
+              ]
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for properties."
+      }
+    },
+    {
+      "id": "types-internal",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "kind": "type_alias_declaration" },
+              { "not": { "inside": { "kind": "export_statement" } } },
+              { "not": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for types."
+      }
+    },
+    {
+      "id": "types-exported",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "kind": "export_statement" },
+              { "has": { "kind": "type_alias_declaration" } },
+              { "not": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for exported types."
+      }
+    },
+    {
+      "id": "variables-internal",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "kind": "variable_declarator" },
+              {
+                "inside": {
+                  "all": [
+                    { "any": [{ "kind": "lexical_declaration" }, { "kind": "variable_declaration" }] },
+                    { "not": { "inside": { "kind": "export_statement" } } },
+                    {
+                      "inside": {
+                        "any": [
+                          { "kind": "program" },
+                          {
+                            "kind": "statement_block",
+                            "inside": { "any": [{ "kind": "internal_module" }, { "kind": "module" }] }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  { "matches": "later-declarator" },
+                  { "inside": { "not": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } } }
+                ]
+              }
+            ]
+          },
+          "utils": {
+            "later-declarator": {
+              "follows": {
+                "any": [
+                  { "kind": "variable_declarator" },
+                  { "regex": "^,$" },
+                  { "kind": "comment", "matches": "later-declarator" }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for variables."
+      }
+    },
+    {
+      "id": "variables-exported",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "kind": "variable_declarator" },
+              {
+                "inside": {
+                  "all": [
+                    { "any": [{ "kind": "lexical_declaration" }, { "kind": "variable_declaration" }] },
+                    {
+                      "inside": {
+                        "all": [
+                          { "kind": "export_statement" },
+                          {
+                            "inside": {
+                              "any": [
+                                { "kind": "program" },
+                                {
+                                  "kind": "statement_block",
+                                  "inside": { "any": [{ "kind": "internal_module" }, { "kind": "module" }] }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  { "matches": "later-declarator" },
+                  {
+                    "inside": { "inside": { "not": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } } }
+                  }
+                ]
+              }
+            ]
+          },
+          "utils": {
+            "later-declarator": {
+              "follows": {
+                "any": [
+                  { "kind": "variable_declarator" },
+                  { "regex": "^,$" },
+                  { "kind": "comment", "matches": "later-declarator" }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for exported variables."
+      }
+    }
+  ]
+}

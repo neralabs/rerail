@@ -1,0 +1,19 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-reference-import",
+  "revision": 1,
+  "description": "Flags `/// <reference types=\"x\" />` in files that also import. Approximation: cannot check that x is the imported module.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "checks": [
+    {
+      "id": "reference-types-with-import",
+      "forbid": {
+        "select_when": {
+          "select": { "regex": { "source": "file.content", "pattern": "(?m)^[ \\t]*///[ \\t]*<reference[ \\t]+types[ \\t]*=[ \\t]*\"(?<NAME>[^\"\\n]*)\"" } },
+          "exists": { "ast": { "language": "typescript", "rule": { "any": [ { "kind": "import_statement" }, { "kind": "import_alias" } ] } } }
+        }
+      },
+      "finding": { "anchor": "capture.NAME", "code": "NO_REFERENCE_IMPORT", "severity": "error", "message": "No need to reference the module, since it is imported." }
+    }
+  ]
+}

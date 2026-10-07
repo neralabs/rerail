@@ -1,0 +1,91 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-submodule-imports",
+  "revision": 1,
+  "description": "Port of TSLint's `no-submodule-imports` rule with its default options (https://palantir.github.io/tslint/rules/no-submodule-imports/). Disallows importing any submodule of a non-relative package (default: empty whitelist).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "checks": [
+    {
+      "id": "submodule-import",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "string"
+              },
+              {
+                "regex": "^[\"'](?:@[^/\"']+/[^/\"']+|[^./@\"'][^/\"']*)/"
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "import_statement"
+                        },
+                        {
+                          "kind": "export_statement"
+                        },
+                        {
+                          "kind": "import_require_clause"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call_expression",
+                        "any": [
+                          {
+                            "pattern": "import($$$A)"
+                          },
+                          {
+                            "pattern": "require($$$A)"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_SUBMODULE_IMPORTS",
+        "severity": "error",
+        "message": "Submodule import paths from this package are disallowed; import from the root instead"
+      }
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:label-position",
+  "revision": 1,
+  "description": "Port of TSLint's `label-position` rule with its default options (https://palantir.github.io/tslint/rules/label-position/). Only allows labels on do/for/while/switch statements.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "checks": [
+    {
+      "id": "label-position",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "statement_identifier"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "labeled_statement",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "for_statement"
+                        },
+                        {
+                          "kind": "for_in_statement"
+                        },
+                        {
+                          "kind": "while_statement"
+                        },
+                        {
+                          "kind": "do_statement"
+                        },
+                        {
+                          "kind": "switch_statement"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "LABEL_POSITION",
+        "severity": "error",
+        "message": "unexpected label on statement"
+      }
+    }
+  ]
+}

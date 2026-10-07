@@ -1,0 +1,44 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-invalid-template-strings",
+  "revision": 1,
+  "description": "Warns on ${...} interpolation syntax inside ordinary (non-template) string literals.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "interpolation-in-string",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "string_fragment"
+              },
+              {
+                "regex": "(?<INTERPOLATION>\\$\\{.+?\\})"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "string"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "capture.INTERPOLATION",
+        "code": "NO_INVALID_TEMPLATE_STRINGS",
+        "severity": "error",
+        "message": "Interpolation will only work for template strings: $INTERPOLATION"
+      }
+    }
+  ]
+}

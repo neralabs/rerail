@@ -1,0 +1,58 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:object-literal-sort-keys",
+  "revision": 1,
+  "description": "Options [\"ignore-case\"]. checkAlphabetical: in an object literal spanning lines, each identifier- or string-keyed property (pair or shorthand) compares its key with the key of the nearest earlier such property, back to the last spread (methods, numeric and computed keys are skipped and keep the previous key); string keys compare unquoted, lower-cased first. Only the first descending key of an object is reported, as TSLint returns after it. Not modelled: the blank-line reset (a descending key after a blank line is not reported by TSLint), which needs trivia.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "checks": [
+    {
+      "id": "unsorted-key",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "inside": {"kind": "object", "regex": "\\n"},
+            "all": [{"matches": "descending"}, {"not": {"follows": {"stopBy": "end", "matches": "descending-before"}}}]
+          },
+          "utils": {
+            "key": {"any": [{"kind": "property_identifier"}, {"kind": "string"}], "precedes": {"regex": "^:$"}},
+            "keyed-previous": {
+              "any": [
+                {"kind": "pair", "has": {"matches": "key", "pattern": "$PREV"}},
+                {"kind": "shorthand_property_identifier", "pattern": "$PREV"}
+              ]
+            },
+            "descending": {
+              "any": [
+                {"kind": "pair", "has": {"matches": "key", "pattern": "$KEY"}},
+                {"kind": "shorthand_property_identifier", "pattern": "$KEY"}
+              ],
+              "follows": {"stopBy": {"kind": "spread_element"}, "matches": "keyed-previous"},
+              "compare": {"left": "PREV", "op": "gt", "right": "KEY", "collation": "fold-lower", "text": "unquoted"}
+            },
+            "descending-before": {
+              "any": [
+                {"kind": "pair", "has": {"matches": "key", "pattern": "$KEY2"}},
+                {"kind": "shorthand_property_identifier", "pattern": "$KEY2"}
+              ],
+              "follows": {"stopBy": {"kind": "spread_element"}, "matches": "keyed-previous-2"},
+              "compare": {"left": "PREV2", "op": "gt", "right": "KEY2", "collation": "fold-lower", "text": "unquoted"}
+            },
+            "keyed-previous-2": {
+              "any": [
+                {"kind": "pair", "has": {"matches": "key", "pattern": "$PREV2"}},
+                {"kind": "shorthand_property_identifier", "pattern": "$PREV2"}
+              ]
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "capture.KEY",
+        "code": "OBJECT_LITERAL_SORT_KEYS",
+        "severity": "error",
+        "message": "The key '$KEY' is not sorted alphabetically (after '$PREV')."
+      }
+    }
+  ]
+}

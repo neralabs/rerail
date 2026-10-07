@@ -1,0 +1,31 @@
+{
+  "verdict": "INFEASIBLE",
+  "primitive": "type-checker",
+  "secondary": [],
+  "needs": [
+    "expression-type",
+    "symbol-resolution",
+    "lib-types"
+  ],
+  "reason": "The checker question is 'is the static type of this call / await / tagged-template expression exactly `void`?'. Position logic (statement, ternary branch, &&/|| chains, arrow shorthand option) ports exactly. The port can only name callees that are void by convention (console.*). Anything else needs the callee's declared return type, and for `await` the awaited type of a Promise<void>. Checker APIs: getTypeAtLocation(call) flag Void (:90). Line 11 needs the awaited type of Promise<void>; console.* voids come from lib.",
+  "evidence": [
+    {
+      "variant": "default",
+      "file": "test.ts.lint",
+      "line": 10,
+      "why": "`const x = doIt();` is void only because `declare function doIt(): void;` (line 18) says so. The same syntax with any value-returning function is valid."
+    },
+    {
+      "variant": "default",
+      "file": "test.ts.lint",
+      "line": 11,
+      "why": "`await doAsync()` is void only because doAsync returns Promise<void>; needs awaited-type resolution"
+    },
+    {
+      "variant": "default",
+      "file": "test.ts.lint",
+      "line": 12,
+      "why": "`print``` is void only via `declare function print(...): void`"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+target/
+*.node
+/index.js
+/index.d.ts
+/native/index.js
+/native/index.d.ts
+coverage/
+.DS_Store
+.rerail/

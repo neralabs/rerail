@@ -1,0 +1,250 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-mergeable-namespace",
+  "revision": 1,
+  "description": "Port of TSLint's `no-mergeable-namespace` rule with its default options (https://palantir.github.io/tslint/rules/no-mergeable-namespace/). Disallows mergeable namespaces in the same file: a namespace/module whose name (first segment of a dotted name) equals an earlier sibling namespace/module declaration's in the same statement list.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "checks": [
+    {
+      "id": "later-sibling-namespace",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "pattern": "$K"
+                  },
+                  {
+                    "kind": "nested_identifier",
+                    "has": {
+                      "kind": "identifier",
+                      "pattern": "$K"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "internal_module"
+                        },
+                        {
+                          "kind": "module"
+                        }
+                      ]
+                    },
+                    {
+                      "any": [
+                        {
+                          "follows": {
+                            "stopBy": "end",
+                            "any": [
+                              {
+                                "all": [
+                                  {
+                                    "any": [
+                                      {
+                                        "kind": "internal_module"
+                                      },
+                                      {
+                                        "kind": "module"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "has": {
+                                      "any": [
+                                        {
+                                          "kind": "identifier",
+                                          "pattern": "$K"
+                                        },
+                                        {
+                                          "kind": "nested_identifier",
+                                          "has": {
+                                            "kind": "identifier",
+                                            "pattern": "$K"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "kind": "expression_statement"
+                                  },
+                                  {
+                                    "kind": "ambient_declaration"
+                                  }
+                                ],
+                                "has": {
+                                  "all": [
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "internal_module"
+                                        },
+                                        {
+                                          "kind": "module"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "pattern": "$K"
+                                          },
+                                          {
+                                            "kind": "nested_identifier",
+                                            "has": {
+                                              "kind": "identifier",
+                                              "pattern": "$K"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "inside": {
+                            "any": [
+                              {
+                                "kind": "expression_statement"
+                              },
+                              {
+                                "kind": "ambient_declaration"
+                              }
+                            ],
+                            "follows": {
+                              "stopBy": "end",
+                              "any": [
+                                {
+                                  "all": [
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "internal_module"
+                                        },
+                                        {
+                                          "kind": "module"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "pattern": "$K"
+                                          },
+                                          {
+                                            "kind": "nested_identifier",
+                                            "has": {
+                                              "kind": "identifier",
+                                              "pattern": "$K"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "expression_statement"
+                                    },
+                                    {
+                                      "kind": "ambient_declaration"
+                                    }
+                                  ],
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "any": [
+                                          {
+                                            "kind": "internal_module"
+                                          },
+                                          {
+                                            "kind": "module"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "has": {
+                                          "any": [
+                                            {
+                                              "kind": "identifier",
+                                              "pattern": "$K"
+                                            },
+                                            {
+                                              "kind": "nested_identifier",
+                                              "has": {
+                                                "kind": "identifier",
+                                                "pattern": "$K"
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_MERGEABLE_NAMESPACE",
+        "severity": "error",
+        "message": "Mergeable namespace found. Merge its contents with the earlier namespace of the same name."
+      }
+    }
+  ]
+}

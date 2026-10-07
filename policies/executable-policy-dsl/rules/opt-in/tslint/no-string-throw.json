@@ -1,0 +1,77 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-string-throw",
+  "revision": 1,
+  "description": "Port of TSLint's `no-string-throw` rule with its default options (https://palantir.github.io/tslint/rules/no-string-throw/). Flags throwing plain strings: string/template literals, parenthesized strings, and '+' concatenations with a string operand, to any depth.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "checks": [
+    {
+      "id": "string-throw",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "throw_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "is-string"
+            }
+          },
+          "utils": {
+            "is-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "template_string"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "is-string"
+                  }
+                },
+                {
+                  "kind": "binary_expression",
+                  "pattern": "$_ + $_",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "is-string"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_STRING_THROW",
+        "severity": "error",
+        "message": "Throwing plain strings (not instances of Error) gives no stack traces"
+      }
+    }
+  ]
+}

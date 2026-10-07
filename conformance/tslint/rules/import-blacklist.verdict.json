@@ -1,0 +1,19 @@
+{
+  "verdict": "BLOCKED",
+  "primitive": "fixture-artifact",
+  "reason": "The port matches all 13 expected failures, at TSLint's exact start positions, on a copy of the fixture with the two unparseable lines removed. In the real fixture, `from rxjs;` and `require(lodash)` (non-string module specifiers) are syntax errors to tree-sitter, so the kernel reports source-incomplete and yields no findings. TSLint's parser recovers. TSLint's default blacklist is empty, and an empty checks list does not compile, so rules/import-blacklist.json ports the fixture's option list. Those two lines are invalid TS (TS1141).",
+  "evidence": [
+    {
+      "variant": ".",
+      "file": "test.ts.lint",
+      "line": 10,
+      "why": "`import {Observable} from rxjs;` has an identifier specifier, a tree-sitter syntax error; the whole file becomes source-incomplete"
+    },
+    {
+      "variant": ".",
+      "file": "test.ts.lint",
+      "line": 11,
+      "why": "`import forOwn = require(lodash);` is also not parseable by tree-sitter-typescript"
+    }
+  ]
+}

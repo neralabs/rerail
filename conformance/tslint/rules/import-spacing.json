@@ -1,0 +1,252 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:import-spacing",
+  "revision": 1,
+  "description": "Ensures proper spacing between import statement keywords.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "add-space-after-import",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "import_statement"
+              },
+              {
+                "regex": "^import[{*\\\"']"
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "IMPORT_SPACING",
+        "severity": "error",
+        "message": "Add space after 'import'"
+      }
+    },
+    {
+      "id": "too-many-after-import",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "import_statement"
+              },
+              {
+                "regex": "^import\\s{2,}"
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "IMPORT_SPACING",
+        "severity": "error",
+        "message": "Too many spaces after 'import'"
+      }
+    },
+    {
+      "id": "line-break-before-clause",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "import_statement"
+              },
+              {
+                "regex": "^import\\s*\\n"
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "IMPORT_SPACING",
+        "severity": "error",
+        "message": "Line breaks are not allowed in import declaration"
+      }
+    },
+    {
+      "id": "line-break-after-clause",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?:[ \\t]*\\n\\s*from\\s*|\\s*from[ \\t]*\\n\\s*)[\\\"']"
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "IMPORT_SPACING",
+        "severity": "error",
+        "message": "Line breaks are not allowed in import declaration"
+      }
+    },
+    {
+      "id": "add-space-after-from",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\s*from[\\\"']"
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "IMPORT_SPACING",
+        "severity": "error",
+        "message": "Add space after 'from'"
+      }
+    },
+    {
+      "id": "too-many-after-from",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\s*from\\s{2,}[\\\"']"
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "IMPORT_SPACING",
+        "severity": "error",
+        "message": "Too many spaces after 'from'"
+      }
+    },
+    {
+      "id": "too-many-before-from",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\s{2,}from\\s*[\\\"']"
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "IMPORT_SPACING",
+        "severity": "error",
+        "message": "Too many spaces before 'from'"
+      }
+    },
+    {
+      "id": "add-space-before-from",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "regex": "^from$"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "kind": "import_statement"
+                    },
+                    {
+                      "regex": "\\}from\\s*[\\\"']"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "IMPORT_SPACING",
+        "severity": "error",
+        "message": "Add space before 'from'"
+      }
+    },
+    {
+      "id": "add-space-after-star",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "namespace_import"
+              },
+              {
+                "regex": "^\\*as"
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "IMPORT_SPACING",
+        "severity": "error",
+        "message": "Add space after '*'"
+      }
+    },
+    {
+      "id": "too-many-after-star",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "namespace_import"
+              },
+              {
+                "regex": "^\\*\\s{2,}as"
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "IMPORT_SPACING",
+        "severity": "error",
+        "message": "Too many spaces after '*'"
+      }
+    },
+    {
+      "id": "line-break-namespace",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "namespace_import"
+              },
+              {
+                "regex": "^\\*(?:\\n|[ \\t\\r]?as\\s*\\n)"
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "IMPORT_SPACING",
+        "severity": "error",
+        "message": "Line breaks are not allowed in import declaration"
+      }
+    }
+  ]
+}

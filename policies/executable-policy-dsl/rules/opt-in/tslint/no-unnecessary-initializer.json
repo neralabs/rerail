@@ -1,0 +1,236 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-unnecessary-initializer",
+  "revision": 1,
+  "description": "Port of TSLint's `no-unnecessary-initializer` rule with its default options (https://palantir.github.io/tslint/rules/no-unnecessary-initializer/). Forbids initializing variables, binding elements, and function/method parameters to `undefined`. Fixes drop the initializer, except where no required parameter follows (TSLint suggests an optional parameter there and has no fix).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "checks": [
+    {
+      "id": "undefined-initializer",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "has": {
+                  "kind": "undefined"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "variable_declarator",
+                    "not": {
+                      "any": [
+                        {
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "object_pattern"
+                              },
+                              {
+                                "kind": "array_pattern"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "inside": {
+                            "kind": "lexical_declaration",
+                            "regex": "^const\\b"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "all": [
+                      {
+                        "matches": "fn-param"
+                      },
+                      {
+                        "precedes": {
+                          "stopBy": "end",
+                          "kind": "required_parameter",
+                          "not": {
+                            "has": {
+                              "regex": "^=$"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "object_assignment_pattern"
+                      },
+                      {
+                        "kind": "assignment_pattern"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "shorthand_property_identifier_pattern"
+                    }
+                  ],
+                  "pattern": "$NAME"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "has": {
+                      "kind": "type_annotation",
+                      "pattern": "$TYPE"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "kind": "type_annotation"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "utils": {
+            "fn-param": {
+              "any": [
+                {
+                  "kind": "required_parameter"
+                },
+                {
+                  "kind": "optional_parameter"
+                }
+              ],
+              "has": {
+                "kind": "undefined"
+              },
+              "inside": {
+                "kind": "formal_parameters",
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "function_declaration"
+                    },
+                    {
+                      "kind": "generator_function_declaration"
+                    },
+                    {
+                      "kind": "method_definition"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_UNNECESSARY_INITIALIZER",
+        "severity": "error",
+        "message": "Unnecessary initialization to 'undefined'.",
+        "fix": "$NAME$TYPE"
+      }
+    },
+    {
+      "id": "undefined-parameter-could-be-optional",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "fn-param"
+              },
+              {
+                "not": {
+                  "precedes": {
+                    "stopBy": "end",
+                    "kind": "required_parameter",
+                    "not": {
+                      "has": {
+                        "regex": "^=$"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "utils": {
+            "fn-param": {
+              "any": [
+                {
+                  "kind": "required_parameter"
+                },
+                {
+                  "kind": "optional_parameter"
+                }
+              ],
+              "has": {
+                "kind": "undefined"
+              },
+              "inside": {
+                "kind": "formal_parameters",
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "function_declaration"
+                    },
+                    {
+                      "kind": "generator_function_declaration"
+                    },
+                    {
+                      "kind": "method_definition"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_UNNECESSARY_INITIALIZER",
+        "severity": "error",
+        "message": "Use an optional parameter instead of initializing to 'undefined'. Also, the type declaration does not need to include '| undefined'."
+      }
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:radix",
+  "revision": 1,
+  "description": "Port of TSLint's `radix` rule with its default options (https://palantir.github.io/tslint/rules/radix/). Requires the radix parameter for parseInt (bare, global./window./Number., and global./window.Number.).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "checks": [
+    {
+      "id": "missing-radix",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "pattern": "parseInt($A)"
+              },
+              {
+                "pattern": "global.parseInt($A)"
+              },
+              {
+                "pattern": "window.parseInt($A)"
+              },
+              {
+                "pattern": "Number.parseInt($A)"
+              },
+              {
+                "pattern": "global.Number.parseInt($A)"
+              },
+              {
+                "pattern": "window.Number.parseInt($A)"
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "RADIX",
+        "severity": "error",
+        "message": "Missing radix parameter"
+      }
+    }
+  ]
+}

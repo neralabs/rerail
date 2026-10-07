@@ -1,0 +1,86 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-bitwise",
+  "revision": 1,
+  "description": "Port of TSLint's `no-bitwise` rule with its default options (https://palantir.github.io/tslint/rules/no-bitwise/). Disallows bitwise operators (&, |, ^, <<, >>, >>>, their compound assignments, and ~).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "checks": [
+    {
+      "id": "bitwise-operator",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "pattern": "$A & $B"
+              },
+              {
+                "pattern": "$A | $B"
+              },
+              {
+                "pattern": "$A ^ $B"
+              },
+              {
+                "pattern": "$A << $B"
+              },
+              {
+                "pattern": "$A >> $B"
+              },
+              {
+                "pattern": "$A >>> $B"
+              },
+              {
+                "pattern": "$A &= $B"
+              },
+              {
+                "pattern": "$A |= $B"
+              },
+              {
+                "pattern": "$A ^= $B"
+              },
+              {
+                "pattern": "$A <<= $B"
+              },
+              {
+                "pattern": "$A >>= $B"
+              },
+              {
+                "pattern": "$A >>>= $B"
+              },
+              {
+                "pattern": "~$A"
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_BITWISE",
+        "severity": "error",
+        "message": "Forbidden bitwise operation"
+      }
+    }
+  ]
+}

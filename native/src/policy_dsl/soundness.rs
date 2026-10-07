@@ -1,0 +1,887 @@
+use super::lines::LineTable;
+use super::matcher::{AstMatcher, UtilRef, UtilitySummary, stop_rule};
+#[cfg(test)]
+use super::test_support::{Walk, record_walk};
+use std::collections::BTreeSet;
+use std::ops::Range;
+
+mod semantic;
+
+type SoundMemo<T> = UtilitySummary<(usize, bool, bool), T>;
+
+// Error-tolerant evaluation drops every witness whose range meets a syntax-error region, so
+// claims about nodes inside the witness (pattern, kind, regex, `has`, and negations of those)
+// only ever read cleanly parsed source. Relations that leave the witness range (`inside`,
+// `precedes`, `follows`) can reach nodes in or around an error region. A positive claim there
+// is still a fact of the recovered tree: the related node is the witness's parent, an ancestor,
+// or a sibling under the same parent, all of which the parser produced; if that node is an ERROR
+// ancestor, the witness lies inside it and is dropped anyway. `stopBy: end` only widens the walk
+// along the same axis (every ancestor, every sibling of the one parent), so it is sound wherever
+// `neighbor` is. Negating a relation that leaves the witness, or anything beneath one, turns it
+// into an absence claim over siblings or ancestors the parser may not have read; such rules are
+// not evaluated in files with syntax errors. Checking per file whether the parent's range is
+// clean could admit some of them; that refinement is not attempted.
+//
+// A capture that an outward relation binds under `any` is unbound exactly when that relation
+// failed, which an error region can cause: reading it where unbound means "pass" (a negated
+// comparison, a constraint) turns the relation's failure into a finding, so such a read is unsound.
+// Positive comparisons fail on an unbound side, a false negative at worst.
+pub(super) fn sound_under_errors(matcher: &AstMatcher) -> bool {
+    let mut optional = BTreeSet::new();
+    optional_outward_captures(matcher, false, false, &mut SoundMemo::new(), &mut optional);
+    sound(matcher, false, false, &optional, &mut SoundMemo::new())
+}
+
+/// Names a pattern binds through a relation that leaves the witness and sits under `any`, where
+/// its failure does not fail the match. Negations, counts and stop rules are walked too, since a
+/// comparison inside them reads their own bindings.
+fn optional_outward_captures(
+    matcher: &AstMatcher,
+    under_any: bool,
+    outward: bool,
+    memo: &mut SoundMemo<BTreeSet<String>>,
+    names: &mut BTreeSet<String>,
+) {
+    let mut walk = |item: &AstMatcher, under_any: bool, outward: bool| {
+        optional_outward_captures(item, under_any, outward, memo, names);
+    };
+    match matcher {
+        AstMatcher::Pattern(pattern) => {
+            if under_any && outward {
+                names.extend(pattern.defined_vars().into_iter().map(str::to_owned));
+            }
+        }
+        AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Compare(_) | AstMatcher::Never => {
+        }
+        AstMatcher::Semantic(semantic) => {
+            semantic::optional_outward_captures(semantic, under_any, outward, memo, names)
+        }
+        #[cfg(test)]
+        AstMatcher::TestUnknown(_) => {}
+        AstMatcher::All(items) => items.iter().for_each(|item| walk(item, under_any, outward)),
+        AstMatcher::Any(items) => items.iter().for_each(|item| walk(item, true, outward)),
+        AstMatcher::Not(item) => walk(item, under_any, outward),
+        AstMatcher::Count(count) => walk(&count.relation, under_any, outward),
+        AstMatcher::Has(item, stop) => {
+            walk(item, under_any, outward);
+            if let Some(stop) = stop_rule(stop) {
+                walk(stop, under_any, outward);
+            }
+        }
+        AstMatcher::Inside(item, stop)
+        | AstMatcher::Precedes(item, stop)
+        | AstMatcher::Follows(item, stop) => {
+            walk(item, under_any, true);
+            if let Some(stop) = stop_rule(stop) {
+                walk(stop, under_any, true);
+            }
+        }
+        AstMatcher::NthChild(nth) => {
+            if let Some(rule) = &nth.of_rule {
+                walk(rule, under_any, outward);
+            }
+        }
+        AstMatcher::Field(relation) => {
+            let outward = outward || relation.inside;
+            walk(&relation.rule, under_any, outward);
+            if let Some(stop) = stop_rule(&relation.stop) {
+                walk(stop, under_any, outward);
+            }
+        }
+        // A utility's names, and a frame's own (its comparisons read them) together with the
+        // caller's names of the parameters among them.
+        AstMatcher::Util(util) => {
+            names.extend(optional_utility_captures(util, under_any, outward, memo));
+        }
+        AstMatcher::Call(call) => {
+            let found = optional_utility_captures(&call.util, under_any, outward, memo);
+            names.extend(call.outward(&found).into_iter().map(str::to_owned));
+            names.extend(found);
+        }
+        AstMatcher::Constrained(core) => {
+            walk(&core.rule, under_any, outward);
+            for (_, constraint) in &core.constraints {
+                walk(constraint, under_any, outward);
+            }
+        }
+    }
+}
+
+/// `optional_outward_captures` of a utility's rule in a context, in the utility's own names.
+fn optional_utility_captures(
+    util: &UtilRef,
+    under_any: bool,
+    outward: bool,
+    memo: &mut SoundMemo<BTreeSet<String>>,
+) -> BTreeSet<String> {
+    memo.summarize((util.index, under_any, outward), BTreeSet::new(), |memo| {
+        #[cfg(test)]
+        record_walk(Walk::OptionalCaptures);
+        let mut found = BTreeSet::new();
+        util.with_target(|rule| {
+            optional_outward_captures(rule, under_any, outward, memo, &mut found)
+        });
+        found
+    })
+}
+
+// A `matches` reference is as sound as its target in the same context: a verdict is the
+// conjunction of everything the rule reaches, so a recursive reference adds nothing and starts at
+// sound. Constraints read captured nodes, which lie outside the witness whenever the rule relates
+// it to nodes outside it.
+fn sound(
+    matcher: &AstMatcher,
+    negated: bool,
+    outside: bool,
+    optional: &BTreeSet<String>,
+    memo: &mut SoundMemo<bool>,
+) -> bool {
+    match matcher {
+        // Never has no relations and matches nothing, so an error region cannot change its verdict.
+        // A comparison reads captured nodes' text, as a constraint's regex does.
+        // A value reads the node's own text, like a regex; a builtin name is a value only in a
+        // file without syntax errors, so an error region cannot hide the binding that shadows it.
+        // Arguments read the call's own argument list, inside the witness, as its pattern does.
+        AstMatcher::Pattern(_) | AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
+            true
+        }
+        AstMatcher::Semantic(semantic) => {
+            semantic::sound(semantic, negated, outside, optional, memo)
+        }
+        #[cfg(test)]
+        AstMatcher::TestUnknown(_) => true,
+        // A position counts the siblings before the node, and an error region among them can hide
+        // or add one.
+        AstMatcher::NthChild(_) => false,
+        // An unbound side makes a comparison fail, so negated it holds vacuously.
+        // A transform variable reads the captures it is computed from.
+        AstMatcher::Compare(comparison) => {
+            let optional_read = |name: &str| {
+                optional.contains(name)
+                    || comparison.transform.as_ref().is_some_and(|transform| {
+                        transform
+                            .roots(name)
+                            .into_iter()
+                            .any(|root| optional.contains(root))
+                    })
+            };
+            !negated || !(optional_read(&comparison.left) || optional_read(&comparison.right))
+        }
+        AstMatcher::All(items) | AstMatcher::Any(items) => items
+            .iter()
+            .all(|item| sound(item, negated, outside, optional, memo)),
+        AstMatcher::Not(item) => !outside && sound(item, true, outside, optional, memo),
+        // A stop rule decides where the walk ends, so its non-matches count as much as its match:
+        // it is an absence claim over the nodes walked past, classified as `not` over those nodes.
+        AstMatcher::Has(item, stop) => {
+            sound(item, negated, outside, optional, memo)
+                && stop_rule(stop)
+                    .is_none_or(|stop| !outside && sound(stop, true, outside, optional, memo))
+        }
+        // Walking ancestors or siblings past nodes that did not stop it claims they are absent,
+        // like a `not` outside the witness: a relation with a stop rule is unsound under errors.
+        AstMatcher::Inside(item, stop)
+        | AstMatcher::Precedes(item, stop)
+        | AstMatcher::Follows(item, stop) => {
+            !negated && stop_rule(stop).is_none() && sound(item, negated, true, optional, memo)
+        }
+        // A field narrows which nodes the walk tests; it is classified as the relation it narrows.
+        AstMatcher::Field(relation) if relation.inside => {
+            !negated
+                && stop_rule(&relation.stop).is_none()
+                && sound(&relation.rule, negated, true, optional, memo)
+        }
+        AstMatcher::Field(relation) => {
+            sound(&relation.rule, negated, outside, optional, memo)
+                && stop_rule(&relation.stop)
+                    .is_none_or(|stop| !outside && sound(stop, true, outside, optional, memo))
+        }
+        AstMatcher::Util(util) => utility_sound(util, negated, outside, optional, memo),
+        AstMatcher::Call(call) => utility_sound(&call.util, negated, outside, optional, memo),
+        // A count is a presence and an absence claim over the relation's nodes, so it is as sound
+        // as the negated relation.
+        AstMatcher::Count(count) => {
+            !outside && sound(&count.relation, true, outside, optional, memo)
+        }
+        AstMatcher::Constrained(core) => {
+            let captures_outside =
+                outside || leaves_witness(&core.rule, &mut UtilitySummary::new());
+            // A constraint on an unbound capture is skipped: it passes vacuously.
+            let skippable = core
+                .constraints
+                .iter()
+                .any(|(name, _)| optional.contains(name.as_str()));
+            !skippable
+                && sound(&core.rule, negated, outside, optional, memo)
+                && core.constraints.iter().all(|(_, constraint)| {
+                    sound(constraint, negated, captures_outside, optional, memo)
+                })
+        }
+    }
+}
+
+fn utility_sound(
+    util: &UtilRef,
+    negated: bool,
+    outside: bool,
+    optional: &BTreeSet<String>,
+    memo: &mut SoundMemo<bool>,
+) -> bool {
+    memo.summarize((util.index, negated, outside), true, |memo| {
+        #[cfg(test)]
+        record_walk(Walk::SoundVerdict);
+        util.with_target(|rule| sound(rule, negated, outside, optional, memo))
+            .unwrap_or(true)
+    })
+}
+
+/// Whether a rule relates its node to nodes outside that node's subtree (and so may bind them).
+/// A stop rule binds nothing, so it never adds a capture.
+fn leaves_witness(matcher: &AstMatcher, memo: &mut UtilitySummary<usize, bool>) -> bool {
+    match matcher {
+        AstMatcher::Pattern(_)
+        | AstMatcher::Kind(_)
+        | AstMatcher::Regex(_)
+        | AstMatcher::Compare(_)
+        | AstMatcher::Never => false,
+        AstMatcher::Semantic(semantic) => semantic::leaves_witness(semantic, memo),
+        #[cfg(test)]
+        AstMatcher::TestUnknown(_) => false,
+        AstMatcher::All(items) | AstMatcher::Any(items) => {
+            items.iter().any(|item| leaves_witness(item, memo))
+        }
+        // A negation or a count binds nothing, so nothing it reaches can become a capture.
+        AstMatcher::Not(_) | AstMatcher::Count(_) => false,
+        AstMatcher::Has(item, _) => leaves_witness(item, memo),
+        AstMatcher::Inside(..) | AstMatcher::Precedes(..) | AstMatcher::Follows(..) => true,
+        AstMatcher::Field(relation) => relation.inside || leaves_witness(&relation.rule, memo),
+        AstMatcher::NthChild(nth) => nth
+            .of_rule
+            .as_ref()
+            .is_some_and(|rule| leaves_witness(rule, memo)),
+        AstMatcher::Util(util) => utility_leaves_witness(util, memo),
+        AstMatcher::Call(call) => utility_leaves_witness(&call.util, memo),
+        AstMatcher::Constrained(core) => {
+            leaves_witness(&core.rule, memo)
+                || core
+                    .constraints
+                    .iter()
+                    .any(|(_, constraint)| leaves_witness(constraint, memo))
+        }
+    }
+}
+
+fn utility_leaves_witness(util: &UtilRef, memo: &mut UtilitySummary<usize, bool>) -> bool {
+    memo.summarize(util.index, false, |memo| {
+        util.with_target(|rule| leaves_witness(rule, memo))
+            .unwrap_or(false)
+    })
+}
+
+/// Byte ranges the parser could not read: ERROR subtrees and zero-width MISSING tokens.
+/// Sorted by start; overlapping ranges are merged, so range ends never decrease.
+pub(super) struct SyntaxErrors {
+    regions: Vec<Range<usize>>,
+}
+
+impl SyntaxErrors {
+    /// The native tree's regions, which tapes record (`TapeDoc::syntax_error_ranges`).
+    #[cfg(test)]
+    pub(super) fn collect(root: tree_sitter::Node<'_>) -> Self {
+        let mut found = Vec::new();
+        // `has_error` covers the whole subtree, so clean subtrees are never entered.
+        let mut stack = if root.has_error() {
+            vec![root]
+        } else {
+            Vec::new()
+        };
+        while let Some(node) = stack.pop() {
+            if node.is_error() || node.is_missing() {
+                found.push(node.byte_range());
+                continue;
+            }
+            let mut cursor = node.walk();
+            stack.extend(node.children(&mut cursor).filter(|child| child.has_error()));
+        }
+        Self::from_ranges(found)
+    }
+
+    /// Regions from ERROR and MISSING node ranges, in any order.
+    pub(super) fn from_ranges(mut found: Vec<Range<usize>>) -> Self {
+        found.sort_by_key(|range| (range.start, range.end));
+        let mut regions: Vec<Range<usize>> = Vec::with_capacity(found.len());
+        for range in found {
+            match regions.last_mut() {
+                Some(last) if range.start < last.end || *last == range => {
+                    last.end = last.end.max(range.end);
+                }
+                _ => regions.push(range),
+            }
+        }
+        Self { regions }
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.regions.is_empty()
+    }
+
+    /// Whether `range` meets any region; a zero-width MISSING point meets a range that touches it.
+    pub(super) fn overlaps(&self, range: &Range<usize>) -> bool {
+        let first = self
+            .regions
+            .partition_point(|region| region.end < range.start);
+        self.regions[first..]
+            .iter()
+            .take_while(|region| region.start <= range.end)
+            .any(|region| {
+                if region.is_empty() {
+                    range.start <= region.start && region.start <= range.end
+                } else if range.is_empty() {
+                    region.start <= range.start && range.start < region.end
+                } else {
+                    range.start < region.end && region.start < range.end
+                }
+            })
+    }
+
+    pub(super) fn partial_message(&self, lines: &LineTable) -> String {
+        let (line, column) = lines.point(self.regions[0].start);
+        format!(
+            "file has syntax errors; AST checks ran outside {} error region(s), first at line {}, column {}",
+            self.regions.len(),
+            line + 1,
+            column + 1
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::policy_dsl::language::GrammarDialect;
+    use crate::policy_dsl::model::{CheckKind, Query};
+    use crate::policy_dsl::test_support::*;
+    use ast_grep_language::LanguageExt;
+    use serde_json::{Value, json};
+
+    fn compiled_sound(ast: Value) -> bool {
+        grammar_matchers(&compiled(ast))
+            .iter()
+            .all(|grammar| grammar.sound_under_errors)
+    }
+
+    fn syntax_errors(language: GrammarDialect, source: &str) -> SyntaxErrors {
+        let root = language.ast_grep(source);
+        SyntaxErrors::collect(root.root().get_doc().tree.root_node())
+    }
+
+    #[test]
+    fn syntax_errors_cover_error_and_missing_nodes_only() {
+        assert!(syntax_errors(GrammarDialect::TypeScript, "debugger;\n").is_empty());
+        let source = "debugger;\nfunction f( {\n  debugger;\n";
+        let errors = syntax_errors(GrammarDialect::TypeScript, source);
+        assert!(!errors.is_empty());
+        assert!(!errors.overlaps(&(0..9)), "the leading statement is clean");
+        assert!(
+            errors.overlaps(&(0..source.len())),
+            "the program contains the error"
+        );
+        let lines = LineTable::new(source, crate::policy_dsl::lines::Terminators::Eslint);
+        assert!(errors.partial_message(&lines).contains("first at line 2"));
+    }
+
+    #[test]
+    fn missing_tokens_suppress_only_the_witnesses_that_contain_them() {
+        // An unclosed body parses with a zero-width MISSING `}` after its last statement and no
+        // ERROR node. A MISSING child sits at its parent's end, so a witness that merely abuts
+        // the point is suppressed too (`x = 1;` here); the earlier `debugger;` is clean.
+        let source = "function f() {\n  debugger;\n  x = 1;\n";
+        let errors = syntax_errors(GrammarDialect::TypeScript, source);
+        let point = source.len() - 1;
+        assert_eq!(errors.regions.len(), 1);
+        assert_eq!(errors.regions[0], point..point);
+        let debugger = compile_typescript_rule(json!({ "kind": "debugger_statement" }))
+            .expect("rule compiles");
+        let result = evaluate_file(&debugger, "typescript", "open.ts", source);
+        assert_eq!(result["findings"][0]["span"]["startLine"], 1, "{result}");
+        assert_eq!(result["failures"][0]["code"], "source-partial", "{result}");
+        let function = compile_typescript_rule(json!({ "kind": "function_declaration" }))
+            .expect("rule compiles");
+        let result = evaluate_file(&function, "typescript", "open.ts", source);
+        assert_eq!(
+            result["findings"],
+            json!([]),
+            "the declaration spans the MISSING token"
+        );
+        assert_eq!(result["failures"][0]["code"], "source-partial", "{result}");
+    }
+
+    #[test]
+    fn syntax_error_regions_merge_and_treat_missing_as_a_point() {
+        let errors = SyntaxErrors {
+            regions: vec![4..4, 10..20],
+        };
+        assert!(
+            errors.overlaps(&(0..4)),
+            "a range ending at a MISSING point touches it"
+        );
+        assert!(
+            errors.overlaps(&(4..8)),
+            "a range starting at a MISSING point touches it"
+        );
+        assert!(
+            !errors.overlaps(&(5..10)),
+            "ranges are half-open for real regions"
+        );
+        assert!(
+            errors.overlaps(&(12..12)),
+            "an empty witness inside a region overlaps"
+        );
+        assert!(!errors.overlaps(&(20..20)));
+        assert!(!errors.overlaps(&(20..30)));
+        assert!(errors.overlaps(&(0..100)));
+    }
+
+    #[test]
+    fn negated_relations_leaving_the_witness_are_unsound_under_errors() {
+        let sound = |rule: Value| {
+            let CheckKind::Forbid(Query::Ast { matchers, .. }) = &compile_typescript_rule(rule)
+                .expect("rule compiles")
+                .inner
+                .checks[0]
+                .kind
+            else {
+                unreachable!()
+            };
+            matchers.iter().all(|grammar| grammar.sound_under_errors)
+        };
+        assert!(sound(json!({ "kind": "debugger_statement" })));
+        assert!(sound(
+            json!({ "kind": "program", "not": { "has": { "kind": "class_declaration", "stopBy": "end" } } })
+        ));
+        assert!(sound(
+            json!({ "kind": "debugger_statement", "inside": { "kind": "function_declaration", "stopBy": "end" } })
+        ));
+        assert!(sound(
+            json!({ "kind": "debugger_statement", "follows": { "kind": "import_statement" } })
+        ));
+        assert!(!sound(
+            json!({ "kind": "debugger_statement", "not": { "inside": { "kind": "function_declaration" } } })
+        ));
+        assert!(!sound(
+            json!({ "kind": "debugger_statement", "not": { "any": [{ "precedes": { "kind": "return_statement" } }] } })
+        ));
+        // `stopBy: end` walks the same parent's siblings, so a positive claim stays sound.
+        assert!(sound(
+            json!({ "kind": "debugger_statement", "follows": { "kind": "import_statement", "stopBy": "end" } })
+        ));
+        assert!(sound(
+            json!({ "kind": "debugger_statement", "precedes": { "kind": "return_statement", "stopBy": "end" } })
+        ));
+        assert!(!sound(
+            json!({ "kind": "debugger_statement", "not": { "follows": { "kind": "import_statement", "stopBy": "end" } } })
+        ));
+        assert!(!sound(
+            json!({ "kind": "debugger_statement", "not": { "precedes": { "kind": "return_statement" } } })
+        ));
+        assert!(!sound(
+            json!({ "kind": "debugger_statement", "inside": { "kind": "function_declaration", "not": { "has": { "kind": "return_statement" } } } })
+        ));
+    }
+
+    #[test]
+    fn never_matching_sub_rules_stay_sound_under_errors() {
+        // In the plain dialect the JSX sub-rule compiles to `Never`; it has no relations, so the
+        // rule stays sound and witnesses outside the error region are still reported.
+        let compiled = compile_typescript_rule(json!({
+            "kind": "debugger_statement",
+            "not": { "has": { "kind": "jsx_expression", "stopBy": "end" } },
+        }))
+        .unwrap_or_else(|error| panic!("{}", error.reason));
+        let CheckKind::Forbid(Query::Ast { matchers, .. }) = &compiled.inner.checks[0].kind else {
+            unreachable!()
+        };
+        assert!(matchers.iter().all(|grammar| grammar.sound_under_errors));
+        let result = evaluate_file(
+            &compiled,
+            "typescript",
+            "open.ts",
+            "debugger;\nfunction f( {\n",
+        );
+        assert_eq!(result["findings"][0]["span"]["startLine"], 0, "{result}");
+        assert_eq!(result["failures"][0]["code"], "source-partial", "{result}");
+
+        // A rule that is `Never` as a whole in the plain dialect has no matcher there at all.
+        let compiled = compile_typescript_rule(json!({ "kind": "jsx_attribute" }))
+            .unwrap_or_else(|error| panic!("{}", error.reason));
+        let result = evaluate_file(
+            &compiled,
+            "typescript",
+            "open.ts",
+            "debugger;\nfunction f( {\n",
+        );
+        assert_eq!(result["findings"], json!([]), "{result}");
+    }
+
+    #[test]
+    fn stateless_evaluation_reports_witnesses_outside_error_regions() {
+        let compiled = compile_typescript_rule(json!({ "kind": "debugger_statement" }))
+            .expect("rule compiles");
+        let result = evaluate_file(
+            &compiled,
+            "typescript",
+            "api.test.ts",
+            "const m = importOriginal<typeof import(\"./api\")>();\ndebugger;\n",
+        );
+        assert_eq!(result["status"], "failed", "{result}");
+        assert_eq!(
+            result["findings"].as_array().map(Vec::len),
+            Some(1),
+            "{result}"
+        );
+        assert_eq!(result["findings"][0]["span"]["startLine"], 1, "{result}");
+        assert_eq!(
+            result["failures"].as_array().map(Vec::len),
+            Some(1),
+            "{result}"
+        );
+        assert_eq!(result["failures"][0]["code"], "source-partial", "{result}");
+        assert_eq!(result["failures"][0]["path"], "api.test.ts", "{result}");
+
+        let unsound = compile_typescript_rule(json!({
+            "kind": "debugger_statement",
+            "not": { "follows": { "kind": "import_statement", "stopBy": "end" } },
+        }))
+        .expect("rule compiles");
+        let result = evaluate_file(
+            &unsound,
+            "typescript",
+            "api.test.ts",
+            "const m = importOriginal<typeof import(\"./api\")>();\ndebugger;\n",
+        );
+        assert_eq!(result["findings"], json!([]), "{result}");
+        assert_eq!(
+            result["failures"][0]["code"], "source-incomplete",
+            "{result}"
+        );
+    }
+
+    #[test]
+    fn stop_rules_are_absence_claims_under_errors() {
+        let sound = |rule: Value| {
+            grammar_matchers(&compile_typescript_rule(rule).expect("rule compiles"))
+                .iter()
+                .all(|grammar| grammar.sound_under_errors)
+        };
+        // Inside the witness a stop rule reads cleanly parsed nodes only.
+        assert!(sound(json!({
+            "kind": "function_declaration",
+            "has": { "kind": "return_statement", "stopBy": { "kind": "function_declaration" } },
+        })));
+        // Walking ancestors or siblings past nodes that did not stop claims they are absent.
+        for relation in ["inside", "precedes", "follows"] {
+            assert!(!sound(json!({
+                "kind": "identifier",
+                relation: { "kind": "class_declaration", "stopBy": { "kind": "function_declaration" } },
+            })));
+        }
+        // A stop rule under `has` that itself leaves the node it tests is unsound too.
+        assert!(!sound(json!({
+            "kind": "function_declaration",
+            "has": { "kind": "return_statement", "stopBy": { "inside": { "kind": "class_body" } } },
+        })));
+    }
+
+    #[test]
+    fn utils_and_constraints_are_as_sound_under_errors_as_what_they_reach() {
+        let sound = |ast: Value| {
+            grammar_matchers(&compiled(ast))
+                .iter()
+                .all(|grammar| grammar.sound_under_errors)
+        };
+        // Recursion that stays inside the witness, and positive relations, stay sound.
+        assert!(sound(json!({
+            "rule": { "kind": "return_statement", "has": { "matches": "tail" } },
+            "utils": { "tail": { "any": [{ "kind": "await_expression" }, { "kind": "parenthesized_expression", "has": { "matches": "tail" } }] } },
+        })));
+        assert!(sound(json!({
+            "rule": { "kind": "identifier", "matches": "in-loop" },
+            "utils": { "in-loop": { "inside": { "stopBy": "end", "kind": "for_statement" } } },
+        })));
+        // A negated relation leaving the witness is unsound wherever it hides, including behind a
+        // reference, a recursive one, or a reference reached under `not`.
+        assert!(!sound(json!({
+            "rule": { "kind": "identifier", "matches": "top-level" },
+            "utils": { "top-level": { "not": { "inside": { "stopBy": "end", "kind": "function_declaration" } } } },
+        })));
+        assert!(!sound(json!({
+            "rule": { "kind": "identifier", "not": { "matches": "in-function" } },
+            "utils": { "in-function": { "inside": { "stopBy": "end", "kind": "function_declaration" } } },
+        })));
+        assert!(!sound(json!({
+            "rule": { "kind": "identifier", "matches": "walk" },
+            "utils": { "walk": { "any": [
+                { "kind": "program" },
+                { "inside": { "matches": "walk" }, "not": { "follows": { "kind": "comment" } } },
+            ] } },
+        })));
+        // A constraint's negation reads the captured node: fine inside the witness, not outside it.
+        assert!(sound(json!({
+            "rule": { "pattern": "$F($$$)" },
+            "constraints": { "F": { "not": { "has": { "kind": "this" } } } },
+        })));
+        assert!(!sound(json!({
+            "rule": { "kind": "return_statement", "follows": { "pattern": "$PREV" } },
+            "constraints": { "PREV": { "not": { "has": { "stopBy": "end", "kind": "call_expression" } } } },
+        })));
+    }
+
+    #[test]
+    fn reading_a_capture_an_outward_relation_may_leave_unbound_is_unsound_under_errors() {
+        // Review finding 3 on #2561. `any` tolerates the outward relation failing, and it fails
+        // when an ERROR sibling swallowed the earlier node: `$PREV` is then unbound, so the negated
+        // comparison holds vacuously and so does a constraint on `$PREV` (unbound captures are
+        // skipped). The equivalent `not: { follows }` is already unsound.
+        let optional_prev = json!([
+            { "follows": { "kind": "expression_statement", "pattern": "$PREV" } },
+            { "regex": "." },
+        ]);
+        let differs = json!({
+            "kind": "expression_statement",
+            "pattern": "$CUR",
+            "any": optional_prev,
+            "not": { "compare": { "left": "PREV", "op": "eq", "right": "CUR" } },
+        });
+        let compiled = compile_typescript_rule(differs.clone()).expect("rule compiles");
+        assert!(
+            !grammar_matchers(&compiled)
+                .iter()
+                .any(|grammar| grammar.sound_under_errors),
+            "a negated comparison of a possibly unbound outward capture"
+        );
+        let source = "f();\nf(;\nf();\n";
+        let result = evaluate_file(&compiled, "typescript", "a.ts", source);
+        assert_eq!(result["findings"], json!([]), "{result}");
+        assert_eq!(
+            result["failures"][0]["code"], "source-incomplete",
+            "{result}"
+        );
+        let constrained = compiled_sound(json!({
+            "rule": { "kind": "expression_statement", "any": optional_prev },
+            "constraints": { "PREV": { "regex": "^g" } },
+        }));
+        assert!(
+            !constrained,
+            "a constraint skipped when the outward capture is unbound"
+        );
+        // Without `any` the relation must hold for the witness to exist, so the capture is bound.
+        assert!(compiled_sound(json!({
+            "rule": { "kind": "expression_statement", "pattern": "$CUR", "all": [
+                { "follows": { "kind": "expression_statement", "pattern": "$PREV" } },
+                { "not": { "compare": { "left": "PREV", "op": "eq", "right": "CUR" } } },
+            ] },
+        })));
+        assert!(compiled_sound(json!({
+            "rule": { "kind": "expression_statement", "follows": { "kind": "expression_statement", "pattern": "$PREV" } },
+            "constraints": { "PREV": { "regex": "^g" } },
+        })));
+        // A capture made inside the witness is bound or not by clean source alone.
+        assert!(compiled_sound(json!({
+            "rule": { "kind": "call_expression", "pattern": "$F($$$)", "any": [{ "has": { "kind": "arguments", "pattern": "$ARGS" } }, { "regex": "." }],
+                "not": { "compare": { "left": "F", "op": "eq", "right": "ARGS" } } },
+            "constraints": { "ARGS": { "regex": "^\\(" } },
+        })));
+        // Positive comparisons stay sound: an unbound side makes them fail, a false negative.
+        assert!(compiled_sound(json!({
+            "rule": { "kind": "expression_statement", "pattern": "$CUR", "any": optional_prev,
+                "compare": { "left": "PREV", "op": "eq", "right": "CUR" } },
+        })));
+    }
+
+    #[test]
+    fn parameterized_calls_track_optional_outward_captures_per_mapping() {
+        let optional_previous = json!({
+            "params": ["P"],
+            "rule": { "any": [
+                { "follows": { "kind": "expression_statement", "pattern": "$P" } },
+                { "regex": "." }
+            ] }
+        });
+        let rule = json!({
+            "rule": {
+                "pattern": "$C",
+                "all": [
+                    { "matches": { "previous": { "P": "$A" } } },
+                    { "matches": { "previous": { "P": "$B" } } },
+                    { "not": { "compare": { "left": "B", "op": "eq", "right": "C" } } }
+                ]
+            },
+            "utils": { "previous": optional_previous }
+        });
+        let compiled = compile_typescript_ast(rule).expect("rule compiles");
+        assert!(
+            !grammar_matchers(&compiled)
+                .iter()
+                .all(|grammar| grammar.sound_under_errors),
+            "each caller capture can be unbound when the outward relation is swallowed by syntax errors"
+        );
+        let result = evaluate_file(&compiled, "typescript", "a.ts", "a();\na(;\na();\n");
+        assert_eq!(result["findings"], json!([]), "{result}");
+        assert_eq!(
+            result["failures"][0]["code"], "source-incomplete",
+            "{result}"
+        );
+    }
+
+    #[test]
+    fn utility_capture_analysis_memoizes_completed_diamond_paths() {
+        let mut utils = serde_json::Map::new();
+        utils.insert("u0".to_owned(), json!({ "kind": "identifier" }));
+        for depth in 1..=8 {
+            let prior = format!("u{}", depth - 1);
+            utils.insert(
+                format!("u{depth}"),
+                json!({ "all": [{ "matches": prior }, { "matches": prior }] }),
+            );
+        }
+        reset_walks();
+        let _ = compiled(json!({
+            "rule": { "matches": "u8" },
+            "utils": utils,
+        }));
+        assert!(
+            walks(Walk::OptionalCaptures) <= 36,
+            "a completed utility/context must be analyzed once, not once per diamond path"
+        );
+    }
+
+    /// A parameterized call's summary is its utility's, in the utility's own names, whatever the
+    /// mapping: each utility is analysed a constant number of times, not once per call path.
+    #[test]
+    fn parameterized_utility_diamonds_are_analysed_in_linear_visits() {
+        let compiled = compiled_parameterized_utility_diamonds(DIAMOND_DEPTH);
+        let matcher = &grammar_matchers(&compiled)[0].matcher;
+        reset_walks();
+        sound_under_errors(matcher);
+        let bound = linear_walk(DIAMOND_DEPTH);
+        assert!(
+            walks(Walk::OptionalCaptures) <= bound,
+            "optional capture analysis expanded {} utilities (bound {bound})",
+            walks(Walk::OptionalCaptures)
+        );
+        assert!(
+            walks(Walk::SoundVerdict) <= bound,
+            "the soundness verdict expanded {} utilities (bound {bound})",
+            walks(Walk::SoundVerdict)
+        );
+    }
+
+    #[test]
+    fn soundness_verdict_memoizes_completed_diamond_paths() {
+        let mut utils = serde_json::Map::new();
+        utils.insert("u0".to_owned(), json!({ "kind": "identifier" }));
+        for depth in 1..=16 {
+            let prior = format!("u{}", depth - 1);
+            utils.insert(
+                format!("u{depth}"),
+                json!({ "all": [{ "matches": prior }, { "matches": prior }] }),
+            );
+        }
+        reset_walks();
+        let _ = compiled(json!({
+            "rule": { "matches": "u16" },
+            "utils": utils,
+        }));
+        assert!(
+            walks(Walk::SoundVerdict) <= 64,
+            "a completed utility/context must be checked once, not once per diamond path"
+        );
+    }
+
+    #[test]
+    fn counts_are_as_sound_under_errors_as_the_negated_relation() {
+        let sound = |rule: Value| {
+            grammar_matchers(&compile_typescript_rule(rule).expect("rule compiles"))
+                .iter()
+                .all(|grammar| grammar.sound_under_errors)
+        };
+        assert!(sound(json!({
+            "kind": "function_declaration",
+            "count": { "has": { "kind": "if_statement", "stopBy": { "kind": "arrow_function" } }, "min": 2 },
+        })));
+        for relation in ["inside", "precedes", "follows"] {
+            assert!(!sound(json!({
+                "kind": "if_statement",
+                "count": { relation: { "kind": "if_statement", "stopBy": "end" }, "min": 2 },
+            })));
+        }
+    }
+
+    #[test]
+    fn utility_diamonds_compile_in_linear_utility_visits() {
+        let compilers: [fn(usize) -> crate::policy_dsl::CompiledPolicyDsl; 2] = [
+            compiled_utility_diamonds,
+            compiled_parameterized_utility_diamonds,
+        ];
+        for compile in compilers {
+            reset_walks();
+            compile(30);
+            assert!(
+                walks(Walk::OptionalCaptures) <= 128,
+                "optional capture analysis visited {} utility contexts",
+                walks(Walk::OptionalCaptures)
+            );
+            assert!(
+                walks(Walk::SoundVerdict) <= 128,
+                "soundness visited {} utility contexts",
+                walks(Walk::SoundVerdict)
+            );
+        }
+    }
+
+    /// A capture bound through a cycle of parameterized calls under an outward relation under
+    /// `any` is optional whichever call a walk summarizes first: a summary computed while the other
+    /// was still being summarized holds only part of it, and must not stand for the whole.
+    #[test]
+    fn optional_captures_through_recursive_calls_do_not_depend_on_branch_order() {
+        for branches in recursive_call_branch_orders() {
+            let mut utils = mutually_recursive_calls();
+            utils.insert("bindX".to_owned(), json!({ "pattern": "$X" }));
+            let sound = compiled_sound(json!({
+                "rule": { "kind": "expression_statement", "any": branches },
+                "constraints": { "X": { "regex": "^g" } },
+                "utils": utils,
+            }));
+            assert!(
+                !sound,
+                "a constraint on `$X`, which `W` may leave unbound, is skipped under errors ({branches})"
+            );
+        }
+    }
+
+    /// A self-recursive call binding its parameter through an outward relation under `any`: the
+    /// negated comparison of what the inner call binds reads an optional capture, also when the
+    /// root's call sits under `any` itself (the inner call's context).
+    #[test]
+    fn a_self_recursive_calls_optional_capture_is_unsound_wherever_it_is_called() {
+        let utils = json!({
+            "W": { "params": ["P"], "rule": { "pattern": "$N", "any": [
+                { "follows": { "kind": "expression_statement", "pattern": "$P" } },
+                { "has": { "all": [
+                    { "matches": { "W": { "P": "$Q" } } },
+                    { "not": { "compare": { "left": "Q", "op": "eq", "right": "N" } } }
+                ] } }
+            ] } },
+        });
+        for rule in [
+            json!({ "kind": "expression_statement", "matches": { "W": { "P": "$X" } } }),
+            json!({ "kind": "expression_statement", "any": [
+                { "matches": { "W": { "P": "$X" } } }, { "kind": "identifier" } ] }),
+        ] {
+            assert!(
+                !compiled_sound(json!({ "rule": rule, "utils": utils.clone() })),
+                "{rule}"
+            );
+        }
+    }
+}

@@ -1,0 +1,126 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:newline-before-return",
+  "revision": 1,
+  "description": "Enforces a blank line before return when not the only line in the block. AST approximation: return_statement (inside a block) whose previous sibling is a statement; blank lines are not visible, so returns already preceded by a blank line are also flagged.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "return-after-statement",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "return_statement"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "statement_block"
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": "neighbor",
+                  "regex": "[;}]$",
+                  "not": {
+                    "kind": "comment"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.start",
+        "code": "NEWLINE_BEFORE_RETURN",
+        "severity": "error",
+        "message": "Missing blank line before return"
+      }
+    },
+    {
+      "id": "comment-before-return",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "comment"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "statement_block"
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": "neighbor",
+                  "regex": "[;}]$",
+                  "not": {
+                    "kind": "comment"
+                  }
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "return_statement"
+                    },
+                    {
+                      "all": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "precedes": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "return_statement"
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "kind": "comment"
+                                  },
+                                  {
+                                    "precedes": {
+                                      "stopBy": "neighbor",
+                                      "kind": "return_statement"
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.start",
+        "code": "NEWLINE_BEFORE_RETURN",
+        "severity": "error",
+        "message": "Missing blank line before return"
+      }
+    }
+  ]
+}

@@ -1,0 +1,358 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { OpenAPIHono } from "@hono/zod-openapi";
+import Database from "better-sqlite3";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createRerailApi } from "../src/api/http.js";
+import { operations, type RerailApiStores } from "../src/api/operations.js";
+import type { ExecutablePolicyFinding } from "../src/executable-policy.js";
+import { SqlitePolicyExecutionReader, SqlitePolicyExecutionStore } from "../src/policy-execution-store.js";
+import { SqlitePresentationPreferenceStore } from "../src/presentation-preference-store.js";
+import { SqliteScanControlStore } from "../src/scan-control.js";
+import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
+import { MOCK_COSINE_RULES, MOCK_POLICY_RULES } from "../src/seed.js";
+import { SqliteTranscriptReader, SqliteTranscriptStore } from "../src/transcript-store.js";
+
+/** The host a browser addressed the page to through a container port mapping; the fixture never binds it. */
+const PAGE_HOST = "localhost:35831";
+const SESSION = { host: "codex" as const, sessionId: "session-a", cwd: "/workspace" };
+
+const flagged: ExecutablePolicyFinding = {
+  id: "finding-1",
+  policyId: MOCK_POLICY_RULES[0]!.id,
+  checkId: "console-call",
+  code: "forbidden-call",
+  severity: "error",
+  message: "console.log is not allowed",
+  path: "web/src/x.ts",
+  span: { startByte: 0, endByte: 9, startLine: 1, startColumn: 1, endLine: 1, endColumn: 9 },
+  captures: {},
+  variables: {},
+};
+
+describe("Rerail API over HTTP", () => {
+  let root: string;
+  let databasePath: string;
+  let app: OpenAPIHono;
+  let stores: RerailApiStores;
+  let catalog: ScopedRuleCatalog;
+  let executions: SqlitePolicyExecutionStore;
+  let transcripts: SqliteTranscriptStore;
+  let raw: Database.Database;
+  let closeables: Array<{ close(): void }>;
+  const originalRerailHome = process.env.RERAIL_HOME;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-api-"));
+    process.env.RERAIL_HOME = join(root, "home");
+    databasePath = join(root, ".rerail", "rerail.sqlite");
+    catalog = ScopedRuleCatalog.open(join(root, "rules.sqlite"), { repositoryId: "test-repository", workspaceRoot: root });
+    executions = new SqlitePolicyExecutionStore(databasePath);
+    transcripts = new SqliteTranscriptStore(databasePath);
+    const reader = new SqliteTranscriptReader(databasePath);
+    const executionReader = new SqlitePolicyExecutionReader(databasePath);
+    const preferences = new SqlitePresentationPreferenceStore(databasePath);
+    const scanControls = new SqliteScanControlStore(databasePath);
+    raw = new Database(databasePath);
+    closeables = [catalog, executions, transcripts, reader, executionReader, preferences, scanControls, raw];
+    stores = {
+      reader,
+      executions: executionReader,
+      rules: () => catalog,
+      transcripts: () => transcripts,
+      scanControls: () => scanControls,
+      preferences: () => preferences,
+      health: () => ({ pid: process.pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
+    };
+    app = createRerailApi(stores, operations, { version: "0.0.0-test" });
+    transcripts.openSession(SESSION);
+  });
+
+  afterEach(async () => {
+    for (const closeable of closeables) closeable.close();
+    if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
+    else process.env.RERAIL_HOME = originalRerailHome;
+    await rm(root, { recursive: true, force: true });
+  });
+
+  /** A completed run with an explicit start time, which is what every range query is bounded by. */
+  function seedRun(run: { sessionId?: string; at: number; findings?: ExecutablePolicyFinding[]; evaluated?: string[] }): string {
+    const runId = executions.start({
+      sessionId: run.sessionId ?? SESSION.sessionId,
+      workspaceRoot: root,
+      scope: "touched-files",
+      mode: "resteer",
+      revision: 1,
+      catalogRevision: null,
+      ruleRevisions: (run.evaluated ?? []).map(ruleId => ({ ruleId, revision: 1 })),
+      paths: ["web/src/x.ts"],
+      ruleProvenance: [],
+    });
+    executions.finish(runId, { status: "completed", findings: run.findings ?? [], failures: [] });
+    raw.prepare("UPDATE policy_runs SET started_at = ? WHERE run_id = ?").run(run.at, runId);
+    return runId;
+  }
+
+  async function getJson<T>(path: string): Promise<T> {
+    const response = await app.request(path);
+    expect(response.status).toBe(200);
+    // Test boundary: the response is asserted against an expectation on the next line.
+    return await response.json() as T;
+  }
+
+  it("counts one unfixed violation once however many runs report it", async () => {
+    const [policy, otherPolicy] = [MOCK_POLICY_RULES[0]!, MOCK_POLICY_RULES[1]!];
+    const cosine = MOCK_COSINE_RULES[0]!;
+    catalog.upsertPolicy(policy);
+    catalog.upsertPolicy(otherPolicy);
+    catalog.upsertCosine(cosine, { revision: 1 });
+    seedRun({ at: 500, findings: [flagged], evaluated: [policy.id] });
+    seedRun({ at: 2_000, findings: [flagged], evaluated: [policy.id, otherPolicy.id] });
+    seedRun({ at: 3_000, findings: [{ ...flagged, id: "finding-2" }], evaluated: [policy.id] });
+
+    const body = await getJson<{ since: number; rules: Record<string, Record<string, unknown>> }>("/api/rules/activity?since=1000");
+
+    expect(body.since).toBe(1000);
+    // Evaluated by the two runs in range; the run at 500 is before the range and counts for nothing.
+    expect(body.rules[policy.id]).toEqual({
+      measured: true,
+      distinctViolations: 1,
+      sessions: 1,
+      lastSeenAt: 3_000,
+      evaluations: 2,
+      rerails: 0,
+    });
+    // Compiled into a run but never flagged: a zero backed by evidence rather than by silence.
+    expect(body.rules[otherPolicy.id]).toMatchObject({ measured: true, distinctViolations: 0, evaluations: 1, lastSeenAt: null });
+    // Cosine rules never write a policy run, so there is nothing to report either way.
+    expect(body.rules[cosine.id]).toEqual({
+      measured: false,
+      distinctViolations: 0,
+      sessions: 0,
+      lastSeenAt: null,
+      evaluations: 0,
+      rerails: 0,
+    });
+  });
+
+  it("separates violations by path, span, and session, and excludes runs before the range", async () => {
+    const policy = MOCK_POLICY_RULES[0]!;
+    catalog.upsertPolicy(policy);
+    seedRun({ at: 500, findings: [{ ...flagged, path: "web/src/old.ts" }] });
+    seedRun({
+      at: 2_000,
+      sessionId: "session-b",
+      findings: [flagged, { ...flagged, id: "finding-2", path: "web/src/y.ts" }],
+    });
+    transcripts.openSession({ ...SESSION, sessionId: "session-b" });
+    seedRun({ at: 2_500, findings: [flagged] });
+
+    const body = await getJson<{ rules: Record<string, Record<string, unknown>> }>("/api/rules/activity?since=1000");
+
+    // Findings alone do not make a run an evaluation of the rule; only the compiled rule set does.
+    expect(body.rules[policy.id]).toMatchObject({ distinctViolations: 2, sessions: 2, lastSeenAt: 2_500, evaluations: 0 });
+    expect((await getJson<{ rules: Record<string, Record<string, unknown>> }>("/api/rules/activity?since=0"))
+      .rules[policy.id]).toMatchObject({ distinctViolations: 3, lastSeenAt: 2_500 });
+  });
+
+  it("attributes re-rails to the rules a steering delivery named", async () => {
+    const policy = MOCK_POLICY_RULES[0]!;
+    catalog.upsertPolicy(policy);
+    transcripts.append({ sessionId: SESSION.sessionId, kind: "steering-delivered", observedAt: 2_000, payload: { ruleIds: [policy.id] } });
+    // Deliveries recorded before rule attribution existed carry an empty payload and count for nothing.
+    transcripts.append({ sessionId: SESSION.sessionId, kind: "steering-delivered", observedAt: 2_100, payload: {} });
+    transcripts.append({ sessionId: SESSION.sessionId, kind: "steering-delivered", observedAt: 500, payload: { ruleIds: [policy.id] } });
+
+    const body = await getJson<{ rules: Record<string, { rerails: number }> }>("/api/rules/activity?since=1000");
+
+    expect(body.rules[policy.id]!.rerails).toBe(1);
+    expect((await getJson<{ rules: Record<string, { rerails: number }> }>("/api/rules/activity?since=0"))
+      .rules[policy.id]!.rerails).toBe(2);
+  });
+
+  it("lists findings newest first, paged, and filtered by rule", async () => {
+    const other = { ...flagged, id: "finding-other", policyId: MOCK_POLICY_RULES[1]!.id, path: "web/src/z.ts" };
+    seedRun({ at: 1_000, findings: [flagged] });
+    // The same violation twice in one run is one row; across runs it is history.
+    const newest = seedRun({ at: 4_000, findings: [flagged, { ...flagged, id: "finding-copy" }, other] });
+
+    const page = await getJson<{ total: number; findings: Array<Record<string, unknown>> }>("/api/findings?since=0&limit=2");
+    expect(page.total).toBe(3);
+    expect(page.findings).toHaveLength(2);
+    expect(page.findings.map(finding => finding.at)).toEqual([4_000, 4_000]);
+    expect(page.findings[0]).toMatchObject({
+      id: flagged.id,
+      ruleId: flagged.policyId,
+      checkId: flagged.checkId,
+      code: flagged.code,
+      severity: "error",
+      path: "web/src/x.ts",
+      span: flagged.span,
+      sessionId: SESSION.sessionId,
+      runId: newest,
+      at: 4_000,
+    });
+    expect((await getJson<{ findings: Array<{ at: number }> }>("/api/findings?since=0&limit=2&offset=2")).findings)
+      .toMatchObject([{ at: 1_000 }]);
+    // A page past the end still reports how many findings exist.
+    expect(await getJson<{ total: number; findings: unknown[] }>("/api/findings?since=0&limit=2&offset=3"))
+      .toEqual({ total: 3, findings: [] });
+
+    const filtered = await getJson<{ total: number; findings: Array<{ ruleId: string }> }>(`/api/findings?since=0&ruleId=${other.policyId}`);
+    expect(filtered).toMatchObject({ total: 1, findings: [{ ruleId: other.policyId }] });
+    expect((await getJson<{ total: number }>("/api/findings?since=2000")).total).toBe(2);
+  });
+
+  it("lists only the sessions started in range", async () => {
+    transcripts.openSession({ ...SESSION, sessionId: "session-old" }, 500);
+    transcripts.openSession({ ...SESSION, sessionId: "session-new" }, 2_000);
+
+    // The fixture's own session opened at the current clock, so only `session-old` falls outside.
+    expect((await getJson<{ sessions: Array<{ sessionId: string }> }>("/api/sessions?since=1000")).sessions
+      .map(session => session.sessionId)).toEqual(["session-new", SESSION.sessionId]);
+    expect((await getJson<{ sessions: unknown[] }>("/api/sessions")).sessions).toHaveLength(3);
+  });
+
+  it("answers an unchanged catalog read with 304 and mints a new tag after a write", async () => {
+    catalog.upsertPolicy(MOCK_POLICY_RULES[0]!);
+    const first = await app.request("/api/rules");
+    const tag = first.headers.get("etag");
+    expect(tag).toMatch(/^"[0-9a-f]{32}"$/);
+
+    const repeated = await app.request("/api/rules", { headers: { "if-none-match": tag! } });
+    expect(repeated.status).toBe(304);
+    expect(repeated.headers.get("etag")).toBe(tag);
+    expect(await repeated.text()).toBe("");
+    // A different filter is a different response, so it must not reuse the tag.
+    expect((await app.request("/api/rules?kind=cosine", { headers: { "if-none-match": tag! } })).status).toBe(200);
+
+    const upsert = await app.request(`/api/rules/${MOCK_POLICY_RULES[1]!.id}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "policy", rule: MOCK_POLICY_RULES[1]! }),
+    });
+    expect(upsert.status).toBe(200);
+    const refreshed = await app.request("/api/rules", { headers: { "if-none-match": tag! } });
+    expect(refreshed.status).toBe(200);
+    expect(refreshed.headers.get("etag")).not.toBe(tag);
+  });
+
+  it("stores a structural tool-call rule and rejects a regex the kernel cannot compile", async () => {
+    const id = "no-force-push";
+    const rule = (regex: string) => ({
+      id,
+      match: { all: [{ field: "tool.name", eq: "Bash" }, { field: "input.command", regex }] },
+      sample: { source: "tool:Bash", boundary: "tool-call" },
+      action: { delivery: "steer", content: "Do not force-push." },
+    });
+    const put = (regex: string) => app.request(`/api/rules/${id}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "cosine", rule: rule(regex) }),
+    });
+
+    const rejected = await put("(?!main)");
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toMatchObject({
+      error: "invalid-request",
+      issues: [{ path: ["rule", "match", "all", 1, "regex"], message: expect.stringMatching(/^is not a valid regex: .*look-around/su) }],
+    });
+    expect(catalog.get(id)).toBeUndefined();
+
+    expect((await put("\\bgit\\s+push\\b[^\\n]*--force\\b")).status).toBe(200);
+    expect(catalog.get(id)?.rule).toEqual(rule("\\bgit\\s+push\\b[^\\n]*--force\\b"));
+  });
+
+  it("reports a quarantined inherited global toggle as a rule conflict", async () => {
+    const id = "quarantined-global";
+    catalog.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id }, { applicability: "global" });
+    const catalogDatabase = new Database(catalog.path);
+    catalogDatabase.prepare("UPDATE catalog_rules SET document_json = ? WHERE rule_id = ?").run(
+      JSON.stringify({ kind: "cosine", rule: { id, unknown: true } }),
+      id,
+    );
+    catalogDatabase.close();
+
+    const response = await app.request("/api/rules", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: false, ids: [id] }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "rule-conflict",
+      message: `cannot toggle quarantined global rule ${id}`,
+    });
+  });
+
+  it("dates activity, findings, and sessions by their own result", async () => {
+    catalog.upsertPolicy(MOCK_POLICY_RULES[0]!);
+    for (const path of ["/api/rules/activity?since=0", "/api/findings?since=0", "/api/sessions"]) {
+      const first = await app.request(path);
+      const tag = first.headers.get("etag")!;
+      expect(first.status).toBe(200);
+      const repeated = await app.request(path, { headers: { "if-none-match": tag } });
+      expect(repeated.status).toBe(304);
+      expect(await repeated.text()).toBe("");
+      seedRun({ at: 5_000, findings: [flagged] });
+      transcripts.openSession({ ...SESSION, sessionId: `session-${path}` });
+      expect((await app.request(path, { headers: { "if-none-match": tag } })).status).toBe(200);
+    }
+  });
+
+  it("admits a write whose Origin is an allowlisted host on the requested port and rejects every other", async () => {
+    const patch = async (headers: Record<string, string>, api = app): Promise<Response> => await api.request("/api/rules", {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify({ enabled: true, ids: ["mock-no-console-log"] }),
+    });
+
+    // The page is reached through a container port mapping: Host names a port the daemon never bound.
+    expect((await patch({ origin: "http://localhost:35831", host: PAGE_HOST })).status).toBe(200);
+    expect((await patch({ origin: "http://127.0.0.1:35831", host: "127.0.0.1:35831" })).status).toBe(200);
+    // `URL` keeps the brackets around an IPv6 literal, exactly as `Host` carries them.
+    expect((await patch({ origin: "http://[::1]:35831", host: "[::1]:35831" })).status).toBe(200);
+    expect((await patch({ origin: "http://LOCALHOST:35831", host: PAGE_HOST })).status).toBe(200);
+    expect((await patch({ origin: "http://localhost", host: "localhost" })).status).toBe(200);
+    expect((await patch({ origin: "http://localhost", host: "localhost:80" })).status).toBe(200);
+
+    const forbidden = await patch({ origin: "http://127.0.0.1:9999", host: "127.0.0.1:53831" });
+    expect(forbidden.status).toBe(403);
+    expect(await forbidden.json()).toEqual({ error: "api-origin-forbidden" });
+    expect((await patch({ origin: "https://evil.example", host: PAGE_HOST })).status).toBe(403);
+    // A rebinding page's own name is the only host it can put in both headers; agreeing headers are not enough.
+    expect((await patch({ origin: "https://rerail.example", host: "rerail.example:443" })).status).toBe(403);
+    expect((await patch({ origin: "http://[::1]:35831", host: "::1:35831" })).status).toBe(403);
+    expect((await patch({ origin: "http://localhost", host: "localhost:443" })).status).toBe(403);
+    expect((await patch({ origin: "null", host: PAGE_HOST })).status).toBe(403);
+    expect((await patch({ origin: "file:///index.html", host: "" })).status).toBe(403);
+    expect((await patch({ origin: "http://localhost:35831" })).status).toBe(403);
+
+    // `--public-host` admits that name, on the requested port, alongside loopback.
+    const published = createRerailApi(stores, operations, { version: "0.0.0-test", publicHosts: new Set(["rerail.example"]) });
+    expect((await patch({ origin: "https://rerail.example", host: "rerail.example:443" }, published)).status).toBe(200);
+    expect((await patch({ origin: "https://Rerail.Example:8443", host: "rerail.example:8443" }, published)).status).toBe(200);
+    expect((await patch({ origin: "http://localhost:35831", host: PAGE_HOST }, published)).status).toBe(200);
+    expect((await patch({ origin: "https://rerail.example", host: "rerail.example:8443" }, published)).status).toBe(403);
+    expect((await patch({ origin: "https://evil.example", host: "rerail.example:443" }, published)).status).toBe(403);
+
+    // CLI, curl, and MCP clients send no Origin at all.
+    expect((await patch({ host: PAGE_HOST })).status).toBe(200);
+    expect((await patch({})).status).toBe(200);
+    // Reads are not writes: a foreign page can already only read what its own daemon serves.
+    expect((await app.request("/api/rules", { headers: { origin: "https://evil.example", host: PAGE_HOST } })).status).toBe(200);
+  });
+
+  it("documents the new operations and their conditional responses", async () => {
+    const document = await getJson<{ paths: Record<string, Record<string, { operationId: string; responses: Record<string, unknown> }>> }>("/openapi.json");
+
+    expect(document.paths["/api/rules/activity"]?.get?.operationId).toBe("rules_activity");
+    expect(document.paths["/api/findings"]?.get?.operationId).toBe("findings_list");
+    for (const path of ["/api/rules", "/api/rules/{id}", "/api/rules/activity", "/api/findings", "/api/sessions"]) {
+      expect(document.paths[path]?.get?.responses["304"]).toBeDefined();
+    }
+    expect(document.paths["/api/rules"]?.patch?.responses["304"]).toBeUndefined();
+  });
+});

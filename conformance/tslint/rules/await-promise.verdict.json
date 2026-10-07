@@ -1,0 +1,38 @@
+{
+  "verdict": "INFEASIBLE",
+  "primitive": "type-checker",
+  "secondary": [
+    "fixture-artifact"
+  ],
+  "needs": [
+    "expression-type",
+    "lib-types"
+  ],
+  "reason": "The checker must answer: does the static type of the awaited or for-await-iterated expression contain Promise, or a configured promise class, or AsyncIterable, through unions, intersections and base classes? The port catches only operands whose non-promise-ness is visible in the syntax (literals, ternaries of literals, `new X()` of a non-Promise class). Identifiers need their declared or inferred type and the class hierarchy. Secondary: the for-await-of fixture has a syntax error (error-tolerant-parse). Checker APIs: getTypeAtLocation on the awaited / for-await operand, then base types and symbol name (Promise from lib, AsyncIterable).",
+  "evidence": [
+    {
+      "variant": "es6-promise",
+      "file": "test.ts.lint",
+      "line": 31,
+      "why": "`await foo` is fine only because `class Foo extends Promise<number>`. Syntactically it is identical to a non-promise identifier await; needs base-type resolution"
+    },
+    {
+      "variant": "es6-promise",
+      "file": "test.ts.lint",
+      "line": 5,
+      "why": "`await isAny` is allowed because isAny is `any`. Needs the declared type of the identifier"
+    },
+    {
+      "variant": "for-await-of",
+      "file": "test.ts.lint",
+      "line": 34,
+      "why": "`for await (... of foo)` with `foo: Iterable<string>` is flagged, but `foo: AsyncIterable<string>` (line 9) is not. Needs the parameter's type (and `Array<Promise<string>)` on line 17 is a syntax error that makes the whole file source-incomplete)"
+    },
+    {
+      "variant": "for-await-of",
+      "file": "test.ts.lint",
+      "line": 30,
+      "why": "`generator()` is a call to a non-async `function*` declared elsewhere in the file. Needs the call's return type"
+    }
+  ]
+}

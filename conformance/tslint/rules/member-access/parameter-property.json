@@ -1,0 +1,96 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:member-access",
+  "revision": 1,
+  "description": "Option check-parameter-property.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "checks": [
+    {
+      "id": "member",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "member-name",
+            "not": {
+              "any": [
+                {"follows": {"stopBy": "neighbor", "regex": "^(?:get|set)$"}},
+                {"kind": "property_identifier", "regex": "^constructor$"}
+              ]
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "class-member",
+              "not": {"has": {"stopBy": "neighbor", "kind": "accessibility_modifier"}}
+            }
+          },
+          "utils": {
+            "member-name": {
+              "any": [
+                {"kind": "property_identifier"},
+                {"kind": "private_property_identifier"},
+                {"kind": "string"},
+                {"kind": "number"},
+                {"kind": "computed_property_name"}
+              ],
+              "not": {"follows": {"stopBy": "neighbor", "regex": "^=$"}}
+            },
+            "class-member": {
+              "any": [
+                {"kind": "method_definition"},
+                {"kind": "method_signature"},
+                {"kind": "public_field_definition"},
+                {"kind": "abstract_method_signature"}
+              ],
+              "inside": {"stopBy": "neighbor", "kind": "class_body"}
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "MEMBER_ACCESS",
+        "severity": "error",
+        "message": "The class member must be marked either 'private', 'public', or 'protected'"
+      }
+    },
+    {
+      "id": "parameter-property",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "identifier",
+            "follows": {"stopBy": "neighbor", "regex": "^readonly$"},
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "parameter-in-constructor",
+              "not": {"has": {"stopBy": "neighbor", "kind": "accessibility_modifier"}}
+            }
+          },
+          "utils": {
+            "parameter-in-constructor": {
+              "any": [{"kind": "required_parameter"}, {"kind": "optional_parameter"}],
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "formal_parameters",
+                "inside": {"stopBy": "neighbor", "matches": "constructor"}
+              }
+            },
+            "constructor": {
+              "kind": "method_definition",
+              "has": {"stopBy": "neighbor", "kind": "property_identifier", "regex": "^constructor$"},
+              "inside": {"stopBy": "neighbor", "kind": "class_body"}
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "MEMBER_ACCESS",
+        "severity": "error",
+        "message": "The parameter property must be marked either 'private', 'public', or 'protected'"
+      }
+    }
+  ]
+}

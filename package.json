@@ -1,0 +1,153 @@
+{
+  "name": "@neralabs/rerail",
+  "version": "0.1.1",
+  "description": "Persistent semantic event loop and cosine relations for coding harnesses",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "restricted"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neralabs/rerail.git"
+  },
+  "bugs": {
+    "url": "https://github.com/neralabs/rerail/issues"
+  },
+  "homepage": "https://github.com/neralabs/rerail#readme",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "rerail": "dist/cli.js"
+  },
+  "omp": {
+    "extensions": [
+      "./dist/default-extension.js"
+    ]
+  },
+  "pi": {
+    "extensions": [
+      "./dist/pi-extension.js"
+    ]
+  },
+  "keywords": [
+    "pi-package",
+    "semantic-search",
+    "cosine-similarity"
+  ],
+  "files": [
+    "dist",
+    "native/*.node",
+    "model",
+    "policies/executable-policy-dsl/capabilities.json",
+    "LICENSE",
+    ".claude-plugin",
+    ".codex-plugin",
+    ".cursor-plugin",
+    "hooks",
+    "skills",
+    "CHANGELOG.md",
+    "THIRD_PARTY_NOTICES",
+    "policies/executable-policy-dsl/rules"
+  ],
+  "scripts": {
+    "build": "npm run build:clean && npm run build:native && npm run build:ts && npm run build:omp && npm run build:events && npm run build:cursor && npm run build:claude && npm run build:codex && npm run build:ui",
+    "build:clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build:ui": "node scripts/copy-ui.mjs",
+    "ensure:sqlite": "node scripts/ensure-sqlite.mjs",
+    "build:native": "node scripts/require-cargo.mjs && napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
+    "build:ts": "npm run generate:terminal-brand && npm run generate:ui-tokens && tsc -p tsconfig.build.json && esbuild src/session-presentation.ts --bundle --platform=node --format=esm --outfile=dist/session-presentation.js",
+    "build:omp": "esbuild src/default-extension.ts --bundle --platform=node --target=node24 --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/default-extension.js",
+    "build:test-host": "esbuild integration/fixtures/omp-host.ts --bundle --packages=external --platform=node --target=node24 --format=esm --outfile=node_modules/.cache/rerail/omp-host.mjs",
+    "build:events": "esbuild src/event-stream.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/event-stream.js",
+    "build:cursor": "esbuild src/cursor-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/cursor-hook.js",
+    "build:claude": "esbuild src/claude-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/claude-hook.js",
+    "build:codex": "esbuild src/codex-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/codex-hook.js",
+    "check": "tsc --noEmit",
+    "check:architecture": "python3 scripts/check_architecture.py",
+    "check:native": "cargo fmt --manifest-path Cargo.toml --all -- --check && cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings && cargo clippy --manifest-path native/Cargo.toml --features policy-profile --all-targets -- -D warnings",
+    "check:all": "npm run check:architecture && npm run check && npm run check:native && npm run check:ui-tokens && npm run check:reference",
+    "check:reference": "node scripts/policy-dsl-reference.mjs grammar",
+    "check:ui-tokens": "node scripts/check-ui-tokens.mjs",
+    "test": "vitest run --dir test",
+    "test:native": "cargo test --manifest-path Cargo.toml --workspace",
+    "test:policy-dsl-runtime": "vitest run test/native-policy-dsl-runtime.test.ts",
+    "bench:policy-dsl": "node --import tsx scripts/policy-dsl-bench.ts",
+    "test:integration:built": "npm run build:test-host && vitest run --dir integration",
+    "test:integration:policy-runtime": "vitest run integration/policy-runtime.test.ts",
+    "test:integration": "npm run build && npm run test:integration:built",
+    "test:e2e:harness": "npm run build && node --import tsx scripts/harness-smoke.ts",
+    "test:e2e:lifecycle": "npm run build:ts && node --import tsx scripts/harness-lifecycle.ts omp",
+    "test:e2e:lifecycle:pi": "npm run build:ts && node --import tsx scripts/harness-lifecycle.ts pi",
+    "test:all": "npm run build && npm test && npm run test:reference && npm run test:native && npm run test:integration:built",
+    "test:reference": "node --import tsx scripts/policy-dsl-reference.mjs examples",
+    "test:watch": "vitest --dir test",
+    "benchmark": "node --import tsx benchmark/kernel.ts",
+    "benchmark:rerailer": "node --import tsx benchmark/rerailer.ts",
+    "benchmark:workspace-size": "node --expose-gc --import tsx benchmark/workspace-size.ts",
+    "generate:schema": "node --import tsx scripts/generate-schema-sql.ts",
+    "generate:terminal-brand": "node scripts/generate-terminal-brand.mjs",
+    "generate:ui-tokens": "node scripts/generate-ui-tokens.mjs",
+    "package:check": "npm run build && npm pack --dry-run",
+    "prepack": "node scripts/stamp-plugin-versions.mjs stamp",
+    "postpack": "node scripts/stamp-plugin-versions.mjs restore"
+  },
+  "dependencies": {
+    "@asteasolutions/zod-to-openapi": "^9.1.0",
+    "@hono/node-server": "^2.1.1",
+    "@hono/zod-openapi": "^1.6.3",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@oh-my-pi/pi-agent-core": "18.0.4",
+    "@oh-my-pi/pi-coding-agent": "18.0.4",
+    "better-sqlite3": "^12.11.1",
+    "diff": "8.0.3",
+    "drizzle-orm": "^0.45.2",
+    "drizzle-zod": "^0.8.3",
+    "hono": "^4.13.5",
+    "ignore": "7.0.5",
+    "superjson": "2.2.6",
+    "typebox": "1.1.38",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@ast-grep/cli": "0.45.3",
+    "@earendil-works/pi-agent-core": "0.85.1",
+    "@earendil-works/pi-ai": "0.85.1",
+    "@earendil-works/pi-coding-agent": "0.87.1",
+    "@napi-rs/cli": "3.8.6",
+    "@oh-my-pi/omptype": "18.0.4",
+    "@oh-my-pi/pi-ai": "18.0.4",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "24.10.0",
+    "@vitest/coverage-v8": "^5.0.0",
+    "drizzle-kit": "^0.31.10",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "vitest": "5.0.0"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "napi": {
+    "binaryName": "omp_cosine_rules",
+    "targets": [
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-pc-windows-msvc",
+      "aarch64-pc-windows-msvc"
+    ]
+  },
+  "allowScripts": {
+    "better-sqlite3": true,
+    "esbuild": true
+  }
+}

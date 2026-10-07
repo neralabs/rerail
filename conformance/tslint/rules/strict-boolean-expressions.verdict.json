@@ -1,0 +1,31 @@
+{
+  "verdict": "INFEASIBLE",
+  "primitive": "type-checker",
+  "secondary": [],
+  "needs": [
+    "expression-type",
+    "symbol-resolution",
+    "compiler-options"
+  ],
+  "reason": "The checker question is 'is the static type of this operand / condition exactly boolean (or, per option, number, string, enum, a null/undefined union, or a mix)?'. Contexts port exactly: operands of && / || (with ignore-rhs), `!`, ternary conditions and if/while/do conditions. The port can only classify literal operands (1/129 recall, 0 FP). The fixtures are almost entirely identifiers whose type comes from a `let` declaration, and the same syntax is valid or invalid depending on that type. Options (allow-null-union, allow-undefined-union, allow-boolean-or-undefined, allow-enum, allow-mix) and the tsconfig strictNullChecks setting only mean something with union types. Checker APIs: getTypeAtLocation + type flags per union part (:207-259); strictNullChecks (:108). Line 23 `let numType = 9` is number only by inference.",
+  "evidence": [
+    {
+      "variant": "default",
+      "file": "test.ts.lint",
+      "line": 23,
+      "why": "`numType && boolType;` is flagged at numType (declared `let numType = 9`); `boolType && boolType2;` (line 41) has the same shape and is valid"
+    },
+    {
+      "variant": "default",
+      "file": "test.ts.lint",
+      "line": 64,
+      "why": "`!strType;` is flagged; `!boolExpr;` (line 73) is the same syntax and valid"
+    },
+    {
+      "variant": "default",
+      "file": "test.ts.lint",
+      "line": 78,
+      "why": "`if (numType) { }` is flagged; `if (boolType) { }` (line 89) is valid"
+    }
+  ]
+}

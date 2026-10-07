@@ -1,0 +1,46 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:increment-decrement",
+  "revision": 1,
+  "description": "Port of TSLint's `increment-decrement` rule with its default options (https://palantir.github.io/tslint/rules/increment-decrement/). Bans ++ and -- (TSLint default: both prefix and postfix).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "checks": [
+    {
+      "id": "increment-decrement",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "update_expression"
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "INCREMENT_DECREMENT",
+        "severity": "error",
+        "message": "Use an explicit += 1 or -= 1 operator."
+      }
+    }
+  ]
+}

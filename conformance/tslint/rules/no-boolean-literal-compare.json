@@ -1,0 +1,89 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-boolean-literal-compare",
+  "revision": 1,
+  "description": "Flags the operand compared (==, ===, !=, !==) to a boolean literal; syntactic only, cannot check the operand is exactly boolean.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "bool-literal-compare",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "not": {
+                  "kind": "true"
+                }
+              },
+              {
+                "not": {
+                  "kind": "false"
+                }
+              },
+              {
+                "not": {
+                  "regex": "^[!=]==?$"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "kind": "binary_expression"
+                    },
+                    {
+                      "any": [
+                        {
+                          "regex": "^(true|false)\\s*[!=]==?\\s*"
+                        },
+                        {
+                          "regex": "\\s*[!=]==?\\s*(true|false)$"
+                        }
+                      ]
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "all": [
+                            {
+                              "kind": "binary_expression"
+                            },
+                            {
+                              "any": [
+                                {
+                                  "regex": "^(true|false)\\s*[!=]==?\\s*"
+                                },
+                                {
+                                  "regex": "\\s*[!=]==?\\s*(true|false)$"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_BOOLEAN_LITERAL_COMPARE",
+        "severity": "error",
+        "message": "This expression is unnecessarily compared to a boolean."
+      }
+    }
+  ]
+}

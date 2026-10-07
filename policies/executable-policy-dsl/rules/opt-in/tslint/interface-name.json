@@ -1,0 +1,61 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:interface-name",
+  "revision": 1,
+  "description": "Port of TSLint's `interface-name` rule with its default options (https://palantir.github.io/tslint/rules/interface-name/). Interface names must start with a capitalized I (TSLint default: always-prefix).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "checks": [
+    {
+      "id": "interface-name",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "type_identifier"
+              },
+              {
+                "not": {
+                  "regex": "^I[A-Z]"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "interface_declaration"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "INTERFACE_NAME",
+        "severity": "error",
+        "message": "interface name must start with a capitalized I"
+      }
+    }
+  ]
+}

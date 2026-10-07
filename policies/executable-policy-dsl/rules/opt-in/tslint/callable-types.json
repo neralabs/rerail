@@ -1,0 +1,109 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:callable-types",
+  "revision": 1,
+  "description": "Port of TSLint's `callable-types` rule with its default options (https://palantir.github.io/tslint/rules/callable-types/). An interface or type literal with only a call signature should be a function type.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "checks": [
+    {
+      "id": "callable-types",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "call_signature"
+                  },
+                  {
+                    "kind": "construct_signature"
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "type_annotation"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "pattern": {
+                        "context": "type X = { $A }",
+                        "selector": "object_type"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "pattern": {
+                            "context": "interface X { $A }",
+                            "selector": "interface_body"
+                          }
+                        },
+                        {
+                          "not": {
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "all": [
+                                  {
+                                    "kind": "extends_type_clause"
+                                  },
+                                  {
+                                    "not": {
+                                      "regex": "^extends\\s+Function$"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "CALLABLE_TYPES",
+        "severity": "error",
+        "message": "Only a call signature -- use a function type instead."
+      }
+    }
+  ]
+}

@@ -1,0 +1,120 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:typedef",
+  "revision": 1,
+  "description": "Requires type definitions for: parameter, call-signature.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "checks": [
+    {
+      "id": "call-signature",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "any": [
+                  {"kind": "identifier"},
+                  {"kind": "property_identifier"},
+                  {"kind": "private_property_identifier"},
+                  {"kind": "string"},
+                  {"kind": "number"},
+                  {"kind": "computed_property_name"},
+                  {"kind": "type_identifier"}
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {"kind": "function_declaration"},
+                    {"kind": "function_expression"},
+                    {"kind": "generator_function_declaration"},
+                    {"kind": "generator_function"},
+                    {"kind": "function_signature"},
+                    {"kind": "method_definition"},
+                    {"kind": "method_signature"},
+                    {"kind": "abstract_method_signature"}
+                  ],
+                  "matches": "untyped"
+                },
+                "not": {
+                  "any": [{"regex": "^constructor$"}, {"follows": {"stopBy": "neighbor", "regex": "^(?:set|=)$"}}]
+                }
+              },
+              {
+                "kind": "formal_parameters",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [{"kind": "function_expression"}, {"kind": "generator_function"}],
+                  "matches": "untyped",
+                  "not": {"has": {"stopBy": "neighbor", "kind": "identifier"}}
+                }
+              }
+            ]
+          },
+          "utils": {"untyped": {"not": {"has": {"stopBy": "neighbor", "kind": "type_annotation"}}}}
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "TYPEDEF",
+        "severity": "error",
+        "message": "expected call-signature to have a typedef"
+      }
+    },
+    {
+      "id": "parameter",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {"matches": "param-name"},
+          "utils": {
+            "untyped": {"not": {"has": {"stopBy": "neighbor", "kind": "type_annotation"}}},
+            "param-name": {
+              "any": [
+                {
+                  "any": [
+                    {"kind": "identifier"},
+                    {"kind": "object_pattern"},
+                    {"kind": "array_pattern"},
+                    {"kind": "this"}
+                  ],
+                  "not": {"follows": {"stopBy": "neighbor", "regex": "^=$"}},
+                  "inside": {"stopBy": "neighbor", "matches": "untyped-param"}
+                },
+                {
+                  "kind": "identifier",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "rest_pattern",
+                    "inside": {"stopBy": "neighbor", "matches": "untyped-param"}
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "inside": {"stopBy": "neighbor", "matches": "param-owner"},
+                  "precedes": {"stopBy": "neighbor", "regex": "^=>$"}
+                }
+              ]
+            },
+            "untyped-param": {
+              "any": [{"kind": "required_parameter"}, {"kind": "optional_parameter"}],
+              "matches": "untyped",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "formal_parameters",
+                "inside": {"stopBy": "neighbor", "matches": "param-owner"}
+              }
+            },
+            "param-owner": {"not": {"kind": "arrow_function"}}
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "TYPEDEF",
+        "severity": "error",
+        "message": "expected parameter to have a typedef"
+      }
+    }
+  ]
+}

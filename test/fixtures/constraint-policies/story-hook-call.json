@@ -1,0 +1,27 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "example:story-hook-call",
+  "revision": 1,
+  "description": "Story files must not call useState, useEffect, or custom hooks. The AST form of nera-web:story-hook-call: `constraints` names the callee, so hook names in comments, strings, and JSX text no longer match.",
+  "scope": { "include": ["**/*.stories.ts", "**/*.stories.tsx"], "exclude": [] },
+  "checks": [
+    {
+      "id": "no-hook-calls-in-stories",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": { "any": [{ "pattern": "$HOOK($$$ARGS)" }, { "pattern": "$HOOK<$$$TYPES>($$$ARGS)" }] },
+          "constraints": {
+            "HOOK": { "regex": "^(React\\.)?use[A-Z][A-Za-z0-9_$]*$" }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "STORY_HOOK_CALL",
+        "severity": "warning",
+        "message": "Story files must not call useState, useEffect, or custom hooks."
+      }
+    }
+  ]
+}

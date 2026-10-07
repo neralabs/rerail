@@ -1,0 +1,92 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:triple-equals",
+  "revision": 1,
+  "description": "Requires === and !==; allows == / != against undefined (allow-undefined-check).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "loose-eq",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "regex": "^==$"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "binary_expression"
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "binary_expression",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "undefined"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "TRIPLE_EQUALS",
+        "severity": "error",
+        "message": "== should be ==="
+      }
+    },
+    {
+      "id": "loose-neq",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "regex": "^!=$"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "binary_expression"
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "binary_expression",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "undefined"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "TRIPLE_EQUALS",
+        "severity": "error",
+        "message": "!= should be !=="
+      }
+    }
+  ]
+}

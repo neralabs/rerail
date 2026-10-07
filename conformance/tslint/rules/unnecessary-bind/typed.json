@@ -1,0 +1,142 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:unnecessary-bind",
+  "revision": 1,
+  "description": "unnecessary-bind with type info: also flags `.bind(x)` on arrow functions. Only arrow LITERALS are visible; identifiers bound to arrows need binding/type resolution.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "function-bind",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "call_expression"
+              },
+              {
+                "pattern": "$F.bind(this)"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "member_expression",
+                  "regex": "\\.\\s*bind$",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "parenthesized_expression",
+                        "has": {
+                          "kind": "function_expression",
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "public_field_definition",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "decorator"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "pattern": "function $N($$$P) { $$$A $N($$$R); $$$B }.bind(this)"
+                    },
+                    {
+                      "pattern": "(function $N($$$P) { $$$A $N($$$R); $$$B }).bind(this)"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "UNNECESSARY_BIND",
+        "severity": "error",
+        "message": "Don't bind `this` without arguments as a scope to a function. Use an arrow lambda instead."
+      }
+    },
+    {
+      "id": "arrow-bind",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "call_expression"
+              },
+              {
+                "pattern": "$F.bind($A)"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "member_expression",
+                  "regex": "\\.\\s*bind$",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "parenthesized_expression",
+                        "has": {
+                          "kind": "arrow_function",
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "public_field_definition",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "decorator"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "UNNECESSARY_BIND",
+        "severity": "error",
+        "message": "Don't bind scopes to arrow lambdas, as they already have a bound scope."
+      }
+    }
+  ]
+}

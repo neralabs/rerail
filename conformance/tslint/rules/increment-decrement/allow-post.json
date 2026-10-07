@@ -1,0 +1,14 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:increment-decrement",
+  "revision": 1,
+  "description": "Bans ++ and -- (option allow-post: prefix only).",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "checks": [
+    {
+      "id": "increment-decrement",
+      "forbid": { "ast": { "language": "typescript", "rule": {"all":[{"kind":"update_expression"},{"regex":"^(\\+\\+|--)"}]} } },
+      "finding": { "anchor": "witness.span", "code": "INCREMENT_DECREMENT", "severity": "error", "message": "Use an explicit += 1 or -= 1 operator." }
+    }
+  ]
+}

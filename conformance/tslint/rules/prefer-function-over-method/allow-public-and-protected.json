@@ -1,0 +1,90 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:prefer-function-over-method",
+  "revision": 1,
+  "description": "Options allow-public and allow-protected: Flags class methods with a body, not static, that never use `this` or `super` outside nested functions, object/class methods and nested classes; `this.<ownName>` (recursion), a `this` parameter and `this` types do not count.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "checks": [
+    {
+      "id": "method",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "member-name",
+            "pattern": "$N",
+            "inside": {
+              "pattern": "$M",
+              "matches": "method",
+              "not": {"has": {"stopBy": "end", "matches": "own-this"}},
+              "has": {"kind": "accessibility_modifier", "regex": "^private$"}
+            }
+          },
+          "utils": {
+            "member-name": {
+              "any": [
+                {"kind": "property_identifier"},
+                {"kind": "computed_property_name"},
+                {"kind": "private_property_identifier"},
+                {"kind": "string"},
+                {"kind": "number"}
+              ]
+            },
+            "method": {
+              "kind": "method_definition",
+              "inside": {"kind": "class_body"},
+              "has": {"kind": "statement_block"},
+              "not": {"has": {"regex": "^static$"}}
+            },
+            "own-this": {
+              "any": [
+                {"kind": "super"},
+                {
+                  "kind": "this",
+                  "not": {
+                    "any": [
+                      {"precedes": {"kind": "type_annotation"}},
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "type_annotation",
+                          "inside": {"stopBy": "end", "pattern": "$M"}
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "member_expression",
+                          "has": {"kind": "property_identifier", "pattern": "$N"}
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "not": {
+                "inside": {"stopBy": "end", "matches": "this-boundary", "inside": {"stopBy": "end", "pattern": "$M"}}
+              }
+            },
+            "this-boundary": {
+              "any": [
+                {"kind": "function_expression"},
+                {"kind": "function_declaration"},
+                {"kind": "generator_function"},
+                {"kind": "generator_function_declaration"},
+                {"kind": "method_definition"},
+                {"kind": "class"},
+                {"kind": "class_declaration"}
+              ]
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "PREFER_FUNCTION_OVER_METHOD",
+        "severity": "error",
+        "message": "Class method does not use 'this'. Use a function instead."
+      }
+    }
+  ]
+}

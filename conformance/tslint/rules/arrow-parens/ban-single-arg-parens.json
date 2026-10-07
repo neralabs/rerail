@@ -1,0 +1,80 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:arrow-parens",
+  "revision": 1,
+  "description": "Bans parentheses around a single simple arrow-function parameter.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "single-arg-parens",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "required_parameter"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "all": [
+                    {
+                      "kind": "formal_parameters"
+                    },
+                    {
+                      "regex": "^\\(\\s*[\\p{L}_$][\\p{L}\\p{N}_$]*\\s*,?\\s*\\)$"
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "all": [
+                          {
+                            "kind": "arrow_function"
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "type_annotation"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "type_parameters"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "ARROW_PARENS",
+        "severity": "error",
+        "message": "Parentheses are prohibited around the parameter in this single parameter arrow function"
+      }
+    }
+  ]
+}

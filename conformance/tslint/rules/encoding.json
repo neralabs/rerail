@@ -1,0 +1,14 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:encoding",
+  "revision": 1,
+  "description": "Files must be UTF-8. Only a leading U+FEFF is visible after decoding, and it cannot tell a UTF-16 BOM from a UTF-8 BOM.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "checks": [
+    {
+      "id": "bom",
+      "forbid": { "regex": { "source": "file.content", "pattern": "\\A\\x{FEFF}" } },
+      "finding": { "anchor": "witness.span", "code": "ENCODING", "severity": "error", "message": "This file is not UTF-8 encoded." }
+    }
+  ]
+}

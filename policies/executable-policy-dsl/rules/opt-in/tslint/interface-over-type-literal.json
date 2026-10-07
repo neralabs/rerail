@@ -1,0 +1,82 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:interface-over-type-literal",
+  "revision": 1,
+  "description": "Port of TSLint's `interface-over-type-literal` rule with its default options (https://palantir.github.io/tslint/rules/interface-over-type-literal/). Prefer an interface over a type alias of an object type literal.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "checks": [
+    {
+      "id": "interface-over-type-literal",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "type_identifier"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "kind": "type_alias_declaration"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "all": [
+                          {
+                            "kind": "object_type"
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "index_signature",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "mapped_type_clause"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "INTERFACE_OVER_TYPE_LITERAL",
+        "severity": "error",
+        "message": "Use an interface instead of a type literal."
+      }
+    }
+  ]
+}

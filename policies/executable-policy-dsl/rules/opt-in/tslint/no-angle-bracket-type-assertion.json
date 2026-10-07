@@ -1,0 +1,58 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-angle-bracket-type-assertion",
+  "revision": 1,
+  "description": "Port of TSLint's `no-angle-bracket-type-assertion` rule with its default options (https://palantir.github.io/tslint/rules/no-angle-bracket-type-assertion/). Disallows <T>x type assertions; nested assertions report once at the outermost.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "checks": [
+    {
+      "id": "no-angle-bracket-type-assertion",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "type_assertion"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type_assertion"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_ANGLE_BRACKET_TYPE_ASSERTION",
+        "severity": "error",
+        "message": "Type assertion using the '<>' syntax is forbidden. Use the 'as' syntax instead."
+      }
+    }
+  ]
+}

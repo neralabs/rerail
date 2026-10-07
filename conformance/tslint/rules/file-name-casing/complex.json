@@ -1,0 +1,89 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:file-name-casing",
+  "revision": 1,
+  "description": "Regex-keyed config: .component.ts$ -> PascalCase, .tsx$ -> PascalCase, .ts$ -> camelCase (first matching key wins; key test and casing test intersected via select_when).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "component-pascal",
+      "forbid": {
+        "select_when": {
+          "select": {
+            "regex": {
+              "source": "file.path",
+              "pattern": "\\A(?:.*/)?(?:[a-z][^/]*$|[^/]*[_-][^/]*$)"
+            }
+          },
+          "exists": {
+            "regex": {
+              "source": "file.path",
+              "pattern": "(?i).component.ts$"
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.start",
+        "code": "FILE_NAME_CASING",
+        "severity": "error",
+        "message": "File name must be PascalCase"
+      }
+    },
+    {
+      "id": "tsx-pascal",
+      "forbid": {
+        "select_when": {
+          "select": {
+            "regex": {
+              "source": "file.path",
+              "pattern": "\\A(?:.*/)?(?:[a-z][^/]*$|[^/]*[_-][^/]*$)"
+            }
+          },
+          "exists": {
+            "regex": {
+              "source": "file.path",
+              "pattern": "(?i).tsx$"
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.start",
+        "code": "FILE_NAME_CASING",
+        "severity": "error",
+        "message": "File name must be PascalCase"
+      }
+    },
+    {
+      "id": "ts-camel",
+      "forbid": {
+        "select_when": {
+          "select": {
+            "regex": {
+              "source": "file.path",
+              "pattern": "\\A(?:.*/)?(?:[A-Z][^/]*$|[^/]*[_-][^/]*$)"
+            }
+          },
+          "exists": {
+            "regex": {
+              "source": "file.path",
+              "pattern": "(?i)(?:\\A(?:.*/)?[^/]{0,11}ts$|(?:[^c]........|c[^o].......|co[^m]......|com[^p].....|comp[^o]....|compo[^n]...|compon[^e]..|compone[^n].|componen[^t]).ts$)"
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.start",
+        "code": "FILE_NAME_CASING",
+        "severity": "error",
+        "message": "File name must be camelCase"
+      }
+    }
+  ]
+}

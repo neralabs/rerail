@@ -1,0 +1,6 @@
+{
+  "name": "rerail",
+  "description": "Persistent semantic monitoring and rule delivery for Codex",
+  "license": "MIT",
+  "hooks": "./hooks/codex.json"
+}

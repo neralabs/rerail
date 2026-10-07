@@ -1,0 +1,56 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:typedef",
+  "revision": 1,
+  "description": "Requires type definitions for: arrow-call-signature.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "checks": [
+    {
+      "id": "arrow-call-signature",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "regex": "(?<AT>\\([\\s\\S]*|[\\s\\S])$",
+            "any": [
+              {"kind": "formal_parameters", "inside": {"stopBy": "neighbor", "matches": "checked-arrow"}},
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "matches": "bare-arrow",
+                  "not": {"has": {"stopBy": "neighbor", "matches": "async-modifier"}}
+                }
+              },
+              {"matches": "async-modifier", "inside": {"stopBy": "neighbor", "matches": "bare-arrow"}}
+            ]
+          },
+          "utils": {
+            "untyped": {"not": {"has": {"stopBy": "neighbor", "kind": "type_annotation"}}},
+            "checked-arrow": {
+              "kind": "arrow_function",
+              "matches": "untyped",
+              "not": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "public_field_definition",
+                  "has": {"stopBy": "neighbor", "kind": "type_annotation"}
+                }
+              }
+            },
+            "bare-arrow": {
+              "matches": "checked-arrow",
+              "not": {"has": {"stopBy": "neighbor", "kind": "formal_parameters"}}
+            },
+            "async-modifier": {"regex": "^async$", "precedes": {"stopBy": "neighbor", "kind": "identifier"}}
+          }
+        }
+      },
+      "finding": {
+        "anchor": "capture.AT",
+        "code": "TYPEDEF",
+        "severity": "error",
+        "message": "expected arrow-call-signature to have a typedef"
+      }
+    }
+  ]
+}

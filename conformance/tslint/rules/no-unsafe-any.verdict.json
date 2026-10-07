@@ -1,0 +1,31 @@
+{
+  "verdict": "INFEASIBLE",
+  "primitive": "type-checker",
+  "secondary": [],
+  "needs": [
+    "expression-type",
+    "symbol-resolution",
+    "overload-resolution"
+  ],
+  "reason": "The checker question is 'is the static type of this expression `any`, and is it used where `any` leaks (member access, call, assignment or argument to a non-any declared type, destructuring, spread, JSX tag)?'. Nearly every fixture operand is an identifier declared `any` elsewhere (`declare const x: any`), so the port can only name sources that are `any` by library signature (JSON.parse). An explicit `(x as any)` is ALLOWED by TSLint (line 131), so the syntax of an any-cast cannot serve as a proxy. 0/65 on fixtures. Checker APIs: getTypeAtLocation, getContextualType (:319, parameter type at an argument), getBaseTypes, getSymbolAtLocation + getAliasedSymbol, getDeclaredTypeOfSymbol (:427-461).",
+  "evidence": [
+    {
+      "variant": "default",
+      "file": "test.ts.lint",
+      "line": 79,
+      "why": "`x.foo;` is flagged only because `declare const x: any` (line 40); the same member access on a typed object is fine"
+    },
+    {
+      "variant": "default",
+      "file": "test.ts.lint",
+      "line": 49,
+      "why": "`takesNumber(x, x)` is flagged because the parameters are declared number; `takesAny(x, x)` (line 48) has the same syntax and is valid"
+    },
+    {
+      "variant": "default",
+      "file": "test.ts.lint",
+      "line": 131,
+      "why": "`(x as any).whatchamacallit;` is explicitly allowed; a syntactic 'as any' heuristic produces an FP here"
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:completed-docs",
+  "revision": 1,
+  "description": "public properties only.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "checks": [
+    {
+      "id": "properties",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [{ "kind": "public_field_definition" }, { "kind": "property_signature" }, { "matches": "accessor" }]
+              },
+              {
+                "not": {
+                  "any": [
+                    { "matches": "documented" },
+                    {
+                      "all": [
+                        { "matches": "accessor" },
+                        { "has": { "kind": "property_identifier", "pattern": "$AN" } },
+                        {
+                          "inside": {
+                            "has": {
+                              "all": [
+                                { "matches": "accessor" },
+                                { "has": { "kind": "property_identifier", "pattern": "$AN" } },
+                                { "matches": "documented" }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              { "not": { "has": { "kind": "accessibility_modifier", "regex": "^(?:private|protected)$" } } }
+            ]
+          },
+          "utils": {
+            "documented": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } },
+            "accessor": {
+              "all": [
+                {
+                  "any": [
+                    { "kind": "method_definition", "inside": { "kind": "class_body" } },
+                    { "kind": "method_signature" },
+                    { "kind": "abstract_method_signature" }
+                  ]
+                },
+                { "has": { "regex": "^[gs]et$", "not": { "kind": "property_identifier" } } }
+              ]
+            }
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "severity": "error",
+        "message": "Documentation must exist for properties."
+      }
+    }
+  ]
+}

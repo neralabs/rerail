@@ -1,0 +1,63 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-for-in-array",
+  "revision": 1,
+  "description": "Sound syntactic under-approximation: for-in over an array literal or string literal. Deciding whether an arbitrary expression is array-typed needs the type checker.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "checks": [
+    {
+      "id": "for-in-literal",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "for_in_statement"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "array"
+                    },
+                    {
+                      "kind": "string"
+                    },
+                    {
+                      "kind": "template_string"
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "array_pattern"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "finding": {
+        "anchor": "witness.span",
+        "code": "NO_FOR_IN_ARRAY",
+        "severity": "error",
+        "message": "for-in loops over arrays are forbidden. Use for-of or array.forEach instead."
+      }
+    }
+  ]
+}
