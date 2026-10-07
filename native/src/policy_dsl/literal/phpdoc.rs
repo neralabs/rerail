@@ -1,6 +1,6 @@
 //! `phpDoc`: PHP doc comments (`T_DOC_COMMENT`: `/**` and white space) as PHPStan 2.2.16 reads
 //! them, through phpstan/phpdoc-parser 2.3.5 (`PhpDocStringResolver`: the comment's whole text,
-//! lexed and parsed); the oracle is that parser (`rerail-fixtures/php/literal/generate_phpdoc.php`).
+//! lexed and parsed); the oracle is that parser (`fixtures/php/literal/generate_phpdoc.php`).
 //!
 //! The tree is phpdoc-parser's AST. A node's kind is its class without the namespace and the
 //! `Node` suffix, in snake case: the `php_doc` root holds `php_doc_text` and `php_doc_tag`

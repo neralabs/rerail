@@ -1,6 +1,6 @@
 //! ESLint's directive matrix: a rule reporting every identifier, with `suppress.eslint`, against
 //! the reports ESLint 10.11.0 keeps after applying the fixtures' directive comments
-//! (`rerail-fixtures/ecma/suppress/generate_eslint.mjs`).
+//! (`fixtures/ecma/suppress/generate_eslint.mjs`).
 
 use crate::policy_dsl::oracle;
 use crate::policy_dsl::test_support::*;

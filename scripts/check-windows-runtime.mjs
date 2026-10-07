@@ -1,5 +1,5 @@
 // Release guard: a Windows kernel must load on a clean machine, so it may not import the
-// Visual C++ redistributable (VCRUNTIME140.dll, MSVCP140.dll). rerail/.cargo/config.toml links
+// Visual C++ redistributable (VCRUNTIME140.dll, MSVCP140.dll). .cargo/config.toml links
 // the CRT statically; this fails the build if that ever stops being true.
 import { readFileSync } from "node:fs";
 

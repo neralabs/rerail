@@ -170,17 +170,16 @@ const FILE_CHECK_SQL: &str =
       )";
 
 /// Run with:
-/// `cargo test --manifest-path rerail/Cargo.toml --release spike_sql_file_filter_indexes -- --ignored --nocapture`
+/// `cargo test --manifest-path Cargo.toml --release spike_sql_file_filter_indexes -- --ignored --nocapture`
 #[test]
 #[ignore = "measured spike over the tracked repository corpus"]
 fn spike_sql_file_filter_indexes() {
     let native = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repository = native.parent().unwrap().parent().unwrap().to_path_buf();
-    let rules = repository.join("rerail/policies/executable-policy-dsl/rules");
-    let capabilities = fs::read_to_string(
-        repository.join("rerail/policies/executable-policy-dsl/capabilities.json"),
-    )
-    .unwrap();
+    let repository = native.parent().unwrap().to_path_buf();
+    let rules = repository.join("policies/executable-policy-dsl/rules");
+    let capabilities =
+        fs::read_to_string(repository.join("policies/executable-policy-dsl/capabilities.json"))
+            .unwrap();
 
     let mut workspace = PolicyDslWorkspace::new();
     let mut rule_paths = fs::read_dir(rules)

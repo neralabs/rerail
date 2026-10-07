@@ -19,7 +19,7 @@ export interface TranscriptSessionSummary {
   sessionId: string;
   host: AdapterSession["host"];
   cwd: string;
-  /** Repository the session ran in; null for sessions recorded before sessions carried one. */
+  /** Repository the session ran in; null when the recorder had no repository identity to attribute it to. */
   repositoryId: string | null;
   startedAt: number;
   endedAt: number | null;
@@ -153,7 +153,7 @@ export class SqliteTranscriptStore {
     }, session);
   }
 
-  /** `ruleIds` credits the steer to the rules whose findings it carried; events written before re-rail attribution have `{}`. */
+  /** `ruleIds` credits the steer to the rules whose findings it carried. */
   recordSteeringDelivery(
     session: AdapterSession,
     receiptId: string,
@@ -331,8 +331,7 @@ export class SqliteTranscriptReader {
 
   /**
    * Re-rails per rule: steering deliveries in range, counted against each rule the delivery
-   * named. A delivery recorded before rule attribution existed carries an empty payload, so
-   * `json_each` over its missing `ruleIds` yields no rows and it contributes to nothing.
+   * named. A delivery that named no rule contributes to nothing.
    */
   steeringDeliveriesByRule(since: number): Map<string, number> {
     const database = this.#database.open();

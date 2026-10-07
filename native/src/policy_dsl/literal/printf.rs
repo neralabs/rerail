@@ -1,7 +1,7 @@
 //! `printfFormat`: PHP's printf-family formats (`sprintf`, `printf`, `vsprintf`, `vprintf`,
 //! `fprintf`, `vfprintf`), read as PHP 8.5.11's `php_formatted_print` reads them when every value
 //! it asks for is passed; the oracle is that function and PHPStan 2.2.16's `PrintfFormatParser`
-//! (`rerail-fixtures/php/literal/generate_printf.php`).
+//! (`fixtures/php/literal/generate_printf.php`).
 //!
 //! The tree is a `format` root holding `literal` and `placeholder` parts in order. A placeholder
 //! is `%[argnum$][flags][width][.precision][l]conversion`: it holds, when present, its `argnum`,

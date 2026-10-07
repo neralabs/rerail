@@ -1,6 +1,6 @@
 import { and, asc, count, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 import { openRerailDatabase, type RerailDatabase } from "./database.js";
-import { readStoredPolicyRule, reportQuarantinedRule, storedDocumentDigest, type QuarantinedRule } from "./legacy-policy-rule.js";
+import { readStoredPolicyRule, reportQuarantinedRule, storedDocumentDigest, type QuarantinedRule } from "./rule-quarantine.js";
 import { assertPolicyCompiles } from "./policy-kernel-check.js";
 import { policyRuleSchema, type PolicyRule } from "./policy-schema.js";
 import { assertKernelRegexes } from "./rule-regexes.js";
@@ -148,8 +148,8 @@ function storedBody(row: RuleRow): unknown {
 type RowRead = { ok: true; stored: StoredRule } | { ok: false; quarantined: QuarantinedRule };
 
 /**
- * Rows are re-validated on read: other processes write this table too, and rows can predate the current
- * schema. Legacy policy fields are normalized first; a row that still fails is quarantined, never thrown.
+ * Rows are re-validated on read: other processes, and plain SQL, write this table too. A row that
+ * fails the current schema is quarantined, never thrown.
  */
 function readRuleRow(row: RuleRow): RowRead {
   const base: StoredRuleBase = {
@@ -162,9 +162,9 @@ function readRuleRow(row: RuleRow): RowRead {
   };
   const quarantine = (reason: string): RowRead => ({ ok: false, quarantined: { ruleId: row.id, kind: row.kind, owner: row.scope, reason } });
   if (row.kind === "policy") {
-    const read = readStoredPolicyRule(storedBody(row), row.sourceDigest);
+    const read = readStoredPolicyRule(storedBody(row));
     if (!read.ok) return quarantine(read.reason);
-    return { ok: true, stored: { ...base, sourceDigest: read.sourceDigest, kind: "policy", rule: read.rule } };
+    return { ok: true, stored: { ...base, kind: "policy", rule: read.rule } };
   }
   try {
     return { ok: true, stored: { ...base, kind: "cosine", rule: parseCosineRule(storedBody(row), `rules[${row.id}]`) } };
@@ -342,7 +342,7 @@ export class SqliteRuleStore {
     return this.#rows(query).flatMap(row => this.#read(row) ?? []);
   }
 
-  /** Rows that fail validation even after legacy normalization, and are therefore skipped by every read. */
+  /** Rows that fail validation, and are therefore skipped by every read. */
   quarantined(): QuarantinedRule[] {
     return this.#rows({}).flatMap(row => {
       const read = readRuleRow(row);

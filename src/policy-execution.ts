@@ -13,7 +13,7 @@ export interface RuleEvaluationProvenance {
   payloadHash: string;
   applicability: "global" | "project";
   projectId?: string;
-  origin: "local" | "bundled" | "migrated" | "nera";
+  origin: "local" | "bundled" | "nera";
   syncState: "local-only" | "synced" | "pending";
   upstreamRuleId?: string;
 }
@@ -54,9 +54,9 @@ export interface PolicyRunInput {
   scope: PolicyScope;
   mode: PolicyMode;
   revision: number;
-  /** Digest of the compiled policy catalog, null when an older runtime did not record it. */
+  /** Digest of the compiled policy catalog; null when the run never reached evaluation. */
   catalogRevision: string | null;
-  /** Exact compiled rule revisions; an empty array is honest legacy provenance. */
+  /** Exact compiled rule revisions; empty when the run never reached evaluation. */
   ruleRevisions: Array<{ ruleId: string; revision: number }>;
   paths: string[];
   ruleProvenance?: RuleEvaluationProvenance[];

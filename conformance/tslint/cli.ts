@@ -3,7 +3,7 @@ import { join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { loadNativeBinding, nativePlatformSuffix } from "../../src/native.js";
 import { timeCorpus, type CorpusTiming } from "./corpus.js";
-import { ensureFixtures, fetchFixtures, loadExcludedRules, loadRuleList, loadScoredRules, loadVariants, REPOSITORY_ROOT, repositoryPath, RERAIL_ROOT, TSLINT_SHA } from "./fixtures.js";
+import { ensureFixtures, fetchFixtures, loadExcludedRules, loadRuleList, loadScoredRules, loadVariants, repositoryPath, RERAIL_ROOT, TSLINT_SHA } from "./fixtures.js";
 import { FIXTURE_TYPESCRIPT_VERSION } from "./lint-format.js";
 import { reportJson, reportMarkdown, ruleDetail, type ConformanceReport, type Inventory } from "./report.js";
 import { summarize } from "./consolidated.js";
@@ -17,47 +17,46 @@ import { goldenRules } from "./golden.js";
 import { goldenFailures } from "./golden-gate.js";
 
 const USAGE = `TSLint conformance harness for Rerail policy ports.
+Run from the repository root as \`node --import tsx conformance/tslint/cli.ts <arguments>\`:
 
-  just rerail-conformance fetch                       fetch TSLint fixtures at the pinned SHA (idempotent)
-  just rerail-conformance --rule <name> [--ends]      detailed diff for one rule (porting inner loop)
-  just rerail-conformance golden                      golden gate: every rule in the opt-in pack meets its golden.json entry;
-                                                     exit 1 with a line per regression
-  just rerail-conformance [--label <l>] [--no-corpus] full run; writes report-<date>-<label>.md and summary-<date>-<label>.json
-                                                     to docs/design/data_history/rerail-tslint-conformance/, full detail JSON to tmp/rerail-conformance/;
-                                                     exit 1 if the golden gate fails
-  just rerail-conformance --label <l> --compare <summary.json> [--delta-only]
-                                                     also writes delta-<date>-<label>.md against an earlier summary;
-                                                     --delta-only sends the full report .md to tmp/ (commit summary + delta)
-  just rerail-conformance --corpus <dir>              all ports in one workspace over <dir> (e.g. web/src): cold + 1-file edit
-  just rerail-conformance --rename-identifiers [--rule <name>]
-                                                     identifier-poisoning gate: score on fixtures with user identifiers renamed
-                                                     to opaque same-length names; lists rules whose score changes, exit 1 if a
-                                                     golden rule changes. With --rule: that rule's renamed detail
-  just rerail-conformance literals [--rule <name>] [--all]
-                                                     static scan: identifier literals in ports that only fixtures use
-  options: --runs <n> (default 5)  --corpus-dir <dir> (full-run corpus, default web/src)  --no-write`;
+  fetch                                 fetch TSLint fixtures at the pinned SHA (idempotent)
+  --rule <name> [--ends]                detailed diff for one rule (porting inner loop)
+  golden                                golden gate: every rule in the opt-in pack meets its golden.json entry;
+                                        exit 1 with a line per regression
+  [--label <l>] [--no-corpus]           full run; writes report-<date>-<label>.md and summary-<date>-<label>.json
+                                        to conformance/tslint/history/, full detail JSON to tmp/rerail-conformance/;
+                                        exit 1 if the golden gate fails
+  --label <l> --compare <summary.json> [--delta-only]
+                                        also writes delta-<date>-<label>.md against an earlier summary;
+                                        --delta-only sends the full report .md to tmp/ (commit summary + delta)
+  --corpus <dir>                        all ports in one workspace over <dir> (e.g. src): cold + 1-file edit
+  --rename-identifiers [--rule <name>]  identifier-poisoning gate: score on fixtures with user identifiers renamed
+                                        to opaque same-length names; lists rules whose score changes, exit 1 if a
+                                        golden rule changes. With --rule: that rule's renamed detail
+  literals [--rule <name>] [--all]      static scan: identifier literals in ports that only fixtures use
+  options: --runs <n> (default 5)  --corpus-dir <dir> (full-run corpus, default src)  --no-write`;
 
-/** Committed output: `data_history/` is ignored everywhere except under docs/design. */
-const REPORT_DIRECTORY = join(REPOSITORY_ROOT, "docs", "design", "data_history", "rerail-tslint-conformance");
+/** Committed output: the summaries and deltas that carry the conformance history. */
+const REPORT_DIRECTORY = join(RERAIL_ROOT, "conformance", "tslint", "history");
 /** Per-fixture detail: regenerable and megabytes per run, so it stays in the gitignored tmp/. */
-const DETAIL_DIRECTORY = join(REPOSITORY_ROOT, "tmp", "rerail-conformance");
+const DETAIL_DIRECTORY = join(RERAIL_ROOT, "tmp", "rerail-conformance");
 
-/** `just` runs from rerail/, so a relative path that does not exist there is taken from the repository root. */
+/** A relative path that does not exist from the working directory is taken from the repository root. */
 function resolveCompare(path: string): string {
   const fromCwd = resolve(path);
-  return repositoryPath(existsSync(fromCwd) ? fromCwd : resolve(REPOSITORY_ROOT, path));
+  return repositoryPath(existsSync(fromCwd) ? fromCwd : resolve(RERAIL_ROOT, path));
 }
 
 function kernelInfo(): { path: string; version: string } {
   const configured = process.env.RERAIL_NATIVE_KERNEL_PATH;
-  const path = configured ?? join(RERAIL_ROOT, "native", `omp_cosine_rules.${nativePlatformSuffix()}.node`);
+  const path = configured ?? join(RERAIL_ROOT, "native", `rerail.${nativePlatformSuffix()}.node`);
   let built = "";
   try {
     built = `, built ${statSync(path).mtime.toISOString()}`;
   } catch {
     built = "";
   }
-  return { path: relative(REPOSITORY_ROOT, path), version: `${loadNativeBinding().health().kernelVersion}${built}` };
+  return { path: relative(RERAIL_ROOT, path), version: `${loadNativeBinding().health().kernelVersion}${built}` };
 }
 
 function inventory(): Inventory {
@@ -115,7 +114,7 @@ async function main(): Promise<void> {
     options: {
       rule: { type: "string" },
       corpus: { type: "string" },
-      "corpus-dir": { type: "string", default: "web/src" },
+      "corpus-dir": { type: "string", default: "src" },
       "no-corpus": { type: "boolean", default: false },
       label: { type: "string", default: "run" },
       runs: { type: "string", default: "5" },
@@ -180,7 +179,7 @@ async function main(): Promise<void> {
       mkdirSync(DETAIL_DIRECTORY, { recursive: true });
       const path = join(DETAIL_DIRECTORY, "rename-identifiers.md");
       writeFileSync(path, markdown);
-      console.log(`wrote ${relative(REPOSITORY_ROOT, path)}`);
+      console.log(`wrote ${relative(RERAIL_ROOT, path)}`);
     }
     const golden = new Set(goldenRules());
     const failing = comparisons.filter(comparison => golden.has(comparison.rule) && (comparison.changed || comparison.renamerIssues.length > 0));
@@ -224,7 +223,7 @@ async function main(): Promise<void> {
   const written: string[] = [];
   const write = (path: string, text: string): void => {
     writeFileSync(path, text);
-    written.push(relative(REPOSITORY_ROOT, path));
+    written.push(relative(RERAIL_ROOT, path));
   };
   write(join(values["delta-only"] ? DETAIL_DIRECTORY : REPORT_DIRECTORY, `report-${name}.md`), markdown);
   write(join(REPORT_DIRECTORY, `summary-${name}.json`), summaryJson(summary));

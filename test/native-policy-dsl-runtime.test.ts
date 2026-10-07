@@ -704,31 +704,31 @@ checks:
 
     it.each([
       [
-        "nera-data-layer-layer-violations",
+        "example-data-layer-layer-violations",
         "impl/module.py",
         "# module header\nfrom impl.internal import Service\n",
         "layer_violations",
       ],
       [
-        "nera-landing-spirit-internal-import-in-function",
+        "example-app-internal-import-in-function",
         "api/module.py",
         "# module header\ndef load():\n    from api import service\n",
         "INTERNAL_IMPORT_IN_FUNCTION",
       ],
       [
-        "nera-landing-spirit-impl-bootstrap-import",
+        "example-app-impl-bootstrap-import",
         "api/module.py",
         "# module header\nfrom impl.core.bootstrap import bootstrap\n",
         "IMPL_BOOTSTRAP_IMPORT",
       ],
       [
-        "nera-landing-spirit-inmemory-index",
+        "example-app-inmemory-index",
         "api/module.py",
         "# module header\n_records_index: dict[str, object] = {}\n",
         "INMEMORY_INDEX",
       ],
       [
-        "nera-landing-spirit-unsafe-cache",
+        "example-app-unsafe-cache",
         "api/module.py",
         "# module header\n_records_cache: dict[str, object] = {}\n",
         "UNSAFE_CACHE",
@@ -742,7 +742,7 @@ checks:
     });
 
     it("limits eager resolve findings to explicit plan scope bodies", () => {
-      const compiled = compilePolicyFile("nera-data-layer-plan-scope-side-effects");
+      const compiled = compilePolicyFile("example-data-layer-plan-scope-side-effects");
       const unrelated = evaluate(
         compiled,
         snapshot([
@@ -776,43 +776,43 @@ checks:
 
     it.each([
       [
-        "nera-landing-spirit-conn-based-function",
+        "example-app-conn-based-function",
         "def load(conn: SyncDatabaseConnection):\n    return conn.session()\n",
         "def load(txn: ReadTransaction):\n    return txn.query()\n",
         "CONN_BASED_FUNCTION",
       ],
       [
-        "nera-landing-spirit-sync-conn-in-async",
+        "example-app-sync-conn-in-async",
         "async def load(db_conn):\n    return db_conn.read(fetch)\n",
         "async def load(db_conn):\n    return await db_conn.read_async(fetch)\n",
         "SYNC_CONN_IN_ASYNC",
       ],
       [
-        "nera-landing-spirit-json-loads-attrs",
+        "example-app-json-loads-attrs",
         "def load(raw: str):\n    return json.loads(raw)\n",
         "def load(raw: str):\n    return Record.model_validate(json.loads(raw))\n",
         "JSON_LOADS_ATTRS",
       ],
       [
-        "nera-landing-spirit-model-dump-no-alias",
+        "example-app-model-dump-no-alias",
         "def export(model):\n    return model.model_dump()\n",
         "def export(model):\n    return model.model_dump(by_alias=True)\n",
         "MODEL_DUMP_NO_ALIAS",
       ],
       [
-        "nera-landing-spirit-stored-connection",
+        "example-app-stored-connection",
         "class Service:\n    def __init__(self, conn: SyncDatabaseConnection):\n        self.conn = conn\n",
         "class Service:\n    def __init__(self, pool: DatabasePool):\n        self.pool = pool\n",
         "STORED_CONNECTION",
       ],
       [
-        "nera-landing-spirit-str-artifact-node-id",
+        "example-app-str-artifact-node-id",
         "class Edge:\n    src_id: str\n",
         "class Edge:\n    src_id: ArtifactNodeId\n",
         "STR_ARTIFACT_NODE_ID",
       ],
       [
-        "nera-landing-spirit-str-userid-field",
+        "example-app-str-userid-field",
         "class Record:\n    owner_id: str\n",
         "class Record:\n    owner_id: UserId\n",
         "STR_USERID_FIELD",

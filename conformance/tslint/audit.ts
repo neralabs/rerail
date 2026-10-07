@@ -11,7 +11,7 @@
  *   cannot steer. Listed with the TSLint evidence in `promote.ts`'s `REQUIRES_CONFIGURATION`; never promoted.
  *
  * - `poisoned`: passes because it matches identifiers only the fixtures use (`foo`, `MyClass`) rather than the structure
- *   the rule is about; the score moves when `just rerail-conformance --rename-identifiers` renames user identifiers.
+ *   the rule is about; the score moves when the harness's `--rename-identifiers` gate renames user identifiers.
  *
  * `primitive` names what would make a non-genuine port genuine; it feeds the primitive histogram.
  */
@@ -123,7 +123,7 @@ export const PASS_AUDIT: Readonly<Record<string, PassAudit>> = {
   "new-parens": { class: "genuine", note: "new_expression lacking an arguments child mirrors ts.NewExpression.arguments === undefined exactly." },
   "no-irregular-whitespace": { class: "genuine", note: "Char class reproduces TSLint's IRREGULAR_WHITESPACE_REGEX set, whole-file scope matching TSLint." },
   "arrow-parens": { class: "fixture-fit", note: "ban-single-arg-parens override's textual regex over formal_parameters breaks on a comment inside the parens (`(bar/*x*/) => bar`), missing a violation TSLint's structural isSimpleParameter check would flag. (Effective verdict is PASS (repaired fixture) for the fixture-artifact blocker; this fixture-fit gap is separate and real.)" },
-  "import-blacklist": { class: "fixture-fit", note: "The implicit-named fallback (whole-module warn on a partially-banned import) is only wired for lodash, not the fixture's own `dummy` module; `import * as x from \"dummy\";` would be unflagged though TSLint's generic fallback flags any partially-banned module. (Effective verdict PASS (repaired fixture) for the fixture-artifact blocker; primary primitive stays fixture-artifact since option-baking is the more decisive limitation here.) The default doc also bakes the fixture's banned list (lodash, dummy, pull/pullAll), where TSLint's bare `true` bans nothing (found by `just rerail-conformance literals`)." },
+  "import-blacklist": { class: "fixture-fit", note: "The implicit-named fallback (whole-module warn on a partially-banned import) is only wired for lodash, not the fixture's own `dummy` module; `import * as x from \"dummy\";` would be unflagged though TSLint's generic fallback flags any partially-banned module. (Effective verdict PASS (repaired fixture) for the fixture-artifact blocker; primary primitive stays fixture-artifact since option-baking is the more decisive limitation here.) The default doc also bakes the fixture's banned list (lodash, dummy, pull/pullAll), where TSLint's bare `true` bans nothing (found by the harness's `literals` scan)." },
   "member-access": { class: "genuine", note: "stopBy:neighbor scoping mirrors TSLint's shouldCheck/check() exactly incl. accessor/constructor/parameter-property variants; both repairs are invalid-syntax (TS1245/TS1029) fixes, not semantic gaps." },
   "newline-per-chained-call": { class: "bounded", depth: "receiver chain unrolled 5 levels", note: "hasChildCall's real recursion is unbounded descent through member/subscript chains; a 6-hop chain is a false negative." },
   "no-any": { class: "genuine", note: "TSLint's check is purely syntactic (AnyKeyword); the predefined_type/any match plus rest-arg exclusion is exactly equivalent." },

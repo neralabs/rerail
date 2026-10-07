@@ -116,7 +116,6 @@ section.group{margin-bottom:24px}
 .badge{display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:var(--radius-md);font-size:11px;font-weight:500;background:var(--subtle);color:var(--muted-foreground);white-space:nowrap}
 .badge.new{background:var(--info-subtle);color:var(--info-foreground)}
 .badge.mine{background:var(--success-subtle);color:var(--success-foreground)}
-.badge.files{background:var(--brand-subtle);color:var(--brand-foreground)}
 .badge.preset{background:var(--warning-subtle);color:var(--warning-foreground)}
 .badge.synced{background:var(--accent);color:var(--accent-foreground)}
 .badge.on{background:var(--success-subtle);color:var(--success-foreground)}

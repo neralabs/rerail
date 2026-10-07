@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 fn oracle_dir() -> PathBuf {
-    PathBuf::from(env!("RERAIL_FIXTURES_DIR")).join("php/calls/php")
+    PathBuf::from(crate::policy_dsl::fixtures_dir!()).join("php/calls/php")
 }
 
 fn line_of(source: &str, offset: usize) -> u64 {
@@ -570,7 +570,7 @@ fn php_files(root: &Path, out: &mut Vec<PathBuf>) {
 }
 
 /// PHPStan's call targets over sampled corpora (`RERAIL_PHP_CALLS`, written by
-/// `rerail-fixtures/php/calls/php/generate_corpus.py`), against what Rerail names at the same calls with every file of
+/// `fixtures/php/calls/php/generate_corpus.py`), against what Rerail names at the same calls with every file of
 /// the corpus linked; the summary goes to `RERAIL_PHP_CALLS_REPORT`. Rerail may decide nothing (an
 /// unknown callee, a receiver whose class needs type inference); where it names a declaration it
 /// must be PHPStan's.

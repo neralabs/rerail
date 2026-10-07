@@ -143,7 +143,7 @@ fn symfony_doc_comments_match_phpdoc_parser() {
 }
 
 /// Every distinct doc comment of the PHP corpora (`RERAIL_PHPDOC_CORPUS`, written by
-/// `rerail-fixtures/php/literal/generate_phpdoc.php --corpus`); the summary goes to
+/// `fixtures/php/literal/generate_phpdoc.php --corpus`); the summary goes to
 /// `RERAIL_PHPDOC_REPORT`.
 #[test]
 #[ignore = "phpdoc-parser over every doc comment of the PHP corpora"]

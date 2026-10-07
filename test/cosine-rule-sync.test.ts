@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { LiveCosineRules } from "../src/cosine-rule-sync.js";
 import { CosineRuleRegistry } from "../src/registry.js";
 import type { CosineRule } from "../src/rule-schema.js";
-import { loadCosineRules } from "../src/rule-sources.js";
+import { cosineRuleLoader } from "../src/rule-sources.js";
 import { SqliteRuleStore } from "../src/rule-store.js";
 import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
 import { MOCK_POLICY_RULES } from "../src/seed.js";
@@ -58,9 +58,7 @@ describe("LiveCosineRules", () => {
     daemon.upsertCosine(rule("shared", "Guest checkout remains available.", { action: { delivery: "steer", content: "from database" } }), { now: 1_000 });
 
     const registry = new CosineRuleRegistry({ modelPath: resolve("model") });
-    const sync = new LiveCosineRules(new SqliteRuleStore(databasePath), registry, database =>
-      loadCosineRules({}, root, ".omp/cosine-rules.json", database),
-    );
+    const sync = new LiveCosineRules(new SqliteRuleStore(databasePath), registry, cosineRuleLoader({}, root, ".omp/cosine-rules.json"));
     try {
       sync.prime();
       expect(registry.match({ source: "assistant-text", boundary: "message", text: "Guest checkout remains available." })[0]?.action.content).toBe("from database");

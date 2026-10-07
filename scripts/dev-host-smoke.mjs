@@ -68,7 +68,7 @@ try {
   const prompt = { prompt: rule.reference, text: rule.reference };
   await handlers.get(host === "omp" ? "before_agent_start" : "input")(prompt, context);
   assert.ok(deliveries.some(message => JSON.stringify(message).includes(`Only native ${host}`)));
-  assert.ok(entries.some(entry => entry.customType === "omp-cosine-rules.mutation"));
+  assert.ok(entries.some(entry => entry.customType === "rerail.mutation"));
   await invoke("cosine_rules", { action: "remove", ids: [rule.id] });
   const removed = await invoke("cosine_rules", { action: "list" });
   assert.ok(!removed.rules.some(entry => entry.rule.id === rule.id));

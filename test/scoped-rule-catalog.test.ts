@@ -1,10 +1,10 @@
-import { execFile, execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../src/database.js";
 import {
@@ -12,10 +12,8 @@ import {
   resolveRepositoryContext,
   ScopedRuleCatalog,
 } from "../src/scoped-rule-catalog.js";
-import { exportRules, exportScopedRules, importScopedRules } from "../src/rule-bootstrap.js";
+import { exportScopedRules, importScopedRules } from "../src/rule-bootstrap.js";
 import { parseCosineRuleDocument } from "../src/rule-schema.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
-import { SqliteTranscriptReader, SqliteTranscriptStore } from "../src/transcript-store.js";
 import { MOCK_COSINE_RULES, MOCK_POLICY_RULES } from "../src/seed.js";
 import { ruleDocumentDigest } from "../src/stable-json.js";
 
@@ -96,7 +94,7 @@ describe("ScopedRuleCatalog", () => {
       rule: { action: { content: "Project override" } },
     });
     expect(project.list({ applicability: "global" })).toHaveLength(1);
-    expect(project.remove(["shared"], 1_250, "global")).toBe(1);
+    expect(project.remove(["shared"], "global")).toBe(1);
     expect(project.get("shared")).toMatchObject({ applicability: "project" });
     global.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "shared" }, { applicability: "global", now: 1_275 });
 
@@ -131,43 +129,6 @@ describe("ScopedRuleCatalog", () => {
     first.close();
     second.close();
     unrelated.close();
-  });
-
-  it("migrates checkout rules into project scope once without changing execution history", async () => {
-    const path = await catalogPath();
-    const legacyPath = join(temporaryDirectories[0]!, "checkout", ".rerail", "transcripts.sqlite");
-    const transcripts = new SqliteTranscriptStore(legacyPath);
-    transcripts.openSession({ host: "omp", sessionId: "same-session", cwd: "/repo/a" }, 900);
-    transcripts.append({ sessionId: "same-session", eventId: "event-1", kind: "user-prompt", observedAt: 950, payload: { text: "keep" } });
-    transcripts.close();
-    const legacy = new SqliteRuleStore(legacyPath);
-    legacy.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "legacy" }, { scope: "global", now: 1_000 });
-    legacy.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "legacy", reference: "edited" }, { now: 2_000 });
-    legacy.close();
-
-    const catalog = ScopedRuleCatalog.open(path, { repositoryId: "repo-a", workspaceRoot: "/repo/a" });
-    expect(catalog.migrateLegacyRules(legacyPath, 3_000)).toBe(1);
-    expect(catalog.migrateLegacyRules(legacyPath, 4_000)).toBe(0);
-    expect(catalog.get("legacy")).toMatchObject({
-      applicability: "project",
-      catalogOrigin: "migrated",
-      createdAt: 1_000,
-      updatedAt: 2_000,
-      revision: 2,
-      rule: { reference: "edited" },
-    });
-    expect(catalog.remove(["legacy"], 3_500)).toBe(1);
-    const secondLegacyPath = join(temporaryDirectories[0]!, "worktree", ".rerail", "transcripts.sqlite");
-    const secondLegacy = new SqliteRuleStore(secondLegacyPath);
-    secondLegacy.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "legacy", reference: "stale copy" }, { now: 1_500 });
-    secondLegacy.close();
-    expect(catalog.migrateLegacyRules(secondLegacyPath, 4_000)).toBe(0);
-    expect(catalog.get("legacy")).toBeUndefined();
-    catalog.close();
-
-    const history = new SqliteTranscriptReader(legacyPath);
-    expect(history.sessions()).toEqual([expect.objectContaining({ sessionId: "same-session", eventCount: 1 })]);
-    history.close();
   });
 
   it("round-trips global and project definitions without flattening overrides", async () => {
@@ -216,7 +177,7 @@ describe("ScopedRuleCatalog", () => {
     destination.close();
   });
 
-  it("validates scoped imports before atomically changing the catalog and accepts v1 dumps", async () => {
+  it("validates scoped imports before atomically changing the catalog", async () => {
     const sourcePath = await catalogPath();
     const output = join(temporaryDirectories.at(-1)!, "rules.json");
     const source = ScopedRuleCatalog.open(sourcePath, { repositoryId: "source", workspaceRoot: "/source" });
@@ -232,15 +193,6 @@ describe("ScopedRuleCatalog", () => {
     const destination = ScopedRuleCatalog.open(destinationPath, { repositoryId: "destination", workspaceRoot: "/destination" });
     expect(() => importScopedRules(destination, output)).toThrow();
     expect(destination.list()).toEqual([]);
-
-    const legacyPath = join(temporaryDirectories.at(-1)!, "legacy.sqlite");
-    const legacyDump = join(temporaryDirectories.at(-1)!, "legacy.json");
-    const legacy = new SqliteRuleStore(legacyPath);
-    legacy.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "legacy-v1" }, { now: 1_000 });
-    exportRules(legacy, legacyDump);
-    legacy.close();
-    expect(importScopedRules(destination, legacyDump)).toBe(1);
-    expect(destination.get("legacy-v1")).toMatchObject({ applicability: "project", catalogOrigin: "migrated" });
     destination.close();
   });
 
@@ -258,7 +210,7 @@ describe("ScopedRuleCatalog", () => {
     });
     expect(global.get("inherited")).toMatchObject({ applicability: "global", enabled: true });
 
-    expect(project.remove(["inherited"], 3_000)).toBe(1);
+    expect(project.remove(["inherited"])).toBe(1);
     expect(project.get("inherited")).toMatchObject({ applicability: "global", enabled: true });
     project.close();
     global.close();
@@ -386,17 +338,9 @@ describe("ScopedRuleCatalog", () => {
     catalog.close();
   });
 
-  it("opens the Rerail database and imports a checkout's pre-catalog rules once, leaving its history behind", async () => {
+  it("opens the workspace's catalog in the Rerail home's database", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-scoped-open-"));
     temporaryDirectories.push(root);
-    const legacyPath = join(root, ".rerail", "transcripts.sqlite");
-    const history = new SqliteTranscriptStore(legacyPath);
-    history.openSession({ host: "omp", sessionId: "old-session", cwd: root }, 500);
-    history.close();
-    const legacy = new SqliteRuleStore(legacyPath);
-    legacy.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "legacy-open" }, { now: 1_000 });
-    legacy.close();
-
     const home = join(root, "home");
     expect(defaultRerailDatabasePath({ RERAIL_HOME: home })).toBe(join(home, "rerail.sqlite"));
     const previousHome = process.env.RERAIL_HOME;
@@ -404,34 +348,11 @@ describe("ScopedRuleCatalog", () => {
     try {
       const catalog = openScopedRuleCatalog(root);
       expect(catalog.path).toBe(join(home, "rerail.sqlite"));
-      expect(catalog.get("legacy-open")).toMatchObject({ applicability: "project", catalogOrigin: "migrated" });
-      expect(catalog.migrateCheckoutRules()).toBe(0);
-      expect(catalog.migrateCosineRules(join(root, "host-rules.json"), [
-        { ...MOCK_COSINE_RULES[0]!, id: "host-rule" },
-      ], 2_000)).toBe(1);
-      expect(catalog.migrateCosineRules(join(root, "host-rules.json"), [
-        { ...MOCK_COSINE_RULES[0]!, id: "host-rule" },
-      ], 3_000)).toBe(0);
       catalog.close();
-      // The checkout's history is not copied; the old file keeps it.
-      expect(new SqliteTranscriptReader(join(home, "rerail.sqlite")).sessions()).toEqual([]);
-      expect(new SqliteTranscriptReader(legacyPath).sessions()).toEqual([expect.objectContaining({ sessionId: "old-session" })]);
     } finally {
       if (previousHome === undefined) delete process.env.RERAIL_HOME;
       else process.env.RERAIL_HOME = previousHome;
     }
-  });
-
-  it("imports the checkout's pre-catalog rules whenever a catalog is opened for an explicit repository", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rerail-scoped-open-"));
-    temporaryDirectories.push(root);
-    const legacy = new SqliteRuleStore(join(root, ".rerail", "transcripts.sqlite"));
-    legacy.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "legacy-explicit" }, { now: 1_000 });
-    legacy.close();
-
-    const catalog = ScopedRuleCatalog.open(join(root, "home", "rerail.sqlite"), { repositoryId: "repo", workspaceRoot: root });
-    expect(catalog.get("legacy-explicit")).toMatchObject({ applicability: "project", catalogOrigin: "migrated" });
-    catalog.close();
   });
 
   it("quarantines an unreadable row without blocking its removal", async () => {
@@ -449,119 +370,6 @@ describe("ScopedRuleCatalog", () => {
     expect(catalog.remove(["broken"])).toBe(1);
     expect(catalog.quarantined()).toEqual([]);
     catalog.close();
-  });
-});
-
-describe("rules.sqlite adoption", () => {
-  /** A machine catalog as the two-file release left it: floor v10, revision 12, thousands of rules, several projects. */
-  async function legacyCatalog(home: string, ruleCount: number): Promise<string> {
-    const path = join(home, "rules.sqlite");
-    const repositories = ["repo-a", "repo-b", "repo-c"].map(repositoryId => ({ repositoryId, workspaceRoot: `/${repositoryId}` }));
-    const catalogs = repositories.map(repository => ScopedRuleCatalog.open(path, repository));
-    const rule = MOCK_COSINE_RULES[0]!;
-    catalogs[0]!.restore(Array.from({ length: ruleCount }, (_value, index) => ({
-      document: { kind: "cosine" as const, rule: { ...rule, id: `rule-${index}` } },
-      options: { applicability: index % 2 === 0 ? "global" as const : "project" as const, now: 1_000 + index },
-    })));
-    catalogs[1]!.upsertCosine({ ...rule, id: "project-b-only" }, { now: 5_000 });
-    catalogs[2]!.upsertCosine({ ...rule, id: "rule-1", reference: "c override" }, { now: 6_000 });
-    for (const catalog of catalogs) catalog.close();
-    const database = new Database(path);
-    database.exec([
-      "DROP INDEX sessions_repository_started",
-      "ALTER TABLE sessions DROP COLUMN repository_id",
-      "UPDATE rerail_schema_revision SET revision = 12",
-      "PRAGMA user_version = 10",
-    ].join(";"));
-    database.close();
-    return path;
-  }
-
-  function counts(path: string): Record<string, number> {
-    const database = new Database(path, { readonly: true });
-    try {
-      return Object.fromEntries(["catalog_rules", "rule_projects", "rule_repositories", "rule_project_repositories", "rule_catalog_identities"]
-        .map(table => [table, (database.prepare(`SELECT count(*) AS n FROM ${table}`).get() as { n: number }).n]));
-    } finally {
-      database.close();
-    }
-  }
-
-  it("copies every rule into rerail.sqlite on first open, leaves rules.sqlite untouched, and never copies again", async () => {
-    const home = await mkdtemp(join(tmpdir(), "rerail-adopt-"));
-    temporaryDirectories.push(home);
-    const legacyPath = await legacyCatalog(home, 3_683);
-    const before = counts(legacyPath);
-    expect(before.catalog_rules).toBe(3_685);
-    const legacyBytes = readFileSync(legacyPath);
-    const legacyModified = statSync(legacyPath).mtimeMs;
-    const path = join(home, "rerail.sqlite");
-    expect(existsSync(path)).toBe(false);
-
-    const catalog = ScopedRuleCatalog.open(path, { repositoryId: "repo-c", workspaceRoot: "/repo-c" });
-    expect(counts(path)).toEqual(before);
-    expect(catalog.get("rule-1")).toMatchObject({ applicability: "project", rule: { reference: "c override" } });
-    expect(catalog.get("rule-0")).toMatchObject({ applicability: "global" });
-    const store = new SqliteTranscriptStore(path, { repositoryId: "repo-c" });
-    store.openSession({ host: "omp", sessionId: "after-adoption", cwd: "/repo-c" });
-    store.close();
-    catalog.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "written-after" });
-    catalog.close();
-    expect(readFileSync(legacyPath).equals(legacyBytes)).toBe(true);
-    expect(statSync(legacyPath).mtimeMs).toBe(legacyModified);
-
-    // A later change to the old file is never re-adopted: rerail.sqlite is authoritative once it exists.
-    const stale = ScopedRuleCatalog.open(legacyPath, { repositoryId: "repo-a", workspaceRoot: "/repo-a" });
-    stale.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "stale-write" });
-    stale.close();
-    const reopened = ScopedRuleCatalog.open(path, { repositoryId: "repo-a", workspaceRoot: "/repo-a" });
-    expect(reopened.get("stale-write")).toBeUndefined();
-    expect(reopened.get("written-after")).toBeUndefined();
-    expect(reopened.get("project-b-only")).toBeUndefined();
-    expect(counts(path).catalog_rules).toBe(before.catalog_rules! + 1);
-    reopened.close();
-    const reader = new SqliteTranscriptReader(path, { repositoryId: "repo-c" });
-    expect(reader.sessions().map(session => session.sessionId)).toEqual(["after-adoption"]);
-    reader.close();
-  });
-
-  it("agrees on one copy when several processes open the database at once", async () => {
-    const home = await mkdtemp(join(tmpdir(), "rerail-adopt-race-"));
-    temporaryDirectories.push(home);
-    const legacyPath = await legacyCatalog(home, 200);
-    const path = join(home, "rerail.sqlite");
-    const script = [
-      `import { openRerailDatabase } from ${JSON.stringify(resolve("src/database.ts"))};`,
-      `openRerailDatabase(${JSON.stringify(path)}).$client.close();`,
-    ].join("\n");
-    await Promise.all(Array.from({ length: 6 }, () => new Promise<void>((resolveRun, reject) => {
-      const child = execFile(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], error => error ? reject(error) : resolveRun());
-      child.stdin?.end();
-    })));
-    expect(counts(path)).toEqual(counts(legacyPath));
-    expect(readdirSync(home).filter(name => name.includes(".adopt"))).toEqual([]);
-  }, 60_000);
-
-  it("removes a partial copy when VACUUM INTO fails", async () => {
-    const home = await mkdtemp(join(tmpdir(), "rerail-adopt-fail-"));
-    temporaryDirectories.push(home);
-    await legacyCatalog(home, 10);
-    const path = join(home, "rerail.sqlite");
-    const prepare = Database.prototype.prepare;
-    const spy = vi.spyOn(Database.prototype, "prepare").mockImplementation(function (this: Database.Database, source: string) {
-      if (source !== "VACUUM INTO ?") return prepare.call(this, source);
-      return { run: (target: string) => {
-        writeFileSync(target, "partial");
-        throw new Error("database or disk is full");
-      } } as unknown as Database.Statement;
-    });
-    try {
-      expect(() => openRerailDatabase(path)).toThrow("database or disk is full");
-    } finally {
-      spy.mockRestore();
-    }
-    expect(readdirSync(home).filter(name => name.includes(".adopt"))).toEqual([]);
-    expect(existsSync(path)).toBe(false);
   });
 });
 

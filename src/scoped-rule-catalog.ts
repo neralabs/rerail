@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { defaultRerailDatabasePath, legacyCheckoutDatabasePath, openRerailDatabase, type RerailDatabase } from "./database.js";
-import { readStoredPolicyRule, reportQuarantinedRule, storedDocumentDigest, type QuarantinedRule } from "./legacy-policy-rule.js";
+import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "./database.js";
+import { readStoredPolicyRule, reportQuarantinedRule, storedDocumentDigest, type QuarantinedRule } from "./rule-quarantine.js";
 import { assertPolicyCompiles } from "./policy-kernel-check.js";
 import { policyRuleSchema, type PolicyRule } from "./policy-schema.js";
 import { assertKernelRegexes } from "./rule-regexes.js";
@@ -12,8 +11,6 @@ import { parseCosineRule, type CosineRule } from "./rule-schema.js";
 import {
   catalogRules,
   ruleCatalogIdentities,
-  ruleMigrations,
-  ruleMigrationTombstones,
   ruleProjectRepositories,
   ruleProjects,
   ruleRepositories,
@@ -25,13 +22,12 @@ import {
 } from "./schema.js";
 import {
   bundledRuleBody,
-  SqliteRuleStore,
   type BundledRuleDocument,
   type RuleDocument,
   type RuleQuery,
   type SeedReport,
 } from "./rule-store.js";
-import { GIT_EXECUTABLE, repositoryIdentityLocation } from "./repository-identity.js";
+import { repositoryIdentityLocation } from "./repository-identity.js";
 import { ruleDocumentDigest } from "./stable-json.js";
 
 const GLOBAL_OWNER = "global";
@@ -100,23 +96,12 @@ export interface RepositoryContext {
  */
 export function resolveRepositoryContext(workspace: string): RepositoryContext {
   const location = repositoryIdentityLocation(workspace);
-  if (location.git) {
-    const legacy = spawnSync(GIT_EXECUTABLE, ["-C", location.workspaceRoot, "config", "--local", "--get", "rerail.repository-id"], { encoding: "utf8" });
-    const legacyId = legacy.status === 0 ? legacy.stdout.trim() : "";
-    const repositoryId = readOrCreateIdentity(location.identityPath, legacyId || `git:${randomUUID()}`);
-    return { repositoryId, workspaceRoot: location.workspaceRoot };
-  }
-  mkdirSync(dirname(location.identityPath), { recursive: true, mode: 0o700 });
-  const repositoryId = readOrCreateIdentity(location.identityPath, randomUUID());
+  if (!location.git) mkdirSync(dirname(location.identityPath), { recursive: true, mode: 0o700 });
+  const repositoryId = readOrCreateIdentity(location.identityPath, location.git ? `git:${randomUUID()}` : randomUUID());
   return { repositoryId, workspaceRoot: location.workspaceRoot };
 }
 
-
-/**
- * The catalog for `workspaceRoot`'s repository in the Rerail database. A checkout that still has a
- * pre-catalog `.rerail/transcripts.sqlite` gets that file's legacy rules imported into its project
- * once; the old file is only read.
- */
+/** The catalog for `workspaceRoot`'s repository in the Rerail database. */
 export function openScopedRuleCatalog(
   workspaceRoot: string,
   databasePath: string = defaultRerailDatabasePath(),
@@ -135,10 +120,6 @@ export interface ScopedRuleWriteOptions {
   syncState?: RuleSyncState;
   upstreamRuleId?: string | null;
 }
-
-type InternalScopedRuleWriteOptions = ScopedRuleWriteOptions & {
-  preserveMigrationTombstone?: boolean;
-};
 
 export type ScopedStoredRule = RuleDocument & {
   enabled: boolean;
@@ -225,19 +206,8 @@ export class ScopedRuleCatalog {
   #closed = false;
   #localRevision = 0;
 
-  /**
-   * The catalog for `repository` in the database at `path`. The only way to obtain one, so no caller
-   * can skip importing the checkout's pre-catalog `.rerail/transcripts.sqlite` rules.
-   */
   static open(path: string, repository: RepositoryContext, database: RerailDatabase = openRerailDatabase(path)): ScopedRuleCatalog {
-    const catalog = new ScopedRuleCatalog(path, repository, database);
-    try {
-      catalog.migrateCheckoutRules();
-    } catch (error) {
-      catalog.close();
-      throw error;
-    }
-    return catalog;
+    return new ScopedRuleCatalog(path, repository, database);
   }
 
   private constructor(path: string, repository: RepositoryContext, database: RerailDatabase) {
@@ -337,7 +307,7 @@ export class ScopedRuleCatalog {
     return this.#ownedRows().flatMap(row => this.#read(row) ?? []);
   }
 
-  /** Global and current-project rows that fail validation even after legacy normalization; every read skips them. */
+  /** Global and current-project rows that fail validation; every read skips them. */
   quarantined(): QuarantinedRule[] {
     return this.#ownedRows().flatMap(row => {
       const read = this.#stored(row);
@@ -418,7 +388,7 @@ export class ScopedRuleCatalog {
     return changed;
   }
 
-  remove(ids: readonly string[], now = Date.now(), applicability?: RuleApplicability): number {
+  remove(ids: readonly string[], applicability?: RuleApplicability): number {
     if (ids.length === 0) return 0;
     const selected = (applicability === undefined
       ? this.#effectiveOwnedRows()
@@ -432,16 +402,6 @@ export class ScopedRuleCatalog {
           eq(catalogRules.ownerId, row.ownerId),
           eq(catalogRules.ruleId, row.ruleId),
         )).returning({ id: catalogRules.ruleId }).all().length;
-        if (row.ownerKind === "project") {
-          this.#database.insert(ruleMigrationTombstones).values({
-            projectId: row.ownerId,
-            ruleId: row.ruleId,
-            deletedAt: now,
-          }).onConflictDoUpdate({
-            target: [ruleMigrationTombstones.projectId, ruleMigrationTombstones.ruleId],
-            set: { deletedAt: now },
-          }).run();
-        }
         const remaining = this.#database.select({ id: catalogRules.ruleId }).from(catalogRules)
           .where(eq(catalogRules.ruleId, row.ruleId)).get();
         if (remaining === undefined) {
@@ -488,45 +448,6 @@ export class ScopedRuleCatalog {
     return report;
   }
 
-  /** Import the repository checkout's pre-catalog `.rerail/transcripts.sqlite` rules, once. */
-  migrateCheckoutRules(now = Date.now()): number {
-    const source = legacyCheckoutDatabasePath(this.#repository.workspaceRoot);
-    if (source === this.path || !existsSync(source) || this.#migrated(source)) return 0;
-    return this.migrateLegacyRules(source, now);
-  }
-
-  migrateLegacyRules(sourcePath: string, now = Date.now()): number {
-    const source = resolve(sourcePath);
-    const legacy = new SqliteRuleStore(source);
-    try {
-      return this.#migrateProjectDocuments(
-        source,
-        legacy.list().map(stored => ({
-          document: { kind: stored.kind, rule: stored.rule } as RuleDocument,
-          options: {
-            enabled: stored.enabled,
-            revision: stored.revision,
-            createdAt: stored.createdAt,
-            now: stored.updatedAt,
-            sourceDigest: stored.sourceDigest,
-          },
-        })),
-        now,
-      );
-    } finally {
-      legacy.close();
-    }
-  }
-
-  /** Import a legacy JSON/host rule source exactly once into project applicability. */
-  migrateCosineRules(sourcePath: string, rules: readonly CosineRule[], now = Date.now()): number {
-    return this.#migrateProjectDocuments(
-      resolve(sourcePath),
-      rules.map(rule => ({ document: { kind: "cosine", rule }, options: { now } })),
-      now,
-    );
-  }
-
   /** Change token covering both other connections and writes through this instance. */
   dataVersion(): string {
     const sqliteVersion = this.#database.all<{ data_version: number }>(sql`PRAGMA data_version`)[0]?.data_version ?? 0;
@@ -567,7 +488,7 @@ export class ScopedRuleCatalog {
     return { kind: "project", id: this.context().projectId };
   }
 
-  #upsert(document: RuleDocument, options: InternalScopedRuleWriteOptions): ScopedStoredRule {
+  #upsert(document: RuleDocument, options: ScopedRuleWriteOptions): ScopedStoredRule {
     // Every catalog write lands here; the kernel compiles a session's rules all or nothing.
     if (document.kind === "cosine") assertKernelRegexes(document.rule);
     const stored = this.#database.transaction(() => {
@@ -622,57 +543,10 @@ export class ScopedRuleCatalog {
           updatedAt: now,
         },
       }).run();
-      if (owner.kind === "project" && options.preserveMigrationTombstone !== true) {
-        this.#database.delete(ruleMigrationTombstones).where(and(
-          eq(ruleMigrationTombstones.projectId, owner.id),
-          eq(ruleMigrationTombstones.ruleId, document.rule.id),
-        )).run();
-      }
       return this.#owned(owner.kind, owner.id, document.rule.id)!;
     }, { behavior: "immediate" });
     this.#localRevision += 1;
     return stored;
-  }
-
-  #migrateProjectDocuments(sourcePath: string, entries: readonly ScopedRuleRestore[], now: number): number {
-    return this.#database.transaction(() => {
-      const claimed = this.#database.insert(ruleMigrations).values({
-        repositoryId: this.#repository.repositoryId,
-        sourcePath,
-        migratedAt: now,
-        ruleCount: 0,
-      }).onConflictDoNothing().returning({ sourcePath: ruleMigrations.sourcePath }).get();
-      if (claimed === undefined) return 0;
-      const projectId = this.context().projectId;
-      let imported = 0;
-      for (const entry of entries) {
-        const tombstone = this.#database.select({ ruleId: ruleMigrationTombstones.ruleId })
-          .from(ruleMigrationTombstones).where(and(
-            eq(ruleMigrationTombstones.projectId, projectId),
-            eq(ruleMigrationTombstones.ruleId, entry.document.rule.id),
-          )).get();
-        if (tombstone !== undefined || this.#ownedRow("project", projectId, entry.document.rule.id) !== undefined) continue;
-        this.#upsert(entry.document, {
-          ...entry.options,
-          applicability: "project",
-          origin: "migrated",
-          preserveMigrationTombstone: true,
-        });
-        imported += 1;
-      }
-      this.#database.update(ruleMigrations).set({ ruleCount: imported }).where(and(
-        eq(ruleMigrations.repositoryId, this.#repository.repositoryId),
-        eq(ruleMigrations.sourcePath, sourcePath),
-      )).run();
-      return imported;
-    });
-  }
-
-  #migrated(sourcePath: string): boolean {
-    return this.#database.select({ sourcePath: ruleMigrations.sourcePath }).from(ruleMigrations).where(and(
-      eq(ruleMigrations.repositoryId, this.#repository.repositoryId),
-      eq(ruleMigrations.sourcePath, sourcePath),
-    )).get() !== undefined;
   }
 
   #ownedRow(kind: RuleApplicability, ownerId: string, ruleId: string): CatalogRuleRow | undefined {
@@ -713,19 +587,17 @@ export class ScopedRuleCatalog {
     return undefined;
   }
 
-  /** Legacy policy fields are normalized first; a row that still fails validation is quarantined, never thrown. */
+  /** A row that fails validation is quarantined, never thrown. */
   #stored(row: CatalogRuleRow): { ok: true; stored: ScopedStoredRule } | { ok: false; quarantined: QuarantinedRule } {
     const quarantine = (reason: string) => ({
       ok: false as const,
       quarantined: { ruleId: row.ruleId, kind: row.kind, owner: row.ownerKind === "global" ? GLOBAL_OWNER : `project:${row.ownerId}`, reason },
     });
     let document: RuleDocument;
-    let sourceDigest = row.sourceDigest;
     if (row.kind === "policy") {
-      const read = readStoredPolicyRule(row.document.rule, row.sourceDigest);
+      const read = readStoredPolicyRule(row.document.rule);
       if (!read.ok) return quarantine(read.reason);
       document = { kind: "policy", rule: read.rule };
-      sourceDigest = read.sourceDigest;
     } else {
       try {
         document = { kind: "cosine", rule: parseCosineRule(row.document.rule) };
@@ -740,7 +612,7 @@ export class ScopedRuleCatalog {
       revision: row.revision,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
-      sourceDigest,
+      sourceDigest: row.sourceDigest,
       payloadHash: row.payloadHash,
       syncState: row.syncState,
       upstreamRuleId: row.upstreamRuleId,

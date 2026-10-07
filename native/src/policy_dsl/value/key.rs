@@ -474,7 +474,7 @@ mod tests {
             .has_error()
     }
 
-    /// Every pair in the isSameReference oracle (`rerail-fixtures/ecma/value/generate_references.mjs`) is the same
+    /// Every pair in the isSameReference oracle (`fixtures/ecma/value/generate_references.mjs`) is the same
     /// reference here exactly where ESLint's says so, with static computed keys and without.
     #[test]
     fn same_references_are_eslints() {
@@ -537,7 +537,7 @@ mod tests {
         assert_eq!(same_reference(&left, &right, true), None);
     }
 
-    /// Every identifier and string literal in the names oracle (`rerail-fixtures/ecma/value/generate_names.mjs`) has a
+    /// Every identifier and string literal in the names oracle (`fixtures/ecma/value/generate_names.mjs`) has a
     /// node of the same range here whose name is ESTree's.
     #[test]
     fn node_names_are_estrees() {
@@ -585,7 +585,7 @@ mod tests {
     }
 
     /// Every key typescript-eslint's getStaticMemberAccessValue names in the oracle
-    /// (`rerail-fixtures/ecma/value/generate_members.mjs`), read with the module's scope: where it has a name Rerail
+    /// (`fixtures/ecma/value/generate_members.mjs`), read with the module's scope: where it has a name Rerail
     /// has the same or none (not known), and where it has none (or a symbol) Rerail has none.
     #[test]
     fn member_access_names_are_typescript_eslints() {
@@ -669,7 +669,7 @@ mod tests {
         assert!(known > 80, "{known} names known, {unknown} not");
     }
 
-    /// Every key ESLint's getStaticPropertyName reads in the oracle (`rerail-fixtures/ecma/value/generate_keys.mjs`)
+    /// Every key ESLint's getStaticPropertyName reads in the oracle (`fixtures/ecma/value/generate_keys.mjs`)
     /// has an owner here with the same key range, and the same name, or none where ESLint has none;
     /// the key node itself (a computed key's expression without its brackets) has the same name.
     #[test]

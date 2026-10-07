@@ -1,16 +1,19 @@
-# Release gate for native Windows: install a packed @neralabs/rerail tarball through the real `just rerail` installer
-# (scripts/rerail-setup.mjs) from a throwaway authenticated Verdaccio, in a sandbox profile, then exercise the managed
-# runtime: launcher, `current` junction, daemon and native kernel, Claude Code's exec-form hook, the Codex hook as
-# Codex runs it (PowerShell), update check, and harness removal. Uses `node` from PATH, so the runner's architecture
-# decides which native kernel is exercised.
+# Release gate for native Windows: install a packed @neralabs/rerail tarball the way a user does, with
+# `npx @neralabs/rerail setup`, from a throwaway local registry standing in for npmjs, in a sandbox profile. Then
+# exercise the managed runtime: launcher, `current` junction, daemon and native kernel, Claude Code's exec-form
+# hook, the Codex hook as Codex runs it (PowerShell), update check, and harness removal. Uses `node` from PATH,
+# so the runner's architecture decides which native kernel is exercised.
+#
+# Only the @neralabs scope resolves through the local registry (Verdaccio); every dependency still comes from
+# npmjs, exactly as for a user who installs the published package.
 param([Parameter(Mandatory)][string]$Tarball)
 
 $ErrorActionPreference = "Stop"
-$rerailRoot = Split-Path -Parent $PSScriptRoot
-$setupScript = Join-Path (Split-Path -Parent $rerailRoot) "scripts\rerail-setup.mjs"
 $Tarball = (Resolve-Path $Tarball).Path
 $node = (Get-Command node).Source
-$npmCli = Join-Path (Split-Path -Parent $node) "node_modules\npm\bin\npm-cli.js"
+$npmBin = Join-Path (Split-Path -Parent $node) "node_modules\npm\bin"
+$npmCli = Join-Path $npmBin "npm-cli.js"
+$npxCli = Join-Path $npmBin "npx-cli.js"
 $base = Join-Path ([IO.Path]::GetTempPath()) ("rerail-windows-smoke-" + [guid]::NewGuid())
 $sandbox = Join-Path $base "home"
 $project = Join-Path $sandbox "proj"
@@ -27,12 +30,13 @@ function Get-FreePort { Invoke-Node @("-e", "const s=require('net').createServer
 New-Item -ItemType Directory -Force $project, "$sandbox\.claude", "$sandbox\.codex", "$sandbox\.cursor", "$base\storage", "$base\npm-cache" | Out-Null
 $verdaccio = $null
 try {
-  Step "Starting an authenticated Verdaccio"
+  Step "Starting a local registry for the @neralabs scope"
   $port = Get-FreePort
   $registry = "http://127.0.0.1:$port"
-  $token = Invoke-Node @("-e", "process.stdout.write(require('crypto').randomBytes(18).toString('hex'))")
-  $sha = Invoke-Node @("-e", "process.stdout.write(require('crypto').createHash('sha1').update(process.argv[1]).digest('base64'))", $token)
-  [IO.File]::WriteAllText("$base\htpasswd", "nera-software:{SHA}$sha`n")
+  # Readable by anyone, as npmjs serves a public package; publishing needs the throwaway account below.
+  $password = Invoke-Node @("-e", "process.stdout.write(require('crypto').randomBytes(18).toString('hex'))")
+  $sha = Invoke-Node @("-e", "process.stdout.write(require('crypto').createHash('sha1').update(process.argv[1]).digest('base64'))", $password)
+  [IO.File]::WriteAllText("$base\htpasswd", "rerail-smoke:{SHA}$sha`n")
   $storage = "$base\storage" -replace '\\', '/'
   $authFile = "$base\htpasswd" -replace '\\', '/'
   [IO.File]::WriteAllText("$base\verdaccio.yaml", @"
@@ -44,16 +48,13 @@ auth:
 uplinks: {}
 packages:
   "@neralabs/*":
-    access: `$authenticated
-    publish: `$authenticated
-  "**":
     access: `$all
-    publish: `$all
+    publish: `$authenticated
 max_body_size: 200mb
 log: { type: stdout, level: warn }
 "@)
-  $password = Invoke-Node @("-p", "Buffer.from(process.argv[1]).toString('base64')", $token)
-  [IO.File]::WriteAllText("$base\publisher.npmrc", "//127.0.0.1:$port/:username=nera-software`n//127.0.0.1:$port/:_password=$password`n")
+  $encoded = Invoke-Node @("-p", "Buffer.from(process.argv[1]).toString('base64')", $password)
+  [IO.File]::WriteAllText("$base\publisher.npmrc", "//127.0.0.1:$port/:username=rerail-smoke`n//127.0.0.1:$port/:_password=$encoded`n")
   # No output redirection: a redirected Start-Process inherits this shell's handles and would hold the caller's pipe.
   $verdaccio = Start-Process -PassThru -WindowStyle Hidden -FilePath $node -ArgumentList @(
     "`"$npmCli`"", "exec", "--yes", "--", "verdaccio@6", "--config", "`"$base\verdaccio.yaml`"", "--listen", "127.0.0.1:$port")
@@ -63,28 +64,28 @@ log: { type: stdout, level: warn }
   }
   if (-not $ready) { throw "Verdaccio did not answer $registry/-/ping within 120s" }
   & $node $npmCli publish $Tarball --tag latest --registry $registry --userconfig "$base\publisher.npmrc" --loglevel=warn
-  if ($LASTEXITCODE -ne 0) { throw "npm publish to Verdaccio failed" }
+  if ($LASTEXITCODE -ne 0) { throw "npm publish to the local registry failed" }
 
-  Step "Running the just rerail installer in a sandbox profile (stdout captured)"
-  # os.homedir() reads USERPROFILE on Windows; the rest pins npm and Rerail state, including the one
-  # Rerail database under RERAIL_HOME, inside the sandbox.
+  Step "Running npx @neralabs/rerail setup in a sandbox profile (stdout captured)"
+  # os.homedir() reads USERPROFILE on Windows; the rest pins npm and Rerail state, including the one Rerail
+  # database under RERAIL_HOME, inside the sandbox. The user config maps only the @neralabs scope to the
+  # local registry, so Rerail's own npm calls (install, update check) resolve it the same way.
   $env:USERPROFILE = $sandbox; $env:HOME = $sandbox; $env:RERAIL_HOME = "$sandbox\.rerail"
   $env:NPM_CONFIG_USERCONFIG = "$sandbox\.npmrc"; $env:NPM_CONFIG_CACHE = "$base\npm-cache"
   $env:RERAIL_STORAGE_ROOT = "$project\.rerail\sessions"
-  $env:RERAIL_REGISTRY = "$registry/"; $env:NERA_NPM_TOKEN = $token
-  [IO.File]::WriteAllText("$sandbox\.npmrc", "")
+  [IO.File]::WriteAllText("$sandbox\.npmrc", "@neralabs:registry=$registry/`n")
   $daemonPort = Get-FreePort
   $start = New-Object Diagnostics.ProcessStartInfo($node)
-  $start.Arguments = "`"$setupScript`" --project `"$project`" --port $daemonPort"
+  $start.Arguments = "`"$npxCli`" --yes @neralabs/rerail@latest setup --project `"$project`" --port $daemonPort"
   $start.WorkingDirectory = $project
   $start.UseShellExecute = $false; $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
   $setup = [Diagnostics.Process]::Start($start)
   $stdout = $setup.StandardOutput.ReadToEndAsync(); $stderr = $setup.StandardError.ReadToEndAsync()
   $setup.WaitForExit()
-  # The daemon must not inherit the installer's output pipe, or every captured `just rerail` hangs until `rerail stop`.
-  if (-not $stdout.Wait(15000)) { throw "the installer exited but its stdout stayed open: the daemon holds the caller's pipe" }
+  # The daemon must not inherit setup's output pipe, or every captured `rerail setup` hangs until `rerail stop`.
+  if (-not $stdout.Wait(15000)) { throw "setup exited but its stdout stayed open: the daemon holds the caller's pipe" }
   Write-Host ($stdout.Result + $stderr.Result)
-  if ($setup.ExitCode -ne 0) { throw "the installer exited $($setup.ExitCode)" }
+  if ($setup.ExitCode -ne 0) { throw "npx @neralabs/rerail setup exited $($setup.ExitCode)" }
 
   Step "Checking the managed installation"
   if (-not (Test-Path $launcher)) { throw "setup did not write $launcher" }

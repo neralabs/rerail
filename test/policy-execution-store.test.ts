@@ -32,7 +32,7 @@ const input = {
     payloadHash: "sha256:policy-a",
     applicability: "project" as const,
     projectId: "project-a",
-    origin: "migrated" as const,
+    origin: "local" as const,
     syncState: "local-only" as const,
   }],
 };
@@ -141,117 +141,6 @@ describe("SQLite policy execution persistence", () => {
     });
     expect(new Database(path).prepare("SELECT count(*) AS count FROM policy_run_result_pages").get()).toEqual({ count: 0 });
     store.close();
-  });
-
-  it("upgrades a stamped v3 database additively without disturbing its session rows", async () => {
-    const path = await temporaryDatabase();
-    const bootstrap = new SqlitePolicyExecutionStore(path);
-    bootstrap.close();
-    const raw = new Database(path);
-    raw.exec(
-      "INSERT INTO sessions (session_id, host, cwd, started_at, ended_at) VALUES ('live', 'omp', '/workspace', 1, NULL); DROP TABLE policy_runs; PRAGMA user_version = 3",
-    );
-    raw.close();
-
-    const upgraded = new SqlitePolicyExecutionStore(path);
-    expect(upgraded.start({ ...input, sessionId: "live" })).toEqual(expect.any(String));
-    upgraded.close();
-
-    const verified = new Database(path, { readonly: true });
-    expect(verified.prepare("SELECT session_id FROM sessions").all()).toEqual([{ session_id: "live" }]);
-    expect(verified.prepare("SELECT count(*) AS total FROM policy_runs").get()).toEqual({ total: 1 });
-    verified.close();
-  });
-  it("migrates v4 execution history to scope and mode without retaining delivery rows", async () => {
-    const path = await temporaryDatabase();
-    const bootstrap = new SqlitePolicyExecutionStore(path);
-    bootstrap.close();
-    const raw = new Database(path);
-    raw.exec(
-      "DROP TABLE policy_runs; " +
-        "CREATE TABLE policy_runs (" +
-        "run_id text PRIMARY KEY NOT NULL, session_id text NOT NULL, workspace_root text NOT NULL, kind text NOT NULL, " +
-        "revision integer NOT NULL, scope_json text NOT NULL, retry_of text, started_at integer NOT NULL, finished_at integer, " +
-        "status text NOT NULL, findings_json text NOT NULL, failures_json text NOT NULL" +
-        "); " +
-        "INSERT INTO policy_runs VALUES " +
-        "('evaluation', 'live', '/workspace', 'scoped-scan', 3, '[\"src/a.ts\"]', NULL, 1, 2, 'completed', '[]', '[]'), " +
-        "('handoff', 'live', '/workspace', 'delivery', 3, '[]', 'evaluation', 3, 4, 'failed', '[]', '[]'); " +
-        "PRAGMA user_version = 4",
-    );
-    raw.close();
-
-    const upgraded = new SqlitePolicyExecutionStore(path);
-    expect(upgraded.list()).toEqual({
-      total: 1,
-      runs: [expect.objectContaining({
-        runId: "evaluation",
-        scope: "touched-files",
-        mode: "log",
-        paths: ["src/a.ts"],
-        ruleProvenance: [],
-        status: "completed",
-        findings: [],
-        failures: [],
-      })],
-    });
-    upgraded.close();
-  });
-
-  it("migrates v5 kind history to independent scope and mode axes", async () => {
-    const path = await temporaryDatabase();
-    const bootstrap = new SqlitePolicyExecutionStore(path);
-    bootstrap.close();
-    const raw = new Database(path);
-    raw.exec(
-      "DROP TABLE policy_runs; " +
-        "CREATE TABLE policy_runs (" +
-        "run_id text PRIMARY KEY NOT NULL, session_id text NOT NULL, workspace_root text NOT NULL, kind text NOT NULL, " +
-        "revision integer NOT NULL, scope_json text NOT NULL, started_at integer NOT NULL, finished_at integer, " +
-        "status text NOT NULL, findings_json text NOT NULL, failures_json text NOT NULL" +
-        "); " +
-        "INSERT INTO policy_runs VALUES " +
-        "('generation', 'live', '/workspace', 'generation', 3, '[\"src/a.ts\"]', 1, 2, 'completed', '[{\"id\":\"f\"}]', '[]'), " +
-        "('ratchet', 'live', '/workspace', 'ratchet', 3, '[\"src/b.ts\"]', 3, 4, 'failed', '[]', '[{\"checkId\":\"scope\",\"code\":\"source-incomplete\",\"message\":\"missing\"}]'); " +
-        "PRAGMA user_version = 5",
-    );
-    raw.close();
-
-    const upgraded = new SqlitePolicyExecutionStore(path);
-    expect(upgraded.list({ scope: "touched-files", mode: "resteer" }).runs).toMatchObject([{
-      runId: "generation",
-      paths: ["src/a.ts"],
-      ruleProvenance: [],
-      findings: [{ id: "f" }],
-    }]);
-    expect(upgraded.list({ scope: "ai-output", mode: "log" }).runs).toMatchObject([{
-      runId: "ratchet",
-      paths: ["src/b.ts"],
-      ruleProvenance: [],
-      failures: [{ checkId: "scope", code: "source-incomplete", message: "missing" }],
-    }]);
-    upgraded.close();
-  });
-
-  it("upgrades v6 history to v7 provenance columns without losing completed runs", async () => {
-    const path = await temporaryDatabase();
-    const bootstrap = new SqlitePolicyExecutionStore(path);
-    bootstrap.close();
-    const raw = new Database(path);
-    raw.exec(
-      "DROP TABLE policy_runs; " +
-        "CREATE TABLE policy_runs (" +
-        "run_id text PRIMARY KEY NOT NULL, session_id text NOT NULL, workspace_root text NOT NULL, scope text NOT NULL, mode text NOT NULL, " +
-        "revision integer NOT NULL, paths_json text NOT NULL, started_at integer NOT NULL, finished_at integer, status text NOT NULL, findings_json text NOT NULL, failures_json text NOT NULL" +
-        "); INSERT INTO policy_runs VALUES ('historic', 'live', '/workspace', 'repository', 'log', 2, '[]', 1, 2, 'completed', '[]', '[]'); PRAGMA user_version = 6",
-    );
-    raw.close();
-
-    const upgraded = new SqlitePolicyExecutionStore(path);
-    expect(upgraded.get("historic")).toMatchObject({ runId: "historic", status: "completed", catalogRevision: null, ruleRevisions: [] });
-    const runId = upgraded.start({ ...input, catalogRevision: "catalog-v7", ruleRevisions: [{ ruleId: "rule-a", revision: 4 }] });
-    expect(upgraded.get(runId)).toMatchObject({ catalogRevision: "catalog-v7", ruleRevisions: [{ ruleId: "rule-a", revision: 4 }] });
-    upgraded.close();
   });
 
   it("keeps a read-only listing empty until the database exists", async () => {

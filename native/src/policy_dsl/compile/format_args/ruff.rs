@@ -1,5 +1,5 @@
 //! Ruff-shaped ports of Pyflakes' format rules (F501-F509, F521-F525), against where Ruff 0.16.9
-//! reports them on its own fixtures (`rerail-fixtures/python/literal/ruff`, `rerail-fixtures/python/literal/generate_ruff.py`).
+//! reports them on its own fixtures (`fixtures/python/literal/ruff`, `fixtures/python/literal/generate_ruff.py`).
 
 use crate::policy_dsl::oracle;
 use crate::policy_dsl::test_support::*;

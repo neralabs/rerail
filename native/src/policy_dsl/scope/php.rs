@@ -17,7 +17,7 @@
 //! take a variable by reference) makes the answer `Unknown` rather than a guess.
 //!
 //! The oracles are PHPStan 2.2.16's `variable.undefined` and Psalm 6.19.1's unused-variable
-//! reports (`rerail-fixtures/php/scope/php`).
+//! reports (`fixtures/php/scope/php`).
 
 use super::php_names::{self, PhpNames, Resolved};
 use super::{Binding, BuildError, Builder, Form, NodeRef, ScopeKind, Site, VALUE};

@@ -119,7 +119,7 @@ function unauthorizedError(error: unknown): Error | undefined {
   if (!(error instanceof Error)) return undefined;
   const line = error.message.split("\n").find(candidate => NPM_UNAUTHORIZED.test(candidate));
   if (line === undefined) return undefined;
-  return new Error(`npm registry credentials are missing or expired. Run \`just rerail\` to refresh them. (${line.trim()})`, { cause: error });
+  return new Error(`npm registry credentials are missing or expired. Run \`npm login\` to refresh them. (${line.trim()})`, { cause: error });
 }
 
 async function spawnNpm(args: readonly string[], options: NpmOptions): Promise<CommandResult> {

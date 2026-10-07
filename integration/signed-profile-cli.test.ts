@@ -61,7 +61,7 @@ describe("signed profile CLI", () => {
     const { privateKey, publicKey } = generateKeyPairSync("ed25519");
     const trustRoots: ActivationTrustRoots = {
       schemaVersion: 1,
-      issuer: "https://activation.neralabs.test",
+      issuer: "https://activation.example.test",
       audience: "rerail-customer-profile",
       keys: [{ ...publicKey.export({ format: "jwk" }), kid: "activation-integration-1" } as ActivationTrustRoots["keys"][number]],
     };

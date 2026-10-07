@@ -1,5 +1,5 @@
 //! `formatArgs` with style `printf` against where PHPStan 2.2.16's `PrintfParametersRule` and
-//! `PrintfArrayParametersRule` report on fixtures (`rerail-fixtures/format_args`).
+//! `PrintfArrayParametersRule` report on fixtures (`fixtures/php/format_args`).
 
 use crate::policy_dsl::oracle;
 use crate::policy_dsl::test_support::*;

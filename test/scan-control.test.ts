@@ -1,12 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import Database from "better-sqlite3";
 import { SqliteScanControlStore } from "../src/scan-control.js";
-import { SqlitePolicyExecutionStore } from "../src/policy-execution-store.js";
 import { SqliteTranscriptStore } from "../src/transcript-store.js";
 
 const directories: string[] = [];
@@ -48,36 +45,6 @@ describe("scan controls", () => {
       error: "Evaluation failed",
     });
     controls.close(); transcripts.close();
-  });
-
-  it("preserves the first historic repository scan when upgrading saved workspaces", async () => {
-    const { root, controls, transcripts } = await fixture();
-    controls.updateSettings("a", { scope: "repository", mode: "log" });
-    const workspaceRoot = realpathSync(root);
-    const executions = new SqlitePolicyExecutionStore(transcripts.path);
-    const runId = executions.start({
-      sessionId: "a",
-      workspaceRoot,
-      scope: "repository",
-      mode: "log",
-      revision: 1,
-      catalogRevision: null,
-      ruleRevisions: [],
-      paths: [],
-    });
-    executions.finish(runId, { status: "completed", findings: [], failures: [] });
-    executions.close(); controls.close(); transcripts.close();
-    const raw = new Database(join(root, "rerail.sqlite"));
-    raw.exec("UPDATE policy_settings SET settings_json = json_set(settings_json, '$.initialMode', 'resteer'); PRAGMA user_version = 7");
-    raw.close();
-
-    const upgraded = new SqliteScanControlStore(join(root, "rerail.sqlite"));
-    expect(upgraded.getSettings("a")).toMatchObject({
-      settings: { scope: "repository", mode: "log" },
-      repositoryDiagnostic: { sessionId: "a", runId, status: "completed" },
-    });
-    expect(upgraded.claimRepositoryDiagnostic("a")).toBe(false);
-    upgraded.close();
   });
 
   it("records and interrupts scans without claiming another session's work", async () => {

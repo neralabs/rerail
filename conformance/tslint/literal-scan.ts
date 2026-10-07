@@ -10,8 +10,8 @@
  * - `protected` / `rule-source` / `option` / `language`: a keyword or standard-library name (`rename.ts`), a word in
  *   TSLint's rule source literals, a word in the fixtures' options, or source syntax (triple-slash, JSDoc tag, tslint:).
  *
- *   just rerail-conformance literals [--rule <name>]   rules with `suspicious` or `fixture-text` tokens
- *   just rerail-conformance literals --all             every token that occurs in the fixtures, with its status
+ *   node --import tsx conformance/tslint/cli.ts literals [--rule <name>]   rules with `suspicious` or `fixture-text` tokens
+ *   node --import tsx conformance/tslint/cli.ts literals --all             every token that occurs in the fixtures, with its status
  */
 import { readFileSync } from "node:fs";
 import { relative } from "node:path";

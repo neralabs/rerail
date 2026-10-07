@@ -875,12 +875,12 @@ mod tests {
             workspace
                 .base_files
                 .iter()
-                .any(|file| file.path == "rerail/native/src/lib.rs"),
+                .any(|file| file.path == "native/src/lib.rs"),
             "source files: {:?}",
             workspace
                 .base_files
                 .iter()
-                .filter(|file| file.path.starts_with("rerail/native/"))
+                .filter(|file| file.path.starts_with("native/"))
                 .take(20)
                 .map(|file| &file.path)
                 .collect::<Vec<_>>()
@@ -907,12 +907,10 @@ mod tests {
                     .iter()
                     .any(|(path, clean)| path == &overlay.path && !clean)
         }));
-        let source = workspace
-            .read_source("rerail/native/build.rs", u64::MAX)
-            .unwrap();
+        let source = workspace.read_source("native/build.rs", u64::MAX).unwrap();
         assert!(!source.is_empty());
         let alias = workspace
-            .source_alias("rerail/native/build.rs", &source)
+            .source_alias("native/build.rs", &source)
             .expect("unchanged source has Git alias");
 
         let database = std::env::temp_dir().join(format!(
@@ -932,9 +930,7 @@ mod tests {
                 .unwrap(),
             published
         );
-        let source_id = workspace
-            .store_source(&store, "rerail/native/build.rs")
-            .unwrap();
+        let source_id = workspace.store_source(&store, "native/build.rs").unwrap();
         assert_eq!(store.source_by_alias(alias).unwrap(), Some(source_id));
         drop(store);
         for suffix in ["", "-shm", "-wal"] {
@@ -1405,7 +1401,8 @@ mod tests {
     #[test]
     fn dirty_source_reads_reject_symlink_escapes() {
         use std::os::unix::fs::symlink;
-        let root = std::env::temp_dir().join(format!("rerail-anchored-read-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("rerail-anchored-read-{}", std::process::id()));
         let outside =
             std::env::temp_dir().join(format!("rerail-anchored-outside-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);

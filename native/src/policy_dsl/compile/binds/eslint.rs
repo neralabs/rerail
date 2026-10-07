@@ -1,8 +1,8 @@
 //! Port-shaped rules for ESLint's no-unused-vars, no-undef and no-redeclare and typescript-eslint's
 //! no-unused-vars and no-redeclare, against where ESLint 10.11.0 and typescript-eslint 8.70.1
-//! report them on the fixtures in `rerail-fixtures/ecma/scope/eslint-usage` under each option set
-//! (`rerail-fixtures/ecma/scope/generate_eslint_usage.mjs`), and for ESLint's no-unused-private-class-members on
-//! its own tests (`rerail-fixtures/ecma/scope/generate_eslint_private.mjs`). The engine owns what reads a variable; each option
+//! report them on the fixtures in `fixtures/ecma/scope/eslint-usage` under each option set
+//! (`fixtures/ecma/scope/generate_eslint_usage.mjs`), and for ESLint's no-unused-private-class-members on
+//! its own tests (`fixtures/ecma/scope/generate_eslint_private.mjs`). The engine owns what reads a variable; each option
 //! is the port's, and these are the shapes that express them. Where the engine is conservative by
 //! design (a direct `eval`, a `with`) the port reports less, and the test lists each range.
 //!
@@ -483,7 +483,9 @@ fn differences(root: &std::path::Path) -> Vec<String> {
 fn ports_report_where_eslint_and_typescript_eslint_do() {
     let root = std::env::var("ESLINT_USAGE_ORACLE_ROOT")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::Path::new(env!("RERAIL_FIXTURES_DIR")).join("ecma/scope"));
+        .unwrap_or_else(|_| {
+            std::path::Path::new(crate::policy_dsl::fixtures_dir!()).join("ecma/scope")
+        });
     let repository = std::env::var("ESLINT_USAGE_ORACLE_ROOT").is_ok();
     let report = differences(&root);
     // Conservative by design: a direct `eval` leaves the usedness of what its function sees
@@ -537,7 +539,7 @@ fn no_unused_private_class_members() -> Value {
 }
 
 /// The port reports exactly where ESLint 10.11.0 does on the rule's own tests and the extra cases
-/// (`rerail-fixtures/ecma/scope/generate_eslint_private.mjs`).
+/// (`fixtures/ecma/scope/generate_eslint_private.mjs`).
 #[test]
 fn private_class_member_ports_report_where_eslint_does() {
     let expected: Value = serde_json::from_str(oracle!("ecma/scope/eslint-private.expected.json"))

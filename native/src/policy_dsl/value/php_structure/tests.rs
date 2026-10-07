@@ -1,4 +1,4 @@
-//! Agreement with the PHP compare oracle's structures (`rerail-fixtures/php/compare/generate_php.php`):
+//! Agreement with the PHP compare oracle's structures (`fixtures/php/compare/generate_php.php`):
 //! nikic/PHP-Parser 5.9.0's trees, attributes stripped, and PHP's array key identity.
 
 use super::*;

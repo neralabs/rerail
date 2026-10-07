@@ -1,14 +1,14 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import type { DaemonState } from "../src/daemon.js";
 
 describe("Rerail daemon CLI", () => {
-  test("starts in dev mode, exposes health, and stops a legacy-format daemon through the CLI", async () => {
+  test("starts in dev mode, exposes health, and stops through the CLI", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-daemon-cli-"));
     const stateFile = join(root, "daemon.json");
     const database = join(root, "rerail.sqlite");
@@ -40,9 +40,6 @@ describe("Rerail daemon CLI", () => {
       expect(page.status).toBe(200);
       expect(page.headers.get("content-type")).toBe("text/html; charset=utf-8");
       expect(await page.text()).toBe(await readFile(join(process.cwd(), "ui", "index.html"), "utf8"));
-
-      const { kernelSocketPath: _socketPath, ...legacyState } = state;
-      await writeFile(stateFile, JSON.stringify(legacyState));
       const daemonClosed = once(child, "close");
       const stop = spawn(process.execPath, [join(process.cwd(), "dist/cli.js"), "stop"], {
         env: { ...process.env, RERAIL_HOME: root },

@@ -209,7 +209,4 @@ Metrics report:
 
 ## Baseline
 
-The pre-redesign baseline and the runtime journal's final comparison are preserved at commit `83f3eae6e`:
-
-- `benchmark/history/ner-1562-publication-transaction-baseline-2026-09-25.json`
-- `docs/workspace-store-runtime-journal.md`
+The pre-redesign baseline and the final comparison were recorded during development and are not part of this repository.

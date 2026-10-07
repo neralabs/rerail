@@ -163,15 +163,12 @@ export {
   RULE_ORIGINS,
   RULE_SCOPES,
   RULE_SYNC_STATES,
-  RERAIL_SCHEMA_COMPATIBILITY_FLOOR,
   RERAIL_SCHEMA_VERSION,
   catalogRules,
   events,
   policyRuns,
   ruleCatalogIdentities,
-  ruleMigrations,
   ruleProjectRepositories,
-  ruleMigrationTombstones,
   ruleProjects,
   ruleRepositories,
   rules,
@@ -187,9 +184,7 @@ export {
   type RuleCatalogIdentityRow,
   type RuleApplicability,
   type RuleKind,
-  type RuleMigrationRow,
   type RuleOrigin,
-  type RuleMigrationTombstoneRow,
   type RuleProjectRepositoryRow,
   type RuleProjectRow,
   type RuleRepositoryRow,
@@ -221,7 +216,7 @@ export {
   type ScopedRuleWriteOptions,
   type ScopedStoredRule,
 } from "./scoped-rule-catalog.js";
-export { loadCosineRules, type CosineRuleSourceOptions } from "./rule-sources.js";
+export { cosineRuleLoader, type CosineRuleSourceOptions, type DatabaseCosineRules } from "./rule-sources.js";
 export {
   ApiError,
   eventRecordSchema,

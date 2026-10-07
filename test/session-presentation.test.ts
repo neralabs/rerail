@@ -25,7 +25,7 @@ beforeEach(async () => {
   await writeFile(database, "");
   await writeFile(join(cwd, ".rerail", "repository-id"), "repository-under-test\n");
   state = { pid: process.pid, host: "127.0.0.1", port: 4737, url: "http://127.0.0.1:4737/", version: "test",
-    databasePath: database, kernelSocketPath: join(home, "kernel.sock"), ui: "bundled", startedAt: 1 };
+    databasePath: database, kernelSocketPath: join(home, "kernel.sock"), ui: "bundled", startedAt: 1, packageRoot: home };
   await writeFile(join(home, "daemon.json"), JSON.stringify(state));
   requested = [];
   sessionContext = { session: { sessionId, host: "claude-code", cwd, repositoryId: "repository-under-test", startedAt: 1, endedAt: null, eventCount: 0 },

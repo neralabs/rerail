@@ -134,7 +134,7 @@
     "node": ">=24"
   },
   "napi": {
-    "binaryName": "omp_cosine_rules",
+    "binaryName": "rerail",
     "targets": [
       "aarch64-apple-darwin",
       "x86_64-apple-darwin",

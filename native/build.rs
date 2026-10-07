@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 fn main() {
     napi_build::setup();
     build_blade_grammar();
-    configure_oracles();
+    configure_fixtures();
     build_identities();
 }
 
@@ -50,24 +50,51 @@ fn build_blade_grammar() {
         .compile("tree-sitter-blade");
 }
 
-fn configure_oracles() {
+/// Where the engine's tests read the conformance fixtures (`rerail-fixtures`): `RERAIL_FIXTURES_DIR`
+/// if set (relative to the repository root), else the repository's `fixtures/` submodule. Only
+/// tests read them, so a build without them (a release build) goes on; the tests that need them
+/// then fail to compile, naming the fix.
+fn configure_fixtures() {
+    println!("cargo:rerun-if-env-changed=RERAIL_FIXTURES_DIR");
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
-    for directory in [
-        manifest.join("../../rerail-fixtures"),
-        manifest.join("../rerail-fixtures"),
-    ] {
-        if directory.is_dir() {
-            let oracle_dir = directory
-                .canonicalize()
-                .expect("oracle directory is readable");
-            println!("cargo:rustc-env=RERAIL_FIXTURES_DIR={}", oracle_dir.display());
-            println!("cargo:rerun-if-changed={}", oracle_dir.display());
-            return;
+    let root = manifest.parent().expect("repository root");
+    let directory = match std::env::var_os("RERAIL_FIXTURES_DIR") {
+        Some(directory) => {
+            let directory = root.join(directory);
+            assert!(
+                is_checkout(&directory),
+                "RERAIL_FIXTURES_DIR={} is not a rerail-fixtures checkout",
+                directory.display()
+            );
+            directory
         }
-    }
+        None => {
+            let submodule = root.join("fixtures");
+            // Empty until the submodule is checked out; rerun once it is.
+            println!("cargo:rerun-if-changed={}", submodule.display());
+            if !is_checkout(&submodule) {
+                println!(
+                    "cargo:warning=Rerail fixtures not found in {}: run `git submodule update --init`, or set RERAIL_FIXTURES_DIR; the engine's tests need them",
+                    submodule.display()
+                );
+                return;
+            }
+            submodule
+        }
+    };
+    let directory = directory
+        .canonicalize()
+        .expect("fixtures directory is readable");
     println!(
-        "cargo:warning=Rerail conformance oracles not found; test-only oracle fixtures are unavailable"
+        "cargo:rustc-env=RERAIL_FIXTURES_DIR={}",
+        directory.display()
     );
+    println!("cargo:rerun-if-changed={}", directory.display());
+}
+
+/// A directory with something in it: an uninitialised submodule is an empty directory.
+fn is_checkout(directory: &Path) -> bool {
+    std::fs::read_dir(directory).is_ok_and(|mut entries| entries.next().is_some())
 }
 
 /// Identities persisted artifacts are keyed by, derived from what built them rather than from

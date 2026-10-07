@@ -388,7 +388,7 @@ mod tests {
         );
     }
 
-    /// Every case of `rerail-fixtures/python/literal/annotation.expected.json`, written in its host and read through the
+    /// Every case of `fixtures/python/literal/annotation.expected.json`, written in its host and read through the
     /// scope table: a refused literal where Ruff 0.16.9's parser reports F722 on the whole
     /// literal, and otherwise an `ERROR` node after the expression for each semantic syntax error
     /// its checker reports, at the same range with the same message. In a complex (escaped)

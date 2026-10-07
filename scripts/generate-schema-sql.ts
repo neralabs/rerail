@@ -13,8 +13,6 @@ import {
   policySessionOwners,
   policySettings,
   ruleCatalogIdentities,
-  ruleMigrationTombstones,
-  ruleMigrations,
   ruleProjectRepositories,
   ruleProjects,
   ruleRepositories,
@@ -27,7 +25,7 @@ export const SCHEMA_SQL_PATH = resolve(fileURLToPath(import.meta.url), "..", "..
 
 /**
  * Render the DDL for the Drizzle tables in `src/schema.ts` as an idempotent
- * statement list. Fresh databases run these verbatim; there is no migration.
+ * statement list, applied verbatim every time a database is opened.
  */
 export async function renderRerailSchemaStatements(): Promise<string[]> {
   const empty = await generateSQLiteDrizzleJson({});
@@ -49,8 +47,6 @@ export async function renderRerailSchemaStatements(): Promise<string[]> {
   ruleCatalogIdentities,
   ruleProjectRepositories,
   catalogRules,
-  ruleMigrations,
-  ruleMigrationTombstones,
   });
   const statements = await generateSQLiteMigration(empty, current);
   return statements.map(statement =>

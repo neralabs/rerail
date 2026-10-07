@@ -732,7 +732,7 @@ impl Family {
                 | Semantic::Calls,
             ) => true,
             // Blade's arms read its embedded PHP program (`blade::view`) as PHP, as the Blade
-            // compiler oracle (`rerail-fixtures/blade`) checks.
+            // compiler oracle (`fixtures/blade`) checks.
             (
                 Self::Blade,
                 Semantic::Scope

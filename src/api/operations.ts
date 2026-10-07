@@ -608,7 +608,7 @@ export const operations: readonly Operation[] = [
     query: z.object({ applicability: z.enum(RULE_APPLICABILITIES).optional() }).strict(),
     output: z.object({ removed: z.literal(1) }),
     handler: (stores, input) => {
-      if (stores.rules().remove([input.id], Date.now(), input.applicability) === 0) {
+      if (stores.rules().remove([input.id], input.applicability) === 0) {
         throw new ApiError(404, "rule-not-found", `rule ${input.id} does not exist`);
       }
       return { removed: 1 as const };

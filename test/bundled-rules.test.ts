@@ -9,7 +9,7 @@
  *
  * The opt-in TSLint pack (rules/opt-in/tslint/, seeded disabled) is the golden set: the conformance harness proves it
  * against TSLint's own fixtures and gates it with golden.json instead. Here each doc must compile and scope TypeScript
- * sources only, the pack must agree with golden.json and the audit (`just rerail-promote-tslint --check`), and the
+ * sources only, the pack must agree with golden.json and the audit (`conformance/tslint/promote.ts --check`), and the
  * harness must score golden rules with the pack's docs. Rules TSLint cannot run without configuration
  * (`REQUIRES_CONFIGURATION`, audited `requires-config`) stay out of it.
  */

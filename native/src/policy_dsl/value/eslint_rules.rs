@@ -1,6 +1,6 @@
 //! Port-shaped rules for ESLint's rules that read static values and property names, against
-//! where ESLint 10.11.0 itself reports them on the fixtures in `rerail-fixtures/ecma/value/eslint`
-//! (`rerail-fixtures/ecma/value/generate_eslint.mjs`).
+//! where ESLint 10.11.0 itself reports them on the fixtures in `fixtures/ecma/value/eslint`
+//! (`fixtures/ecma/value/generate_eslint.mjs`).
 
 use crate::policy_dsl::oracle;
 use crate::policy_dsl::test_support::*;

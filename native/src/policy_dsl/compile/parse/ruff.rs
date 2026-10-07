@@ -1,6 +1,6 @@
 //! Ruff-shaped ports of the rules string type definitions change (F632, F722, F821, F842), against
-//! where Ruff 0.16.9 reports them on its own fixtures (`rerail-fixtures/python/literal/ruff`,
-//! `rerail-fixtures/python/literal/generate_ruff.py`). Where the port differs, the test names each range and why.
+//! where Ruff 0.16.9 reports them on its own fixtures (`fixtures/python/literal/ruff`,
+//! `fixtures/python/literal/generate_ruff.py`). Where the port differs, the test names each range and why.
 
 use crate::policy_dsl::oracle;
 use crate::policy_dsl::test_support::*;
@@ -222,7 +222,7 @@ macro_rules! fixture {
         (
             $name,
             include_str!(concat!(
-                env!("RERAIL_FIXTURES_DIR"),
+                crate::policy_dsl::fixtures_dir!(),
                 "/python/literal/ruff/",
                 $name
             )),

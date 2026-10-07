@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadNativeBinding, type NativeCompiledPolicyDsl } from "./native.js";
 import { bundledPolicyDslDirectory } from "./policy-kernel-check.js";
-import { reportQuarantinedRule, type QuarantinedRule } from "./legacy-policy-rule.js";
+import { reportQuarantinedRule, type QuarantinedRule } from "./rule-quarantine.js";
 import type { RuleEvaluationProvenance } from "./policy-execution.js";
 import { SqliteRuleStore } from "./rule-store.js";
 import type { ScopedRuleCatalog } from "./scoped-rule-catalog.js";
@@ -51,7 +51,7 @@ export interface BootstrapPolicyDslCatalogOptions {
   capabilitiesPath?: string;
   /** Catalog path shown in diagnostics when `store` is supplied. */
   databasePath: string;
-  /** Effective rules for one repository; omitted for legacy callers. */
+  /** Effective rules for one repository; without it the `rules` table at `databasePath` is read. */
   store?: SqliteRuleStore | ScopedRuleCatalog;
   onRefresh?: () => void;
 }

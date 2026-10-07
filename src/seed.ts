@@ -97,8 +97,8 @@ export function mockSessionId(repositoryId?: string): string {
 
 export function mockWorkLinks(sessionId: string): readonly WorkLink[] {
   return [
-    { sessionId, kind: "git-branch", reference: "jeff/ner-1438-rerail-sql-schema-for-rules-sessions-events-work-links" },
-    { sessionId, kind: "linear-issue", reference: "NER-1438", url: "https://linear.app/nera/issue/NER-1438" },
+    { sessionId, kind: "git-branch", reference: "feature/rule-catalog" },
+    { sessionId, kind: "linear-issue", reference: "ABC-1", url: "https://linear.app/example/issue/ABC-1" },
   ];
 }
 

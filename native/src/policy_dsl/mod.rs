@@ -24,10 +24,25 @@ mod transducer;
 mod value;
 mod workspace;
 
+/// The conformance fixtures checkout `native/build.rs` found: `RERAIL_FIXTURES_DIR`, or the
+/// repository's `fixtures/` submodule.
+#[cfg(test)]
+macro_rules! fixtures_dir {
+    () => {
+        env!(
+            "RERAIL_FIXTURES_DIR",
+            "Rerail fixtures not found: run `git submodule update --init`, or set RERAIL_FIXTURES_DIR to a rerail-fixtures checkout"
+        )
+    };
+}
+
+#[cfg(test)]
+pub(crate) use fixtures_dir;
+
 #[cfg(test)]
 macro_rules! oracle {
     ($path:literal) => {
-        include_str!(concat!(env!("RERAIL_FIXTURES_DIR"), "/", $path))
+        include_str!(concat!(crate::policy_dsl::fixtures_dir!(), "/", $path))
     };
 }
 

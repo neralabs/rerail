@@ -1,6 +1,6 @@
 //! Port-shaped rules for ESLint's rules that read lines (M12a's `layout`) and directive comments
 //! (`parse` with `eslintDirective`), against where ESLint 10.11.0 itself reports them on the
-//! fixtures in `rerail-fixtures/ecma/lines/eslint` (`rerail-fixtures/ecma/lines/generate_eslint.mjs`).
+//! fixtures in `fixtures/ecma/lines/eslint` (`fixtures/ecma/lines/generate_eslint.mjs`).
 
 use crate::policy_dsl::oracle;
 use crate::policy_dsl::test_support::*;

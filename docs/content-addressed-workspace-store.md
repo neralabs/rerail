@@ -79,13 +79,12 @@ Overlay deletion and Git-tree publication also use bulk statements.
 The language specification is [Tape transducer language](transducer-design.md).
 It defines one-word instructions, tables, tape navigation, tests, captures, alternatives, and output.
 It does not specify storage or SQL integration.
-The SHA-indexed tape survey (`docs/sha-indexed-transducer-execution.md`, preserved at commit `83f3eae6e`) records historical evidence and the initial outline.
 
 ## Workload evidence
 
 ### Reference corpus
 
-The full data-layer measurement contained:
+A full measurement over a large Python repository contained:
 
 - 5,725 files.
 - 95,697,853 source bytes.
@@ -512,7 +511,6 @@ The `.rerailignore` file uses Git ignore syntax and supports negated patterns.
 Rerail always excludes these directory names:
 
 - `.git`
-- `.nera`
 - `node_modules`
 - `target`
 - `tmp`

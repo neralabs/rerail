@@ -5,7 +5,7 @@
  * pairing them with the rule's option-variant overrides in `rules/<rule>/<variant>.json`.
  *
  * `golden.json` replaces verdict sidecars for golden rules. Per rule it records what the gate asserts on every full run
- * and on `just rerail-conformance golden`: the effective verdict (`PASS`, or `PASS (repaired fixture)` when invalid
+ * and on `node --import tsx conformance/tslint/cli.ts golden`: the effective verdict (`PASS`, or `PASS (repaired fixture)` when invalid
  * fixture syntax is the only blocker), the true positives on the fixtures in scope (on the repaired fixtures for a
  * repaired-fixture PASS) with no false positives, false negatives or engine failures, and the fixture files the shipped
  * scope leaves out (`<variant>/<file>`, reported as out of scope, never as misses). `reason`, `primitive`, `secondary`

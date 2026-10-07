@@ -23,19 +23,16 @@ import type { RuleDocument } from "./rule-store.js";
  *
  * These Drizzle tables are the schema. `schema-sql.ts` is generated from them
  * (`npm run generate:schema`) and applied verbatim when a database is opened.
- * `database.ts` records the compatibility floor in `PRAGMA user_version` and
- * the additive revision separately, then applies additive upgrade steps.
+ * `database.ts` stamps `PRAGMA user_version` with `RERAIL_SCHEMA_VERSION`.
  */
 /**
- * The schema revision written by this Rerail build.
- *
- * Additive changes bump only `RERAIL_SCHEMA_VERSION`. Breaking changes must also
- * raise `RERAIL_SCHEMA_COMPATIBILITY_FLOOR` to the new version.
+ * The schema version written by this Rerail build. A Rerail refuses a database stamped with a
+ * newer version. New tables and indexes need no bump: the DDL is idempotent and older builds
+ * ignore what they do not know. A change an older build would misread, or one SQLite cannot
+ * apply idempotently, raises it.
  */
-export const RERAIL_SCHEMA_VERSION = 13 as const;
+export const RERAIL_SCHEMA_VERSION = 1 as const;
 
-/** Oldest schema revision whose readers can safely open a database written by this build. */
-export const RERAIL_SCHEMA_COMPATIBILITY_FLOOR = 10 as const;
 export const RULE_KINDS = ["policy", "cosine"] as const;
 export type RuleKind = (typeof RULE_KINDS)[number];
 
@@ -65,7 +62,7 @@ export const presentationPreferences = sqliteTable(
 export const RULE_APPLICABILITIES = ["global", "project"] as const;
 export type RuleApplicability = (typeof RULE_APPLICABILITIES)[number];
 
-export const RULE_ORIGINS = ["local", "bundled", "migrated", "nera"] as const;
+export const RULE_ORIGINS = ["local", "bundled", "nera"] as const;
 export type RuleOrigin = (typeof RULE_ORIGINS)[number];
 
 export const RULE_SYNC_STATES = ["local-only", "synced", "pending"] as const;
@@ -211,32 +208,9 @@ export const catalogRules = sqliteTable(
   ],
 );
 
-/** Idempotence marker for copying legacy checkout-owned rules into a project. */
-export const ruleMigrations = sqliteTable(
-  "rule_migrations",
-  {
-    repositoryId: text("repository_id").notNull(),
-    sourcePath: text("source_path").notNull(),
-    migratedAt: integer("migrated_at").notNull(),
-    ruleCount: integer("rule_count").notNull(),
-  },
-  table => [primaryKey({ columns: [table.repositoryId, table.sourcePath] })],
-);
-
-/** Prevent a later legacy checkout import from resurrecting a deleted project rule. */
-export const ruleMigrationTombstones = sqliteTable(
-  "rule_migration_tombstones",
-  {
-    projectId: text("project_id").notNull(),
-    ruleId: text("rule_id").notNull(),
-    deletedAt: integer("deleted_at").notNull(),
-  },
-  table => [primaryKey({ columns: [table.projectId, table.ruleId] })],
-);
-
 /**
  * `repository_id` is the stable identity of the checkout the session ran in; per-repository
- * views filter on it. Null only for rows recorded before sessions carried an identity.
+ * views filter on it. Null when the recorder had no repository identity to attribute it to.
  */
 export const sessions = sqliteTable(
   "sessions",
@@ -305,9 +279,9 @@ export const policyRuns = sqliteTable(
     scope: text("scope", { enum: POLICY_SCOPES }).$type<PolicyScope>().notNull(),
     mode: text("mode", { enum: POLICY_MODES }).$type<PolicyMode>().notNull(),
     revision: integer("revision").notNull(),
-    /** Immutable catalog digest used by this run; null is honest legacy provenance. */
+    /** Immutable catalog digest the run evaluated against; null when it never reached evaluation. */
     catalogRevision: text("catalog_revision"),
-    /** Exact rule revisions compiled for this run; empty only for legacy provenance. */
+    /** Exact rule revisions compiled for this run; empty when it never reached evaluation. */
     ruleRevisions: text("rule_revisions_json", { mode: "json" }).$type<Array<{ ruleId: string; revision: number }>>().notNull().default([]),
     ruleProvenance: text("rule_provenance_json", { mode: "json" }).$type<RuleEvaluationProvenance[]>().notNull(),
     paths: text("paths_json", { mode: "json" }).$type<string[]>().notNull(),
@@ -439,6 +413,4 @@ export type NewCatalogRuleRow = typeof catalogRules.$inferInsert;
 export type RuleProjectRow = typeof ruleProjects.$inferSelect;
 export type RuleRepositoryRow = typeof ruleRepositories.$inferSelect;
 export type RuleProjectRepositoryRow = typeof ruleProjectRepositories.$inferSelect;
-export type RuleMigrationRow = typeof ruleMigrations.$inferSelect;
 export type RuleCatalogIdentityRow = typeof ruleCatalogIdentities.$inferSelect;
-export type RuleMigrationTombstoneRow = typeof ruleMigrationTombstones.$inferSelect;

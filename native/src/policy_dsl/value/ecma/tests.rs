@@ -62,7 +62,7 @@ pub(crate) fn decode_source(language: GrammarDialect, source: &str) -> Value {
     )
 }
 
-/// Every case in the getStaticValue oracle (`rerail-fixtures/ecma/value/generate_typescript.mjs`):
+/// Every case in the getStaticValue oracle (`fixtures/ecma/value/generate_typescript.mjs`):
 /// - where a parser refuses the source, Rerail knows nothing;
 /// - where getStaticValue knows nothing, Rerail knows at most a container's shape;
 /// - where getStaticValue knows the value, Rerail knows the same, unless the case says why not.
@@ -147,7 +147,7 @@ fn value_kinds_cover_every_decoded_root() {
 
 const DESTRUCTURE_ORACLE: &str = oracle!("ecma/value/destructure.expected.json");
 
-/// Every name a declaration in the destructuring oracle (`rerail-fixtures/ecma/value/generate_destructure.mjs`,
+/// Every name a declaration in the destructuring oracle (`fixtures/ecma/value/generate_destructure.mjs`,
 /// TypeScript and Node.js) binds: where the table pairs it with a literal element, that element's
 /// value is the name's.
 #[test]
@@ -237,7 +237,7 @@ fn decode_following(language: GrammarDialect, source: &str) -> Value {
     decode(&argument, &mut context)
 }
 
-/// Every program in the `value.follow` oracle (`rerail-fixtures/ecma/value/generate_follow.mjs`): where getStaticValue
+/// Every program in the `value.follow` oracle (`fixtures/ecma/value/generate_follow.mjs`): where getStaticValue
 /// with the program's scope knows nothing, Rerail knows at most a container's shape; where it knows
 /// the value, Rerail knows the same, unless the case says why not.
 #[test]

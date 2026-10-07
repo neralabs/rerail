@@ -223,7 +223,7 @@ fn summary(node: &PNode, autos: &mut Vec<i64>, indices: &mut Vec<i64>, keywords:
     }
 }
 
-/// Every case of `rerail-fixtures/python/literal/brace.expected.json`: errors and messages as Ruff 0.16.9 reports them
+/// Every case of `fixtures/python/literal/brace.expected.json`: errors and messages as Ruff 0.16.9 reports them
 /// (F521), fields as CPython 3.13's `_string.formatter_parser` reads them where it reads them too.
 #[test]
 fn templates_match_ruff_and_cpython() {

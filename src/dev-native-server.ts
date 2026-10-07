@@ -12,7 +12,7 @@ import { NativeSemanticRuntime } from "./native-semantic-runtime.js";
 import { CosineRuleRegistry, type RuleMatch } from "./registry.js";
 import { loadBundledRules } from "./rule-bootstrap.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "./rule-schema.js";
-import { loadLegacyCosineRuleSources, type CosineRuleSourceOptions } from "./rule-sources.js";
+import { cosineRuleLoader, type CosineRuleSourceOptions } from "./rule-sources.js";
 import { openScopedRuleCatalog } from "./scoped-rule-catalog.js";
 import { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE, type RuleMutation } from "./session-state.js";
 import { RerailRuntime } from "./runtime.js";
@@ -238,14 +238,12 @@ export class DevNativeServer {
       ...(options.maxInputTokens === undefined ? {} : { maxInputTokens: options.maxInputTokens }),
       ...(options.maxRules === undefined ? {} : { maxRules: options.maxRules }),
     });
+    const loadRules = cosineRuleLoader(options, cwd, input.host === "omp" ? ".omp/cosine-rules.json" : ".pi/cosine-rules.json");
     const store = openScopedRuleCatalog(cwd, databasePath);
-    const ruleSync = new LiveCosineRules(store, registry, database => database.enabled);
+    const ruleSync = new LiveCosineRules(store, registry, loadRules);
     let runtime: RerailRuntime | undefined;
     let semantic: NativeSemanticRuntime | undefined;
     try {
-      for (const legacy of loadLegacyCosineRuleSources(options, cwd, input.host === "omp" ? ".omp/cosine-rules.json" : ".pi/cosine-rules.json").reverse()) {
-        store.migrateCosineRules(legacy.path, legacy.rules);
-      }
       store.seed(loadBundledRules());
       ruleSync.prime();
       const turn = replaySessionState(registry, branch);

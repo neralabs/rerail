@@ -88,7 +88,7 @@ function hasDaemonStateFields(value: unknown): value is Record<string, unknown> 
     && (record.ui === "bundled" || record.ui === "dev")
     && (record.nativeToken === undefined || typeof record.nativeToken === "string")
     && typeof record.startedAt === "number"
-    && (record.packageRoot === undefined || typeof record.packageRoot === "string")
+    && typeof record.packageRoot === "string"
     && (record.workspaceRoot === undefined || typeof record.workspaceRoot === "string");
 }
 
@@ -105,12 +105,6 @@ function isDaemonState(value: unknown): value is DaemonState {
   return hasDaemonStateFields(value) && isUsableKernelSocketPath(value.kernelSocketPath);
 }
 
-type LegacyDaemonState = Omit<DaemonState, "kernelSocketPath">;
-
-function isLegacyDaemonState(value: unknown): value is LegacyDaemonState {
-  return hasDaemonStateFields(value) && !isUsableKernelSocketPath(value.kernelSocketPath);
-}
-
 export async function readDaemonState(stateFile: string): Promise<DaemonState | undefined> {
   let text: string;
   try {
@@ -122,22 +116,6 @@ export async function readDaemonState(stateFile: string): Promise<DaemonState | 
   try {
     const value: unknown = JSON.parse(text);
     return isDaemonState(value) ? value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-async function readLegacyDaemonState(stateFile: string): Promise<LegacyDaemonState | undefined> {
-  let text: string;
-  try {
-    text = await readFile(stateFile, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
-  try {
-    const value: unknown = JSON.parse(text);
-    return isLegacyDaemonState(value) ? value : undefined;
   } catch {
     return undefined;
   }
@@ -157,17 +135,7 @@ export async function probeDaemon(url: string): Promise<DaemonHealth | undefined
 export async function lookupDaemon(home: string): Promise<DaemonLookup> {
   const stateFile = join(home, DAEMON_STATE_FILE);
   const state = await readDaemonState(stateFile);
-  if (state === undefined) {
-    const legacy = await readLegacyDaemonState(stateFile);
-    if (legacy === undefined) return { status: "absent" };
-    if (!processAlive(legacy.pid)) {
-      await rm(stateFile, { force: true });
-      return { status: "absent" };
-    }
-    throw new Error(
-      `Rerail daemon pid ${legacy.pid} is incompatible: it predates resident kernel socket support. Run rerail stop, then start again.`,
-    );
-  }
+  if (state === undefined) return { status: "absent" };
   if (!processAlive(state.pid)) {
     await rm(stateFile, { force: true });
     return { status: "absent" };
@@ -326,7 +294,6 @@ export async function startDaemonForPackage(control: DaemonControl, options: Dae
 
 /** Whether a healthy daemon was launched from the package the caller is executing. */
 export async function daemonUsesPackageRoot(daemon: Pick<DaemonState, "packageRoot">, packageRoot: string): Promise<boolean> {
-  if (daemon.packageRoot === undefined) return false;
   const canonical = async (path: string): Promise<string> => await realpath(path).catch(() => resolve(path));
   const [runningRoot, expectedRoot] = await Promise.all([canonical(daemon.packageRoot), canonical(packageRoot)]);
   return runningRoot === expectedRoot;
@@ -377,7 +344,7 @@ function launchDaemonProcess(args: string[], options: DaemonLaunchOptions, env: 
   if (process.platform === "win32") {
     // Node's spawn hands the child every inheritable handle in this process, not just its stdio. A Rust launcher
     // such as `just` leaves its own stdout inheritable, so a daemon started below it held the caller's output
-    // pipe open and `just rerail | tee` never finished. The native spawn passes only NUL stdin and the log.
+    // pipe open and a captured `rerail setup | tee` never finished. The native spawn passes only NUL stdin and the log.
     const definedEnv = Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined));
     const pid = loadNativeBinding().spawnDetached(nodeExecutable(), args, options.cwd ?? null, definedEnv, logFile);
     return { pid, exitReason: () => processAlive(pid) ? undefined : "exited" };
@@ -468,21 +435,9 @@ export function autostartDaemon(): void {
 export type StopDaemonResult = "stopped" | "not-running";
 
 export async function stopDaemon(home: string): Promise<StopDaemonResult> {
-  const stateFile = join(home, DAEMON_STATE_FILE);
-  const legacy = await readLegacyDaemonState(stateFile);
-  let pid: number;
-  if (legacy !== undefined) {
-    const health = processAlive(legacy.pid) ? await probeDaemon(legacy.url) : undefined;
-    if (!processAlive(legacy.pid) || (health !== undefined && health.pid !== legacy.pid)) {
-      await rm(stateFile, { force: true });
-      return "not-running";
-    }
-    pid = legacy.pid;
-  } else {
-    const lookup = await lookupDaemon(home);
-    if (lookup.status === "absent") return "not-running";
-    pid = lookup.state.pid;
-  }
+  const lookup = await lookupDaemon(home);
+  if (lookup.status === "absent") return "not-running";
+  const pid = lookup.state.pid;
   process.kill(pid, "SIGTERM");
   const deadline = Date.now() + STOP_TIMEOUT_MS;
   while (processAlive(pid) && Date.now() < deadline) await sleep(POLL_INTERVAL_MS);

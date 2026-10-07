@@ -253,8 +253,7 @@ Tree-sitter parsing took 8,653.04 ms.
 Tape encoding and restoration took 4,574.91 ms.
 The source corpus contained 95,697,853 bytes.
 
-The artifact, preserved at commit `83f3eae6e`, is `benchmark/history/ner-1562-transducer-comparison-2026-09-27.json`.
-The benchmark is reproducible with its recorded command.
+The benchmark artifact was recorded during development and is not part of this repository.
 This result applies only to the exact root-terminal compiler subset.
 It does not establish structural-pattern, metavariable, relation, or full-policy speedups.
 
@@ -320,4 +319,4 @@ The selective workload is too small to recover those costs.
 Exact anchors also leave too little work to recover each CPU JIT call.
 No JIT or GPU speedup is claimed for the exact-anchor execution.
 
-The artifact, preserved at commit `83f3eae6e`, is `benchmark/history/ner-1562-transducer-backends-2026-09-27.json`.
+The benchmark artifact was recorded during development and is not part of this repository.

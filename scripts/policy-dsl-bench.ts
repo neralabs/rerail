@@ -10,14 +10,13 @@ import { bundledPolicyDslDirectory } from "../src/policy-dsl-catalog.js";
  *
  *   node --import tsx scripts/policy-dsl-bench.ts [directory] [--pattern <ast-grep pattern>] [--runs <n>]
  *
- * The directory must lie inside the repository checkout. Defaults to the nera-landing `web/src` tree next to this package and a `console.log($$$ARGS)` rule, which
- * exercises both TypeScript grammars: `.ts` files parse with the TypeScript grammar and `.tsx` with TSX.
+ * The directory must lie inside this repository. Defaults to `src` and a `console.log($$$ARGS)` rule. `.ts` files
+ * parse with the TypeScript grammar and `.tsx` with TSX, so a tree holding both exercises both grammars.
  * Evaluation goes through the incremental workspace the enforcer uses, so a file the grammar cannot parse is
  * reported as a per-file failure while every other file still yields findings.
  */
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const REPOSITORY = resolve(ROOT, "..");
 type SnapshotFile = { language: "typescript" | "tsx"; path: string; source: string };
 
 function option(name: string, fallback: string): string {
@@ -59,8 +58,8 @@ function compile(pattern: string): NativeCompiledPolicyDsl {
 }
 
 const capabilitiesJson = await readFile(join(bundledPolicyDslDirectory(), "capabilities.json"), "utf8");
-const directory = resolve(REPOSITORY, process.argv[2]?.startsWith("--") === false ? process.argv[2] : join("web", "src"));
-if (!directory.startsWith(REPOSITORY + sep)) throw new Error(`${directory} is outside the repository checkout`);
+const directory = resolve(ROOT, process.argv[2]?.startsWith("--") === false ? process.argv[2] : "src");
+if (!directory.startsWith(ROOT + sep)) throw new Error(`${directory} is outside the repository checkout`);
 const pattern = option("--pattern", "console.log($$$ARGS)");
 const runs = Number.parseInt(option("--runs", "5"), 10);
 if (!(await stat(directory)).isDirectory()) throw new Error(`${directory} is not a directory`);

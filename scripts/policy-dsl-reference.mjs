@@ -1,43 +1,43 @@
 #!/usr/bin/env node
-// Generator and checker for docs/design/rerail-policy-dsl-reference.html (milestone M13).
+// Generator and checker for docs/policy-dsl-reference.html, the policy DSL reference.
 //
-//   node rerail/scripts/policy-dsl-reference.mjs fill
-//     Refills every example figure of the reference: `<figure class="ex-fig" data-src="SUITE:PATH#PTR">`
-//     takes its JSON from the committed port (SUITE `ruff` and `eslint` read the suites' branches,
-//     `repo` this checkout), so the reference quotes ports exactly; a figure without `data-src`
-//     keeps its own JSON. Both are reformatted to one width.
+//   node scripts/policy-dsl-reference.mjs fill
+//     Refills every example figure of the reference: `<figure class="ex-fig" data-src="repo:PATH#PTR">`
+//     takes its JSON from the committed document in this repository, so the reference quotes it
+//     exactly; a figure without `data-src` keeps its own JSON. Both are reformatted to one width.
 //
-//   node rerail/scripts/policy-dsl-reference.mjs figures
+//   node scripts/policy-dsl-reference.mjs figures
 //     Redraws the relations figure between `<!-- figure:relations:begin -->` and `…:end -->`.
 //
-//   node rerail/scripts/policy-dsl-reference.mjs check
+//   node scripts/policy-dsl-reference.mjs check
 //     Checks every `data-zod` annotation names an existing zod object, that each grammar
 //     production lists exactly that object's keys, and that a key the schema reads with
 //     `z.enum(...)` lists exactly its values as literals. `grammar` is the same check; reads only.
 //     `npm run check:reference` runs it in `check:all`.
 //
-//   node rerail/scripts/policy-dsl-reference.mjs coverage [--ruff REF|DIR] [--eslint REF|DIR] [--write]
+//   node scripts/policy-dsl-reference.mjs coverage [--ruff REF|DIR] [--eslint REF|DIR] [--write]
 //     Counts, per suite, the committed policy documents that use each DSL construct. Prints the
 //     table; with --write, regenerates the reference's coverage heatmap between its
 //     `<!-- coverage:begin -->` and `<!-- coverage:end -->` markers.
 //
-//   node --import tsx rerail/scripts/policy-dsl-reference.mjs examples [--kernel PATH] [--verbose]
+//   node --import tsx scripts/policy-dsl-reference.mjs examples [--kernel PATH] [--verbose]
 //     Compiles every example of the reference with the native kernel (`PolicyDslRuntime.compile`),
 //     wrapping rule, query, check and define examples into documents. PATH is a built kernel:
-//     `native/*.node`, or a debug build (`target/debug/libomp_cosine_rules_native.dylib`), which Node
+//     `native/*.node`, or a debug build (`target/debug/librerail_native.dylib`), which Node
 //     loads the same way; without it, the addon the package loads (`resolveNativeBindingPath`).
 //     Examples marked `data-kind="fragment"` are fragments on purpose. Reads only;
 //     `npm run test:reference` runs it in `test:all`, after the kernel is built.
 //
-//   node rerail/scripts/policy-dsl-reference.mjs locate FEATURE [--suite ID] [--whole check] [--limit N]
+//   node scripts/policy-dsl-reference.mjs locate FEATURE [--suite ID] [--whole check] [--limit N]
 //     Prints the smallest committed uses of a feature (see `features`), with files and JSON pointers:
 //     the search behind the reference's examples. `features` lists every feature with its count;
 //     `show SUITE:PATH[#PTR]` prints a document's checks, or the value at a pointer.
 //
-// The Ruff and ESLint ports live on the suites' branches and are read from git at pinned commits
-// (DEFAULT_RUFF_REF, DEFAULT_ESLINT_REF below); TSLint ports, bundled policies and the engine's
-// worked examples from this checkout. Regenerate in this order: fill, figures, coverage --write;
-// then check with grammar and examples.
+// The TSLint ports, bundled policies and the engine's worked examples are read from this checkout.
+// Ruff and ESLint conformance ports are not part of this repository; `--ruff` and `--eslint` add
+// them as a directory of ports, or as a git ref of this repository that has them under
+// `conformance/<suite>/rules`. Regenerate in this order: fill, figures, coverage --write; then
+// check with grammar and examples.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -45,16 +45,8 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const RERAIL = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const REPO = resolve(RERAIL, "..");
-const REFERENCE = join(REPO, "docs/design/rerail-policy-dsl-reference.html");
+const REFERENCE = join(RERAIL, "docs/policy-dsl-reference.html");
 const CAPABILITIES = join(RERAIL, "policies/executable-policy-dsl/capabilities.json");
-// The suites' commits this reference quotes, pinned so a rerun reproduces it: the heads of
-// jeffreysnell/ner-1642-ruff-conformance (m12c recorded) and jeffreysnell/rerail-eslint-conformance
-// when M13 was written. `--ruff` and `--eslint` take another ref (a branch to rescore against), or a
-// directory of ports.
-const DEFAULT_RUFF_REF = "3f102adcbd4bae40132565a478d5f2d33ed1aa3a";
-const DEFAULT_ESLINT_REF = "3a2a93db67a018d919696ce73acfd3e7cb0c5132";
-const SUITE_BRANCHES = { ruff: "jeffreysnell/ner-1642-ruff-conformance", eslint: "jeffreysnell/rerail-eslint-conformance" };
 
 function args(argv) {
   const out = { _: [] };
@@ -82,7 +74,7 @@ function* jsonFiles(dir) {
   }
 }
 
-const git = (...argv) => execFileSync("git", argv, { cwd: REPO, maxBuffer: 1 << 30 });
+const git = (...argv) => execFileSync("git", argv, { cwd: RERAIL, maxBuffer: 1 << 30 });
 
 /** `[path, text]` for every JSON file under `path` at a git ref, read in one `cat-file --batch`. */
 function gitJsonFiles(ref, path) {
@@ -93,7 +85,7 @@ function gitJsonFiles(ref, path) {
     .sort();
   if (names.length === 0) return [];
   const input = names.map(name => `${ref}:${name}`).join("\n") + "\n";
-  const out = execFileSync("git", ["cat-file", "--batch"], { cwd: REPO, input, maxBuffer: 1 << 30 });
+  const out = execFileSync("git", ["cat-file", "--batch"], { cwd: RERAIL, input, maxBuffer: 1 << 30 });
   const files = [];
   let offset = 0;
   for (const name of names) {
@@ -122,20 +114,24 @@ function documents(suite) {
   return docs;
 }
 
-/** A suite read from a git ref (`dir` relative to the repository) or, when `override` is a directory, from it. */
-function source(id, label, override, ref, dir) {
-  if (typeof override === "string" && existsSync(override)) return { id, label, dir: resolve(override) };
-  return { id, label, ref: typeof override === "string" ? override : ref, dir };
+/**
+ * An optional external suite: absent without `override`; read from `override` when it is a directory,
+ * otherwise from `conformance/<id>/rules` at the git ref `override` names.
+ */
+function source(id, label, override) {
+  if (typeof override !== "string") return undefined;
+  if (existsSync(override)) return { id, label, dir: resolve(override) };
+  return { id, label, ref: override, dir: `conformance/${id}/rules` };
 }
 
 function suites(options) {
   const list = [
-    source("ruff", "Ruff", options.ruff, DEFAULT_RUFF_REF, "rerail/conformance/ruff/rules"),
-    source("eslint", "ESLint", options.eslint, DEFAULT_ESLINT_REF, "rerail/conformance/eslint/rules"),
+    source("ruff", "Ruff", options.ruff),
+    source("eslint", "ESLint", options.eslint),
     { id: "tslint", label: "TSLint", dir: join(RERAIL, "conformance/tslint/rules") },
     { id: "bundled", label: "Bundled", dir: join(RERAIL, "policies/executable-policy-dsl/rules") },
     { id: "worked", label: "Worked", dir: join(RERAIL, "native/src/policy_dsl/compile/examples") },
-  ];
+  ].filter(suite => suite !== undefined);
   for (const suite of list) {
     if (suite.ref !== undefined) suite.commit = git("rev-parse", "--short=9", suite.ref).toString("utf8").trim();
   }
@@ -672,16 +668,15 @@ function heatmap({ rows, totals, scanned }) {
 }
 
 function suiteLocation(suite) {
-  const dir = suite.dir.startsWith(REPO) ? relative(REPO, suite.dir) : suite.dir;
+  const dir = suite.dir.startsWith(RERAIL) ? relative(RERAIL, suite.dir) : suite.dir;
   if (suite.ref === undefined) return `<code>${htmlEscape(dir)}</code>`;
-  const ref = /^[0-9a-f]{40}$/u.test(suite.ref) ? SUITE_BRANCHES[suite.id] : suite.ref.replace(/^origin\//u, "");
-  return `<code>${htmlEscape(dir)}</code> on <code>${htmlEscape(ref)}</code> @ <code>${suite.commit}</code>`;
+  return `<code>${htmlEscape(dir)}</code> on <code>${htmlEscape(suite.ref.replace(/^origin\//u, ""))}</code> @ <code>${suite.commit}</code>`;
 }
 
 function coverageSection(result) {
   const suitesLine = result.scanned.map(suite => `<li><b>${htmlEscape(suite.label)}</b>: ${suite.docs} documents in ${suiteLocation(suite)}</li>`).join("");
   return [
-    "<!-- coverage:begin (generated by rerail/scripts/policy-dsl-reference.mjs coverage --write) -->",
+    "<!-- coverage:begin (generated by scripts/policy-dsl-reference.mjs coverage --write) -->",
     `<ul class="scanned">${suitesLine}</ul>`,
     `<div class="figure-wrap">${heatmap(result)}</div>`,
     "<!-- coverage:end -->",
@@ -844,9 +839,7 @@ function pretty(value, indent = 0, prefix = 0) {
 }
 
 const SOURCES = {
-  ruff: { ref: DEFAULT_RUFF_REF, dir: "rerail/conformance/ruff/rules", label: "Ruff suite" },
-  eslint: { ref: DEFAULT_ESLINT_REF, dir: "rerail/conformance/eslint/rules", label: "ESLint suite" },
-  repo: { dir: "", label: "this branch" },
+  repo: { dir: "", label: "this repository" },
 };
 const fileCache = new Map();
 
@@ -869,7 +862,7 @@ function loadSource(spec) {
   const path = source.dir === "" ? file : `${source.dir}/${file}`;
   const key = `${suite}:${path}`;
   if (!fileCache.has(key)) {
-    const text = source.ref === undefined ? readFileSync(join(REPO, path), "utf8") : git("show", `${source.ref}:${path}`).toString("utf8");
+    const text = source.ref === undefined ? readFileSync(join(RERAIL, path), "utf8") : git("show", `${source.ref}:${path}`).toString("utf8");
     fileCache.set(key, JSON.parse(text));
   }
   const pointer = hash === undefined ? "" : hash.slice(1);

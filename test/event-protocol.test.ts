@@ -44,7 +44,7 @@ describe("Rerail event protocol", () => {
     }))).toEqual({ eventId: "session-1:prompt-1", deliveries: [] });
   });
 
-  it("carries delivery rule ids across the kernel socket and tolerates a kernel that sends none", () => {
+  it("carries delivery rule ids across the kernel socket", () => {
     const delivery = {
       sessionId: "session-1",
       requested: "steer" as const,
@@ -55,9 +55,5 @@ describe("Rerail event protocol", () => {
     const encoded = encodeRerailEventResult({ eventId: "session-1:prompt-1", deliveries: [delivery] });
     expect(JSON.parse(encoded).deliveries[0].ruleIds).toEqual(["rerail:no-raw-sql", "team:api-auth"]);
     expect(decodeRerailEventResult(encoded).deliveries).toEqual([delivery]);
-
-    const { ruleIds: _omitted, ...legacy } = delivery;
-    expect(decodeRerailEventResult(JSON.stringify({ eventId: "session-1:prompt-1", deliveries: [legacy] })).deliveries)
-      .toEqual([{ ...legacy, ruleIds: [] }]);
   });
 });

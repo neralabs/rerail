@@ -4,8 +4,8 @@
  * the fixtures use (`foo`, `MyClass`) loses TPs or gains FPs. Parse checks per file: TypeScript's syntax diagnostics
  * (in the runner) and the kernel's `source-partial` error-region message must be unchanged by the rename.
  *
- *   just rerail-conformance --rename-identifiers                 every rule, table of rules whose score changed
- *   just rerail-conformance --rename-identifiers --rule <name>   one rule's detailed diff on the renamed fixtures
+ *   node --import tsx conformance/tslint/cli.ts --rename-identifiers                 every rule, table of rules whose score changed
+ *   node --import tsx conformance/tslint/cli.ts --rename-identifiers --rule <name>   one rule's detailed diff on the renamed fixtures
  */
 import type { RuleInfo } from "./fixtures.js";
 import { evaluateRule, type FileResult, type RuleResult } from "./runner.js";

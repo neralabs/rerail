@@ -8,10 +8,9 @@ import { z } from "zod";
 import { RULE_MESSAGE_TYPE } from "../src/adapter-contract.js";
 import { createCosineRulesExtension } from "../src/extension.js";
 import type { CosineRule } from "../src/rule-schema.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "./native-daemon-fixture.js";
 import { defaultRerailDatabasePath, resetRepositoryHistory } from "../src/database.js";
-import { resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
+import { openScopedRuleCatalog, resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
 import { SqliteTranscriptReader } from "../src/transcript-store.js";
 
 type Handler = (event: unknown, context: ExtensionContext) => unknown;
@@ -168,7 +167,7 @@ describe("OMP cosine-rules extension", () => {
     ]);
     expect(harness.entries).toEqual([
       expect.objectContaining({
-        customType: "omp-cosine-rules.match",
+        customType: "rerail.match",
         data: expect.objectContaining({ ruleId: "checkout", delivery: "steer" }),
       }),
     ]);
@@ -230,7 +229,7 @@ describe("OMP cosine-rules extension", () => {
       version: 1,
       rules: [{ ...sentenceRule, id: "file-only", action: { delivery: "steer", content: "File-only rule." } }],
     }), { flag: "wx" });
-    const store = new SqliteRuleStore(join(harness.context.cwd, ".rerail", "transcripts.sqlite"));
+    const store = openScopedRuleCatalog(harness.context.cwd);
     store.upsertCosine({ ...sentenceRule, action: { delivery: "steer", content: "From the database." } });
     store.upsertCosine({ ...sentenceRule, id: "disabled", action: { delivery: "steer", content: "Disabled rule." } }, { enabled: false });
     store.close();
@@ -347,7 +346,7 @@ describe("OMP cosine-rules extension", () => {
     expect(harness.messages).toEqual([]);
     expect(harness.entries).toEqual([
       expect.objectContaining({
-        customType: "omp-cosine-rules.match",
+        customType: "rerail.match",
         data: expect.objectContaining({
           ruleId: "tool-input",
           source: "tool:submit",
@@ -395,7 +394,7 @@ describe("OMP cosine-rules extension", () => {
 
     expect(harness.entries).toEqual([
       expect.objectContaining({
-        customType: "omp-cosine-rules.match",
+        customType: "rerail.match",
         data: expect.objectContaining({ ruleId: "no-force-push", source: "tool:bash", boundary: "tool-call", delivery: "observe" }),
       }),
     ]);
@@ -450,7 +449,7 @@ describe("OMP cosine-rules extension", () => {
     );
 
     expect(harness.messages).toHaveLength(1);
-    expect(harness.entries.filter((entry) => entry.customType === "omp-cosine-rules.match")).toHaveLength(1);
+    expect(harness.entries.filter((entry) => entry.customType === "rerail.match")).toHaveLength(1);
   });
 
   it("keeps recording and delivering guidance after an in-place reset beneath the daemon", async () => {

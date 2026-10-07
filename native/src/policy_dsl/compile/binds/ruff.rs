@@ -1,5 +1,5 @@
 //! Port-shaped rules for Ruff's Pyflakes usedness and resolution rules, against where Ruff 0.16.9
-//! itself reports them on the fixtures in `rerail-fixtures/python/scope/usage` (`rerail-fixtures/python/scope/generate_usage.py`).
+//! itself reports them on the fixtures in `fixtures/python/scope/usage` (`fixtures/python/scope/generate_usage.py`).
 //! Where the engine is conservative by design (a read `eval` may make) the port reports less, and
 //! the test lists each such range.
 

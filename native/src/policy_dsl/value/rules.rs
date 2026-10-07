@@ -1,7 +1,7 @@
 //! Port-shaped rules for Ruff's value and binding rules, against where Ruff 0.16.9 itself reports
-//! them on the fixtures in `rerail-fixtures/python/value/ruff` (`rerail-fixtures/python/value/generate_ruff.py`); and for Bandit's call-argument
-//! rules, against where Bandit 1.8.6 reports them on its own examples in `rerail-fixtures/python/value/bandit`
-//! (`rerail-fixtures/python/value/generate_bandit.py`).
+//! them on the fixtures in `fixtures/python/value/ruff` (`fixtures/python/value/generate_ruff.py`); and for Bandit's call-argument
+//! rules, against where Bandit 1.8.6 reports them on its own examples in `fixtures/python/value/bandit`
+//! (`fixtures/python/value/generate_bandit.py`).
 
 use crate::policy_dsl::oracle;
 use crate::policy_dsl::test_support::*;
@@ -238,7 +238,7 @@ fn b005_strip_with_a_repeated_character() {
     assert_port("B005", source, ast, "witness.span");
 }
 
-/// Where a structural port reports on its fixture `rerail-fixtures/python/value/ruff/<stem>.py`, against Ruff.
+/// Where a structural port reports on its fixture `fixtures/python/value/ruff/<stem>.py`, against Ruff.
 fn assert_port(stem: &str, source: &str, ast: Value, anchor: &str) {
     assert_eq!(starts(ast, anchor, source), expected(stem), "{stem}");
 }
@@ -617,7 +617,7 @@ fn b019_cache_on_a_method_of_a_class_without_an_enum_base() {
 
 const BANDIT: &str = oracle!("python/value/bandit.expected.json");
 
-/// Where Bandit 1.8.6 reports `code` on its own example (`rerail-fixtures/python/value/generate_bandit.py`).
+/// Where Bandit 1.8.6 reports `code` on its own example (`fixtures/python/value/generate_bandit.py`).
 fn bandit(code: &str) -> Vec<u64> {
     let oracle: Value = serde_json::from_str(BANDIT).expect("oracle JSON");
     assert_eq!(oracle["bandit"], "1.8.6");

@@ -81,7 +81,7 @@ fn partial_agrees(value: &Value, oracle: &Json) -> bool {
         && truthy(value).is_none_or(|nonempty| nonempty != entries.is_empty())
 }
 
-/// Every case in the PHP oracle (`rerail-fixtures/php/value/generate_php.php`):
+/// Every case in the PHP oracle (`fixtures/php/value/generate_php.php`):
 /// - where PHP raises an error, Rerail knows nothing;
 /// - a value Rerail knows is the value PHP gives the constant expression, or, where PHP refuses
 ///   it as a constant expression, the value it evaluates to at run time; of a value it knows only

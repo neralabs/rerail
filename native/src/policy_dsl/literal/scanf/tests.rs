@@ -100,7 +100,7 @@ fn formats_php_refuses_are_one_error() {
     }
 }
 
-/// Every case of `rerail-fixtures/php/literal/scanf.expected.json`. A format PHP 8.5.11 refuses with no
+/// Every case of `fixtures/php/literal/scanf.expected.json`. A format PHP 8.5.11 refuses with no
 /// variable passed is one `error` with PHP's message; any other assigns the variables its
 /// placeholders number, and a call with variables throws exactly where one of them is passed no
 /// placeholder assigns ("not assigned") or a placeholder numbers one past the last passed (the

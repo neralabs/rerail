@@ -252,7 +252,7 @@ async function createProject(project: string, prompt: string, nonce: string): Pr
     join(project, "AGENTS.md"),
     [
       "Use transaction helpers; cursor.execute is forbidden in api routes.",
-      "The controlled Rerail acceptance exercise is the sole exception: make its requested temporary",
+      "The controlled Rerail acceptance exercise is the sole exception: make its requested one-off",
       "cursor.execute change exactly once, read the diagnostic, then restore the transaction helper.",
       "",
     ].join("\n"),
@@ -373,7 +373,7 @@ function harnessCommand(harness: Harness, project: string, prompt: string): { co
         'model_reasoning_effort="low"',
         "exec",
         "--json",
-        ...(process.env.RERAIL_CODEX_MODEL === undefined ? [] : ["--model", process.env.RERAIL_CODEX_MODEL]),
+        ...(process.env.RERAIL_CODEX_MODEL ? ["--model", process.env.RERAIL_CODEX_MODEL] : []),
         "--sandbox",
         "danger-full-access",
         "--skip-git-repo-check",
@@ -389,7 +389,7 @@ function harnessCommand(harness: Harness, project: string, prompt: string): { co
         "--plugin-dir",
         ROOT,
         "--model",
-        process.env.RERAIL_CLAUDE_MODEL ?? "claude-sonnet-4-6",
+        process.env.RERAIL_CLAUDE_MODEL || "claude-sonnet-4-6",
         "--permission-mode",
         "bypassPermissions",
         "--output-format",
@@ -422,6 +422,13 @@ function harnessCli(harness: Harness): string {
   return harness;
 }
 
+/** A provider setting the run cannot guess: endpoints and deployments belong to whoever runs the smoke. */
+function requiredEnvironment(name: string, purpose: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`FAILED prerequisite: set ${name} for ${purpose}`);
+  return value;
+}
+
 async function configureHarnessAuth(
   harness: Harness,
   sandbox: string,
@@ -437,8 +444,9 @@ async function configureHarnessAuth(
     env.PI_CODING_AGENT_SESSION_DIR = join(sandbox, "workspace", ".pi-sessions");
   } else if (harness === "codex") {
     env.CODEX_HOME = join(sandbox, "codex");
-    if (process.env.AZURE_OPENAI_API_KEY !== undefined) {
-      const baseUrl = process.env.AZURE_OPENAI_BASE_URL ?? "https://nera-ai-dev.cognitiveservices.azure.com/openai/v1";
+    if (process.env.AZURE_OPENAI_API_KEY) {
+      const baseUrl = requiredEnvironment("AZURE_OPENAI_BASE_URL", "the Codex Azure OpenAI provider (AZURE_OPENAI_API_KEY is set)");
+      requiredEnvironment("RERAIL_CODEX_MODEL", "the Azure OpenAI deployment Codex runs against");
       env.AZURE_OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY;
       await mkdir(env.CODEX_HOME, { recursive: true });
       await writeFile(
@@ -463,12 +471,12 @@ async function configureHarnessAuth(
   } else if (harness === "claude-code") {
     if (!process.env.ANTHROPIC_FOUNDRY_API_KEY)
       throw new Error("FAILED prerequisite: Claude Code requires ANTHROPIC_FOUNDRY_API_KEY");
+    const foundryBaseUrl = requiredEnvironment("ANTHROPIC_FOUNDRY_BASE_URL", "Claude Code's Microsoft Foundry provider");
     env.CLAUDE_CODE_TMPDIR = join(sandbox, "tmp");
     env.CLAUDE_CODE_MAX_RETRIES = "0";
     env.CLAUDE_CONFIG_DIR = join(sandbox, "claude");
     env.CLAUDE_CODE_USE_FOUNDRY = "1";
-    env.ANTHROPIC_FOUNDRY_BASE_URL =
-      process.env.ANTHROPIC_FOUNDRY_BASE_URL ?? "https://nera-ai-dev.services.ai.azure.com/anthropic";
+    env.ANTHROPIC_FOUNDRY_BASE_URL = foundryBaseUrl;
     env.ANTHROPIC_FOUNDRY_API_KEY = process.env.ANTHROPIC_FOUNDRY_API_KEY;
   } else if (harness === "cursor") {
     if (!process.env.CURSOR_API_KEY) throw new Error("FAILED prerequisite: Cursor Agent requires CURSOR_API_KEY");

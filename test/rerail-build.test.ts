@@ -14,7 +14,7 @@ import {
 
 /** This binary's store file (`STORE_FILE_NAME`, raised with the store schema floor). */
 const STORE_FILE = "content-v3.sqlite";
-const MAIN_STORE = join(homedir(), ".cache", "nera", "rerail", STORE_FILE);
+const MAIN_STORE = join(homedir(), ".cache", "rerail", STORE_FILE);
 
 let root: string;
 let storeOverride: string | undefined;
@@ -68,7 +68,7 @@ describe("resolveRerailBuild", () => {
   });
 
   test("a checkout build is dev with a store private to that checkout", () => {
-    const checkout = join(root, "landing");
+    const checkout = join(root, "checkout");
     mkdirSync(join(checkout, ".git"), { recursive: true });
     mkdirSync(join(checkout, "rerail"));
 
@@ -96,7 +96,7 @@ describe("resolveRerailBuild", () => {
 
   test("RERAIL_CONTENT_STORE_PATH overrides the store for main and dev alike", () => {
     const { home, packageRoot } = managedHome("1.4.0");
-    const checkout = join(root, "landing");
+    const checkout = join(root, "checkout");
     mkdirSync(join(checkout, ".git"), { recursive: true });
     process.env.RERAIL_CONTENT_STORE_PATH = join(root, "override.sqlite");
 

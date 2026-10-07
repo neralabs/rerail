@@ -131,7 +131,7 @@ describe("the single main instance", () => {
     const root = await temporaryDirectory();
     const machineHome = join(root, "user");
     const rerailHome = join(root, "rerail-home");
-    const mainDirectory = join(machineHome, ".cache", "nera", "rerail");
+    const mainDirectory = join(machineHome, ".cache", "rerail");
     const holder = await holdInAnotherProcess(mainDirectory, "1.4.0");
 
     try {

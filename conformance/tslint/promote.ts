@@ -11,8 +11,8 @@
  * then names the port default and verdict sidecar to `git rm`: the pack doc replaces them, and option-variant
  * overrides stay in `rules/<rule>/`.
  *
- *   just rerail-promote-tslint <rule>     promote one port (needs the fixtures: just rerail-conformance fetch)
- *   just rerail-promote-tslint --check    pack <-> golden.json <-> audit consistency (no fixtures needed)
+ *   node --import tsx conformance/tslint/promote.ts <rule>    promote one port (needs the fixtures: `cli.ts fetch`)
+ *   node --import tsx conformance/tslint/promote.ts --check   pack <-> golden.json <-> audit consistency (no fixtures needed)
  */
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -20,7 +20,7 @@ import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import { policyRuleSchema, type PolicyScope } from "../../src/policy-schema.js";
 import { PASS_AUDIT } from "./audit.js";
-import { ensureFixtures, loadScoredRules, REPOSITORY_ROOT } from "./fixtures.js";
+import { ensureFixtures, loadScoredRules, RERAIL_ROOT } from "./fixtures.js";
 import {
   GOLDEN_MANIFEST,
   goldenDocumentPath,
@@ -114,7 +114,7 @@ export function checkGolden(manifest: GoldenManifest = loadGoldenManifest(), dir
     problems.push(...auditProblems(rule));
     for (const stale of [`${rule}.json`, `${rule}.verdict.json`]) {
       const path = join(COMMITTED_PORTS_DIRECTORY, stale);
-      if (existsSync(path)) problems.push(`${rule}: golden, so ${relative(REPOSITORY_ROOT, path)} duplicates the pack doc and golden.json; git rm it`);
+      if (existsSync(path)) problems.push(`${rule}: golden, so ${relative(RERAIL_ROOT, path)} duplicates the pack doc and golden.json; git rm it`);
     }
     const entry = manifest.rules[rule];
     if (entry?.verdict === "PASS (repaired fixture)" && (entry.evidence ?? []).length === 0) {
@@ -145,7 +145,7 @@ export async function promote(rule: string, log: (line: string) => void = consol
   if (info === undefined) return [`${rule}: not a scored TSLint core rule`];
   if (isGoldenRule(rule)) return [`${rule}: already golden`];
   const portPath = join(COMMITTED_PORTS_DIRECTORY, `${rule}.json`);
-  if (!existsSync(portPath)) return [`${rule}: no port default at ${relative(REPOSITORY_ROOT, portPath)}`];
+  if (!existsSync(portPath)) return [`${rule}: no port default at ${relative(RERAIL_ROOT, portPath)}`];
   const problems = auditProblems(rule);
   if (problems.length > 0) return problems;
 
@@ -155,8 +155,8 @@ export async function promote(rule: string, log: (line: string) => void = consol
   const result = await evaluateRule(info, 1);
   const observed = observedEntry(result);
   const rename = await renameCheck(info);
-  if ("problem" in observed) problems.push(`${rule}: ${observed.problem} with the shipped doc (just rerail-conformance --rule ${rule})`);
-  if (rename.changed || rename.renamerIssues.length > 0) problems.push(`${rule}: scores differently on renamed fixtures (just rerail-conformance --rename-identifiers --rule ${rule})`);
+  if ("problem" in observed) problems.push(`${rule}: ${observed.problem} with the shipped doc (node --import tsx conformance/tslint/cli.ts --rule ${rule})`);
+  if (rename.changed || rename.renamerIssues.length > 0) problems.push(`${rule}: scores differently on renamed fixtures (node --import tsx conformance/tslint/cli.ts --rename-identifiers --rule ${rule})`);
   if ("problem" in observed || problems.length > 0) {
     rmSync(packPath);
     return problems;
@@ -177,17 +177,17 @@ export async function promote(rule: string, log: (line: string) => void = consol
   };
   const manifest = loadGoldenManifest();
   writeFileSync(GOLDEN_MANIFEST, goldenManifestText({ ...manifest, rules: { ...manifest.rules, [rule]: entry } }));
-  log(`promoted ${rule}: ${relative(REPOSITORY_ROOT, packPath)} (${entry.verdict}, TP ${entry.truePositives}${entry.outOfScope === undefined ? "" : `, out of scope ${entry.outOfScope.join(", ")}`})`);
-  const stale = [portPath, sidecarPath].filter(path => existsSync(path)).map(path => relative(REPOSITORY_ROOT, path));
+  log(`promoted ${rule}: ${relative(RERAIL_ROOT, packPath)} (${entry.verdict}, TP ${entry.truePositives}${entry.outOfScope === undefined ? "" : `, out of scope ${entry.outOfScope.join(", ")}`})`);
+  const stale = [portPath, sidecarPath].filter(path => existsSync(path)).map(path => relative(RERAIL_ROOT, path));
   log(`the pack doc replaces the port default; remove it with: git rm ${stale.join(" ")}`);
-  if (entry.verdict === "PASS (repaired fixture)" && entry.evidence === undefined) log(`add evidence for the invalid fixture lines to ${relative(REPOSITORY_ROOT, GOLDEN_MANIFEST)}`);
+  if (entry.verdict === "PASS (repaired fixture)" && entry.evidence === undefined) log(`add evidence for the invalid fixture lines to ${relative(RERAIL_ROOT, GOLDEN_MANIFEST)}`);
   return [];
 }
 
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: { check: { type: "boolean", default: false } } });
-  const problems = values.check ? checkGolden() : positionals.length === 1 ? await promote(positionals[0]!) : ["usage: just rerail-promote-tslint <rule> | --check"];
-  if (values.check && problems.length === 0) console.log(`golden set consistent: ${goldenRules().length} rules in ${relative(REPOSITORY_ROOT, PACK_DIRECTORY)} and ${relative(REPOSITORY_ROOT, GOLDEN_MANIFEST)}`);
+  const problems = values.check ? checkGolden() : positionals.length === 1 ? await promote(positionals[0]!) : ["usage: node --import tsx conformance/tslint/promote.ts <rule> | --check"];
+  if (values.check && problems.length === 0) console.log(`golden set consistent: ${goldenRules().length} rules in ${relative(RERAIL_ROOT, PACK_DIRECTORY)} and ${relative(RERAIL_ROOT, GOLDEN_MANIFEST)}`);
   for (const problem of problems) console.error(problem);
   if (problems.length > 0) process.exitCode = 1;
 }

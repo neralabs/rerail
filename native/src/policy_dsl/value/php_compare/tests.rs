@@ -1,4 +1,4 @@
-//! Agreement with the PHP compare oracle (`rerail-fixtures/php/compare/generate_php.php`): keys,
+//! Agreement with the PHP compare oracle (`fixtures/php/compare/generate_php.php`): keys,
 //! members, names and references as nikic/PHP-Parser 5.9.0 parses the code and PHP 8.5 evaluates
 //! and looks up what it names.
 

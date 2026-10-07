@@ -9,7 +9,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 // store. Additive changes that older SQL ignores, such as indexes, bump STORE_REVISION instead;
 // every revision batch is idempotent and older binaries tolerate a newer revision.
 //
-// The managed installation's store is one file per machine (`~/.cache/nera/rerail/`), shared by
+// The managed installation's store is one file per machine (`~/.cache/rerail/`), shared by
 // every installed version; a build running from a checkout keeps its own in `<checkout>/.rerail/`.
 // Raising the floor therefore also renames the file (STORE_FILE_NAME), wherever it lives: older
 // binaries keep their own store and a new store starts empty, since the store is a cache. The

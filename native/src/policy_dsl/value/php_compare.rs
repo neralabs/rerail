@@ -1,6 +1,6 @@
 //! What `compare`'s `key`, `member`, `name` and `reference` modes read from PHP (tree-sitter-php
 //! 0.24.2), as nikic/PHP-Parser 5.9.0 parses the code and PHP 8.5 evaluates and looks up what it
-//! names (`rerail-fixtures/php/compare/generate_php.php`).
+//! names (`fixtures/php/compare/generate_php.php`).
 //!
 //! - A key is the name of a property, method, class constant, array element or named argument,
 //!   or of the access, declaration or element holding one: an identifier as written, or what PHP

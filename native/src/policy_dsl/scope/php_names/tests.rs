@@ -39,7 +39,8 @@ fn names_resolve_as_php_parser_name_resolver() {
         serde_json::from_str(oracle!("php/scope/php/names.expected.json")).expect("oracle JSON");
     assert_eq!(oracle["php"], "8.5.11");
     assert_eq!(oracle["phpParser"], "v5.9.0");
-    let directory = std::path::Path::new(env!("RERAIL_FIXTURES_DIR")).join("php/scope/php/names");
+    let directory =
+        std::path::Path::new(crate::policy_dsl::fixtures_dir!()).join("php/scope/php/names");
     let mut failures = Vec::new();
     let mut counts = BTreeMap::<&str, usize>::new();
     for (file, records) in oracle["files"].as_object().expect("files") {
@@ -123,7 +124,8 @@ fn names_resolve_as_php_parser_name_resolver() {
 fn use_items_import_what_php_parser_reads() {
     let oracle: Value =
         serde_json::from_str(oracle!("php/scope/php/names.expected.json")).expect("oracle JSON");
-    let directory = std::path::Path::new(env!("RERAIL_FIXTURES_DIR")).join("php/scope/php/names");
+    let directory =
+        std::path::Path::new(crate::policy_dsl::fixtures_dir!()).join("php/scope/php/names");
     let mut failures = Vec::new();
     let mut total = 0;
     for (file, records) in oracle["imports"].as_object().expect("imports") {

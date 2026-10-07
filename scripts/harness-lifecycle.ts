@@ -5,15 +5,16 @@
  *
  *   npm run test:e2e:lifecycle                       # omp, the user's default model
  *   npm run test:e2e:lifecycle:pi                    # pi, the user's default model
- *   node --import tsx scripts/harness-lifecycle.ts pi -- --provider azure-openai-responses --model gpt-5.4-mini
+ *   node --import tsx scripts/harness-lifecycle.ts pi -- --provider <provider> --model <model>
  *                                                    # anything after `--` goes to the harness verbatim
- *   LIFECYCLE_KEEP=1 ...                             # keep the temp project and print its path
+ *   LIFECYCLE_KEEP=1 ...                             # keep the scratch project and print its path
  *   LIFECYCLE_DUMP=1 ...                             # print every harness transcript entry (truncated)
  *
  * The harness runs with extension discovery off and exactly this checkout's `dist/` build loaded, and
- * with `--session-dir` under the temp project so the harness's own transcript is at a known path. The
- * project has every bundled policy disabled except `nera-sql:sql-execute-fstring`, and the
- * prompt asks the agent to write `api/probe.py` with a raw `conn.execute(f"INSERT ...")`.
+ * with `--session-dir` under the scratch project so the harness's own transcript is at a known path.
+ * The proof owns its rule rather than depending on which documents ship as bundled defaults: the run's
+ * private Rerail catalog holds one enabled policy, flagging `.execute(f"... VALUES ({...})")` as
+ * SQL_EXECUTE_FSTRING, and the prompt asks the agent to write `api/probe.py` with exactly that call.
  *
  * What one run proves, from records only (nothing depends on the model's wording):
  *   1. The extension prints no `Extension error` / `handler timed out` lines.
@@ -34,8 +35,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { RULE_MESSAGE_TYPE } from "../src/adapter-contract.js";
-import { bootstrapProjectRules } from "../src/rule-bootstrap.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
+import { defaultRerailDatabasePath } from "../src/database.js";
+import { openScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
 import { SqliteTranscriptReader, type TranscriptEventRecord } from "../src/transcript-store.js";
 
 type Harness = "omp" | "pi";
@@ -49,8 +50,37 @@ const TIMEOUT_MS = 180_000;
  * fire on every start is the failure this guards against.
  */
 const MAX_SESSION_START_MS = 5_000;
-const POLICY = "nera-sql:sql-execute-fstring";
 const CODE = "SQL_EXECUTE_FSTRING";
+/** The one enabled policy: a Python `.execute(...)` call whose SQL is an f-string interpolating into the statement. */
+const POLICY = {
+  format: "rerail.policy/v1",
+  id: "rerail-lifecycle:sql-execute-fstring",
+  revision: 1,
+  scope: { include: ["**/*.py"], exclude: [] },
+  checks: [
+    {
+      id: "execute-fstring",
+      forbid: {
+        ast: {
+          language: "python",
+          rule: {
+            kind: "call",
+            all: [
+              { pattern: "$C.execute($$$ARGS)" },
+              {
+                has: {
+                  kind: "argument_list",
+                  has: { kind: "string", all: [{ regex: "^([rR]?[fF]|[fF][rR])[\"']" }, { regex: "(?is)\\b(WHERE|VALUES|SET|HAVING|LIKE|IN\\s*\\().*\\{" }] },
+                },
+              },
+            ],
+          },
+        },
+      },
+      finding: { code: CODE, severity: "error", anchor: "witness.span", message: "Do not build SQL queries with string formatting; use parameterized queries." },
+    },
+  ],
+};
 const PROBE = "api/probe.py";
 const PROMPT =
   `Use the write tool to create ${PROBE} containing exactly:\n\n` +
@@ -203,16 +233,14 @@ async function project(): Promise<Workspace> {
   const root = await mkdtemp(join(tmpdir(), "rerail-lifecycle-"));
   await mkdir(join(root, "api"), { recursive: true });
   await writeFile(join(root, "api", "existing.py"), "def existing():\n    return 1\n");
-  // Rules staged the pre-catalog way, in the checkout's own database: the runtime imports them into the
-  // run's private Rerail home, which also keeps its history out of the user's.
-  const checkoutDatabase = join(root, ".rerail", "transcripts.sqlite");
   const rerailHome = join(root, ".rerail-home");
   const databasePath = join(rerailHome, "rerail.sqlite");
-  bootstrapProjectRules(checkoutDatabase);
-  const store = new SqliteRuleStore(checkoutDatabase);
-  store.setEnabled({ filter: { kind: "policy" } }, false);
-  if (store.setEnabled({ ids: [POLICY] }, true) !== 1) throw new Error(`${POLICY} is not a bundled rule`);
-  store.close();
+  const catalog = openScopedRuleCatalog(root, defaultRerailDatabasePath({ ...process.env, RERAIL_HOME: rerailHome }));
+  try {
+    catalog.upsertPolicy(POLICY, { applicability: "project", enabled: true });
+  } finally {
+    catalog.close();
+  }
   // Orca's terminal injects ORCA_* variables that redirect OMP's agent directory; the run must see the
   // user's real HOME (credentials, model choice) and nothing else. RERAIL_AUTOSTART=0 keeps the daemon out.
   const env: NodeJS.ProcessEnv = { RERAIL_AUTOSTART: "0" };

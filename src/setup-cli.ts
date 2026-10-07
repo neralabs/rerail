@@ -179,10 +179,9 @@ export async function runSetupCommand(args: readonly string[], context: SetupCon
     // A daemon from before this setup keeps serving the old version's UI and kernel; replace it.
     const lookup = await lookupDaemon(home);
     const activeRoot = await realpath(updater.currentLink);
-    const runningRoot = lookup.status === "running" && lookup.state.packageRoot !== undefined
+    const runningRoot = lookup.status === "running"
       ? await realpath(lookup.state.packageRoot).catch(() => lookup.state.packageRoot)
       : undefined;
-    // No recorded root means a daemon from before setup could tell; treat it as stale too.
     const stale = lookup.status === "unresponsive" || (lookup.status === "running" && runningRoot !== activeRoot);
     if (stale) {
       process.stdout.write(`Stopping daemon pid ${lookup.state.pid} (${lookup.status === "running" ? `version ${lookup.state.version}` : "not answering"})...\n`);

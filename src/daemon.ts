@@ -51,11 +51,8 @@ export interface DaemonState {
    */
   ui: "bundled" | "dev";
   startedAt: number;
-  /**
-   * The package the daemon was launched from; `rerail setup` restarts a daemon whose root is no
-   * longer `current`. Absent in state files written before this field existed.
-   */
-  packageRoot?: string;
+  /** The package the daemon was launched from; `rerail setup` restarts a daemon whose root is no longer `current`. */
+  packageRoot: string;
   workspaceRoot?: string;
   /** Same-user capability for normal native sessions; never exposed by health/API responses. */
   nativeToken?: string;

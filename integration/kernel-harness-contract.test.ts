@@ -71,7 +71,7 @@ describe("shared harness kernel", () => {
           requested: "steer",
           mechanism: "native-queue",
           content: "COSINE: preserve transaction atomicity",
-          // Cosine matches are not policy steering: re-rail attribution only credits policy rules (NER-1525 Q22).
+          // Cosine matches are not policy steering: re-rail attribution only credits policy rules.
           ruleIds: [],
         },
       ]);

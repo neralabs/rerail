@@ -11,25 +11,27 @@ the equivalence set by decision on 2026-09-23: whitespace and layout belong to a
 are listed in `excluded-rules.json` with that reason; the harness never evaluates them, and reports and summaries list
 them separately instead of counting them as `NO_PORT`. Other TSLint "Format"-category rules (quotemark, new-parens,
 arrow-parens, import-spacing, linebreak-style, no-irregular-whitespace, number-literal-format, newline-before-return)
-stay in. Reports committed before the decision still show the formatter rules.
+stay in.
 
 ## Inner loop
 
+Run the harness from the repository root. `conformance` below stands for `node --import tsx conformance/tslint/cli.ts`:
+
 ```sh
-just rerail-conformance fetch                  # once; sparse, shallow checkout into tmp/tslint-fixtures (idempotent)
-just rerail-conformance --rule no-var-keyword  # evaluate one port, print every miss/extra with line text and caret
-just rerail-conformance --rule quotemark --ends   # also list findings whose start matches but end differs
-RERAIL_TSLINT_PORTS=<dir> just rerail-conformance --rule curly   # score scratch copies of the ports instead of rules/
-just rerail-conformance golden                 # golden gate only: every golden rule meets its golden.json entry
-just rerail-conformance --label all --no-corpus # all rules; writes the consolidated report + summary (see below)
-just rerail-conformance --label m3 --no-corpus --compare docs/design/data_history/rerail-tslint-conformance/summary-<date>-m2.json --delta-only
-                                              # milestone: summary + delta against an earlier summary
-just rerail-conformance --corpus web/src       # every port in one workspace over web/src: cold load + 1-file edits
-just rerail-conformance --rename-identifiers   # identifier-poisoning gate: every rule on renamed fixtures (see below)
-just rerail-conformance --rename-identifiers --rule class-name   # one rule's detail on renamed fixtures
-just rerail-conformance literals [--all]       # static scan: identifier literals a port hardcodes that only fixtures use
-just rerail-promote-tslint <rule>              # promote a proven port into the golden set (see below)
-just rerail-promote-tslint --check             # pack <-> golden.json <-> audit consistency
+conformance fetch                  # once; sparse, shallow checkout into tmp/tslint-fixtures (idempotent)
+conformance --rule no-var-keyword  # evaluate one port, print every miss/extra with line text and caret
+conformance --rule quotemark --ends   # also list findings whose start matches but end differs
+RERAIL_TSLINT_PORTS=<dir> conformance --rule curly   # score scratch copies of the ports instead of rules/
+conformance golden                 # golden gate only: every golden rule meets its golden.json entry
+conformance --label all --no-corpus # all rules; writes the consolidated report + summary (see below)
+conformance --label m3 --no-corpus --compare conformance/tslint/history/summary-<date>-m2.json --delta-only
+                                   # milestone: summary + delta against an earlier summary
+conformance --corpus src           # every port in one workspace over src/: cold load + 1-file edits
+conformance --rename-identifiers   # identifier-poisoning gate: every rule on renamed fixtures (see below)
+conformance --rename-identifiers --rule class-name   # one rule's detail on renamed fixtures
+conformance literals [--all]       # static scan: identifier literals a port hardcodes that only fixtures use
+node --import tsx conformance/tslint/promote.ts <rule>   # promote a proven port into the golden set (see below)
+node --import tsx conformance/tslint/promote.ts --check  # pack <-> golden.json <-> audit consistency
 ```
 
 While you port a rule, read the fixtures in `tmp/tslint-fixtures/test/rules/<rule>/` and the implementation in
@@ -45,7 +47,7 @@ conformance/tslint/
   rules/<rule>.verdict.json         optional manual verdict sidecar (non-golden rules only)
   golden.json                       golden gate: expected verdict, TP and out-of-scope files per golden rule
   golden.ts golden-gate.ts          golden membership (the pack folder), golden.json, and the gate
-  promote.ts                        `just rerail-promote-tslint`: promotion into the pack and its --check
+  promote.ts                        promotion into the pack and its --check
   tslint-rules.tsv                  rule list (all 163 core rules): name, T = needs type info, F = has fixer
   excluded-rules.json               rules removed from the equivalence set: rule -> reason
   repairs.ts                        minimal edits that make invalid fixtures parse (effective verdicts)
@@ -63,17 +65,16 @@ conformance/tslint/
 
 ### Run output
 
-A full run writes, relative to the repo root:
+A full run writes, relative to the repository root:
 
 | file | where | commit? |
 |---|---|---|
-| `report-<date>-<label>.md` | `docs/design/data_history/rerail-tslint-conformance/` (`tmp/rerail-conformance/` with `--delta-only`) | yes, unless `--delta-only` |
-| `summary-<date>-<label>.json` | `docs/design/data_history/rerail-tslint-conformance/` | yes |
-| `delta-<date>-<label>.md` | `docs/design/data_history/rerail-tslint-conformance/` (only with `--compare`) | yes |
-| `report-<date>-<label>.json` | `tmp/rerail-conformance/` (gitignored) | no: ~3.5 MB of per-fixture detail, regenerable |
+| `report-<date>-<label>.md` | `conformance/tslint/history/` (`tmp/rerail-conformance/` with `--delta-only`) | yes, unless `--delta-only` |
+| `summary-<date>-<label>.json` | `conformance/tslint/history/` | yes |
+| `delta-<date>-<label>.md` | `conformance/tslint/history/` (only with `--compare`) | yes |
+| `report-<date>-<label>.json` | `tmp/rerail-conformance/` (ignored) | no: ~3.5 MB of per-fixture detail, regenerable |
 
-`docs/design/data_history/` is the one `data_history/` directory `.gitignore` does not ignore. Every full run also
-re-runs the grammar-gap and engine probes against the current kernel and puts them in the report.
+Every full run also re-runs the grammar-gap and engine probes against the current kernel and puts them in the report.
 
 The **summary** has one scalar row per rule: raw and effective verdict, TP/FP/FN, engine failures, partial files,
 primary primitive, eval ms, and the port's size (`port-size.ts`, summed over the default doc and every override):
@@ -202,10 +203,10 @@ the summary), never as a miss. None of the 74 golden rules loses a fixture file 
 syntax is the only blocker), `truePositives` (on the repaired fixtures for a repaired-fixture PASS; FP, FN and
 engine failures must be 0), `outOfScope` (fixture files the shipped scope leaves out), and the notes a sidecar gave
 the report: `reason`, `primitive`, `secondary`, and `evidence`, which for a repaired-fixture PASS cites the fixture
-lines that are not valid TypeScript. `just rerail-conformance golden` and every full run check each golden rule
+lines that are not valid TypeScript. `conformance golden` and every full run check each golden rule
 against its entry and exit 1 with one line per regression; the report's Golden set section lists the result.
 
-`just rerail-promote-tslint <rule>` promotes a port: its audit class must be `genuine` and it must not be in
+`node --import tsx conformance/tslint/promote.ts <rule>` promotes a port: its audit class must be `genuine` and it must not be in
 `REQUIRES_CONFIGURATION`; scored with the doc as it would ship, it must reach an effective PASS and score identically
 on renamed fixtures. It writes the pack doc (the port's default doc with a `Port of TSLint's ...` description prefix
 and the shipped scope) and the `golden.json` entry, then prints the `git rm` for the port default and sidecar.
@@ -221,8 +222,8 @@ rule keeps a port default or sidecar in `rules/`.
 3. Findings are matched on **start position** (line and UTF-16 column, exactly as TSLint reports). End positions
    are scored separately (the `end` column). The kernel reports the whole matched node, so match the node that
    starts where TSLint's failure starts. For example, `pattern: "var"` matches the bare `var` keyword token.
-4. Don't tune a port to one fixture's quirks. The same doc must stay sensible on real code: `--corpus web/src`
-   runs it over the whole frontend.
+4. Don't tune a port to one fixture's quirks. The same doc must stay sensible on real code: `--corpus <dir>`
+   runs it over a real TypeScript tree (the full run defaults to Rerail's own `src/`).
 
 ## How evaluation works
 

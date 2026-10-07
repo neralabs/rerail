@@ -1157,7 +1157,7 @@ fn source_range(table: &ScopeTable, reference: &Reference) -> std::ops::Range<us
 }
 
 /// Every reference the table resolves to no file-local binding, against an offline oracle's list
-/// (`rerail-fixtures/python/scope/generate_python.py`, `rerail-fixtures/ecma/scope/generate_typescript.mjs`): Ruff's
+/// (`fixtures/python/scope/generate_python.py`, `fixtures/ecma/scope/generate_typescript.mjs`): Ruff's
 /// F821 for Python, typescript-eslint's unresolved references for
 /// TypeScript. Names the oracle treats as builtins or ambient globals are left out on both sides.
 fn oracle_differences(
@@ -1326,7 +1326,7 @@ fn oracle_fixtures(
     let root = std::env::var("SCOPE_ORACLE_ROOT")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
-            std::path::Path::new(env!("RERAIL_FIXTURES_DIR"))
+            std::path::Path::new(crate::policy_dsl::fixtures_dir!())
                 .join(pack)
                 .join("scope")
         })

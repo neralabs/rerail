@@ -33,8 +33,6 @@ export const RERAIL_SCHEMA_STATEMENTS: readonly string[] = [
   "CREATE INDEX IF NOT EXISTS `rule_project_repositories_project` ON `rule_project_repositories` (`project_id`)",
   "CREATE TABLE IF NOT EXISTS `catalog_rules` (\n\t`owner_kind` text NOT NULL,\n\t`owner_id` text NOT NULL,\n\t`rule_id` text NOT NULL,\n\t`kind` text NOT NULL,\n\t`revision` integer NOT NULL,\n\t`enabled` integer DEFAULT true NOT NULL,\n\t`document_json` text NOT NULL,\n\t`payload_hash` text NOT NULL,\n\t`source_digest` text,\n\t`origin` text NOT NULL,\n\t`sync_state` text DEFAULT 'local-only' NOT NULL,\n\t`upstream_rule_id` text,\n\t`created_at` integer NOT NULL,\n\t`updated_at` integer NOT NULL,\n\tPRIMARY KEY(`owner_kind`, `owner_id`, `rule_id`),\n\tCONSTRAINT \"catalog_rules_owner\" CHECK(\n      (\"catalog_rules\".\"owner_kind\" = 'global' AND \"catalog_rules\".\"owner_id\" = 'global')\n      OR (\"catalog_rules\".\"owner_kind\" = 'project' AND \"catalog_rules\".\"owner_id\" <> 'global')\n    ),\n\tCONSTRAINT \"catalog_rules_revision\" CHECK(\"catalog_rules\".\"revision\" > 0)\n)",
   "CREATE INDEX IF NOT EXISTS `catalog_rules_kind_enabled` ON `catalog_rules` (`kind`,`enabled`)",
-  "CREATE TABLE IF NOT EXISTS `rule_migrations` (\n\t`repository_id` text NOT NULL,\n\t`source_path` text NOT NULL,\n\t`migrated_at` integer NOT NULL,\n\t`rule_count` integer NOT NULL,\n\tPRIMARY KEY(`repository_id`, `source_path`)\n)",
-  "CREATE TABLE IF NOT EXISTS `rule_migration_tombstones` (\n\t`project_id` text NOT NULL,\n\t`rule_id` text NOT NULL,\n\t`deleted_at` integer NOT NULL,\n\tPRIMARY KEY(`project_id`, `rule_id`)\n)",
 ];
 
 export const RERAIL_SCHEMA_SQL = `${RERAIL_SCHEMA_STATEMENTS.join(";\n\n")};\n`;

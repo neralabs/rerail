@@ -6,7 +6,7 @@ Rerail ships as one customer-neutral local runtime. Customer identity, control-p
 
 The policy kernel and latency-sensitive evaluation run on the customer's machine. Network services provide distribution, activation, entitlement renewal, and signed policy delivery; they are not in the evaluation path.
 
-The initial distribution channel is the restricted npm package `@neralabs/rerail`, served from a private Azure Artifacts feed until launch (see [Pre-launch registry](#pre-launch-registry)). A customer download portal may replace npm access management later without changing the runtime artifact or activation model.
+The distribution channel is the npm package `@neralabs/rerail` on npmjs, the only registry Rerail is published to (see [Registry](#registry)). A customer download portal may be added later without changing the runtime artifact or activation model.
 
 ## System shape
 
@@ -41,42 +41,23 @@ The package contains:
 
 A customer-specific package, branch, or native build is prohibited by default. Customer-specific identity and leak attribution belong in signed entitlements and policy bundles. This keeps releases reproducible and allows one security update to serve every deployment.
 
-### Pre-launch registry
+### Registry
 
-Before launch, the registry of record is a private Azure Artifacts npm feed:
+npmjs is the registry of record. `.github/workflows/release.yml` publishes each tagged version there with npm trusted publishing (OIDC from a protected GitHub environment, no long-lived publish token). No other registry, mirror, or feed carries Rerail.
 
-- Organization: `nera-software` (Entra tenant `nera.software`).
-- Feed: `nera-software`.
-- Registry: `https://pkgs.dev.azure.com/nera-software/_packaging/nera-software/npm/registry/`.
+Until launch the package is restricted: only members of the `neralabs` npm organization can read it. They authenticate with their own npm identities (`npm login`); automation uses a read-only granular access token limited to this package. At launch the package becomes public and installs without an account, matching the Apache-2.0 source, which is public as well.
 
-Each developer authenticates with their own organization-scoped, read-only personal access token (Packaging: Read). `just rerail` mints it through the Azure CLI after `az login` and stores it in `~/.npmrc`; re-running `just rerail` replaces an expired one. Organization access is Stakeholder, granted by a group rule on the `Nera Developers` Entra group, so adding someone to that group is the whole onboarding step. `rerail-release.yml` publishes tagged versions with the `AZURE_DEVOPS_NPM_TOKEN` secret to the registry named by the `RERAIL_AZURE_NPM_REGISTRY` repository variable.
-
-#### Anonymous read at launch: undecided
-
-Nobody outside the organization can install Rerail yet. The options considered, each set aside for now:
-
-- Public npmjs: publishes the compiled package, native kernels included, to anyone.
-- A shared read token embedded in the install script: it leaks with the script and expires on a schedule nobody owns.
-- A read-through proxy in front of the feed: more infrastructure to run, secure, and keep up.
-- A feed in a public Azure DevOps project: Azure DevOps is retiring public projects.
-
-Consequence for NER-1610: the no-account one-line `npx` install in the first-run journey cannot work for people outside the organization until this is decided. NER-1610 builds against the private route in the meantime.
-
-### npm access
-
-This is the launch-era model, for when the package is on npmjs; it is not in effect yet. The package is restricted. Each customer receives read-only access through a dedicated npm organization team. Individual developers authenticate with their npm identities; automation uses a read-only granular token limited to this package.
-
-Example access grant:
+Pre-launch access grant:
 
 ```sh
-npm access grant read-only neralabs:customer-acme @neralabs/rerail
+npm access grant read-only neralabs:<team> @neralabs/rerail
 ```
 
-Customer installation:
+Installation:
 
 ```sh
-npm login
-npm install @neralabs/rerail
+npm login   # only while the package is restricted
+npx @neralabs/rerail setup
 ```
 
 Revoking npm access prevents future downloads. It does not remove previously downloaded artifacts or terminate an offline entitlement.
@@ -91,11 +72,11 @@ beta    designated customer preview
 latest  stable customer release
 ```
 
-The bytes must not be rebuilt between channels. Production publication uses npm provenance and restricted access.
+The bytes must not be rebuilt between channels. npm provenance attestations are generated once the source repository is public.
 
 ## npm-backed explicit updates
 
-npm is the authenticated artifact transport for updates. Rerail uses the customer's existing npm authentication to resolve and install the restricted package; it never copies, logs, or sends npm credentials to a control plane.
+npm is the authenticated artifact transport for updates. Rerail uses the machine's existing npm configuration and authentication to resolve and install the package; it never copies, logs, or sends npm credentials to a control plane.
 
 Harness configurations invoke the stable `rerail` launcher rather than a version-specific file. Managed versions live below the Rerail home directory:
 
@@ -126,7 +107,7 @@ Updates are explicit. `rerail events`, the harness hooks, and the daemon run the
 
 An update:
 
-1. Exports the rules of the current project, and of the project the daemon serves, to `<project>/.rerail/rules.json`, so a later bootstrap can restore them.
+1. Copies the Rerail database to `$RERAIL_HOME/rerail.sqlite.pre-update`, so every rule and repository's history survives a failed or regretted update.
 2. Resolves the exact version behind the configured npm dist-tag.
 3. Compares it with the active semantic version.
 4. Acquires a machine-wide update lock.
@@ -152,8 +133,8 @@ Online activation:
 ```sh
 rerail --profile acme activate \
   --code <one-use-code> \
-  --activation-url https://activation.neralabs.com \
-  --trust-root ./nera-activation-roots.json
+  --activation-url https://activation.example.com \
+  --trust-root ./activation-roots.json
 ```
 
 Offline activation:
@@ -165,7 +146,7 @@ rerail --profile acme activation request \
 
 rerail --profile acme activate \
   --file acme-profile.jws \
-  --trust-root ./nera-activation-roots.json
+  --trust-root ./activation-roots.json
 ```
 
 The activation trust-root file is public but security-critical. It must arrive through the authenticated installer, customer portal, or another authenticated channel independent of the profile. Accepting a trust root delivered beside an untrusted profile provides no authenticity. A production release may embed the same public roots and remove the command-line requirement after the production keys exist.
@@ -203,7 +184,7 @@ A profile binds configuration to one customer, deployment, and device:
 ```json
 {
   "schemaVersion": 1,
-  "issuer": "https://activation.neralabs.com",
+  "issuer": "https://activation.example.com",
   "audience": "rerail-customer-profile",
   "profileId": "prof_acme_01",
   "sequence": 7,
@@ -293,12 +274,12 @@ When no profile is specified, exactly one active machine profile must exist; oth
 
 ## Security limits
 
-Private distribution controls who can download releases. It does not make customer-side code impossible to inspect. Native compilation, symbol stripping, device-bound credentials, signed assets, and customer watermarking raise extraction cost and make leaks attributable, but a machine administrator can eventually inspect code and decrypted memory.
+Restricted distribution before launch controls who can download built releases; it does not make code secret. The source is public under Apache-2.0, and a machine administrator can always inspect the runtime and its decrypted memory. Device-bound credentials and signed assets protect integrity and attribute activations; they are not confidentiality controls.
 
 Software signatures protect integrity, not confidentiality. Policy and model encryption at rest prevents casual file copying but cannot hide assets while the authorized runtime evaluates them.
 
-The current repository license remains MIT until Nera makes a separate legal and product decision. Restricted npm access does not override rights granted by the license to recipients.
+Rerail is licensed under Apache-2.0. Restricted npm access does not limit the rights the licence grants to recipients.
 
 ## Evolution
 
-Restricted npm is appropriate for initial technical customers. Move customer-facing downloads to a portal or commercial artifact registry when npm organization membership becomes operationally limiting. The portal should continue distributing the same signed, immutable artifacts and must not create customer-specific runtime forks.
+A restricted npm package is the pre-launch channel; at launch the same package becomes public on npmjs. A customer portal or other artifact registry, if one is ever added, must distribute the same signed, immutable artifacts and must not create customer-specific runtime forks.

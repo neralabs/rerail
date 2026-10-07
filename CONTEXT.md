@@ -46,7 +46,7 @@ A machine-local, stable identity grouping one or more explicit repository identi
 
 ## Repository and Checkout
 
-A repository has a stable local identity stored in Git's common configuration. Its linked worktrees are separate checkouts that inherit that identity; clones and forks receive new identities and require explicit project assignment.
+A repository has a stable local identity stored in Git's common metadata directory (`rerail-repository-id`). Its linked worktrees are separate checkouts that inherit that identity; clones and forks receive new identities and require explicit project assignment.
 
 ## Rerail Database
 

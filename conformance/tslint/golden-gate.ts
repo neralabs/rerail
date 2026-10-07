@@ -1,6 +1,6 @@
 /**
  * The golden gate: every golden rule (`golden.ts`) must meet its golden.json entry on every full run and on
- * `just rerail-conformance golden`.
+ * `node --import tsx conformance/tslint/cli.ts golden`.
  */
 import { goldenRules, loadGoldenManifest, membershipProblems, type GoldenEntry } from "./golden.js";
 import { effectiveVerdict, type RuleResult } from "./runner.js";

@@ -1,6 +1,6 @@
 //! Ruff 0.16.9's `# noqa` matrix: every diagnostic Ruff reports with `--ignore-noqa` on the
-//! fixtures in `rerail-fixtures/python/suppress/ruff`, read through `NoqaIndex`, against the ones Ruff keeps when it honours
-//! the comments (`rerail-fixtures/python/suppress/generate_ruff.py`).
+//! fixtures in `fixtures/python/suppress/ruff`, read through `NoqaIndex`, against the ones Ruff keeps when it honours
+//! the comments (`fixtures/python/suppress/generate_ruff.py`).
 
 use super::noqa::{NoqaIndex, parent_statement};
 use crate::policy_dsl::language::GrammarDialect;

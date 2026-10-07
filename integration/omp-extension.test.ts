@@ -32,7 +32,7 @@ function checkoutRule(id: string): CosineRule {
     action: { delivery: "steer", content: "Check checkout requirements." }, repeat: { mode: "once" } };
 }
 function matches(evidence: HostEvidence) {
-  return evidence.branch.filter(entry => entry.type === "custom" && "customType" in entry && entry.customType === "omp-cosine-rules.match");
+  return evidence.branch.filter(entry => entry.type === "custom" && "customType" in entry && entry.customType === "rerail.match");
 }
 function expectNoExtensionErrors(host: OmpHost): void {
   expect(host.frames.filter(frame => frame.type === "extension_error")).toEqual([]);

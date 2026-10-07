@@ -27,8 +27,7 @@ const DeliverySchema: z.ZodType<AdapterDelivery> = z.object({
   requested: z.enum(["observe", "steer", "followUp", "nextTurn"]),
   mechanism: z.enum(["observe", "native-queue", "additional-context", "continuation", "deferred-context"]),
   content: z.string(),
-  // A kernel from a build without re-rail attribution sends no rule ids.
-  ruleIds: z.array(z.string()).default([]),
+  ruleIds: z.array(z.string()),
 }).strict();
 
 const EventFrameSchema = z.object({ event: AdapterEventSchema }).strict();

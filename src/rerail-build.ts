@@ -70,7 +70,7 @@ export function isMainRerailBuild(): boolean {
 
 /** The directory holding the machine-wide content store that only the main build opens. */
 export function mainContentStoreDirectory(): string {
-  return join(homedir(), ".cache", "nera", "rerail");
+  return join(homedir(), ".cache", "rerail");
 }
 
 /**

@@ -6,12 +6,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { policyControlsResponseSchema } from "../src/api/operations.js";
 import { RerailDaemon } from "../src/daemon.js";
 import { resetRepositoryHistory } from "../src/database.js";
-import { resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
+import { openScopedRuleCatalog, resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
 import { NativeExecutablePolicyEnforcer } from "../src/executable-policy-enforcer.js";
 import { bootstrapPolicyDslCatalog } from "../src/policy-dsl-catalog.js";
 import { RerailRuntime, type RerailRuntimeOptions } from "../src/runtime.js";
 import { runScanCommand } from "../src/scan-cli.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
 import { SqliteScanControlStore } from "../src/scan-control.js";
 import { scanRequestSchema } from "../src/scan-control-schema.js";
 import { registerRerailCommands, type RerailCommandHost } from "../src/rerail-command.js";
@@ -35,8 +34,8 @@ async function fixture(createPolicyEvaluator?: RerailRuntimeOptions["createPolic
   execFileSync("git", ["init"], { cwd: root });
   execFileSync("git", ["add", ".gitignore", "api/clean.py"], { cwd: root });
   execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-m", "baseline"], { cwd: root });
-  // A pre-catalog checkout database: the runtime imports its rules into the Rerail database.
-  const rules = new SqliteRuleStore(join(root, ".rerail/transcripts.sqlite"));
+  const database = join(home, "rerail.sqlite");
+  const rules = openScopedRuleCatalog(root, database);
   rules.upsertPolicy({
     format: "rerail.policy/v1", id: "test:no-print", revision: 1,
     scope: { include: ["api/**/*.py"], exclude: [] },
@@ -47,7 +46,6 @@ async function fixture(createPolicyEvaluator?: RerailRuntimeOptions["createPolic
     }],
   });
   rules.close();
-  const database = join(home, "rerail.sqlite");
   const runtime = new RerailRuntime({
     storageRoot: join(root, ".rerail/sessions"), databasePath: database,
     workspaceRoot: root,
@@ -293,7 +291,8 @@ describe("rerail scan and settings CLI", () => {
   it("applies saved log mode to new edits while an explicit scan is still running", async () => {
     const gate = Promise.withResolvers<void>();
     const { root, database, runtime, daemon } = await fixture(options => {
-      const catalog = bootstrapPolicyDslCatalog({ databasePath: join(options.workspaceRoot, ".rerail/transcripts.sqlite") });
+      const databasePath = join(options.workspaceRoot, "home", "rerail.sqlite");
+      const catalog = bootstrapPolicyDslCatalog({ databasePath, store: openScopedRuleCatalog(options.workspaceRoot, databasePath) });
       const evaluator = new NativeExecutablePolicyEnforcer(catalog, options);
       const close = evaluator.close.bind(evaluator);
       evaluator.close = async () => { await close(); catalog.close(); };

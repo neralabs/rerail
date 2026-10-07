@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { IGNORED_DIRECTORIES, languageFor } from "../../src/executable-policy-enforcer.js";
 import { loadNativeBinding, type NativeCompiledPolicyDsl } from "../../src/native.js";
-import { REPOSITORY_ROOT } from "./fixtures.js";
+import { RERAIL_ROOT } from "./fixtures.js";
 import { applyToWorkspace, capabilitiesJson, compileDocument, findPort, INFORMATIONAL_FAILURE_CODES, listPortedRules } from "./runner.js";
 import { compareDeterministicStrings } from "../../src/stable-json.js";
 
@@ -61,10 +61,10 @@ interface WorkspaceEvaluation {
  * with the appropriate TypeScript, TSX, or JavaScript grammar under `directory` (relative to the repository root).
  */
 export async function timeCorpus(directoryArgument: string, runs: number): Promise<CorpusTiming> {
-  const directory = resolve(REPOSITORY_ROOT, directoryArgument);
-  if (!directory.startsWith(REPOSITORY_ROOT + sep)) throw new Error(`${directory} is outside the repository checkout`);
+  const directory = resolve(RERAIL_ROOT, directoryArgument);
+  if (!directory.startsWith(RERAIL_ROOT + sep)) throw new Error(`${directory} is outside the repository checkout`);
   const files: CorpusFile[] = [];
-  await collect(directory, REPOSITORY_ROOT, files);
+  await collect(directory, RERAIL_ROOT, files);
   files.sort((a, b) => a.path.localeCompare(b.path));
   const bytes = files.reduce((total, file) => total + Buffer.byteLength(file.source), 0);
 
@@ -132,7 +132,7 @@ export async function timeCorpus(directoryArgument: string, runs: number): Promi
   const failures = all.filter(failure => !INFORMATIONAL_FAILURE_CODES.has(failure.code));
   const paths = (list: typeof all): string[] => [...new Set(list.flatMap(failure => (failure.path === undefined ? [] : [failure.path])))].sort(compareDeterministicStrings);
   return {
-    directory: relative(REPOSITORY_ROOT, directory).split(sep).join("/"),
+    directory: relative(RERAIL_ROOT, directory).split(sep).join("/"),
     rules: included,
     compileErrors: excluded,
     files: files.length,

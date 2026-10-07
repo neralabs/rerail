@@ -86,7 +86,6 @@ export const rulesArray = () => [...data.rules.values()];
 export function matches(stored) {
   const id = stored.rule.id, origin = stored.catalogOrigin;
   const f = ui.filter;
-  if (f === "files" && origin !== "migrated") return false;
   if (f === "added" && origin !== "local") return false;
   if (f === "preset" && origin !== "bundled") return false;
   if (f === "on" && !stored.enabled) return false;

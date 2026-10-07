@@ -307,7 +307,7 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   const commandArgs = takeOption(args, "--profile").args;
   const command = commandArgs[0];
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
-  // `seed`, `rules`, and `reset` write the Rerail database with the invoking package's schema (a checkout under `just rerail-dev`).
+  // `seed`, `rules`, and `reset` write the Rerail database with the invoking package's schema (a checkout build, say).
   if (["setup", "install", "stop", "status", "session", "ui", "disable", "enable", "seed", "rules", "reset"].includes(command ?? "")) return true;
   return command === "update" && (commandArgs[1] === "status" || commandArgs[1] === "rollback");
 }

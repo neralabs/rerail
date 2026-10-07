@@ -5,12 +5,11 @@
 import { collapse } from "./format.js";
 
 /**
- * `catalogOrigin` enum in scoped-rule-catalog.ts / schema.ts is
- * ["local", "bundled", "migrated", "nera"]. The design names three; `nera` (a rule synced
- * down from the Nera service) gets its own label and rides with "your rules" in origin grouping.
+ * `catalogOrigin` enum in scoped-rule-catalog.ts / schema.ts is ["local", "bundled", "nera"].
+ * `nera` (a rule synced down from the Nera service) gets its own label and rides with
+ * "your rules" in origin grouping.
  */
 export const ORIGIN = {
-  migrated: { cls: "files", label: "Your files", chip: "files" },
   local: { cls: "mine", label: "Added by you", chip: "added" },
   bundled: { cls: "preset", label: "Nera preset", chip: "preset" },
   nera: { cls: "synced", label: "Synced from Nera", chip: null },

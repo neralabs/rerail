@@ -46,7 +46,7 @@ pub(crate) fn decode_source(source: &str) -> Value {
     decode_with(source, &mut || true).0
 }
 
-/// Every case in the CPython oracle (`rerail-fixtures/python/value/generate_python.py`):
+/// Every case in the CPython oracle (`fixtures/python/value/generate_python.py`):
 /// - a value Rerail knows is the value CPython evaluates the expression to;
 /// - where CPython evaluates it to nothing (a syntax error), Rerail knows nothing;
 /// - where `ast.literal_eval` reads a value, or `optimize=1` folds one, Rerail knows it too, unless

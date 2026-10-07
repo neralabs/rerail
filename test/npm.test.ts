@@ -74,8 +74,8 @@ describe("environmentForNode", () => {
 describe("cleanCommandError", () => {
   it("redacts _authToken and _password values from npm output", () => {
     const text = [
-      "//pkgs.dev.azure.com/nera-software/_packaging/nera-software/npm/registry/:_authToken=secret-token",
-      "//pkgs.dev.azure.com/nera-software/_packaging/nera-software/npm/:_password=c2VjcmV0",
+      "//registry.example.test/:_authToken=secret-token",
+      "//registry.example.test/npm/:_password=c2VjcmV0",
     ].join("\n");
     const cleaned = cleanCommandError(text);
     expect(cleaned).not.toContain("secret-token");
@@ -94,11 +94,11 @@ describe.skipIf(process.platform === "win32")("runNpm", () => {
 
   it.each([
     "npm error code E401",
-    "npm error 401 Unauthorized - GET https://pkgs.dev.azure.com/nera-software/_packaging/nera-software/npm/registry/@neralabs%2frerail",
+    "npm error 401 Unauthorized - GET https://registry.npmjs.org/@neralabs%2frerail",
   ])("tells the user to refresh credentials when npm reports %s", async (line) => {
     const bin = await fakeNpm(`echo "${line}" >&2; echo "//x/npm/:_password=c2VjcmV0" >&2; exit 1`);
     const failure = runNpm(["view", "@neralabs/rerail"], { env: { PATH: bin } });
-    await expect(failure).rejects.toThrow("npm registry credentials are missing or expired. Run `just rerail` to refresh them.");
+    await expect(failure).rejects.toThrow("npm registry credentials are missing or expired. Run `npm login` to refresh them.");
     await expect(failure).rejects.not.toThrow("c2VjcmV0");
   });
 

@@ -129,7 +129,7 @@ fn uses(root: &PNode) -> Vec<(i64, &'static str)> {
     uses
 }
 
-/// Every case of `rerail-fixtures/php/literal/printf.expected.json`. A format PHP 8.5.11 refuses (a
+/// Every case of `fixtures/php/literal/printf.expected.json`. A format PHP 8.5.11 refuses (a
 /// `ValueError` with every value passed) is one `error` with PHP's message, and one PHPStan 2.2.16
 /// reads as invalid; any other has PHPStan's argument uses, and a call passes PHP exactly when it
 /// passes every value a use asks for. Where no missing value can shift PHP's scan (no `*` and no

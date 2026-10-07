@@ -12,14 +12,13 @@ export const TSLINT_SHA = "285fc1db18d1fd24680d6a2282c6445abf1566ee";
 
 export const HARNESS_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 export const RERAIL_ROOT = resolve(HARNESS_DIRECTORY, "..", "..");
-export const REPOSITORY_ROOT = resolve(RERAIL_ROOT, "..");
-export const FIXTURE_CHECKOUT = join(REPOSITORY_ROOT, "tmp", "tslint-fixtures");
+export const FIXTURE_CHECKOUT = join(RERAIL_ROOT, "tmp", "tslint-fixtures");
 
 /** `path` resolved absolute; throws unless it lies inside the repository checkout. */
 export function repositoryPath(path: string): string {
   const absolute = resolve(path);
-  if (absolute !== REPOSITORY_ROOT && !absolute.startsWith(`${REPOSITORY_ROOT}${sep}`)) {
-    throw new Error(`${path} is outside the repository (${REPOSITORY_ROOT})`);
+  if (absolute !== RERAIL_ROOT && !absolute.startsWith(`${RERAIL_ROOT}${sep}`)) {
+    throw new Error(`${path} is outside the repository (${RERAIL_ROOT})`);
   }
   return absolute;
 }
@@ -77,7 +76,7 @@ export function fetchFixtures(log: (line: string) => void = console.log): void {
     }
     if (head === TSLINT_SHA && existsSync(FIXTURE_RULES)) {
       git(["sparse-checkout", "set", "--no-cone", ...SPARSE_PATHS], FIXTURE_CHECKOUT);
-      log(`fixtures present at ${relative(REPOSITORY_ROOT, FIXTURE_CHECKOUT)} (${TSLINT_SHA})`);
+      log(`fixtures present at ${relative(RERAIL_ROOT, FIXTURE_CHECKOUT)} (${TSLINT_SHA})`);
       return;
     }
   } else {
@@ -89,7 +88,7 @@ export function fetchFixtures(log: (line: string) => void = console.log): void {
   git(["sparse-checkout", "set", "--no-cone", ...SPARSE_PATHS], FIXTURE_CHECKOUT);
   git(["fetch", "-q", "--depth", "1", "origin", TSLINT_SHA], FIXTURE_CHECKOUT);
   git(["checkout", "-q", "--force", "FETCH_HEAD"], FIXTURE_CHECKOUT);
-  log(`fixtures ready at ${relative(REPOSITORY_ROOT, FIXTURE_CHECKOUT)}`);
+  log(`fixtures ready at ${relative(RERAIL_ROOT, FIXTURE_CHECKOUT)}`);
 }
 
 export function ensureFixtures(log?: (line: string) => void): void {

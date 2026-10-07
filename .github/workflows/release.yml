@@ -1,0 +1,357 @@
+name: Release
+
+# Builds the @neralabs/rerail package: native rules kernels for every supported target, the
+# TypeScript runtime, and the bundled UI, packed into one cross-platform tarball.
+#
+# `workflow_dispatch` builds and uploads the tarball as a run artifact without publishing, so a
+# build can be installed and checked by hand. Pushing a `v*` tag publishes that tarball to npmjs
+# under the dist-tag derived from the tag: `v1.2.3` -> latest, `v1.2.3-beta.N` -> beta,
+# `v1.2.3-next.N` -> next. The tag must equal package.json's version.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Rejects a malformed tag, or one that disagrees with package.json, before any kernel is built.
+  metadata:
+    name: Release metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      channel: ${{ steps.release-channel.outputs.channel }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - id: release-channel
+        name: Derive npm dist-tag
+        env:
+          TAG_PUSH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node --input-type=module <<'EOF'
+          import { appendFileSync, readFileSync } from "node:fs";
+          if (process.env.TAG_PUSH !== "true") {
+            console.log("Not a release tag push: the build is uploaded as an artifact and not published.");
+            appendFileSync(process.env.GITHUB_OUTPUT, "channel=\n");
+            process.exit(0);
+          }
+          const tag = process.env.RELEASE_TAG;
+          const match = /^v(\d+\.\d+\.\d+)(?:-(beta|next)\.\d+)?$/u.exec(tag);
+          if (match === null) throw new Error(`Release tag ${tag} is not vX.Y.Z, vX.Y.Z-beta.N, or vX.Y.Z-next.N`);
+          const version = JSON.parse(readFileSync("package.json", "utf8")).version;
+          if (version !== tag.slice(1)) throw new Error(`package.json version ${version} does not match ${tag}`);
+          const channel = match[2] ?? "latest";
+          console.log(`Publishing ${version} to the ${channel} channel.`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `channel=${channel}\n`);
+          EOF
+
+  native:
+    name: Native ${{ matrix.target }}
+    needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            windows_runtime_smoke: true
+          # Cross-compiled on x64; no hosted Windows arm64 runner is used, so this kernel is checked
+          # by import inspection only.
+          - runner: windows-2025
+            target: aarch64-pc-windows-msvc
+            windows_runtime_smoke: false
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
+      # so the toolchain installed here must be the same channel.
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        shell: bash
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rerail-release-${{ matrix.target }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rerail-release-${{ matrix.target }}-${{ steps.rust-toolchain.outputs.channel }}-
+
+      - name: Install dependencies
+        run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
+
+      - name: Build TypeScript
+        run: npm run build:ts
+
+      - name: Build native kernel
+        run: ./node_modules/.bin/napi build --platform --release --target ${{ matrix.target }} --manifest-path native/Cargo.toml --output-dir native
+
+      # Runners ship the Visual C++ runtime, so the load smokes below cannot catch a kernel
+      # that needs it; a clean Windows install does not have it.
+      - name: Check Windows kernel has no Visual C++ runtime dependency
+        if: endsWith(matrix.target, '-windows-msvc')
+        shell: bash
+        run: node scripts/check-windows-runtime.mjs native/rerail.*.node
+
+      - name: Smoke Windows rerail CLI install planning
+        if: matrix.windows_runtime_smoke
+        run: node dist/cli.js install --root . --project . --harness omp,pi,claude-code,codex,cursor --dry-run
+
+      - name: Provision Linux Secret Service
+        if: startsWith(matrix.runner, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes dbus-x11 gnome-keyring libsecret-tools
+
+      - name: Smoke macOS Keychain device storage
+        if: startsWith(matrix.runner, 'macos')
+        run: ./node_modules/.bin/vitest run integration/signed-profile-cli.test.ts
+
+      - name: Smoke Linux Secret Service device storage
+        if: startsWith(matrix.runner, 'ubuntu')
+        run: |
+          dbus-run-session -- bash <<'EOF'
+          set -euo pipefail
+          # --unlock reads the login keyring password from stdin and creates the
+          # keyring when it does not exist; --start never creates it, which left
+          # secret-tool with no default collection. The password only guards this
+          # ephemeral session bus, so any non-empty throwaway value works.
+          eval "$(gnome-keyring-daemon --unlock --components=secrets <<< 'rerail-ci')"
+          if ! printf 'x' | secret-tool store --label=probe rerail-probe 1 \
+            || [ "$(secret-tool lookup rerail-probe 1)" != 'x' ]; then
+            echo '::error::Secret Service default collection is not writable after gnome-keyring-daemon --unlock' >&2
+            exit 1
+          fi
+          secret-tool clear rerail-probe 1
+          ./node_modules/.bin/vitest run integration/signed-profile-cli.test.ts
+          EOF
+
+      - name: Smoke Windows Credential Manager device storage
+        if: matrix.windows_runtime_smoke
+        run: ./node_modules/.bin/vitest run integration/signed-profile-cli.test.ts
+
+      - name: Smoke native kernel
+        if: matrix.target != 'aarch64-pc-windows-msvc'
+        run: ./node_modules/.bin/vitest run test/native-health.test.ts
+
+      - name: Smoke Windows junction lifecycle
+        if: matrix.windows_runtime_smoke
+        run: ./node_modules/.bin/vitest run test/updater.test.ts test/harness-registration.test.ts -t "Windows.*junction"
+
+      - name: Smoke Windows daemon launch handle isolation
+        if: matrix.windows_runtime_smoke
+        run: ./node_modules/.bin/vitest run test/windows-daemon-launch.test.ts
+
+      - name: Upload native kernel
+        uses: actions/upload-artifact@v7
+        with:
+          name: rerail-native-${{ matrix.target }}
+          path: native/*.node
+          if-no-files-found: error
+
+  package:
+    name: Package
+    needs: native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      tarball: ${{ steps.packed-package.outputs.tarball }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
+
+      - name: Assemble release package
+        run: |
+          npm run build:clean
+          npm run build:ts
+          npm run build:omp
+          npm run build:events
+          npm run build:cursor
+          npm run build:claude
+          npm run build:codex
+          npm run build:ui
+
+      - name: Download native kernels
+        uses: actions/download-artifact@v7
+        with:
+          pattern: rerail-native-*
+          path: native
+          merge-multiple: true
+
+      - name: Verify every supported native target is present
+        run: |
+          set -euo pipefail
+          for target in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc win32-arm64-msvc; do
+            test -f "native/rerail.${target}.node" || { echo "missing native/rerail.${target}.node" >&2; exit 1; }
+          done
+
+      - id: packed-package
+        name: Pack release package
+        run: |
+          npm pack --json > "$RUNNER_TEMP/packed-package.json"
+          node --input-type=module <<'EOF'
+          import { readFileSync, appendFileSync } from "node:fs";
+          const [{ filename }] = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/packed-package.json`, "utf8"));
+          appendFileSync(process.env.GITHUB_OUTPUT, `tarball=${filename}\n`);
+          EOF
+
+      - name: Smoke installed release package
+        env:
+          PACKAGE_TARBALL: ${{ steps.packed-package.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          smoke_directory="$(mktemp -d)"
+          installed="$smoke_directory/node_modules/@neralabs/rerail"
+          npm install --prefix "$smoke_directory" "$PWD/$PACKAGE_TARBALL"
+          "$smoke_directory/node_modules/.bin/rerail" --help
+          for hook in cursor claude codex; do
+            test -f "$installed/dist/$hook-hook.js" || { echo "missing dist/$hook-hook.js" >&2; exit 1; }
+          done
+          test -f "$installed/dist/ui/index.html"
+          for notice in LICENSE NOTICE; do
+            test -f "$installed/$notice" || { echo "missing $notice" >&2; exit 1; }
+          done
+          # prepack stamps package.json's version into the harness plugin manifests.
+          for harness in claude codex cursor; do
+            node -e 'const [pkg, manifest] = process.argv.slice(1).map((path) => require(path)); if (manifest.version !== pkg.version) { console.error(process.argv[2] + " version " + manifest.version + " is not " + pkg.version); process.exit(1); }' \
+              "$installed/package.json" "$installed/.$harness-plugin/plugin.json"
+          done
+          (
+            cd "$smoke_directory"
+            node --input-type=module --eval 'import { nativeHealth } from "@neralabs/rerail"; if (!nativeHealth().ok) process.exit(1);'
+          )
+
+      - name: Upload release tarball
+        uses: actions/upload-artifact@v7
+        with:
+          name: rerail-package
+          path: ${{ steps.packed-package.outputs.tarball }}
+          if-no-files-found: error
+
+  # The managed install renames a staged version into place, runs the native kernel, and starts the
+  # daemon: behavior the Linux package smoke cannot see. Every release installs on native Windows x64
+  # before it ships.
+  windows-install:
+    name: Windows x64 managed install
+    needs: package
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Download release tarball
+        uses: actions/download-artifact@v7
+        with:
+          name: rerail-package
+          path: release
+
+      - name: Install the release with npx @neralabs/rerail setup
+        shell: pwsh
+        run: ./scripts/windows-install-smoke.ps1 -Tarball "release/${{ needs.package.outputs.tarball }}"
+
+  # npm trusted publishing: the registry exchanges this job's GitHub OIDC token for a short-lived
+  # publish credential, so no npm token exists anywhere. npmjs must list this repository,
+  # `release.yml`, and the `release` environment as the package's trusted publisher.
+  # npm only generates provenance attestations for packages published from a public repository;
+  # until this repository is public, releases publish without provenance.
+  publish:
+    name: Publish to npmjs
+    needs: [metadata, package, windows-install]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      # Trusted publishing needs npm CLI 11.5.1 or newer.
+      - name: Install npm with trusted publishing support
+        run: |
+          npm install --global "npm@^11.5.1"
+          npm --version
+
+      - name: Download release tarball
+        uses: actions/download-artifact@v7
+        with:
+          name: rerail-package
+          path: release
+
+      - name: Publish
+        env:
+          PACKAGE_TARBALL: release/${{ needs.package.outputs.tarball }}
+          RELEASE_CHANNEL: ${{ needs.metadata.outputs.channel }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_CHANNEL" || { echo "::error::No release channel was derived for ${GITHUB_REF_NAME}" >&2; exit 1; }
+          npm publish "./$PACKAGE_TARBALL" --registry https://registry.npmjs.org --access restricted --tag "$RELEASE_CHANNEL"

@@ -225,8 +225,8 @@ export function resolveNativeBindingPath(configuredPath = process.env.RERAIL_NAT
   }
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
   const packageRoot = dirname(moduleDirectory);
-  const fileName = `omp_cosine_rules.${nativePlatformSuffix()}.node`;
-  const candidates = [join(packageRoot, "native", fileName), join(packageRoot, "native", "omp_cosine_rules.node")];
+  const fileName = `rerail.${nativePlatformSuffix()}.node`;
+  const candidates = [join(packageRoot, "native", fileName), join(packageRoot, "native", "rerail.node")];
   const addonPath = candidates.find(existsSync);
   if (addonPath === undefined) {
     throw new Error(`Unsupported platform or missing native addon: ${fileName}`);

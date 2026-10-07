@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 fn oracle_root() -> PathBuf {
-    PathBuf::from(env!("RERAIL_FIXTURES_DIR")).join("php/scope/php")
+    PathBuf::from(crate::policy_dsl::fixtures_dir!()).join("php/scope/php")
 }
 
 fn oracle(name: &str) -> Json {

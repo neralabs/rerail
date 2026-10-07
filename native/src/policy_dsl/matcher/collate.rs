@@ -87,7 +87,7 @@ mod tests {
 
     const ORACLE: &str = oracle!("ecma/value/natural.expected.json");
 
-    /// Every pair in the natural-compare oracle (`rerail-fixtures/ecma/value/generate_natural.mjs`), as is and
+    /// Every pair in the natural-compare oracle (`fixtures/ecma/value/generate_natural.mjs`), as is and
     /// with both sides lower-cased as sort-keys does without `caseSensitive`.
     #[test]
     fn natural_order_is_natural_compare() {

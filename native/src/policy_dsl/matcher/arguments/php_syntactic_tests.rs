@@ -1,5 +1,5 @@
 //! `arguments` with `mode: "syntactic"` for PHP, against nikic/PHP-Parser 5.9.0
-//! (`rerail-fixtures/php/arguments/generate_php_syntactic.php`).
+//! (`fixtures/php/arguments/generate_php_syntactic.php`).
 
 use super::{Arguments, Passed, SlotKind};
 use crate::policy_dsl::language::GrammarDialect;

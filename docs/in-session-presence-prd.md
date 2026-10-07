@@ -2,9 +2,7 @@
 
 **Document type:** As-built product requirements — describes what we made, not a proposed roadmap.
 
-**Work item:** [NER-1464](https://linear.app/nera/issue/NER-1464/spike-surface-rerail-in-agent-sessions-configurably-and-link-back-to)
-
-**Delivery status:** Implemented, installed locally, and verified in real agent sessions. These changes have **not yet been published as a package release**.
+**Delivery status:** Implemented and verified in real agent sessions; ships in Rerail 0.1.0.
 
 ## 1. Executive summary
 
@@ -68,7 +66,7 @@ Each segment has a specific purpose:
 | `185 rules` | Effective rule coverage configured for this session | Rules page in the same project database |
 | `steered 3×` | Three successful deliveries of guidance to the agent | Exact current session |
 
-Only the `Rerail` label uses Nera’s canonical brand color. Raw URLs do not need to occupy the ambient row. Link activation depends on the terminal’s hyperlink support.
+Only the `Rerail` label uses the brand colour. Raw URLs do not need to occupy the ambient row. Link activation depends on the terminal’s hyperlink support.
 
 The row can append a short state such as `checking…`, `evaluation failed`, or an unavailable indicator. Detailed findings stay in the explicit detail view and dashboard.
 
@@ -175,7 +173,7 @@ Recorded before the current refactor (not fresh verification of subsequent chang
 
 - **380 tests passed across 47 files**, with TypeScript and lint checks passing.
 - A packed installer smoke test ran real `npx @neralabs/rerail setup` against a temporary local registry, exercised the installed integration, and verified uninstall restoration.
-- `just rerail-dev` updated the live installation. A subsequent installer dry run reported every registration unchanged.
+- Re-registering a source checkout updated the live installation. A subsequent installer dry run reported every registration unchanged.
 - Real OMP and Claude sessions rendered the installed HUD. Native terminal captures contained all three hyperlink segments and the canonical brand color without feature flags.
 - Session URLs from OMP, Claude, and Codex selected the originating sessions in the bundled dashboard.
 - SQLite-only preference changes hid and restored both ambient HUDs. Claude’s predecessor stayed visible and its existing 60-second refresh cadence was preserved.
@@ -188,9 +186,7 @@ The integration pass must recheck startup deletion safety, inherited Claude stat
 
 ### Distribution status
 
-The implementation supports `npx @neralabs/rerail setup` and its `just rerail` wrapper. The unreleased checkout has been installed with `just rerail-dev`.
-
-**A public package release is still required before ordinary registry installs receive these changes.** The temporary-registry test proves the packaged install path, not that the public package has been updated.
+The surfaces install through `npx @neralabs/rerail setup`; a source checkout registers through `rerail install --root <checkout>`. The temporary-registry test proves the packaged install path.
 
 ## 10. Suggested post-release product evaluation
 

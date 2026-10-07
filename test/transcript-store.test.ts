@@ -265,7 +265,7 @@ describe("SQLite transcript persistence", () => {
     rules.setEnabled({ ids: rules.list().filter(rule => rule.rule.id !== "host-only").map(rule => rule.rule.id) }, false);
     expect(reader.hud("omp-live")).toEqual({ activeRuleCount: null, steeringCount: 0 });
     await handlers.get("before_agent_start")?.({ type: "before_agent_start", prompt: "hello" }, context);
-    // Bundled rules unload on the next event; the migrated host rule remains enabled.
+    // Bundled rules unload on the next event; the host-supplied rule, which no catalog row masks, remains.
     expect(reader.hud("omp-live")).toEqual({ activeRuleCount: 1, steeringCount: 0 });
     rules.upsertPolicy(MOCK_POLICY_RULES[0], { enabled: true });
     expect(reader.hud("omp-live").activeRuleCount).toBeNull();

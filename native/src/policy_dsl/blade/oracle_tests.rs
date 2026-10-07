@@ -1,4 +1,4 @@
-//! Blade's embedded PHP against illuminate/view's `BladeCompiler` (`rerail-fixtures/blade`): the PHP
+//! Blade's embedded PHP against illuminate/view's `BladeCompiler` (`fixtures/blade`): the PHP
 //! regions the view reads, the definedness of their variables (PHPStan on the compiled template)
 //! and the values of their constant expressions (PHP).
 
@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 fn oracle_root() -> PathBuf {
-    PathBuf::from(env!("RERAIL_FIXTURES_DIR")).join("blade/view")
+    PathBuf::from(crate::policy_dsl::fixtures_dir!()).join("blade/view")
 }
 
 fn expected() -> Json {
@@ -282,7 +282,7 @@ fn a_template_variable_some_paths_define_is_unknown() {
 /// Each region that is an expression without variables, read by the view, has the value PHP gives
 /// it as a constant expression (or at run time, where PHP refuses it as one); where PHP evaluates
 /// it as a constant expression, Rerail knows its value, unless it reads a named constant or class
-/// name, whose value needs PHP name resolution (as rerail-fixtures/php/value/php.cases.json records).
+/// name, whose value needs PHP name resolution (as fixtures/php/value/php.cases.json records).
 #[test]
 fn blade_constant_expressions_agree_with_php() {
     let expected = expected();
@@ -347,7 +347,7 @@ fn blade_constant_expressions_agree_with_php() {
 /// Region parity over a corpus: the regions `generate.php --corpus` recorded for each template
 /// (`BLADE_REGIONS`) against the view's, written to `BLADE_REGIONS_REPORT`.
 #[test]
-#[ignore = "corpus benchmark: rerail-fixtures/blade/view/generate.php --corpus output"]
+#[ignore = "corpus benchmark: fixtures/blade/view/generate.php --corpus output"]
 fn benchmark_blade_region_parity() {
     let input = std::env::var("BLADE_REGIONS").expect("BLADE_REGIONS names the generator's output");
     let report =

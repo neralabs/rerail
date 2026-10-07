@@ -1,28 +1,16 @@
 import { readFileSync } from "node:fs";
-import { readFile, mkdtemp, readdir, rm } from "node:fs/promises";
+import { readFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { renderRerailSchemaModule, SCHEMA_SQL_PATH } from "../scripts/generate-schema-sql.js";
-import { openRerailDatabase } from "../src/database.js";
-import { RERAIL_SCHEMA_STATEMENTS } from "../src/schema-sql.js";
 import { parseCosineRuleDocument } from "../src/rule-schema.js";
-import { RERAIL_SCHEMA_VERSION } from "../src/schema.js";
 import { SqliteRuleStore } from "../src/rule-store.js";
-import { SqlitePresentationPreferenceStore } from "../src/presentation-preference-store.js";
 import { MOCK_COSINE_RULES, MOCK_POLICY_RULES, MOCK_SESSION_ID, mockSessionId, seedRerailDatabase } from "../src/seed.js";
 import { SqliteTranscriptReader, SqliteTranscriptStore } from "../src/transcript-store.js";
 
 const TOOL_CALL_RULES = parseCosineRuleDocument(JSON.parse(readFileSync(resolve("test/fixtures/tool-call-rules.json"), "utf8")));
-
-/** The v10 `rules` table: today's DDL with the one CHECK clause v11 relaxed put back. */
-function rulesTableV10(): string {
-  const current = RERAIL_SCHEMA_STATEMENTS.find(statement => statement.startsWith("CREATE TABLE IF NOT EXISTS `rules`"))!;
-  const relaxed = `("rules"."reference" IS NOT NULL OR json_extract("rules"."match_json", '$.operator') IS NULL)`;
-  expect(current).toContain(relaxed);
-  return current.replace(relaxed, `"rules"."reference" IS NOT NULL`);
-}
 
 const temporaryDirectories: string[] = [];
 
@@ -39,65 +27,6 @@ async function temporaryDatabase(): Promise<string> {
 describe("Rerail schema", () => {
   it("keeps the committed DDL in sync with the Drizzle tables", async () => {
     expect(await readFile(SCHEMA_SQL_PATH, "utf8")).toBe(await renderRerailSchemaModule());
-  });
-
-  it("adds presentation settings to a v6 database without changing its durable records", async () => {
-    const path = await temporaryDatabase();
-    seedRerailDatabase(path, { cwd: "/workspace", now: 100_000 });
-    const legacy = new Database(path);
-    legacy.exec(`
-      INSERT INTO policy_runs (run_id, session_id, workspace_root, scope, mode, revision, paths_json,
-        started_at, status, findings_json, failures_json, rule_provenance_json, rule_revisions_json)
-        VALUES ('running', '${MOCK_SESSION_ID}', '/workspace', 'repository', 'log', 1, '[]', 100000, 'running', '[]', '[]', '[]', '[]');
-      DROP TABLE presentation_preferences;
-      PRAGMA user_version = 6;
-    `);
-    const tables = ["sessions", "events", "rules", "work_links", "policy_runs"];
-    const records = tables.map(table => legacy.prepare(`SELECT * FROM ${table}`).all());
-    legacy.close();
-
-    const preferences = new SqlitePresentationPreferenceStore(path);
-    try {
-      preferences.upsert({ repository: "", host: "", presence: "silent" });
-      expect(preferences.effective("/workspace", "omp")).toBe("silent");
-    } finally {
-      preferences.close();
-    }
-    const upgraded = new Database(path, { readonly: true });
-    try {
-      expect(tables.map(table => upgraded.prepare(`SELECT * FROM ${table}`).all())).toEqual(records);
-    } finally {
-      upgraded.close();
-    }
-  });
-  it("moves a database created before this schema aside and starts fresh instead of migrating it", async () => {
-    const path = await temporaryDatabase();
-    const legacy = new SqliteTranscriptStore(path);
-    legacy.close();
-    const raw = new Database(path);
-    raw.exec("CREATE TABLE transcript_sessions (session_id TEXT PRIMARY KEY); INSERT INTO transcript_sessions VALUES ('old')");
-    raw.close();
-    const warnings: string[] = [];
-    const write = vi.spyOn(process.stderr, "write").mockImplementation(chunk => {
-      warnings.push(String(chunk));
-      return true;
-    });
-
-    try {
-      openRerailDatabase(path).$client.close();
-    } finally {
-      write.mockRestore();
-    }
-
-    const archives = (await readdir(dirname(path))).filter(name => name.startsWith("rerail.sqlite.pre-schema-"));
-    expect(archives).toHaveLength(1);
-    const fresh = new Database(path, { readonly: true });
-    expect(fresh.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'transcript_%'").all()).toEqual([]);
-    expect(fresh.prepare("SELECT count(*) AS n FROM rules").get()).toEqual({ n: 0 });
-    fresh.close();
-    const archived = new Database(join(dirname(path), archives[0]!), { readonly: true });
-    expect(archived.prepare("SELECT session_id FROM transcript_sessions").all()).toEqual([{ session_id: "old" }]);
-    archived.close();
   });
 });
 
@@ -173,48 +102,6 @@ describe("SqliteRuleStore", () => {
     expect(database.prepare("SELECT reference, json_extract(match_json, '$.all[1].field') AS field FROM rules").get())
       .toEqual({ reference: null, field: "input.command" });
     database.close();
-  });
-
-  it("upgrades a v10 rules table so structural rules fit beside its existing cosine rows", async () => {
-    const path = await temporaryDatabase();
-    const cosine = MOCK_COSINE_RULES[0]!;
-    new SqliteRuleStore(path).close();
-    const legacy = new Database(path);
-    // A v10 file predates the compatibility-floor stamp, so it has no revision table either.
-    legacy.exec(`DROP TABLE rules; DROP TABLE rerail_schema_revision; ${rulesTableV10()}; PRAGMA user_version = 10;`);
-    legacy.prepare(
-      "INSERT INTO rules (id, kind, revision, enabled, scope, created_at, updated_at, reference, match_json, sample_json, action_json, repeat_json) VALUES (?, 'cosine', 3, 1, 'repository', 1, 2, ?, ?, ?, ?, ?)",
-    ).run(cosine.id, cosine.reference, JSON.stringify(cosine.match), JSON.stringify(cosine.sample), JSON.stringify(cosine.action), cosine.repeat === undefined ? null : JSON.stringify(cosine.repeat));
-    expect(() => legacy.prepare(
-      "INSERT INTO rules (id, kind, revision, enabled, scope, created_at, updated_at, match_json, sample_json, action_json) VALUES ('x', 'cosine', 1, 1, 'repository', 1, 1, '{}', '{}', '{}')",
-    ).run()).toThrow(/rules_cosine_columns/u);
-    legacy.close();
-
-    const store = new SqliteRuleStore(path);
-    expect(store.get(cosine.id)).toMatchObject({ revision: 3, createdAt: 1, updatedAt: 2, rule: cosine });
-    store.upsertCosine(TOOL_CALL_RULES[0]!, { now: 5 });
-    expect(store.list({ kind: "cosine" }).map(stored => stored.rule.id)).toEqual([cosine.id, TOOL_CALL_RULES[0]!.id].sort());
-    store.close();
-
-    const upgraded = new Database(path, { readonly: true });
-    expect(upgraded.pragma("user_version", { simple: true })).toBe(10);
-    expect(upgraded.prepare("SELECT revision FROM rerail_schema_revision").pluck().get()).toBe(RERAIL_SCHEMA_VERSION);
-    expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'rules_kind_enabled'").all()).toHaveLength(1);
-    expect(() => upgraded.prepare("SELECT 1 FROM rules_legacy_v11").all()).toThrow(/no such table/u);
-    upgraded.close();
-  });
-
-  it("rebuilds the rules table of a floor-stamped revision-11 file that already has result pages", async () => {
-    const path = await temporaryDatabase();
-    new SqliteRuleStore(path).close();
-    const stamped = new Database(path);
-    stamped.exec(`DROP TABLE rules; ${rulesTableV10()}; UPDATE rerail_schema_revision SET revision = 11; PRAGMA user_version = 10;`);
-    stamped.close();
-
-    const store = new SqliteRuleStore(path);
-    store.upsertCosine(TOOL_CALL_RULES[0]!, { now: 5 });
-    expect(store.list({ kind: "cosine" }).map(stored => stored.rule.id)).toEqual([TOOL_CALL_RULES[0]!.id]);
-    store.close();
   });
 
   it("still requires a reference for a similarity rule row", async () => {
@@ -298,12 +185,12 @@ describe("work links", () => {
     const path = await temporaryDatabase();
     const store = new SqliteTranscriptStore(path);
     store.linkWork({ sessionId: "unknown-session", kind: "git-branch", reference: "feature/x" }, 10);
-    store.linkWork({ sessionId: "unknown-session", kind: "linear-issue", reference: "NER-1", url: "https://linear.app/nera/issue/NER-1" }, 11);
+    store.linkWork({ sessionId: "unknown-session", kind: "linear-issue", reference: "ABC-1", url: "https://linear.app/example/issue/ABC-1" }, 11);
     store.linkWork({ sessionId: "unknown-session", kind: "git-branch", reference: "feature/x", url: "https://example.test/tree/feature/x" }, 12);
 
     const expected = [
       { linkId: 1, sessionId: "unknown-session", kind: "git-branch", reference: "feature/x", url: "https://example.test/tree/feature/x", createdAt: 10 },
-      { linkId: 2, sessionId: "unknown-session", kind: "linear-issue", reference: "NER-1", url: "https://linear.app/nera/issue/NER-1", createdAt: 11 },
+      { linkId: 2, sessionId: "unknown-session", kind: "linear-issue", reference: "ABC-1", url: "https://linear.app/example/issue/ABC-1", createdAt: 11 },
     ];
     expect(store.workLinks("unknown-session")).toEqual(expected);
     store.close();

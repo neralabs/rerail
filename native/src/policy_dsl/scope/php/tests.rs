@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 fn oracle_root() -> PathBuf {
-    PathBuf::from(env!("RERAIL_FIXTURES_DIR")).join("php/scope/php")
+    PathBuf::from(crate::policy_dsl::fixtures_dir!()).join("php/scope/php")
 }
 
 fn line_of(source: &str, offset: usize) -> u64 {
@@ -209,7 +209,7 @@ fn php_files(root: &Path, out: &mut Vec<PathBuf>) {
 }
 
 /// PHPStan's `variable.undefined` over whole corpora (`RERAIL_PHP_DEFINEDNESS`, written by
-/// `rerail-fixtures/php/scope/php/generate_corpus.py`), against every read Rerail decides; the summary goes to
+/// `fixtures/php/scope/php/generate_corpus.py`), against every read Rerail decides; the summary goes to
 /// `RERAIL_PHP_DEFINEDNESS_REPORT`.
 #[test]
 #[ignore = "PHPStan definedness over full PHP corpora"]

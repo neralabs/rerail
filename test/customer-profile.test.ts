@@ -70,7 +70,7 @@ async function fixture(): Promise<ProfileFixture> {
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   const trustRoots: ActivationTrustRoots = {
     schemaVersion: 1,
-    issuer: "https://activation.neralabs.test",
+    issuer: "https://activation.example.test",
     audience: "rerail-customer-profile",
     keys: [{ ...publicKey.export({ format: "jwk" }), kid: "activation-test-1" } as ActivationTrustRoots["keys"][number]],
   };
@@ -86,7 +86,7 @@ async function fixture(): Promise<ProfileFixture> {
 function profile(deviceKeyThumbprint: string, sequence = 1, now = NOW): CustomerProfile {
   return {
     schemaVersion: 1,
-    issuer: "https://activation.neralabs.test",
+    issuer: "https://activation.example.test",
     audience: "rerail-customer-profile",
     profileId: "profile-acme",
     sequence,

@@ -9,7 +9,7 @@ import type {
   WatermarkStore,
 } from "./semantic-types.js";
 
-export const OMP_WATERMARK_ENTRY_TYPE = "omp-cosine-rules.watermark";
+export const OMP_WATERMARK_ENTRY_TYPE = "rerail.watermark";
 
 interface OmpMessageLike {
   role: string;

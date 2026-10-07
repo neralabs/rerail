@@ -26,8 +26,8 @@ import { resolveRepositoryContext, ScopedRuleCatalog, type RepositoryContext } f
 import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "./semantic-primitives.js";
 import { CosineRuleRegistry, type RuleMatch } from "./registry.js";
 import { LiveCosineRules } from "./cosine-rule-sync.js";
-import { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
-import { parseCosineRule, parseCosineRuleDocument, parseSampleSource, SAMPLE_BOUNDARIES, type CosineRule } from "./rule-schema.js";
+import { parseCosineRule, parseSampleSource, SAMPLE_BOUNDARIES } from "./rule-schema.js";
+import { cosineRuleLoader } from "./rule-sources.js";
 import type { RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
 import { SqliteTranscriptStore } from "./transcript-store.js";
@@ -355,20 +355,6 @@ async function appendJsonLine(path: string, value: unknown, state: JsonlAppendSt
 
 function sessionDirectory(root: string, sessionId: string): string {
   return join(root, createHash("sha256").update(sessionId).digest("hex"));
-}
-
-async function configuredRuleSource(session: AdapterSession): Promise<{ path: string; rules: readonly CosineRule[] } | undefined> {
-  const directory = RULE_DIRECTORIES[session.host] ?? ".codex";
-  const path = join(session.cwd, directory, "cosine-rules.json");
-  try {
-    return {
-      path,
-      rules: parseCosineRuleDocument(parseJsonWithoutDuplicateKeys(await readFile(path, "utf8"), path)),
-    };
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
-    throw error;
-  }
 }
 
 function publicProjection(projection: SemanticProjection): unknown {
@@ -731,7 +717,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       await appendJsonLine(ledgerPath, { type: "hud-tracking-start" }, appendState);
     }
     const processed = processedEventIds(ledger);
-    const { registry, turn, ruleSync } = await this.#restoreRegistry(session, ledger);
+    const { registry, turn, ruleSync } = this.#restoreRegistry(session, ledger);
     const items = ledger.flatMap((entry) => (entry.type === "sample" ? [entry.item] : []));
     const source = new MutableContentSource(items);
     const watermarks = await JsonlWatermarkStore.open(join(directory, "watermarks.jsonl"));
@@ -970,7 +956,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         requested: match.action.delivery,
         mechanism: ADAPTER_CAPABILITIES[state.descriptor.host].delivery[match.action.delivery],
         content: match.action.content,
-        // Cosine matches are not policy steering; their activity is out of scope (NER-1525 Q22).
+        // Cosine matches are not policy steering, so they carry no policy rule ids.
         ruleIds: [],
       };
       await this.#append(state, { type: "delivery", delivery });
@@ -1095,22 +1081,21 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return { active, descriptor };
   }
 
-  async #restoreRegistry(
+  #restoreRegistry(
     session: AdapterSession,
     ledger: readonly LedgerEntry[],
-  ): Promise<{
+  ): {
     registry: CosineRuleRegistry | undefined;
     turn: number;
     ruleSync?: LiveCosineRules | undefined;
-  }> {
+  } {
     if (this.#nativeSession !== undefined) return this.#nativeSession;
     const registry = this.#modelPath === undefined ? undefined : new CosineRuleRegistry({ modelPath: this.#modelPath });
     if (registry === undefined) {
       return { registry, turn: 0, ruleSync: undefined };
     }
-    const source = await configuredRuleSource(session);
-    if (source !== undefined) this.#ruleCatalog.migrateCosineRules(source.path, source.rules);
-    const ruleSync = new LiveCosineRules(this.#ruleCatalog, registry, database => database.enabled);
+    const directory = RULE_DIRECTORIES[session.host] ?? ".codex";
+    const ruleSync = new LiveCosineRules(this.#ruleCatalog, registry, cosineRuleLoader({}, session.cwd, join(directory, "cosine-rules.json")));
     ruleSync.prime();
     let turn = 0;
     for (const entry of ledger) {
@@ -1133,7 +1118,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       ruleSync,
     };
   }
-
 
   async deliver(_delivery: AdapterDelivery): Promise<void> {
     // Hook hosts convert persisted deliveries into hook-specific context responses.

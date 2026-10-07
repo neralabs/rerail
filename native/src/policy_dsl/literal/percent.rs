@@ -424,7 +424,7 @@ mod tests {
         );
     }
 
-    /// Every case of `rerail-fixtures/python/literal/percent.expected.json`: errors and messages as Ruff 0.16.9 reports them
+    /// Every case of `fixtures/python/literal/percent.expected.json`: errors and messages as Ruff 0.16.9 reports them
     /// (F501, F509), keys and positional values as CPython 3.13 reads them.
     #[test]
     fn percent_formats_match_ruff_and_cpython() {

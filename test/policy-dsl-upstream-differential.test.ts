@@ -512,7 +512,7 @@ describe(`M6 compile-time decisions against ast-grep ${UPSTREAM_VERSION}`, () =>
  * M7 `resolves`: upstream has no scope model, so it rejects the key. The same rule without `resolves` matches
  * identically in both engines; with it, Rerail keeps exactly the matches whose name is not shadowed (or, for `import`,
  * that denote a listed qualified name). Name resolution itself is pinned against Ruff and typescript-eslint by the
- * kernel's offline oracle fixtures (`rerail-fixtures/python/scope`, `rerail-fixtures/ecma/scope`).
+ * kernel's offline oracle fixtures (`fixtures/python/scope`, `fixtures/ecma/scope`).
  *
  * M8 `languageOptions`: upstream has no language options; its rule config ignores an unknown `languageOptions` field
  * beside `rule` (and rejects one inside `rule`). Rerail's options change nothing without `resolves`, so the base cases
@@ -639,8 +639,8 @@ describe(`resolves (M7, M8) against ast-grep ${UPSTREAM_VERSION}`, () => {
 /**
  * M9a `value` and `compare`'s new text modes: upstream has neither key and rejects both. The same rule without them
  * matches identically in both engines; with them, Rerail keeps the expected subset. Decoding and folding are pinned
- * against CPython and eslint-utils by the kernel's offline oracle fixtures (`rerail-fixtures/python/value`,
- * `rerail-fixtures/ecma/value`). On
+ * against CPython and eslint-utils by the kernel's offline oracle fixtures (`fixtures/python/value`,
+ * `fixtures/ecma/value`). On
  * comment-free input, `text: "tokens"` equality agrees with upstream's repeated-metavariable equality.
  */
 const VALUE_CASES: ResolveCase[] = [
@@ -736,7 +736,7 @@ async function expectKeptSubset(testCase: ResolveCase): Promise<void> {
 /**
  * M9b `resolves.binding`, `value.follow` and `arguments`: upstream has none of them and rejects `resolves`, `value` and
  * `arguments` as unknown fields. The same rule without them matches identically in both engines; with them, Rerail
- * keeps the expected subset. Binding values are pinned against eslint-utils (`rerail-fixtures/ecma/value`) and
+ * keeps the expected subset. Binding values are pinned against eslint-utils (`fixtures/ecma/value`) and
  * the scope oracles; on calls without starred or keyword arguments, a bound slot is upstream's positional capture.
  */
 const BINDING_CASES: ResolveCase[] = [
@@ -840,7 +840,7 @@ describe(`binding values and arguments (M9b) against ast-grep ${UPSTREAM_VERSION
 /**
  * M10a any-mode resolution and Python usedness: upstream rejects `resolves` (so `unresolved`, `global: true` and
  * `import: true`) and `binds` as unknown fields. The same rule without them matches identically in both engines; with
- * them, Rerail keeps the expected subset. Their semantics are pinned against Ruff 0.16.9 (`rerail-fixtures/python/scope/
+ * them, Rerail keeps the expected subset. Their semantics are pinned against Ruff 0.16.9 (`fixtures/python/scope/
  * usage`).
  */
 const USAGE_CASES: ResolveCase[] = [
@@ -928,7 +928,7 @@ describe(`any-mode resolution and usedness (M10a) against ast-grep ${UPSTREAM_VE
 /**
  * M10b TypeScript usedness: upstream rejects `binds` and `resolves` (so `write`, `occurrence`, `builtin`) as unknown
  * fields. The same rule without them matches identically in both engines; with them, Rerail keeps the expected subset.
- * Their semantics are pinned against ESLint 10.11.0 and typescript-eslint 8.70.1 (`rerail-fixtures/ecma/scope/
+ * Their semantics are pinned against ESLint 10.11.0 and typescript-eslint 8.70.1 (`fixtures/ecma/scope/
  * eslint-usage`).
  */
 const TYPESCRIPT_USAGE_CASES: ResolveCase[] = [
@@ -986,7 +986,7 @@ describe(`TypeScript usedness (M10b) against ast-grep ${UPSTREAM_VERSION}`, () =
 /**
  * M11a literal sub-grammars: upstream rejects `parse` (and so `capture`) as an unknown field. The same rule without it
  * matches identically in both engines; with it, Rerail keeps the expected subset. The grammars are pinned against Ruff
- * 0.16.9 and CPython 3.13 (`rerail-fixtures/python/literal`).
+ * 0.16.9 and CPython 3.13 (`fixtures/python/literal`).
  */
 const LITERAL_CASES: ResolveCase[] = [
   {

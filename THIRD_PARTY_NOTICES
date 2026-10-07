@@ -344,23 +344,6 @@ SOFTWARE.
 
 ----------------------------------------------------------------------
 
-Test oracles: upstream test material (not in the npm package or the addon)
-Files: the rerail-fixtures/ files each rerail-fixtures/<pack>/licenses/<project>/UPSTREAM.md lists
-Source and License:
-  rerail-fixtures/python/licenses/ruff/             Ruff 0.16.9 and Pyflakes fixtures  MIT
-  rerail-fixtures/python/licenses/bandit/           Bandit 1.8.6 examples              Apache-2.0
-  rerail-fixtures/ecma/licenses/eslint/             ESLint 10.11.0 rule test cases     MIT
-  rerail-fixtures/ecma/licenses/typescript-eslint/  typescript-eslint 8.70.1 excerpt   MIT
-  rerail-fixtures/php/licenses/laravel/             laravel/framework doc comments     MIT
-  rerail-fixtures/php/licenses/symfony/             symfony/symfony doc comments       MIT
-
-Each manifest directory carries the project's license file, copied verbatim at
-the pinned version, and an UPSTREAM.md recording which files are copied, from
-which upstream path, and whether verbatim, derived or excerpted. Only the
-engine's tests read these files.
-
-----------------------------------------------------------------------
-
 Bundled grammar: EmranMR/tree-sitter-blade 0.12.2
 Files: native/grammars/tree-sitter-blade/ (LICENSE, src/grammar.json, src/scanner.c,
   src/tag.h, src/tree_sitter/{alloc,array,parser}.h; each byte-identical to upstream)

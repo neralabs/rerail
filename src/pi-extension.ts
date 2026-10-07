@@ -19,7 +19,7 @@ import { PiDevNativeSession } from "./pi-dev-native-session.js";
 import { registerPiHostAdapter } from "./pi-host-adapter.js";
 import { CosineRuleRegistry, type RuleMatch } from "./registry.js";
 import type { CosineRule } from "./rule-schema.js";
-import { loadLegacyCosineRuleSources, type CosineRuleSourceOptions } from "./rule-sources.js";
+import { cosineRuleLoader, type CosineRuleSourceOptions } from "./rule-sources.js";
 import { loadBundledRules } from "./rule-bootstrap.js";
 import { openScopedRuleCatalog } from "./scoped-rule-catalog.js";
 import { defaultRerailDatabasePath } from "./database.js";
@@ -258,12 +258,10 @@ export function createPiCosineRulesExtension(options: PiCosineRulesOptions = {})
         ...(options.maxInputTokens === undefined ? {} : { maxInputTokens: options.maxInputTokens }),
         ...(options.maxRules === undefined ? {} : { maxRules: options.maxRules }),
       });
+      const loadRules = cosineRuleLoader(options, ctx.cwd, ".pi/cosine-rules.json");
       const ruleStore = openScopedRuleCatalog(ctx.cwd, databasePath);
-      const sync = new LiveCosineRules(ruleStore, next, database => database.enabled);
+      const sync = new LiveCosineRules(ruleStore, next, loadRules);
       try {
-        for (const source of loadLegacyCosineRuleSources(options, ctx.cwd, ".pi/cosine-rules.json").reverse()) {
-          ruleStore.migrateCosineRules(source.path, source.rules);
-        }
         ruleStore.seed(loadBundledRules());
         sync.prime();
         const nextTurn = replaySessionState(next, ctx.sessionManager.getBranch());

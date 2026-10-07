@@ -1,9 +1,9 @@
 import type { CosineRuleRegistry } from "./registry.js";
 import { parseCosineRule, type CosineRule } from "./rule-schema.js";
 
-export const MATCH_ENTRY_TYPE = "omp-cosine-rules.match";
-export const MUTATION_ENTRY_TYPE = "omp-cosine-rules.mutation";
-export const TURN_ENTRY_TYPE = "omp-cosine-rules.turn";
+export const MATCH_ENTRY_TYPE = "rerail.match";
+export const MUTATION_ENTRY_TYPE = "rerail.mutation";
+export const TURN_ENTRY_TYPE = "rerail.turn";
 
 export type RuleMutation =
   | { operation: "upsert"; rule: CosineRule; replace: boolean }

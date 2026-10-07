@@ -1,6 +1,6 @@
 //! `scanfFormat`: PHP's `sscanf`/`fscanf` formats, read as PHP 8.5.11's `ValidateFormat`
 //! (`ext/standard/scanf.c`) reads them when no variable is passed (the call returns an array);
-//! the oracle is that function (`rerail-fixtures/php/literal/generate_scanf.php`).
+//! the oracle is that function (`fixtures/php/literal/generate_scanf.php`).
 //!
 //! The tree is a `format` root holding `literal` and `placeholder` parts in order. A placeholder
 //! is `%[*|argnum$][width][l|L|h]conversion`: it holds, when present, its `suppress` (`*`, which

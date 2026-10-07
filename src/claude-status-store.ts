@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import type * as Sqlite from "node:sqlite";
 import { enableWal } from "./sqlite-wal.js";
 
-/** Installation recovery has its own schema, unrelated to project migration versions. */
+/** Installation recovery has its own schema in `harness.sqlite`, separate from the Rerail database. */
 const STATUS_COLUMNS = `settings_path AS settingsPath, installed_command AS installedCommand,
   installed_root AS installedRoot, previous_json AS previousJson`;
 type StoredStatus = Omit<ClaudeStatusRegistration, "previous" | "previousInherited"> & { previousJson: string };
@@ -49,7 +49,7 @@ function readClaudeStatusData<T>(home: string, read: (database: Sqlite.DatabaseS
   return read(database);
 }
 
-/** Read-only even on first run: never creates, migrates, or repairs an installation. */
+/** Read-only even on first run: never creates or repairs an installation. */
 export function readClaudeStatusRegistration(
   home: string = homedir(),
   settingsPath: string = join(resolve(home), ".claude", "settings.json"),
