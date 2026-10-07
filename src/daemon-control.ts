@@ -165,7 +165,7 @@ export async function lookupDaemon(home: string): Promise<DaemonLookup> {
       return { status: "absent" };
     }
     throw new Error(
-      `Rerail daemon pid ${legacy.pid} is incompatible: it predates resident kernel socket support. Run rerail stop, then start again.`,
+      `Rerail daemon pid ${legacy.pid} is incompatible: it predates resident kernel socket support. Run rerail daemon stop, then rerail daemon start.`,
     );
   }
   if (!processAlive(state.pid)) {
@@ -274,7 +274,7 @@ export interface DaemonControl {
 /**
  * The daemon opens SQLite as soon as it starts; a binding built for another Node ABI (a Node upgrade behind a
  * stable Homebrew symlink is the usual cause) kills it before it can answer. Repairing here, in the launcher,
- * puts the rebuild and any unrepairable failure in front of whoever ran `rerail start` rather than in the log.
+ * puts the rebuild and any unrepairable failure in front of whoever ran `rerail daemon start` rather than in the log.
  */
 async function repairSqlite(control: DaemonControl): Promise<void> {
   const repair = control.ensureSqlite ?? (async (packageRoot: string) => await ensureSqlite(packageRoot, {
@@ -292,7 +292,7 @@ export async function startDaemon(control: DaemonControl, options: DaemonLaunchO
     if (lookup.status === "running") return { started: false, daemon: { state: lookup.state, health: lookup.health } };
     if (lookup.status === "unresponsive") {
       throw new Error(
-        `Rerail daemon pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail stop, then start again.`,
+        `Rerail daemon pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail daemon stop, then rerail daemon start.`,
       );
     }
     return await spawnDaemon(control, options);
@@ -317,7 +317,7 @@ export async function startDaemonForPackage(control: DaemonControl, options: Dae
     }
     if (lookup.status === "unresponsive") {
       throw new Error(
-        `Rerail daemon pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail stop, then start again.`,
+        `Rerail daemon pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail daemon stop, then rerail daemon start.`,
       );
     }
     return await spawnDaemon(control, options);
@@ -347,9 +347,9 @@ export async function daemonKernelSocket(replaceOtherPackage: boolean): Promise<
   const daemon = process.env.RERAIL_AUTOSTART === "0"
     ? await findRunningDaemon(home)
     : (replaceOtherPackage ? await startDaemonForPackage(control, options) : await startDaemon(control, options)).daemon;
-  if (daemon === undefined) throw new Error("RERAIL_AUTOSTART=0 requires a running daemon; run rerail start or set RERAIL_KERNEL_SOCKET");
+  if (daemon === undefined) throw new Error("RERAIL_AUTOSTART=0 requires a running daemon; run rerail daemon start or set RERAIL_KERNEL_SOCKET");
   if (replaceOtherPackage && !(await daemonUsesPackageRoot(daemon.state, packageRoot))) {
-    throw new Error("RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package; run rerail start or set RERAIL_KERNEL_SOCKET");
+    throw new Error("RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package; run rerail daemon start or set RERAIL_KERNEL_SOCKET");
   }
   return daemon.state.kernelSocketPath;
 }
@@ -425,10 +425,10 @@ let autostartAttempted = false;
 
 /**
  * Bring the daemon up from inside a harness session so the browser view is
- * live without anyone running `rerail start`. One attempt per process;
+ * live without anyone running `rerail daemon start`. One attempt per process;
  * `RERAIL_AUTOSTART=0` disables it.
  *
- * Truly fire-and-forget: the work is handed to a detached `rerail start`
+ * Truly fire-and-forget: the work is handed to a detached `rerail daemon start`
  * process and nothing here is awaited. Running `startDaemon` in-process
  * would leave its probes and poll timers on the event loop, and a one-shot
  * hook would then sit through daemon startup, or the 15 s timeout, before
@@ -452,7 +452,7 @@ export function autostartDaemon(): void {
     try {
       const child = spawn(
         nodeExecutable(),
-        [join(packageRoot, "dist", "cli.js"), "start"],
+        [join(packageRoot, "dist", "cli.js"), "daemon", "start"],
         { detached: true, stdio: ["ignore", log, log], env: process.env },
       );
       child.on("error", () => undefined);

@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-conditional-assignment",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-conditional-assignment` rule with its default options (https://palantir.github.io/tslint/rules/no-conditional-assignment/). Disallows assignments in if/while/do/for conditions and ternary conditions.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "conditional-assignment",
       "forbid": {
@@ -311,10 +312,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_CONDITIONAL_ASSIGNMENT",
-        "severity": "error",
         "message": "Assignments in conditional expressions are forbidden"
       }
     }

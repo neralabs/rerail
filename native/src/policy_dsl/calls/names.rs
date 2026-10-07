@@ -3,15 +3,17 @@
 //! graph walks prefixes without building strings. A name nothing else holds is dropped when the
 //! table has doubled since it was last swept.
 
+use foldhash::HashSet;
 use parking_lot::RwLock;
 use std::borrow::Borrow;
-use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, LazyLock};
 
 struct Entry {
     text: Box<str>,
     parent: Option<Name>,
+    /// The first dotted component, where it is not the name itself.
+    root: Option<Name>,
 }
 
 /// An interned dotted name. Equal names are the same entry: equality and hashing are by address.
@@ -49,6 +51,11 @@ impl Name {
     /// The name and its dotted prefixes, longest first.
     pub(crate) fn lineage(&self) -> impl Iterator<Item = &Self> {
         std::iter::successors(Some(self), |name| name.parent())
+    }
+
+    /// The name's first dotted component: `a` of `a.b.c`, and of `a`.
+    pub(crate) fn root(&self) -> &Self {
+        self.0.root.as_ref().unwrap_or(self)
     }
 
     /// The language whose definitions the name names: PHP's fully qualified names start with a
@@ -98,9 +105,11 @@ impl Table {
             return name.clone();
         }
         let parent = text.rfind('.').map(|dot| self.insert(&text[..dot]));
+        let root = parent.as_ref().map(|parent| parent.root().clone());
         let name = Name(Arc::new(Entry {
             text: text.into(),
             parent,
+            root,
         }));
         self.names.insert(Key(name.clone()));
         name

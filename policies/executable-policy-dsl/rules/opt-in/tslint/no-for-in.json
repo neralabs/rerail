@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-for-in",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-for-in` rule with its default options (https://palantir.github.io/tslint/rules/no-for-in/). Disallows iterating over an object with a for-in loop.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "for-in",
       "forbid": {
@@ -42,10 +43,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_FOR_IN",
-        "severity": "error",
         "message": "Use a for...of statement instead of for...in. If iterating over an object, use Object.keys() to access its enumerable keys."
       }
     }

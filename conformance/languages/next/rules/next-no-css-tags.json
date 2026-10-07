@@ -1,0 +1,107 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-no-css-tags",
+  "revision": 1,
+  "mode": "steer",
+  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-css-tags: a <link> with rel=\"stylesheet\" and a string href that does not start with http(s).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "jsx_opening_element"
+                  },
+                  {
+                    "kind": "jsx_self_closing_element"
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^link$"
+                }
+              },
+              {
+                "has": {
+                  "kind": "jsx_attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "kind": "property_identifier",
+                        "regex": "^rel$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "kind": "string",
+                        "value": {
+                          "eq": "stylesheet"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "kind": "jsx_attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "kind": "property_identifier",
+                        "regex": "^href$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "kind": "string",
+                        "not": {
+                          "value": {
+                            "startsWith": "http"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/no-css-tags",
+        "message": "Do not include stylesheets manually. See: https://nextjs.org/docs/messages/no-css-tags",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/no-css-tags"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

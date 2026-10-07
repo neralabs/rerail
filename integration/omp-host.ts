@@ -8,6 +8,7 @@ import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { stopDaemon } from "../src/daemon-control.js";
 import { seedContractPolicy } from "./contract-policy.js";
+import { startTestRepository } from "../test/support/started-repository.js";
 import type { OmpSessionEntryLike } from "../src/omp-semantic.js";
 
 export interface HostResponse {
@@ -54,6 +55,7 @@ export class OmpHost {
     await mkdir(join(cwd, "host-agent"), { recursive: true });
     const extension = options.extension ?? "default";
     if (extension !== "none") seedContractPolicy(join(cwd, "home"), cwd);
+    startTestRepository(cwd, join(cwd, "home", "rerail.sqlite"));
     await writeFile(config, JSON.stringify({ responses, kernel: extension === "kernel",
       extension: extension === "none" ? undefined : join(root, "dist", "default-extension.js"),
       modelPath: join(root, "model"), evidencePath: join(cwd, "host-evidence.json"), authPath: options.authPath,

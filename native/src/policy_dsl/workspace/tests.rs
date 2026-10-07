@@ -88,6 +88,68 @@ fn local_result_round_trips_negative_results_and_failures() {
 }
 
 #[test]
+fn a_stored_local_result_decodes_to_typed_witnesses_and_re_encodes_to_its_bytes() {
+    // A version 3 frame as kernels before the typed witness span and captures wrote it: spans and
+    // captures were JSON objects, serialized in key order.
+    let span = |start: usize, end: usize, line: usize, column: usize| {
+        format!(
+            r#"{{"endByte":{end},"endColumn":{},"endLine":{line},"startByte":{start},"startColumn":{column},"startLine":{line}}}"#,
+            column + end - start
+        )
+    };
+    let stored = format!(
+        concat!(
+            r#"{{"failure":null,"syntax":null,"version":3,"witnesses":["#,
+            r#"{{"captures":{{"$project":{{"package":"pkg"}},"A":[{a}],"ARGS":[{first},{last}]}},"#,
+            r#""fix":{{"span":{whole},"text":"log(1, 2)"}},"message":"print 1","span":{whole}}},"#,
+            r#"{{"captures":{{}},"fix":null,"message":null,"span":{other}}}]}}"#,
+        ),
+        a = span(14, 19, 2, 4),
+        first = span(20, 21, 2, 10),
+        last = span(23, 24, 2, 13),
+        whole = span(14, 25, 2, 4),
+        other = span(0, 6, 0, 0),
+    );
+
+    let (witnesses, failure, syntax) = decode_local_result(stored.as_bytes(), "pkg/a.py").unwrap();
+    assert!(failure.is_none() && syntax.is_none());
+    let [printed, plain] = witnesses.as_slice() else {
+        panic!("two witnesses");
+    };
+    let expected =
+        |start_byte, end_byte, start_column, end_column| crate::policy_dsl::findings::Span {
+            start_byte,
+            end_byte,
+            start_line: 2,
+            end_line: 2,
+            start_column,
+            end_column,
+        };
+    assert_eq!(printed.path, "pkg/a.py");
+    assert_eq!(printed.span, expected(14, 25, 4, 15));
+    assert_eq!(
+        printed.captures.get("A"),
+        Some(&[expected(14, 19, 4, 9)][..])
+    );
+    assert_eq!(
+        printed.captures.get("ARGS"),
+        Some(&[expected(20, 21, 10, 11), expected(23, 24, 13, 14)][..])
+    );
+    assert_eq!(printed.captures.get("B"), None);
+    assert_eq!(
+        printed.captures.projection(),
+        Some(&json!({ "package": "pkg" }))
+    );
+    assert_eq!(printed.message.as_deref(), Some("print 1"));
+    assert_eq!(printed.fix.as_ref().unwrap()["text"], "log(1, 2)");
+    assert_eq!(plain.captures, Default::default());
+    assert_eq!(plain.span.end_byte, 6);
+
+    let rewritten = encode_local_result(&witnesses, None, None).unwrap();
+    assert_eq!(String::from_utf8(rewritten).unwrap(), stored);
+}
+
+#[test]
 fn close_releases_idle_workspace_files() {
     let workspace = PolicyDslWorkspace::new();
     {
@@ -154,10 +216,11 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
     let compiled = PolicyDslRuntime::compile(
         json!({
             "format": "rerail.policy/v1", "id": "poisoned-workspace", "revision": 1,
+            "mode": "steer",
             "scope": { "include": ["**/*"], "exclude": [] },
-            "checks": [{
-                "id": "probe", "finding": { "anchor": "witness.span", "code": "PROBE",
-                    "message": "probe", "severity": "error" },
+            "clauses": [{
+                "id": "probe", "violation": { "anchor": "witness.span", "code": "PROBE",
+                    "message": "probe" },
                 "forbid": { "regex": { "pattern": "probe", "source": "file.content" } }
             }]
         })
@@ -257,10 +320,11 @@ fn tape_workspace_matches_native_after_edit_noop_and_invalid_revision() {
     });
     let policy = json!({
         "format": "rerail.policy/v1", "id": "workspace-parity", "revision": 1,
+        "mode": "steer",
         "scope": { "include": ["**/*"], "exclude": [] },
-        "checks": [{
-            "id": "print", "finding": { "anchor": "witness.span", "code": "PRINT",
-                "message": "found print", "severity": "error" },
+        "clauses": [{
+            "id": "print", "violation": { "anchor": "witness.span", "code": "PRINT",
+                "message": "found print" },
             "forbid": { "ast": { "language": "python",
                 "rule": { "pattern": "print($ARG)" } } }
         }]
@@ -313,7 +377,7 @@ fn tape_workspace_matches_native_after_edit_noop_and_invalid_revision() {
             "revision {revision}"
         );
         assert_eq!(
-            actual["evaluation"]["findings"], expected["findings"],
+            actual["evaluation"]["violations"], expected["violations"],
             "revision {revision}"
         );
         if revision == 8 {
@@ -364,8 +428,8 @@ fn tape_workspace_matches_native_after_edit_noop_and_invalid_revision() {
     };
     let actual: Value = serde_json::from_str(&verify.compute().unwrap()).unwrap();
     assert_eq!(
-        actual["evaluation"]["findings"],
-        native("print('back')\n")["findings"]
+        actual["evaluation"]["violations"],
+        native("print('back')\n")["violations"]
     );
     workspace.close();
 }
@@ -469,10 +533,11 @@ fn deferred_global_flush_uses_complete_taped_evidence() {
     });
     let policy = json!({
         "format": "rerail.policy/v1", "id": "global-tape", "revision": 1,
+        "mode": "steer",
         "scope": { "include": ["**/*"], "exclude": [] },
-        "checks": [{
-            "id": "cross-file", "finding": { "anchor": "witness.span", "code": "CROSS",
-                "message": "cross file", "severity": "error" },
+        "clauses": [{
+            "id": "cross-file", "violation": { "anchor": "witness.span", "code": "CROSS",
+                "message": "cross file" },
             "forbid": { "select_when": {
                 "select": { "regex": { "pattern": "report.txt$", "source": "file.path" } },
                 "exists": { "ast": { "language": "python",
@@ -501,7 +566,7 @@ fn deferred_global_flush_uses_complete_taped_evidence() {
         serde_json::from_str(&task.compute().unwrap()).unwrap()
     };
     let first = run(1, vec![report.clone(), evidence("print('yes')\n")], true);
-    assert_eq!(first["evaluation"]["findings"], json!([]));
+    assert_eq!(first["evaluation"]["violations"], json!([]));
     let flushed = run(2, vec![], false);
     let expected: Value = serde_json::from_str(
         &compiled
@@ -517,10 +582,10 @@ fn deferred_global_flush_uses_complete_taped_evidence() {
     )
     .unwrap();
     assert_eq!(flushed["evaluation"]["status"], expected["status"]);
-    assert_eq!(flushed["evaluation"]["findings"], expected["findings"]);
+    assert_eq!(flushed["evaluation"]["violations"], expected["violations"]);
     assert_eq!(flushed["evaluation"]["failures"], expected["failures"]);
     let cleared = run(3, vec![evidence("safe()\n")], false);
-    assert_eq!(cleared["evaluation"]["findings"], json!([]));
+    assert_eq!(cleared["evaluation"]["violations"], json!([]));
     workspace.close();
 }
 
@@ -528,14 +593,15 @@ fn tape_test_policy() -> CompiledPolicyDsl {
     PolicyDslRuntime::compile(
         json!({
             "format": "rerail.policy/v1", "id": "tape-lifecycle", "revision": 1,
+            "mode": "steer",
             "scope": { "include": ["**/*"], "exclude": [] },
-            "checks": [
-                { "id": "python", "finding": { "anchor": "witness.span", "code": "PY",
-                    "message": "python call", "severity": "error" },
+            "clauses": [
+                { "id": "python", "violation": { "anchor": "witness.span", "code": "PY",
+                    "message": "python call" },
                   "forbid": { "ast": { "language": "python",
                 "rule": { "pattern": "print($ARG)" } } } },
-                { "id": "typescript", "finding": { "anchor": "witness.span", "code": "TS",
-                    "message": "typescript call", "severity": "error" },
+                { "id": "typescript", "violation": { "anchor": "witness.span", "code": "TS",
+                    "message": "typescript call" },
                   "forbid": { "ast": { "language": "typescript",
                 "rule": { "pattern": "print($ARG)" } } } }
             ]
@@ -591,7 +657,7 @@ fn binary_workspace_request_matches_json_and_rejects_malformed_lengths() {
         request_direct: None,
     };
     let result: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
-    assert_eq!(result["evaluation"]["findings"][0]["path"], "binary.py");
+    assert_eq!(result["evaluation"]["violations"][0]["path"], "binary.py");
 
     buffer.pop();
     let Err(error) = decode_buffer_request(&buffer) else {
@@ -657,7 +723,10 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
         ],
     );
     assert_eq!(first["replacedPaths"], json!(["first.py", "irrelevant.py"]));
-    assert_eq!(first["evaluation"]["findings"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        first["evaluation"]["violations"].as_array().unwrap().len(),
+        1
+    );
     let state = workspace.state.lock().unwrap();
     assert!(state.files["first.py"].input.source.is_empty());
     assert!(state.files["first.py"].tape.is_none());
@@ -730,10 +799,10 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
     );
     assert_eq!(second["replacedPaths"], json!(["second.py"]));
     assert_eq!(
-        second["evaluation"]["findings"].as_array().unwrap().len(),
+        second["evaluation"]["violations"].as_array().unwrap().len(),
         1
     );
-    assert_eq!(second["evaluation"]["findings"][0]["path"], "second.py");
+    assert_eq!(second["evaluation"]["violations"][0]["path"], "second.py");
     let complete = tape_test_apply(&workspace, 3, Vec::new());
     workspace.completion_task().compute().unwrap();
     assert_eq!(
@@ -742,7 +811,10 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
     );
     assert!(complete["replacedPaths"].is_null());
     assert_eq!(
-        complete["evaluation"]["findings"].as_array().unwrap().len(),
+        complete["evaluation"]["violations"]
+            .as_array()
+            .unwrap()
+            .len(),
         2
     );
     RESULT_PAGE_WITNESSES_VISITED.set(0);
@@ -751,11 +823,11 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
     assert_eq!(pages, 2);
     assert_eq!(
         paged,
-        *complete["evaluation"]["findings"].as_array().unwrap()
+        *complete["evaluation"]["violations"].as_array().unwrap()
     );
     assert_eq!(
         serde_json::to_vec(&paged).unwrap(),
-        serde_json::to_vec(complete["evaluation"]["findings"].as_array().unwrap()).unwrap(),
+        serde_json::to_vec(complete["evaluation"]["violations"].as_array().unwrap()).unwrap(),
         "concatenated paged findings preserve complete-result bytes"
     );
     assert_eq!(
@@ -793,8 +865,8 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
         evicted,
         "pages after cursor zero do not decode evicted result state"
     );
-    let mut evicted_paged = first_page["findings"].as_array().unwrap().clone();
-    evicted_paged.extend(second_page["findings"].as_array().unwrap().clone());
+    let mut evicted_paged = first_page["violations"].as_array().unwrap().clone();
+    evicted_paged.extend(second_page["violations"].as_array().unwrap().clone());
     assert_eq!(
         evicted_paged, paged,
         "evicted files page their stored results"
@@ -807,7 +879,10 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
         })],
     );
     assert_eq!(
-        restored["evaluation"]["findings"].as_array().unwrap().len(),
+        restored["evaluation"]["violations"]
+            .as_array()
+            .unwrap()
+            .len(),
         1
     );
     let restored_state = workspace.state.lock().unwrap();
@@ -824,7 +899,7 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
             "path": "irrelevant.py", "language": "python", "source": "value = 1\n"
         })],
     );
-    assert_eq!(irrelevant["evaluation"]["findings"], json!([]));
+    assert_eq!(irrelevant["evaluation"]["violations"], json!([]));
     let irrelevant_state = workspace.state.lock().unwrap();
     assert!(irrelevant_state.files["irrelevant.py"].tape.is_none());
     drop(irrelevant_state);
@@ -837,7 +912,7 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
     );
     assert_eq!(after_eviction["replacedPaths"], json!(["first.py"]));
     assert_eq!(
-        after_eviction["evaluation"]["findings"]
+        after_eviction["evaluation"]["violations"]
             .as_array()
             .unwrap()
             .len(),
@@ -876,7 +951,7 @@ fn all_result_pages(workspace: &PolicyDslWorkspace, maximum_bytes: u32) -> (Vec<
     for pages in 1.. {
         let page: Value =
             serde_json::from_str(&result_page(workspace, cursor, maximum_bytes).unwrap()).unwrap();
-        findings.extend(page["findings"].as_array().unwrap().iter().cloned());
+        findings.extend(page["violations"].as_array().unwrap().iter().cloned());
         if page["done"].as_bool().unwrap() {
             return (findings, pages);
         }
@@ -898,7 +973,10 @@ fn paging_workspace() -> PolicyDslWorkspace {
         ],
     );
     assert_eq!(
-        applied["evaluation"]["findings"].as_array().unwrap().len(),
+        applied["evaluation"]["violations"]
+            .as_array()
+            .unwrap()
+            .len(),
         2
     );
     workspace
@@ -918,7 +996,7 @@ fn result_page_request_leaves_the_index_build_to_its_pool_task() {
     );
     let page: Value = serde_json::from_str(&pending().unwrap()).unwrap();
     assert!(!page["done"].as_bool().unwrap());
-    assert_eq!(page["findings"].as_array().unwrap().len(), 1);
+    assert_eq!(page["violations"].as_array().unwrap().len(), 1);
     assert_eq!(
         (RESULT_PAGE_SORTS.get(), RESULT_PAGE_WITNESSES_VISITED.get()),
         (1, 2),
@@ -1002,7 +1080,7 @@ fn close_during_live_native_tree_or_restored_doc_cancels_and_releases_source() {
         if phase == "restored-doc" {
             let initial = tape_test_apply(&workspace, 1, vec![file.clone()]);
             assert_eq!(initial["evaluation"]["status"], "completed");
-            assert_eq!(initial["evaluation"]["findings"][0]["code"], "PY");
+            assert_eq!(initial["evaluation"]["violations"][0]["code"], "PY");
             // An unchanged dirty file re-enters through the retained image.
             workspace
                 .state
@@ -1118,7 +1196,7 @@ fn cached_tape_rejects_revision_source_and_grammar_mismatch_without_stale_findin
         );
         assert_eq!(baseline["evaluation"]["status"], "completed");
         assert_eq!(baseline["evaluation"]["failures"], json!([]));
-        let unaffected = baseline["evaluation"]["findings"]
+        let unaffected = baseline["evaluation"]["violations"]
             .as_array()
             .unwrap()
             .iter()
@@ -1166,7 +1244,7 @@ fn cached_tape_rejects_revision_source_and_grammar_mismatch_without_stale_findin
         let rejected = tape_test_apply(&workspace, 2, vec![]);
         assert_eq!(rejected["evaluation"]["status"], "failed", "{mismatch}");
         assert_eq!(
-            rejected["evaluation"]["findings"],
+            rejected["evaluation"]["violations"],
             json!(unaffected),
             "{mismatch}"
         );
@@ -1176,8 +1254,8 @@ fn cached_tape_rejects_revision_source_and_grammar_mismatch_without_stale_findin
                 .unwrap()
                 .iter()
                 .map(|failure| (
-                    failure["policyId"].as_str().unwrap(),
-                    failure["checkId"].as_str().unwrap(),
+                    failure["ruleId"].as_str().unwrap(),
+                    failure["clauseId"].as_str().unwrap(),
                     failure["path"].as_str().unwrap(),
                     failure["code"].as_str().unwrap(),
                 ))
@@ -1202,7 +1280,7 @@ fn cached_tape_rejects_revision_source_and_grammar_mismatch_without_stale_findin
             "{mismatch}"
         );
         assert_eq!(
-            restored["evaluation"]["findings"], oracle["findings"],
+            restored["evaluation"]["violations"], oracle["violations"],
             "{mismatch}"
         );
         assert_eq!(
@@ -1226,13 +1304,14 @@ fn workspace(scopes: &[&str], ast: bool) -> PolicyDslWorkspace {
                 "format": "rerail.policy/v1",
                 "id": format!("lifecycle-{index}"),
                 "revision": 1,
+                "mode": "steer",
                 "scope": {"include": [scope], "exclude": []},
-                "checks": [{
+                "clauses": [{
                     "id": "check",
                     "forbid": query,
-                    "finding": {
+                    "violation": {
                         "anchor": "witness.span", "code": "FORBIDDEN",
-                        "message": "Forbidden call", "severity": "error"
+                        "message": "Forbidden call"
                     }
                 }]
             })
@@ -1435,13 +1514,12 @@ fn check(id: &str, rule: Value) -> Value {
     json!({
         "id": id,
         "forbid": { "ast": { "language": "typescript", "rule": rule } },
-        "finding": { "anchor": "witness.span", "code": "AST_MATCH", "message": "match", "severity": "error" },
+        "violation": { "anchor": "witness.span", "code": "AST_MATCH", "message": "match" },
     })
 }
 
 fn compile_checks(checks: Vec<Value>) -> CompiledPolicyDsl {
-    let document =
-        json!({ "format": "rerail.policy/v1", "id": "tolerant", "revision": 1, "checks": checks });
+    let document = json!({ "format": "rerail.policy/v1", "id": "tolerant", "revision": 1, "mode": "steer", "clauses": checks });
     PolicyDslRuntime::compile(
         document.to_string(),
         "json".to_owned(),
@@ -1498,7 +1576,7 @@ fn failure_codes(evaluation: &Value) -> Vec<(String, String)> {
         .iter()
         .map(|failure| {
             (
-                failure["checkId"].as_str().unwrap().to_owned(),
+                failure["clauseId"].as_str().unwrap().to_owned(),
                 failure["code"].as_str().unwrap().to_owned(),
             )
         })
@@ -1518,7 +1596,7 @@ fn global_regex_leaves_never_mark_a_broken_file_partial() {
                 "exists": { "regex": { "source": "file.content", "pattern": "danger\\(" } },
                 "select": select,
             } },
-            "finding": { "anchor": "witness.span", "code": "GATE", "message": "gate", "severity": "error" },
+            "violation": { "anchor": "witness.span", "code": "GATE", "message": "gate" },
         })
     };
     let checks = || {
@@ -1560,9 +1638,9 @@ fn broken_files_report_sound_witnesses_and_are_marked_partial() {
         ],
         json!([{ "language": "typescript", "path": "broken.ts", "source": source }]),
     );
-    let findings = evaluation["findings"].as_array().expect("findings");
+    let findings = evaluation["violations"].as_array().expect("findings");
     assert_eq!(findings.len(), 1, "{evaluation}");
-    assert_eq!(findings[0]["checkId"], "debugger");
+    assert_eq!(findings[0]["clauseId"], "debugger");
     assert_eq!(
         findings[0]["span"]["startLine"], 0,
         "the debugger inside the damaged function is suppressed"
@@ -1594,13 +1672,14 @@ fn broken_files_report_sound_witnesses_and_are_marked_partial() {
 #[test]
 fn anchor_selection_keeps_witnesses_beside_error_subtrees() {
     // A pattern with an exact terminal is anchored; its postings come from the whole tree,
-    // so an ERROR sibling must not hide the valid call after it.
-    let source = "const m = importOriginal<typeof import(\"./api\")>();\nconsole.log(m);\n";
+    // so an ERROR sibling must not hide the valid call after it. The missing comma is invalid
+    // TypeScript, so the ERROR stays whatever the grammar fixes.
+    let source = "const m = importOriginal(1 load(\"./api\"));\nconsole.log(m);\n";
     let evaluation = apply_checks(
         vec![check("log", json!({ "pattern": "console.log($A)" }))],
         json!([{ "language": "typescript", "path": "api.test.ts", "source": source }]),
     );
-    let findings = evaluation["findings"].as_array().expect("findings");
+    let findings = evaluation["violations"].as_array().expect("findings");
     assert_eq!(findings.len(), 1, "{evaluation}");
     assert_eq!(findings[0]["span"]["startLine"], 1);
     assert_eq!(
@@ -1656,7 +1735,7 @@ fn sibling_selection_matches_the_matcher_around_zero_width_nodes() {
         for rule in &rules {
             let files = json!([{ "language": "typescript", "path": "zero.ts", "source": source }]);
             let indexed = apply_checks(vec![check("sibling", rule.clone())], files.clone());
-            let document = json!({ "format": "rerail.policy/v1", "id": "tolerant", "revision": 1, "checks": [check("sibling", rule.clone())] });
+            let document = json!({ "format": "rerail.policy/v1", "id": "tolerant", "revision": 1, "mode": "steer", "clauses": [check("sibling", rule.clone())] });
             let compiled = PolicyDslRuntime::compile(
                 document.to_string(),
                 "json".to_owned(),
@@ -1671,7 +1750,7 @@ fn sibling_selection_matches_the_matcher_around_zero_width_nodes() {
             )
             .expect("result is JSON");
             assert_eq!(
-                indexed["findings"], stateless["findings"],
+                indexed["violations"], stateless["violations"],
                 "{source:?} {rule}"
             );
         }
@@ -1679,7 +1758,7 @@ fn sibling_selection_matches_the_matcher_around_zero_width_nodes() {
 }
 
 fn reported_check(id: &str, forbid: Value, finding: Value) -> Value {
-    json!({ "id": id, "forbid": forbid, "finding": finding })
+    json!({ "id": id, "forbid": forbid, "violation": finding })
 }
 
 fn reporting_checks() -> Vec<Value> {
@@ -1687,19 +1766,17 @@ fn reporting_checks() -> Vec<Value> {
         reported_check(
             "log",
             json!({ "ast": { "language": "typescript", "rule": { "pattern": "console.log($$$ARGS)" } } }),
-            json!({ "anchor": "capture.ARGS", "code": "LOG", "severity": "error",
-                    "message": "log of $$$ARGS", "fix": "logger.info($$$ARGS)" }),
+            json!({ "anchor": "capture.ARGS", "code": "LOG", "message": "log of $$$ARGS", "fix": "logger.info($$$ARGS)" }),
         ),
         reported_check(
             "end",
             json!({ "ast": { "language": "typescript", "rule": { "kind": "return_statement", "has": { "pattern": "$V" } } } }),
-            json!({ "anchor": "witness.end", "code": "RET", "severity": "warning", "message": "returns $V" }),
+            json!({ "anchor": "witness.end", "code": "RET", "message": "returns $V" }),
         ),
         reported_check(
             "todo",
             json!({ "regex": { "source": "file.content", "pattern": "TODO\\((?<WHO>[a-z]+)\\)" } }),
-            json!({ "anchor": "capture.WHO", "code": "TODO", "severity": "advisory",
-                    "message": "todo for $WHO", "fix": "TODO($WHO, #123)" }),
+            json!({ "anchor": "capture.WHO", "code": "TODO", "message": "todo for $WHO", "fix": "TODO($WHO, #123)" }),
         ),
     ]
 }
@@ -1710,7 +1787,7 @@ fn php_suppressions_remove_the_same_findings_as_stateless() {
         json!({
             "id": id,
             "forbid": { "ast": { "language": "php", "rule": { "kind": "variable_name" } } },
-            "finding": { "anchor": "witness.span", "code": id, "message": "m", "severity": "error",
+            "violation": { "anchor": "witness.span", "code": id, "message": "m",
                 "suppress": suppress },
         })
     };
@@ -1744,16 +1821,16 @@ fn php_suppressions_remove_the_same_findings_as_stateless() {
     );
     for ((source, kept), evaluation) in revisions.iter().zip(&incremental) {
         assert_eq!(
-            evaluation["findings"],
-            stateless(checks(), files(source))["findings"],
+            evaluation["violations"],
+            stateless(checks(), files(source))["violations"],
             "{source:?}"
         );
         for (id, expected) in kept {
-            let texts = evaluation["findings"]
+            let texts = evaluation["violations"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .filter(|finding| finding["checkId"] == *id)
+                .filter(|finding| finding["clauseId"] == *id)
                 .map(|finding| {
                     let span = &finding["span"];
                     &source[span["startByte"].as_u64().unwrap() as usize
@@ -1783,19 +1860,19 @@ fn workspace_findings_carry_anchors_messages_and_fixes_like_stateless() {
     );
     for (source, evaluation) in sources.iter().zip(&incremental) {
         let fresh = stateless(reporting_checks(), files(source));
-        assert_eq!(evaluation["findings"], fresh["findings"], "{source:?}");
+        assert_eq!(evaluation["violations"], fresh["violations"], "{source:?}");
         assert_eq!(
-            evaluation["findings"].as_array().map(Vec::len),
+            evaluation["violations"].as_array().map(Vec::len),
             Some(4),
             "{evaluation}"
         );
     }
-    let last = &incremental[3]["findings"];
+    let last = &incremental[3]["violations"];
     let log = last
         .as_array()
         .unwrap()
         .iter()
-        .find(|finding| finding["checkId"] == "log")
+        .find(|finding| finding["clauseId"] == "log")
         .unwrap();
     assert_eq!(log["message"], "log of a, {…");
     assert_eq!(
@@ -1814,14 +1891,14 @@ fn agreed_findings(checks: impl Fn() -> Vec<Value>, language: &str, source: &str
     let files = json!([{ "language": language, "path": path, "source": source }]);
     let incremental = apply_checks(checks(), files.clone());
     let fresh = stateless(checks(), files);
-    assert_eq!(incremental["findings"], fresh["findings"]);
+    assert_eq!(incremental["violations"], fresh["violations"]);
     assert_eq!(incremental["failures"], json!([]), "{incremental}");
     let text = |span: &Value| {
         source[span["startByte"].as_u64().unwrap() as usize
             ..span["endByte"].as_u64().unwrap() as usize]
             .to_owned()
     };
-    let findings = incremental["findings"].as_array().unwrap();
+    let findings = incremental["violations"].as_array().unwrap();
     let ids = findings
         .iter()
         .map(|finding| finding["id"].as_str().unwrap())
@@ -1858,8 +1935,7 @@ fn a_line_transform_supplies_its_default_where_the_capture_is_unbound() {
                     "E": { "line": { "source": "$A", "edge": "end" } },
                     "S": { "lines": { "source": "$A", "default": "0" } },
                 } } }),
-            json!({ "anchor": "witness.span", "code": "L", "severity": "error",
-                    "message": "argument on line ${L}th, ends on ${E}, ${S} lines" }),
+            json!({ "anchor": "witness.span", "code": "L", "message": "argument on line ${L}th, ends on ${E}, ${S} lines" }),
         )]
     };
     let source = "f(\n  [1,\n  2]);\ng();\n";
@@ -1886,7 +1962,7 @@ fn each_over_a_regex_group_that_no_match_binds_reports_nothing() {
             "runs",
             json!({ "ast": { "language": "typescript", "rule": { "kind": "program", "regex": "q",
                 "all": [{ "regex": "'[^']*'|(?P<WS>q+)" }] } } }),
-            json!({ "anchor": "capture.WS", "code": "WS", "severity": "error", "each": "WS",
+            json!({ "anchor": "capture.WS", "code": "WS", "each": "WS",
                     "message": "run $WS" }),
         )]
     };
@@ -1906,7 +1982,7 @@ fn a_transform_reads_each_matchs_regex_group() {
             "letters",
             json!({ "ast": { "language": "typescript", "rule": { "kind": "comment", "regex": "(?<U>\\p{Lu})" },
                 "transform": { "L": { "convert": { "source": "$U", "toCase": "lowerCase" } } } } }),
-            json!({ "anchor": "capture.U", "code": "U", "severity": "error", "each": "U",
+            json!({ "anchor": "capture.U", "code": "U", "each": "U",
                     "message": "$U to $L", "fix": { "template": "$L", "range": "capture.U" } }),
         )]
     };
@@ -1939,11 +2015,12 @@ fn regex_group_transform_limit_is_local_to_its_check_in_native_and_workspace_eva
     });
     let policy = json!({
         "format": "rerail.policy/v1", "id": "group-transform-limit", "revision": 1,
+        "mode": "steer",
         "scope": { "include": ["**/*"], "exclude": [] },
-        "checks": [
+        "clauses": [
             {
-                "id": "expanded", "finding": { "anchor": "witness.span", "code": "EXPANDED",
-                    "message": "$U", "severity": "error" },
+                "id": "expanded", "violation": { "anchor": "witness.span", "code": "EXPANDED",
+                    "message": "$U" },
                 "forbid": { "ast": { "language": "python",
                     "rule": { "kind": "identifier", "regex": "(?<G>x)" },
                     "transform": {
@@ -1953,8 +2030,8 @@ fn regex_group_transform_limit_is_local_to_its_check_in_native_and_workspace_eva
                 } }
             },
             {
-                "id": "ordinary", "finding": { "anchor": "witness.span", "code": "ORDINARY",
-                    "message": "ordinary", "severity": "error" },
+                "id": "ordinary", "violation": { "anchor": "witness.span", "code": "ORDINARY",
+                    "message": "ordinary" },
                 "forbid": { "regex": { "pattern": "x", "source": "file.content" } }
             }
         ]
@@ -1985,11 +2062,11 @@ fn regex_group_transform_limit_is_local_to_its_check_in_native_and_workspace_eva
     let workspace: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
     for evaluation in [&native, &workspace["evaluation"]] {
         assert_eq!(
-            evaluation["findings"][0]["checkId"], "ordinary",
+            evaluation["violations"][0]["clauseId"], "ordinary",
             "{evaluation}"
         );
         assert_eq!(
-            evaluation["failures"][0]["checkId"], "expanded",
+            evaluation["failures"][0]["clauseId"], "expanded",
             "{evaluation}"
         );
         assert_eq!(
@@ -2000,7 +2077,7 @@ fn regex_group_transform_limit_is_local_to_its_check_in_native_and_workspace_eva
 }
 
 #[test]
-fn query_cursor_stops_after_decision_or_witness_budget_in_native_and_workspace() {
+fn matching_stops_after_decision_or_witness_budget_in_native_and_workspace() {
     let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
     let capabilities = json!({
         "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
@@ -2011,10 +2088,11 @@ fn query_cursor_stops_after_decision_or_witness_budget_in_native_and_workspace()
     });
     let policy = json!({
         "format": "rerail.policy/v1", "id": "query-cursor", "revision": 1,
+        "mode": "steer",
         "scope": { "include": ["**/*"], "exclude": [] },
-        "checks": [{
-            "id": "print", "finding": { "anchor": "witness.span", "code": "PRINT",
-                "message": "found print", "severity": "error" },
+        "clauses": [{
+            "id": "print", "violation": { "anchor": "witness.span", "code": "PRINT",
+                "message": "found print" },
             "forbid": { "ast": { "language": "python",
                 "rule": { "pattern": "print($ARG)" } } }
         }]
@@ -2031,27 +2109,27 @@ fn query_cursor_stops_after_decision_or_witness_budget_in_native_and_workspace()
         "files": [file.clone()]
     });
 
-    super::super::query::reset_rows_stepped();
+    crate::policy_dsl::matcher::reset_roots_matched();
     compiled
         .evaluate(snapshot.to_string(), "decision".into())
         .unwrap();
     assert!(
-        super::super::query::rows_stepped() <= 1,
-        "a decision must stop at its first matching row"
+        crate::policy_dsl::matcher::roots_matched() <= 1,
+        "a decision must stop at its first matching root"
     );
 
-    super::super::query::reset_rows_stepped();
+    crate::policy_dsl::matcher::reset_roots_matched();
     compiled
         .evaluate(snapshot.to_string(), "diagnostic".into())
         .unwrap();
     assert!(
-        super::super::query::rows_stepped() <= 3,
+        crate::policy_dsl::matcher::roots_matched() <= 3,
         "the native evaluator must stop once its witness budget is exceeded"
     );
 
     let mut workspace = PolicyDslWorkspace::new();
     workspace.add_policy(&compiled).unwrap();
-    super::super::query::reset_rows_stepped();
+    crate::policy_dsl::matcher::reset_roots_matched();
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
@@ -2061,9 +2139,94 @@ fn query_cursor_stops_after_decision_or_witness_budget_in_native_and_workspace()
     };
     task.compute().unwrap();
     assert!(
-        super::super::query::rows_stepped() <= 3,
+        crate::policy_dsl::matcher::roots_matched() <= 3,
         "the workspace evaluator must stop once its witness budget is exceeded"
     );
+}
+
+#[test]
+fn roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace() {
+    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let capabilities = json!({
+        "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
+            "languages": { "python": "tree-sitter-python@0.23" } },
+        "limits": { "maxAstPatternBytes": 16384, "maxRegexPatternBytes": 16384,
+            "maxFiles": 100, "maxGraphDepth": 16, "maxSourceBytes": 1000000,
+            "maxVisitedNodes": 1000, "maxWitnesses": 10000 }
+    });
+    let policy = json!({
+        "format": "rerail.policy/v1", "id": "node-bound", "revision": 1, "mode": "steer",
+        "scope": { "include": ["**/*"], "exclude": [] },
+        "clauses": [{
+            "id": "print", "violation": { "anchor": "witness.span", "code": "PRINT",
+                "message": "found print" },
+            "forbid": { "ast": { "language": "python",
+                "rule": { "pattern": "print($ARG)" } } }
+        }]
+    });
+    let compiled =
+        PolicyDslRuntime::compile(policy.to_string(), "json".into(), capabilities.to_string())
+            .unwrap();
+    // 2,000 calls of seven nodes each: only the first ~140 lie within the node bound, and none
+    // past it may be matched, including the `print` at the end.
+    let file = json!({
+        "path": "sample.py", "language": "python",
+        "source": format!("print(0)\n{}print(1)\n", "f(0)\n".repeat(2_000))
+    });
+    let snapshot = json!({
+        "format": "rerail.repository-snapshot/v1", "revision": 1, "facts": [],
+        "files": [file.clone()]
+    });
+
+    crate::policy_dsl::matcher::reset_roots_matched();
+    let native: Value = serde_json::from_str(
+        &compiled
+            .evaluate(snapshot.to_string(), "diagnostic".into())
+            .unwrap(),
+    )
+    .unwrap();
+    let native_roots = crate::policy_dsl::matcher::roots_matched();
+
+    let mut workspace = PolicyDslWorkspace::new();
+    workspace.add_policy(&compiled).unwrap();
+    crate::policy_dsl::matcher::reset_roots_matched();
+    let mut task = WorkspaceApplyTask {
+        state: Arc::clone(&workspace.state),
+        closed: Arc::clone(&workspace.closed),
+        request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
+        request_buffer: None,
+        request_direct: None,
+    };
+    let workspace: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
+    let workspace_roots = crate::policy_dsl::matcher::roots_matched();
+    assert!(native_roots <= 200, "native matched {native_roots} roots");
+    assert!(
+        workspace_roots <= 200,
+        "workspace matched {workspace_roots} roots"
+    );
+    // Reaching the bound fails the clause for the file, with no violation, as before.
+    for (evaluation, message) in [
+        (
+            &native,
+            crate::policy_dsl::matcher::UtilLimit::Work.message(),
+        ),
+        (&workspace["evaluation"], "file AST work budget exceeded"),
+    ] {
+        assert_eq!(evaluation["violations"], json!([]), "{evaluation}");
+        assert_eq!(
+            evaluation["failures"].as_array().unwrap().len(),
+            1,
+            "{evaluation}"
+        );
+        assert_eq!(
+            evaluation["failures"][0]["code"], "budget-exceeded",
+            "{evaluation}"
+        );
+        assert_eq!(
+            evaluation["failures"][0]["message"], message,
+            "{evaluation}"
+        );
+    }
 }
 
 #[test]
@@ -2081,10 +2244,11 @@ fn select_when_exists_leaf_decides_at_first_witness_in_native_and_workspace() {
     let gate = |exists: Value| {
         json!({
             "format": "rerail.policy/v1", "id": "exists-gate", "revision": 1,
+            "mode": "steer",
             "scope": { "include": ["**/*"], "exclude": [] },
-            "checks": [{
-                "id": "gate", "finding": { "anchor": "witness.span", "code": "G",
-                    "message": "gated", "severity": "error" },
+            "clauses": [{
+                "id": "gate", "violation": { "anchor": "witness.span", "code": "G",
+                    "message": "gated" },
                 "forbid": { "select_when": {
                     "select": { "regex": { "source": "file.path", "pattern": "sample\\.py$" } },
                     "exists": exists,
@@ -2116,7 +2280,7 @@ fn select_when_exists_leaf_decides_at_first_witness_in_native_and_workspace() {
         )
         .unwrap();
         let located = |evaluation: &Value| {
-            evaluation["findings"]
+            evaluation["violations"]
                 .as_array()
                 .expect("findings")
                 .iter()
@@ -2164,15 +2328,14 @@ fn line_transforms_build_one_line_table_per_file_in_both_evaluators() {
                 "rule": { "pattern": "f($A)" },
                 "transform": { "L": { "line": { "source": "$A" } } }
             } }),
-            json!({ "anchor": "witness.span", "code": "LINE", "severity": "error",
-                    "message": "line $L" }),
+            json!({ "anchor": "witness.span", "code": "LINE", "message": "line $L" }),
         )]
     };
     let files = json!([{ "language": "typescript", "path": "a.ts", "source": source }]);
 
     crate::policy_dsl::matcher::reset_line_table_constructions();
     let native = stateless(checks(), files.clone());
-    assert_eq!(native["findings"].as_array().map(Vec::len), Some(MATCHES));
+    assert_eq!(native["violations"].as_array().map(Vec::len), Some(MATCHES));
     assert_eq!(
         crate::policy_dsl::matcher::line_table_constructions(),
         1,
@@ -2182,7 +2345,7 @@ fn line_transforms_build_one_line_table_per_file_in_both_evaluators() {
     crate::policy_dsl::matcher::reset_line_table_constructions();
     let workspace = apply_checks(checks(), files);
     assert_eq!(
-        workspace["findings"].as_array().map(Vec::len),
+        workspace["violations"].as_array().map(Vec::len),
         Some(MATCHES)
     );
     assert_eq!(
@@ -2211,7 +2374,7 @@ fn nth_child_sibling_tables_are_built_once_per_file_across_checks() {
             )
         })
         .collect::<Vec<_>>();
-    crate::policy_dsl::query::reset_named_sibling_visits();
+    crate::policy_dsl::matcher::reset_named_sibling_visits();
     let evaluation = apply_checks(
         checks,
         json!([{ "language": "typescript", "path": "a.ts", "source": source }]),
@@ -2222,13 +2385,13 @@ fn nth_child_sibling_tables_are_built_once_per_file_across_checks() {
         .map(|step| ARGUMENTS.div_ceil(step) + 1)
         .sum::<usize>();
     assert_eq!(
-        evaluation["findings"].as_array().map(Vec::len),
+        evaluation["violations"].as_array().map(Vec::len),
         Some(expected)
     );
     assert!(
-        crate::policy_dsl::query::named_sibling_visits() <= ARGUMENTS + 8,
+        crate::policy_dsl::matcher::named_sibling_visits() <= ARGUMENTS + 8,
         "each parent's named children are listed once per file, not once per check: {} visits",
-        crate::policy_dsl::query::named_sibling_visits()
+        crate::policy_dsl::matcher::named_sibling_visits()
     );
 }
 
@@ -2259,9 +2422,9 @@ fn resolves_builds_one_table_per_file_revision_for_every_check() {
     );
     for (source, evaluation) in [first, second].into_iter().zip(&evaluations) {
         let fresh = stateless(checks(), files(source));
-        assert_eq!(evaluation["findings"], fresh["findings"], "{source:?}");
+        assert_eq!(evaluation["violations"], fresh["violations"], "{source:?}");
         assert_eq!(
-            evaluation["findings"].as_array().map(Vec::len),
+            evaluation["violations"].as_array().map(Vec::len),
             Some(2),
             "{evaluation}"
         );
@@ -2292,9 +2455,9 @@ fn layout_reads_a_taped_file_s_lines_like_stateless() {
     let files = json!([{ "language": "typescript", "path": "a.ts", "source": source }]);
     let incremental = apply_checks(checks(), files.clone());
     let fresh = stateless(checks(), files);
-    assert_eq!(incremental["findings"], fresh["findings"]);
+    assert_eq!(incremental["violations"], fresh["violations"]);
     assert_eq!(
-        incremental["findings"].as_array().map(Vec::len),
+        incremental["violations"].as_array().map(Vec::len),
         Some(3),
         "{incremental}"
     );
@@ -2304,7 +2467,7 @@ fn layout_reads_a_taped_file_s_lines_like_stateless() {
 fn suppression_removes_the_same_findings_as_stateless() {
     let checks = || {
         let mut named = check("names", json!({ "kind": "identifier" }));
-        named["finding"]["suppress"] = json!({ "eslint": { "rules": ["names"] } });
+        named["violation"]["suppress"] = json!({ "eslint": { "rules": ["names"] } });
         vec![named, check("all-names", json!({ "kind": "identifier" }))]
     };
     let revisions = [
@@ -2319,12 +2482,12 @@ fn suppression_removes_the_same_findings_as_stateless() {
     );
     for (source, evaluation) in revisions.iter().zip(&incremental) {
         let fresh = stateless(checks(), files(source));
-        assert_eq!(evaluation["findings"], fresh["findings"], "{source:?}");
-        let named = evaluation["findings"]
+        assert_eq!(evaluation["violations"], fresh["violations"], "{source:?}");
+        let named = evaluation["violations"]
             .as_array()
             .unwrap()
             .iter()
-            .filter(|finding| finding["checkId"] == "names")
+            .filter(|finding| finding["clauseId"] == "names")
             .count();
         assert_eq!(named, 1, "{evaluation}");
     }
@@ -2336,16 +2499,15 @@ fn noqa_suppression_reads_a_taped_file_like_stateless() {
         vec![json!({
             "id": "imports",
             "forbid": { "ast": { "language": "python", "rule": { "kind": "dotted_name", "inside": { "kind": "import_from_statement" } } } },
-            "finding": { "anchor": "witness.span", "code": "F401", "message": "unused", "severity": "error",
-                "suppress": { "noqa": { "codes": ["F401"], "parent": "statement" } } },
+            "violation": { "anchor": "witness.span", "code": "F401", "message": "unused", "suppress": { "noqa": { "codes": ["F401"], "parent": "statement" } } },
         })]
     };
     let source = "#!/usr/bin/env python\n# noqa: F401\nfrom a import (  # noqa: F401\n    b,\n)\nfrom c import d\ns = '''x\ny'''  # noqa\nfrom e import f  # NOQA: F401\n";
     let files = json!([{ "language": "python", "path": "a.py", "source": source }]);
     let incremental = apply_checks(checks(), files.clone());
     let fresh = stateless(checks(), files);
-    assert_eq!(incremental["findings"], fresh["findings"]);
-    let texts = incremental["findings"]
+    assert_eq!(incremental["violations"], fresh["violations"]);
+    let texts = incremental["violations"]
         .as_array()
         .unwrap()
         .iter()
@@ -2407,7 +2569,7 @@ fn a_negated_gap_to_a_capture_runs_after_the_term_that_binds_it() {
                 if let Some(utils) = utils {
                     check["forbid"]["ast"]["utils"] = utils.clone();
                 }
-                check["finding"]["message"] = json!(format!("{id} on ${{L}}"));
+                check["violation"]["message"] = json!(format!("{id} on ${{L}}"));
                 check
             })
             .collect()
@@ -2436,7 +2598,7 @@ fn a_negated_gap_to_a_capture_runs_after_the_term_that_binds_it() {
                 "not": gap("capture.N"), "follows": { "matches": "directive" } }),
             );
             through["forbid"]["ast"]["utils"] = json!({ "directive": directive.clone() });
-            through["finding"]["anchor"] = json!("capture.N");
+            through["violation"]["anchor"] = json!("capture.N");
             vec![direct, through]
         },
         "typescript",
@@ -2458,7 +2620,7 @@ fn each_and_a_fix_range_read_a_directive_item_exported_through_a_utility() {
             json!({ "ast": { "language": "typescript", "rule": { "matches": "items" },
                 "utils": { "items": { "kind": "comment", "parse": { "grammar": "eslintDirective",
                     "value": { "regex": "^globals?$" }, "has": { "kind": "item", "capture": "N" } } } } } }),
-            json!({ "anchor": "capture.N", "code": "G", "severity": "error", "each": "N",
+            json!({ "anchor": "capture.N", "code": "G", "each": "N",
                     "message": "global ${N}!", "fix": { "template": "${N}2", "range": "capture.N" } }),
         )]
     };
@@ -2483,8 +2645,8 @@ fn each_and_a_fix_range_read_a_directive_item_exported_through_a_utility() {
 fn suppression_applies_to_each_enumerated_finding_by_its_own_line() {
     let checks = |suppress: bool| {
         move || {
-            let mut finding = json!({ "anchor": "capture.X", "code": "N", "severity": "error",
-                "each": "X", "message": "$X" });
+            let mut finding =
+                json!({ "anchor": "capture.X", "code": "N", "each": "X", "message": "$X" });
             if suppress {
                 finding["suppress"] = json!({ "eslint": { "rules": ["names"] } });
             }
@@ -2524,7 +2686,7 @@ fn noqa_reads_the_statement_around_an_exported_capture() {
                 json!({ "ast": { "language": "python", "rule": { "kind": "string",
                     "parse": { "grammar": "annotation", "has": { "stopBy": "end", "kind": "identifier",
                         "regex": "^(foo|bar|baz)$", "capture": "N" } } } } }),
-                json!({ "anchor": "capture.N", "code": "F821", "severity": "error", "message": "$N",
+                json!({ "anchor": "capture.N", "code": "F821", "message": "$N",
                         "suppress": { "noqa": noqa } }),
             )]
         }
@@ -2543,8 +2705,7 @@ fn noqa_reads_the_statement_around_an_exported_capture() {
 
 /// Compiles `checks`, returning the refusal's reason.
 fn refused(checks: Vec<Value>) -> String {
-    let document =
-        json!({ "format": "rerail.policy/v1", "id": "strict", "revision": 1, "checks": checks });
+    let document = json!({ "format": "rerail.policy/v1", "id": "strict", "revision": 1, "mode": "steer", "clauses": checks });
     PolicyDslRuntime::compile(
         document.to_string(),
         "json".to_owned(),
@@ -2573,7 +2734,7 @@ fn an_all_item_holding_a_gap_reads_its_capture() {
                 "order",
                 rule(json!([first, { "inside": callee.clone() }]))
             )]),
-            "/checks/0/forbid/ast/rule/all/0 reads `$C`, which only /checks/0/forbid/ast/rule/all/1 binds, \
+            "/clauses/0/forbid/ast/rule/all/0 reads `$C`, which only /clauses/0/forbid/ast/rule/all/1 binds, \
              after it: an `all` runs its items in the order written; move all/1 before all/0"
         );
     }
@@ -2588,7 +2749,7 @@ fn an_all_item_holding_a_gap_reads_its_capture() {
                         check["forbid"]["ast"]["transform"] =
                             json!({ "L": { "line": { "source": "$B" } } });
                         let id = check["id"].as_str().unwrap().to_owned();
-                        check["finding"]["message"] = json!(format!("{id} on ${{L}}"));
+                        check["violation"]["message"] = json!(format!("{id} on ${{L}}"));
                         check
                     })
                     .collect()
@@ -2653,7 +2814,7 @@ fn a_gap_to_a_parameter_reads_the_callers_capture() {
                 check["forbid"]["ast"]["utils"] = json!({ "near": { "params": ["P"],
                     "rule": { "layout": { "before": { "to": "capture.P", "breaks": { "eq": 0 } } } } } });
                 check["forbid"]["ast"]["transform"] = json!({ "L": { "line": { "source": "$B" } } });
-                check["finding"]["message"] = json!(format!("{id} on ${{L}} after $C"));
+                check["violation"]["message"] = json!(format!("{id} on ${{L}} after $C"));
                 check
             })
             .collect()
@@ -2681,7 +2842,7 @@ fn a_parameter_a_parse_captures_comes_back_for_each_and_a_fix_range() {
                 "utils": { "items": { "params": ["N"], "rule": { "kind": "comment", "parse": {
                     "grammar": "eslintDirective", "value": { "regex": "^globals?$" },
                     "has": { "kind": "item", "capture": "N" } } } } } } }),
-            json!({ "anchor": "capture.G", "code": "G", "severity": "error", "each": "G",
+            json!({ "anchor": "capture.G", "code": "G", "each": "G",
                     "message": "global ${G}!", "fix": { "template": "${G}2", "range": "capture.G" } }),
         )]
     };
@@ -2719,8 +2880,7 @@ fn transforms_read_what_a_call_returns_with_value_and_default() {
                     "T": { "replace": { "source": "$A", "replace": "x", "by": "X", "default": "-" } },
                     "L": { "line": { "source": "$A", "default": "?" } },
                 } } }),
-            json!({ "anchor": "witness.span", "code": "A", "severity": "error",
-                    "message": "${V} ${T} on ${L}" }),
+            json!({ "anchor": "witness.span", "code": "A", "message": "${V} ${T} on ${L}" }),
         )]
     };
     let source = "f(\n  0x10);\nf();\n";
@@ -2738,8 +2898,8 @@ fn transforms_read_what_a_call_returns_with_value_and_default() {
 fn suppression_applies_to_each_capture_a_call_returns() {
     let checks = |suppress: bool| {
         move || {
-            let mut finding = json!({ "anchor": "capture.X", "code": "N", "severity": "error",
-                "each": "X", "message": "$X" });
+            let mut finding =
+                json!({ "anchor": "capture.X", "code": "N", "each": "X", "message": "$X" });
             if suppress {
                 finding["suppress"] = json!({ "eslint": { "rules": ["names"] } });
             }
@@ -2788,7 +2948,7 @@ fn options_resolve_inside_suppress_layout_transform_and_language_options() {
                         "layout": { "before": { "to": "token", "breaks": { "max": { "$option": "maxBreaks" } } } } },
                     "transform": { "T": { "replace": { "source": "$X", "replace": "^", "by": { "$option": "missing" } } },
                         "D": { "substring": { "source": "$Y", "default": { "$option": "missing" } } } } } }),
-                json!({ "anchor": "capture.X", "code": "N", "severity": "error", "message": "$X ${T} ${D}",
+                json!({ "anchor": "capture.X", "code": "N", "message": "$X ${T} ${D}",
                         "suppress": { "eslint": { "rules": { "$option": "disable" } } } }),
             );
             let window = reported_check(
@@ -2797,7 +2957,7 @@ fn options_resolve_inside_suppress_layout_transform_and_language_options() {
                     "rule": { "kind": "identifier", "regex": "^window$", "resolves": { "global": ["window"] } },
                     "languageOptions": { "globals": { "$option": "browser",
                         "cases": { "true": { "window": "readonly" } }, "default": {} } } } }),
-                json!({ "anchor": "witness.span", "code": "W", "severity": "error", "message": "global" }),
+                json!({ "anchor": "witness.span", "code": "W", "message": "global" }),
             );
             vec![options, names, window]
         }
@@ -2827,7 +2987,7 @@ fn a_file_start_anchor_is_byte_zero_on_both_paths() {
         vec![reported_check(
             "inp",
             json!({ "ast": { "language": "python", "rule": { "kind": "module" } } }),
-            json!({ "anchor": "file.start", "code": "INP001", "severity": "error", "message": "m",
+            json!({ "anchor": "file.start", "code": "INP001", "message": "m",
                     "suppress": { "noqa": { "codes": ["INP001"] } } }),
         )]
     };
@@ -2840,10 +3000,10 @@ fn a_file_start_anchor_is_byte_zero_on_both_paths() {
         let files = json!([{ "language": "python", "path": "a.py", "source": source }]);
         let incremental = apply_checks(checks(), files.clone());
         assert_eq!(
-            incremental["findings"],
-            stateless(checks(), files)["findings"]
+            incremental["violations"],
+            stateless(checks(), files)["violations"]
         );
-        let findings = incremental["findings"].as_array().expect("findings");
+        let findings = incremental["violations"].as_array().expect("findings");
         assert_eq!(findings.len(), kept, "{source:?}");
         for finding in findings {
             assert_eq!(
@@ -2871,7 +3031,7 @@ fn host_rules_and_item_globals_agree_across_paths_and_revisions() {
                 "rule": { "kind": "comment", "parse": { "grammar": "eslintDirective",
                     "value": { "regex": "^globals?$" }, "has": { "kind": "item", "capture": "N",
                         "any": [{ "resolves": { "global": true } }, { "host": declared }] } } } } }),
-            json!({ "anchor": "capture.N", "code": "I", "severity": "error", "each": "N",
+            json!({ "anchor": "capture.N", "code": "I", "each": "N",
                     "message": "'$N' is already defined." }),
         )]
     };
@@ -2888,7 +3048,7 @@ fn host_rules_and_item_globals_agree_across_paths_and_revisions() {
         ],
     );
     let messages = |evaluation: &Value| {
-        evaluation["findings"]
+        evaluation["violations"]
             .as_array()
             .expect("findings")
             .iter()

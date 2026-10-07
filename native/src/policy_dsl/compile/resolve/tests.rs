@@ -11,7 +11,7 @@ fn compile(language: &str, ast: Value) -> Result<CompiledPolicyDsl> {
     ast["language"] = json!(language);
     compile_document_with(
         check_document(
-            json!({ "id": "ast-match", "forbid": { "ast": ast }, "finding": finding() }),
+            json!({ "id": "ast-match", "forbid": { "ast": ast }, "violation": finding() }),
         ),
         &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
     )
@@ -28,7 +28,7 @@ fn typescript(ast: Value) -> CompiledPolicyDsl {
 /// Each finding as `line:text` (1-based lines).
 fn found(result: &Value, source: &str) -> Vec<String> {
     assert_eq!(result["failures"], json!([]), "{result}");
-    result["findings"]
+    result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -172,43 +172,43 @@ fn malformed_resolves_are_rejected() {
     for (ast, expected) in [
         (
             json!({ "rule": { "kind": "identifier", "resolves": { "global": [] } } }),
-            "/checks/0/forbid/ast/rule/resolves/global must not be empty",
+            "/clauses/0/forbid/ast/rule/resolves/global must not be empty",
         ),
         (
             json!({ "rule": { "kind": "identifier", "resolves": { "global": ["a.b"] } } }),
-            "/checks/0/forbid/ast/rule/resolves/global/0: `a.b` is not an identifier of at most 256 bytes",
+            "/clauses/0/forbid/ast/rule/resolves/global/0: `a.b` is not an identifier of at most 256 bytes",
         ),
         (
             json!({ "rule": { "kind": "identifier", "resolves": { "global": ["1x"] } } }),
-            "/checks/0/forbid/ast/rule/resolves/global/0: `1x` is not an identifier of at most 256 bytes",
+            "/clauses/0/forbid/ast/rule/resolves/global/0: `1x` is not an identifier of at most 256 bytes",
         ),
         (
             json!({ "rule": { "kind": "identifier", "resolves": { "global": "print" } } }),
-            "/checks/0/forbid/ast/rule/resolves/global must be true or an array of names",
+            "/clauses/0/forbid/ast/rule/resolves/global must be true or an array of names",
         ),
         (
             json!({ "rule": { "kind": "identifier", "resolves": {} } }),
-            "/checks/0/forbid/ast/rule/resolves must list `global` names, `import` names, `imported` names, `this`, `unresolved`, a `binding`, `write`, or `beforeLocal`",
+            "/clauses/0/forbid/ast/rule/resolves must list `global` names, `import` names, `imported` names, `this`, `unresolved`, a `binding`, `write`, or `beforeLocal`",
         ),
         (
             json!({ "rule": { "kind": "identifier", "resolves": { "global": ["a"], "scope": "file" } } }),
-            "unknown field `scope` at /checks/0/forbid/ast/rule/resolves",
+            "unknown field `scope` at /clauses/0/forbid/ast/rule/resolves",
         ),
         (
             json!({ "rule": { "kind": "identifier", "resolves": { "global": ["a"], "directives": true } } }),
-            "/checks/0/forbid/ast/rule/resolves/directives must be \"eslint\" (honor /* global */ comments)",
+            "/clauses/0/forbid/ast/rule/resolves/directives must be \"eslint\" (honor /* global */ comments)",
         ),
         (
             json!({ "rule": { "kind": "identifier", "not": { "resolves": { "global": ["a"], "directives": "eslint" } } } }),
-            "/checks/0/forbid/ast/rule/not/resolves/directives: /* global */ comments are ESLint's; Python has none",
+            "/clauses/0/forbid/ast/rule/not/resolves/directives: /* global */ comments are ESLint's; Python has none",
         ),
         (
             json!({ "rule": { "kind": "identifier", "resolves": { "import": ["os..path"] } } }),
-            "/checks/0/forbid/ast/rule/resolves/import/0: `os..path` is not a dotted name (identifiers joined by `.`) or a PHP name (labels joined by `\\`) of at most 256 bytes",
+            "/clauses/0/forbid/ast/rule/resolves/import/0: `os..path` is not a dotted name (identifiers joined by `.`) or a PHP name (labels joined by `\\`) of at most 256 bytes",
         ),
         (
             json!({ "rule": { "kind": "identifier", "resolves": { "import": ["os"], "directives": "eslint" } } }),
-            "/checks/0/forbid/ast/rule/resolves/directives: /* global */ comments only add `global` names; list some",
+            "/clauses/0/forbid/ast/rule/resolves/directives: /* global */ comments only add `global` names; list some",
         ),
     ] {
         assert_eq!(rejection(compile("python", ast.clone())), expected, "{ast}");
@@ -218,7 +218,7 @@ fn malformed_resolves_are_rejected() {
             "typescript",
             json!({ "rule": { "resolves": { "import": ["react.useState"] } } })
         )),
-        "/checks/0/forbid/ast/rule/resolves/import: import resolution is Python-only for now; TypeScript rules can use `global`"
+        "/clauses/0/forbid/ast/rule/resolves/import: import resolution is Python-only for now; TypeScript rules can use `global`"
     );
     let many = (0..1025)
         .map(|index| format!("n{index}"))
@@ -228,7 +228,7 @@ fn malformed_resolves_are_rejected() {
             "typescript",
             json!({ "rule": { "resolves": { "global": many } } })
         )),
-        "/checks/0/forbid/ast/rule/resolves/global lists 1025 names; at most 1024 are allowed"
+        "/clauses/0/forbid/ast/rule/resolves/global lists 1025 names; at most 1024 are allowed"
     );
 }
 
@@ -238,7 +238,7 @@ fn files_with_syntax_errors_are_source_incomplete() {
         python(json!({ "rule": { "kind": "identifier", "resolves": { "global": ["print"] } } }));
     // The error region could hide `def print`: the rule is not evaluated around it.
     let result = evaluate_file(&rule, "python", "a.py", "print(1)\ndef (:\n");
-    assert_eq!(result["findings"], json!([]), "{result}");
+    assert_eq!(result["violations"], json!([]), "{result}");
     assert_eq!(
         result["failures"][0]["code"], "source-incomplete",
         "{result}"
@@ -299,7 +299,7 @@ fn imported_reads_nothing_through_an_error_before_the_name() {
         "from a.1 import x\n",
     ] {
         let result = evaluate_file(&rule, "python", "a.py", source);
-        assert_eq!(result["findings"], json!([]), "{source}: {result}");
+        assert_eq!(result["violations"], json!([]), "{source}: {result}");
     }
     let source = "from os import x\nfrom os import y, $\n";
     let result = evaluate_file(&rule, "python", "a.py", source);
@@ -721,17 +721,17 @@ fn lib_adds_typescript_eslint_lib_globals_in_their_namespaces() {
         (
             "typescript",
             json!({ "lib": ["dom", "esnext.nope"] }),
-            "/checks/0/forbid/ast/languageOptions/lib/1: `esnext.nope` is not a lib typescript-eslint 8.70.1 knows",
+            "/clauses/0/forbid/ast/languageOptions/lib/1: `esnext.nope` is not a lib typescript-eslint 8.70.1 knows",
         ),
         (
             "typescript",
             json!({ "lib": "dom" }),
-            "/checks/0/forbid/ast/languageOptions/lib must be an array of lib names",
+            "/clauses/0/forbid/ast/languageOptions/lib must be an array of lib names",
         ),
         (
             "python",
             json!({ "lib": ["dom"] }),
-            "unknown field `lib` at /checks/0/forbid/ast/languageOptions",
+            "unknown field `lib` at /clauses/0/forbid/ast/languageOptions",
         ),
     ] {
         let ast = json!({ "languageOptions": options, "rule": { "kind": "identifier" } });
@@ -1080,55 +1080,55 @@ fn malformed_language_options_are_rejected() {
     for (options, expected) in [
         (
             json!([]),
-            "/checks/0/forbid/ast/languageOptions must be an object",
+            "/clauses/0/forbid/ast/languageOptions must be an object",
         ),
         (
             json!({ "parserOptions": [] }),
-            "/checks/0/forbid/ast/languageOptions/parserOptions must be an object",
+            "/clauses/0/forbid/ast/languageOptions/parserOptions must be an object",
         ),
         (
             json!({ "parserOptions": { "ecmaVersion": 5 } }),
-            "unknown field `ecmaVersion` at /checks/0/forbid/ast/languageOptions/parserOptions",
+            "unknown field `ecmaVersion` at /clauses/0/forbid/ast/languageOptions/parserOptions",
         ),
         (
             json!({ "parserOptions": { "ecmaFeatures": { "jsx": true } } }),
-            "unknown field `jsx` at /checks/0/forbid/ast/languageOptions/parserOptions/ecmaFeatures",
+            "unknown field `jsx` at /clauses/0/forbid/ast/languageOptions/parserOptions/ecmaFeatures",
         ),
         (
             json!({ "parserOptions": { "ecmaFeatures": { "globalReturn": 1 } } }),
-            "/checks/0/forbid/ast/languageOptions/parserOptions/ecmaFeatures/globalReturn must be true or false",
+            "/clauses/0/forbid/ast/languageOptions/parserOptions/ecmaFeatures/globalReturn must be true or false",
         ),
         (
             json!({ "ecmaVersion": 4 }),
-            "/checks/0/forbid/ast/languageOptions/ecmaVersion must be \"latest\", 3, 5, 6 to 17, or 2015 to 2026",
+            "/clauses/0/forbid/ast/languageOptions/ecmaVersion must be \"latest\", 3, 5, 6 to 17, or 2015 to 2026",
         ),
         (
             json!({ "ecmaVersion": 2027 }),
-            "/checks/0/forbid/ast/languageOptions/ecmaVersion must be \"latest\", 3, 5, 6 to 17, or 2015 to 2026",
+            "/clauses/0/forbid/ast/languageOptions/ecmaVersion must be \"latest\", 3, 5, 6 to 17, or 2015 to 2026",
         ),
         (
             json!({ "ecmaVersion": "next" }),
-            "/checks/0/forbid/ast/languageOptions/ecmaVersion must be \"latest\", 3, 5, 6 to 17, or 2015 to 2026",
+            "/clauses/0/forbid/ast/languageOptions/ecmaVersion must be \"latest\", 3, 5, 6 to 17, or 2015 to 2026",
         ),
         (
             json!({ "ecmaVersion": 5 }),
-            "/checks/0/forbid/ast/languageOptions: sourceType \"module\" (the default) needs ecmaVersion 2015 or later; ESLint refuses it",
+            "/clauses/0/forbid/ast/languageOptions: sourceType \"module\" (the default) needs ecmaVersion 2015 or later; ESLint refuses it",
         ),
         (
             json!({ "sourceType": "esm" }),
-            "/checks/0/forbid/ast/languageOptions/sourceType must be \"script\", \"module\" or \"commonjs\"",
+            "/clauses/0/forbid/ast/languageOptions/sourceType must be \"script\", \"module\" or \"commonjs\"",
         ),
         (
             json!({ "globals": [] }),
-            "/checks/0/forbid/ast/languageOptions/globals must be an object",
+            "/clauses/0/forbid/ast/languageOptions/globals must be an object",
         ),
         (
             json!({ "globals": { "a": "on" } }),
-            "/checks/0/forbid/ast/languageOptions/globals/a must be \"readonly\", \"writable\" or \"off\" (or an ESLint alias)",
+            "/clauses/0/forbid/ast/languageOptions/globals/a must be \"readonly\", \"writable\" or \"off\" (or an ESLint alias)",
         ),
         (
             json!({ "globals": { "a-b": "off" } }),
-            "/checks/0/forbid/ast/languageOptions/globals: `a-b` is not an identifier of at most 256 bytes",
+            "/clauses/0/forbid/ast/languageOptions/globals: `a-b` is not an identifier of at most 256 bytes",
         ),
     ] {
         let ast = json!({ "languageOptions": options, "rule": rule });
@@ -1156,56 +1156,56 @@ fn malformed_language_options_are_rejected() {
             "typescript",
             json!({ "languageOptions": { "globals": globals(16_385) }, "rule": rule })
         )),
-        "/checks/0/forbid/ast/languageOptions/globals lists 16385 names; at most 16384 are allowed"
+        "/clauses/0/forbid/ast/languageOptions/globals lists 16385 names; at most 16384 are allowed"
     );
     for (ast, expected) in [
         (
             json!({ "rule": { "kind": "this", "resolves": { "this": "global" } } }),
-            "/checks/0/forbid/ast/rule/resolves/this: the global object depends on languageOptions.sourceType; declare languageOptions",
+            "/clauses/0/forbid/ast/rule/resolves/this: the global object depends on languageOptions.sourceType; declare languageOptions",
         ),
         (
             json!({ "languageOptions": {}, "rule": { "kind": "this", "resolves": { "this": true } } }),
-            "/checks/0/forbid/ast/rule/resolves/this must be \"global\" or \"globalScope\"",
+            "/clauses/0/forbid/ast/rule/resolves/this must be \"global\" or \"globalScope\"",
         ),
         (
             json!({ "languageOptions": {}, "rule": { "kind": "this", "resolves": { "this": "global", "directives": "eslint" } } }),
-            "/checks/0/forbid/ast/rule/resolves/directives: /* global */ comments only add `global` names; list some",
+            "/clauses/0/forbid/ast/rule/resolves/directives: /* global */ comments only add `global` names; list some",
         ),
         (
             json!({ "languageOptions": {}, "rule": { "kind": "this", "resolves": { "this": "global", "sloppyFunctions": false } } }),
-            "/checks/0/forbid/ast/rule/resolves/sloppyFunctions must be true",
+            "/clauses/0/forbid/ast/rule/resolves/sloppyFunctions must be true",
         ),
         (
             json!({ "languageOptions": {}, "rule": { "kind": "this", "resolves": { "this": "globalScope", "sloppyFunctions": true } } }),
-            "/checks/0/forbid/ast/rule/resolves/sloppyFunctions: only `this: \"global\"` reads a function's `this`",
+            "/clauses/0/forbid/ast/rule/resolves/sloppyFunctions: only `this: \"global\"` reads a function's `this`",
         ),
         (
             json!({ "languageOptions": {}, "rule": { "kind": "identifier", "resolves": { "global": ["a"], "declared": "no" } } }),
-            "/checks/0/forbid/ast/rule/resolves/declared must be true or false",
+            "/clauses/0/forbid/ast/rule/resolves/declared must be true or false",
         ),
         (
             json!({ "languageOptions": {}, "rule": { "kind": "this", "resolves": { "this": "global", "declared": false } } }),
-            "/checks/0/forbid/ast/rule/resolves/declared: only `global` names are declared; list some",
+            "/clauses/0/forbid/ast/rule/resolves/declared: only `global` names are declared; list some",
         ),
         (
             json!({ "languageOptions": {}, "rule": { "kind": "identifier", "resolves": { "global": ["a"], "declared": false, "directives": "eslint" } } }),
-            "/checks/0/forbid/ast/rule/resolves/directives: /* global */ comments decide what is declared, which `declared: false` ignores",
+            "/clauses/0/forbid/ast/rule/resolves/directives: /* global */ comments decide what is declared, which `declared: false` ignores",
         ),
         (
             json!({ "languageOptions": {}, "rule": { "kind": "identifier", "resolves": { "global": ["a"], "scriptDeclarations": false } } }),
-            "/checks/0/forbid/ast/rule/resolves/scriptDeclarations must be true",
+            "/clauses/0/forbid/ast/rule/resolves/scriptDeclarations must be true",
         ),
         (
             json!({ "languageOptions": {}, "rule": { "kind": "this", "resolves": { "this": "global", "scriptDeclarations": true } } }),
-            "/checks/0/forbid/ast/rule/resolves/scriptDeclarations: only `global` names resolve to declarations; list some",
+            "/clauses/0/forbid/ast/rule/resolves/scriptDeclarations: only `global` names resolve to declarations; list some",
         ),
         (
             json!({ "rule": { "kind": "identifier", "resolves": { "global": ["a"], "scriptDeclarations": true } } }),
-            "/checks/0/forbid/ast/rule/resolves/scriptDeclarations: whether a file is a script comes from languageOptions.sourceType; declare languageOptions",
+            "/clauses/0/forbid/ast/rule/resolves/scriptDeclarations: whether a file is a script comes from languageOptions.sourceType; declare languageOptions",
         ),
         (
             json!({ "rule": { "kind": "identifier", "resolves": { "global": ["a"], "declared": false } } }),
-            "/checks/0/forbid/ast/rule/resolves/declared: the declared globals come from languageOptions; declare languageOptions",
+            "/clauses/0/forbid/ast/rule/resolves/declared: the declared globals come from languageOptions; declare languageOptions",
         ),
     ] {
         assert_eq!(
@@ -1219,14 +1219,14 @@ fn malformed_language_options_are_rejected() {
             "python",
             json!({ "rule": { "kind": "identifier", "resolves": { "this": "global" } } })
         )),
-        "/checks/0/forbid/ast/rule/resolves/this: `this` is TypeScript's; Python has none"
+        "/clauses/0/forbid/ast/rule/resolves/this: `this` is TypeScript's; Python has none"
     );
     assert_eq!(
         rejection(compile(
             "python",
             json!({ "languageOptions": {}, "rule": { "kind": "identifier", "resolves": { "global": ["a"], "scriptDeclarations": true } } })
         )),
-        "/checks/0/forbid/ast/rule/resolves/scriptDeclarations: scripts are ESLint's; Python has none"
+        "/clauses/0/forbid/ast/rule/resolves/scriptDeclarations: scripts are ESLint's; Python has none"
     );
 }
 
@@ -1400,42 +1400,42 @@ fn a_file_condition_reads_the_files_module_path() {
         (
             "typescript",
             json!({ "inPackage": true }),
-            "/checks/0/forbid/ast/file/inPackage: module paths are Python's; typescript has none",
+            "/clauses/0/forbid/ast/file/inPackage: module paths are Python's; typescript has none",
         ),
         (
             "python",
             json!([]),
-            "/checks/0/forbid/ast/file must be an object",
+            "/clauses/0/forbid/ast/file must be an object",
         ),
         (
             "python",
             json!({}),
-            "/checks/0/forbid/ast/file must set `path`, `declaration`, `module`, `moduleName`, `package` or `inPackage`",
+            "/clauses/0/forbid/ast/file must set `path`, `declaration`, `module`, `moduleName`, `package` or `inPackage`",
         ),
         (
             "python",
             json!({ "paths": { "regex": "a" } }),
-            "unknown field `paths` at /checks/0/forbid/ast/file",
+            "unknown field `paths` at /clauses/0/forbid/ast/file",
         ),
         (
             "python",
             json!({ "inPackage": "yes" }),
-            "/checks/0/forbid/ast/file/inPackage must be true or false",
+            "/clauses/0/forbid/ast/file/inPackage must be true or false",
         ),
         (
             "python",
             json!({ "module": "^a$" }),
-            "/checks/0/forbid/ast/file/module must be an object",
+            "/clauses/0/forbid/ast/file/module must be an object",
         ),
         (
             "python",
             json!({ "module": { "pattern": "a" } }),
-            "unknown field `pattern` at /checks/0/forbid/ast/file/module",
+            "unknown field `pattern` at /clauses/0/forbid/ast/file/module",
         ),
         (
             "python",
             json!({ "moduleName": { "regex": "(" } }),
-            "/checks/0/forbid/ast/file/moduleName/regex: regex parse error:\n    (\n    ^\nerror: unclosed group",
+            "/clauses/0/forbid/ast/file/moduleName/regex: regex parse error:\n    (\n    ^\nerror: unclosed group",
         ),
     ] {
         let ast = json!({ "file": file, "rule": { "kind": "identifier" } });
@@ -1504,32 +1504,32 @@ fn a_file_condition_reads_the_files_path_in_every_language() {
         (
             "typescript",
             json!({ "module": { "regex": "a" } }),
-            "/checks/0/forbid/ast/file/module: module paths are Python's; typescript has none",
+            "/clauses/0/forbid/ast/file/module: module paths are Python's; typescript has none",
         ),
         (
             "python",
             json!({ "declaration": true }),
-            "/checks/0/forbid/ast/file/declaration: declaration files are TypeScript's; python has none",
+            "/clauses/0/forbid/ast/file/declaration: declaration files are TypeScript's; python has none",
         ),
         (
             "typescript",
             json!({}),
-            "/checks/0/forbid/ast/file must set `path` or `declaration`",
+            "/clauses/0/forbid/ast/file must set `path` or `declaration`",
         ),
         (
             "typescript",
             json!({ "declaration": "yes" }),
-            "/checks/0/forbid/ast/file/declaration must be true or false",
+            "/clauses/0/forbid/ast/file/declaration must be true or false",
         ),
         (
             "typescript",
             json!({ "path": "^src/" }),
-            "/checks/0/forbid/ast/file/path must be an object",
+            "/clauses/0/forbid/ast/file/path must be an object",
         ),
         (
             "typescript",
             json!({ "path": {} }),
-            "/checks/0/forbid/ast/file/path must set `regex`, `notRegex` or both",
+            "/clauses/0/forbid/ast/file/path must set `regex`, `notRegex` or both",
         ),
     ] {
         let ast = json!({ "file": file, "rule": { "kind": "identifier" } });
@@ -1572,15 +1572,15 @@ fn a_file_condition_negates_a_key_with_not_regex() {
     for (file, expected) in [
         (
             json!({ "module": {} }),
-            "/checks/0/forbid/ast/file/module must set `regex`, `notRegex` or both",
+            "/clauses/0/forbid/ast/file/module must set `regex`, `notRegex` or both",
         ),
         (
             json!({ "moduleName": { "notRegex": "(" } }),
-            "/checks/0/forbid/ast/file/moduleName/notRegex: regex parse error:\n    (\n    ^\nerror: unclosed group",
+            "/clauses/0/forbid/ast/file/moduleName/notRegex: regex parse error:\n    (\n    ^\nerror: unclosed group",
         ),
         (
             json!({ "module": { "notRegex": 1 } }),
-            "/checks/0/forbid/ast/file/module/notRegex must be a non-empty string",
+            "/clauses/0/forbid/ast/file/module/notRegex must be a non-empty string",
         ),
     ] {
         let ast = json!({ "file": file, "rule": { "kind": "identifier" } });
@@ -1779,7 +1779,7 @@ fn malformed_module_paths_are_rejected() {
 /// Starts of the findings of `result`.
 fn starts(result: &Value) -> std::collections::BTreeSet<u64> {
     assert_eq!(result["failures"], json!([]), "{result}");
-    result["findings"]
+    result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -2243,37 +2243,37 @@ fn malformed_imported_and_prefix_are_rejected() {
         (
             "python",
             json!({ "rule": { "kind": "dotted_name", "resolves": { "imported": [] } } }),
-            "/checks/0/forbid/ast/rule/resolves/imported must not be empty",
+            "/clauses/0/forbid/ast/rule/resolves/imported must not be empty",
         ),
         (
             "python",
             json!({ "rule": { "kind": "dotted_name", "resolves": { "imported": ["a..b"] } } }),
-            "/checks/0/forbid/ast/rule/resolves/imported/0: `a..b` is not a dotted name (identifiers joined by `.`) or a PHP name (labels joined by `\\`) of at most 256 bytes",
+            "/clauses/0/forbid/ast/rule/resolves/imported/0: `a..b` is not a dotted name (identifiers joined by `.`) or a PHP name (labels joined by `\\`) of at most 256 bytes",
         ),
         (
             "python",
             json!({ "rule": { "kind": "dotted_name", "resolves": { "imported": ["a"], "prefix": "yes" } } }),
-            "/checks/0/forbid/ast/rule/resolves/prefix must be true",
+            "/clauses/0/forbid/ast/rule/resolves/prefix must be true",
         ),
         (
             "python",
             json!({ "rule": { "kind": "identifier", "resolves": { "global": ["a"], "prefix": true } } }),
-            "/checks/0/forbid/ast/rule/resolves/prefix: only `import` and `imported` names are dotted; list some",
+            "/clauses/0/forbid/ast/rule/resolves/prefix: only `import` and `imported` names are dotted; list some",
         ),
         (
             "typescript",
             json!({ "rule": { "resolves": { "imported": ["react"] } } }),
-            "/checks/0/forbid/ast/rule/resolves/imported: import resolution is Python-only for now; TypeScript rules can use `global`",
+            "/clauses/0/forbid/ast/rule/resolves/imported: import resolution is Python-only for now; TypeScript rules can use `global`",
         ),
         (
             "python",
             json!({ "rule": { "kind": "dotted_name", "resolves": { "imported": ["a"], "relative": "level" } } }),
-            "/checks/0/forbid/ast/rule/resolves/relative must be \"never\" or \"text\"",
+            "/clauses/0/forbid/ast/rule/resolves/relative must be \"never\" or \"text\"",
         ),
         (
             "python",
             json!({ "rule": { "kind": "attribute", "resolves": { "import": ["a"], "relative": "text" } } }),
-            "/checks/0/forbid/ast/rule/resolves/relative: only `imported` names import sites; list some",
+            "/clauses/0/forbid/ast/rule/resolves/relative: only `imported` names import sites; list some",
         ),
     ] {
         assert_eq!(rejection(compile(language, ast.clone())), expected, "{ast}");
@@ -2489,32 +2489,32 @@ fn a_source_gate_makes_a_query_apply_only_to_its_source_types_and_features() {
         (
             "typescript",
             json!({ "sourceType": "esm" }),
-            "/checks/0/forbid/ast/when/sourceType must be \"script\", \"module\" or \"commonjs\", or a non-empty list of them",
+            "/clauses/0/forbid/ast/when/sourceType must be \"script\", \"module\" or \"commonjs\", or a non-empty list of them",
         ),
         (
             "typescript",
             json!({ "sourceType": [] }),
-            "/checks/0/forbid/ast/when/sourceType must be \"script\", \"module\" or \"commonjs\", or a non-empty list of them",
+            "/clauses/0/forbid/ast/when/sourceType must be \"script\", \"module\" or \"commonjs\", or a non-empty list of them",
         ),
         (
             "typescript",
             json!({ "ecmaFeatures": {} }),
-            "/checks/0/forbid/ast/when/ecmaFeatures must set `globalReturn`, `impliedStrict` or both",
+            "/clauses/0/forbid/ast/when/ecmaFeatures must set `globalReturn`, `impliedStrict` or both",
         ),
         (
             "typescript",
             json!({ "ecmaFeatures": { "jsx": true } }),
-            "unknown field `jsx` at /checks/0/forbid/ast/when/ecmaFeatures",
+            "unknown field `jsx` at /clauses/0/forbid/ast/when/ecmaFeatures",
         ),
         (
             "typescript",
             json!({ "ecmaFeatures": { "impliedStrict": "yes" } }),
-            "/checks/0/forbid/ast/when/ecmaFeatures/impliedStrict must be true or false",
+            "/clauses/0/forbid/ast/when/ecmaFeatures/impliedStrict must be true or false",
         ),
         (
             "python",
             json!({ "sourceType": "script" }),
-            "unknown field `sourceType` at /checks/0/forbid/ast/when",
+            "unknown field `sourceType` at /clauses/0/forbid/ast/when",
         ),
     ] {
         let ast = json!({ "when": when, "rule": { "kind": "identifier" } });
@@ -2547,7 +2547,7 @@ fn a_gate_that_does_not_hold_keeps_the_querys_captures() {
         let check = json!({
             "id": "ast-match",
             "forbid": { "ast": ast },
-            "finding": { "anchor": "capture.NAME", "code": "X", "message": "fn $NAME", "severity": "error", "fix": "$NAME" },
+            "violation": { "anchor": "capture.NAME", "code": "X", "message": "fn $NAME", "fix": "$NAME" },
         });
         let compiled = compile_document_with(
             check_document(check.clone()),
@@ -2556,7 +2556,7 @@ fn a_gate_that_does_not_hold_keeps_the_querys_captures() {
         .unwrap_or_else(|error| panic!("{check}: {}", error.reason));
         let result = evaluate_file(&compiled, language, path, source);
         assert_eq!(result["failures"], json!([]), "{result}");
-        result["findings"]
+        result["violations"]
             .as_array()
             .expect("findings")
             .iter()
@@ -2736,7 +2736,7 @@ os.environ[\"C\"]
             json!({ "file": { "declaration": true }, "rule": { "kind": "subscript",
                     "resolves": { "imported": ["os"], "seenBefore": true } } })
         )),
-        "/checks/0/forbid/ast/file/declaration: declaration files are TypeScript's; python has none"
+        "/clauses/0/forbid/ast/file/declaration: declaration files are TypeScript's; python has none"
     );
 }
 
@@ -2745,19 +2745,19 @@ fn seen_before_lists_top_level_modules_alone() {
     for (rule, expected) in [
         (
             json!({ "kind": "call", "resolves": { "imported": ["os.path"], "seenBefore": true } }),
-            "/checks/0/forbid/ast/rule/resolves/imported/0: `os.path` is not a top-level module; `seenBefore` asks about modules by their first name, as Ruff's `seen_module` does",
+            "/clauses/0/forbid/ast/rule/resolves/imported/0: `os.path` is not a top-level module; `seenBefore` asks about modules by their first name, as Ruff's `seen_module` does",
         ),
         (
             json!({ "kind": "call", "resolves": { "seenBefore": true } }),
-            "/checks/0/forbid/ast/rule/resolves/seenBefore needs `imported` modules",
+            "/clauses/0/forbid/ast/rule/resolves/seenBefore needs `imported` modules",
         ),
         (
             json!({ "kind": "call", "resolves": { "imported": ["os"], "seenBefore": true, "prefix": true } }),
-            "/checks/0/forbid/ast/rule/resolves/prefix: `seenBefore` asks whether an import of a listed module was seen; write other `resolves` terms in a resolves of their own",
+            "/clauses/0/forbid/ast/rule/resolves/prefix: `seenBefore` asks whether an import of a listed module was seen; write other `resolves` terms in a resolves of their own",
         ),
         (
             json!({ "kind": "call", "resolves": { "imported": ["os"], "seenBefore": false } }),
-            "/checks/0/forbid/ast/rule/resolves/seenBefore must be true",
+            "/clauses/0/forbid/ast/rule/resolves/seenBefore must be true",
         ),
     ] {
         let error = compile("python", json!({ "rule": rule }))
@@ -2773,39 +2773,39 @@ fn malformed_python_versions_are_rejected() {
     for (options, expected) in [
         (
             json!({ "pythonVersion": "3.6" }),
-            "/checks/0/forbid/ast/languageOptions/pythonVersion must be a version from \"3.7\" to \"3.15\"",
+            "/clauses/0/forbid/ast/languageOptions/pythonVersion must be a version from \"3.7\" to \"3.15\"",
         ),
         (
             json!({ "pythonVersion": "3.16" }),
-            "/checks/0/forbid/ast/languageOptions/pythonVersion must be a version from \"3.7\" to \"3.15\"",
+            "/clauses/0/forbid/ast/languageOptions/pythonVersion must be a version from \"3.7\" to \"3.15\"",
         ),
         (
             json!({ "pythonVersion": 3.13 }),
-            "/checks/0/forbid/ast/languageOptions/pythonVersion must be a version from \"3.7\" to \"3.15\"",
+            "/clauses/0/forbid/ast/languageOptions/pythonVersion must be a version from \"3.7\" to \"3.15\"",
         ),
         (
             json!({ "pythonVersion": "3.013" }),
-            "/checks/0/forbid/ast/languageOptions/pythonVersion must be a version from \"3.7\" to \"3.15\"",
+            "/clauses/0/forbid/ast/languageOptions/pythonVersion must be a version from \"3.7\" to \"3.15\"",
         ),
         (
             json!({ "ecmaVersion": 5 }),
-            "unknown field `ecmaVersion` at /checks/0/forbid/ast/languageOptions",
+            "unknown field `ecmaVersion` at /clauses/0/forbid/ast/languageOptions",
         ),
         (
             json!({ "typingModules": "compat" }),
-            "/checks/0/forbid/ast/languageOptions/typingModules must be a list of dotted names",
+            "/clauses/0/forbid/ast/languageOptions/typingModules must be a list of dotted names",
         ),
         (
             json!({ "typingModules": ["compat", "a..b"] }),
-            "/checks/0/forbid/ast/languageOptions/typingModules/1 must be a dotted name (identifiers joined by .) of at most 256 bytes",
+            "/clauses/0/forbid/ast/languageOptions/typingModules/1 must be a dotted name (identifiers joined by .) of at most 256 bytes",
         ),
         (
             json!({ "extendGenerics": ["django.db.models.$Key"] }),
-            "/checks/0/forbid/ast/languageOptions/extendGenerics/0 must be a dotted name (identifiers joined by .) of at most 256 bytes",
+            "/clauses/0/forbid/ast/languageOptions/extendGenerics/0 must be a dotted name (identifiers joined by .) of at most 256 bytes",
         ),
         (
             json!({ "extendGenerics": vec!["a"; 257] }),
-            "/checks/0/forbid/ast/languageOptions/extendGenerics lists 257 names; at most 256 are allowed",
+            "/clauses/0/forbid/ast/languageOptions/extendGenerics lists 257 names; at most 256 are allowed",
         ),
     ] {
         let ast = json!({ "languageOptions": options, "rule": rule });
@@ -2816,60 +2816,60 @@ fn malformed_python_versions_are_rejected() {
             "typescript",
             json!({ "languageOptions": { "pythonVersion": "3.13" }, "rule": rule })
         )),
-        "unknown field `pythonVersion` at /checks/0/forbid/ast/languageOptions"
+        "unknown field `pythonVersion` at /clauses/0/forbid/ast/languageOptions"
     );
     assert_eq!(
         rejection(compile(
             "typescript",
             json!({ "languageOptions": { "typingModules": ["compat"] }, "rule": rule })
         )),
-        "unknown field `typingModules` at /checks/0/forbid/ast/languageOptions"
+        "unknown field `typingModules` at /clauses/0/forbid/ast/languageOptions"
     );
     for (language, when, expected) in [
         (
             "python",
             json!([]),
-            "/checks/0/forbid/ast/when must be an object",
+            "/clauses/0/forbid/ast/when must be an object",
         ),
         (
             "python",
             json!({ "ecmaVersion": { "min": 5 } }),
-            "unknown field `ecmaVersion` at /checks/0/forbid/ast/when",
+            "unknown field `ecmaVersion` at /clauses/0/forbid/ast/when",
         ),
         (
             "typescript",
             json!({ "pythonVersion": { "min": "3.10" } }),
-            "unknown field `pythonVersion` at /checks/0/forbid/ast/when",
+            "unknown field `pythonVersion` at /clauses/0/forbid/ast/when",
         ),
         (
             "python",
             json!({ "pythonVersion": "3.10" }),
-            "/checks/0/forbid/ast/when/pythonVersion must be an object",
+            "/clauses/0/forbid/ast/when/pythonVersion must be an object",
         ),
         (
             "python",
             json!({ "pythonVersion": {} }),
-            "/checks/0/forbid/ast/when/pythonVersion must set `min`, `max` or both",
+            "/clauses/0/forbid/ast/when/pythonVersion must set `min`, `max` or both",
         ),
         (
             "python",
             json!({ "pythonVersion": { "min": "3.10", "exact": "3.11" } }),
-            "unknown field `exact` at /checks/0/forbid/ast/when/pythonVersion",
+            "unknown field `exact` at /clauses/0/forbid/ast/when/pythonVersion",
         ),
         (
             "python",
             json!({ "pythonVersion": { "min": "3.16" } }),
-            "/checks/0/forbid/ast/when/pythonVersion/min must be a version from \"3.7\" to \"3.15\"",
+            "/clauses/0/forbid/ast/when/pythonVersion/min must be a version from \"3.7\" to \"3.15\"",
         ),
         (
             "python",
             json!({ "pythonVersion": { "min": "3.12", "max": "3.10" } }),
-            "/checks/0/forbid/ast/when/pythonVersion: min is after max, so the query never applies",
+            "/clauses/0/forbid/ast/when/pythonVersion: min is after max, so the query never applies",
         ),
         (
             "typescript",
             json!({ "ecmaVersion": { "max": 4 } }),
-            "/checks/0/forbid/ast/when/ecmaVersion/max must be \"latest\", 3, 5, 6 to 17, or 2015 to 2026",
+            "/clauses/0/forbid/ast/when/ecmaVersion/max must be \"latest\", 3, 5, 6 to 17, or 2015 to 2026",
         ),
     ] {
         let ast = json!({ "when": when, "rule": { "kind": "identifier" } });
@@ -3033,27 +3033,27 @@ fn any_mode_resolves_are_checked() {
     for (ast, expected) in [
         (
             json!({ "rule": { "kind": "identifier", "resolves": { "unresolved": false } } }),
-            "/checks/0/forbid/ast/rule/resolves/unresolved must be true or \"star\"",
+            "/clauses/0/forbid/ast/rule/resolves/unresolved must be true or \"star\"",
         ),
         (
             json!({ "rule": { "kind": "identifier", "resolves": { "unresolved": true, "global": ["a"] } } }),
-            "/checks/0/forbid/ast/rule/resolves/global: `unresolved` asks about names with no binding; write other `resolves` terms in a resolves of their own",
+            "/clauses/0/forbid/ast/rule/resolves/global: `unresolved` asks about names with no binding; write other `resolves` terms in a resolves of their own",
         ),
         (
             json!({ "rule": { "kind": "identifier", "resolves": { "import": true, "prefix": true } } }),
-            "/checks/0/forbid/ast/rule/resolves/prefix: `import: true` matches every qualified name; it lists none to prefix",
+            "/clauses/0/forbid/ast/rule/resolves/prefix: `import: true` matches every qualified name; it lists none to prefix",
         ),
         (
             json!({ "rule": { "kind": "identifier", "resolves": { "global": true, "declared": false } } }),
-            "/checks/0/forbid/ast/rule/resolves/declared: `global: true` asks for declared globals and builtins; it has no names to undeclare",
+            "/clauses/0/forbid/ast/rule/resolves/declared: `global: true` asks for declared globals and builtins; it has no names to undeclare",
         ),
         (
             json!({ "rule": { "kind": "identifier", "resolves": { "global": false } } }),
-            "/checks/0/forbid/ast/rule/resolves/global must be true or an array of names",
+            "/clauses/0/forbid/ast/rule/resolves/global must be true or an array of names",
         ),
         (
             json!({ "rule": { "kind": "identifier", "resolves": { "unresolved": true, "directives": "eslint" } } }),
-            "/checks/0/forbid/ast/rule/resolves/directives: /* global */ comments are ESLint's; Python has none",
+            "/clauses/0/forbid/ast/rule/resolves/directives: /* global */ comments are ESLint's; Python has none",
         ),
     ] {
         assert_eq!(rejection(compile("python", ast.clone())), expected, "{ast}");
@@ -3061,11 +3061,11 @@ fn any_mode_resolves_are_checked() {
     for (ast, expected) in [
         (
             json!({ "rule": { "resolves": { "unresolved": "star" } } }),
-            "/checks/0/forbid/ast/rule/resolves/unresolved: \"star\" asks whether a Python star import binds the name; TypeScript has none",
+            "/clauses/0/forbid/ast/rule/resolves/unresolved: \"star\" asks whether a Python star import binds the name; TypeScript has none",
         ),
         (
             json!({ "rule": { "resolves": { "import": true } } }),
-            "/checks/0/forbid/ast/rule/resolves/import: import resolution is Python-only for now; TypeScript rules can use `global`",
+            "/clauses/0/forbid/ast/rule/resolves/import: import resolution is Python-only for now; TypeScript rules can use `global`",
         ),
     ] {
         assert_eq!(
@@ -3085,7 +3085,7 @@ fn any_mode_resolves_are_source_incomplete_under_syntax_errors() {
     ] {
         let rule = python(json!({ "rule": { "kind": "identifier", "resolves": resolves } }));
         let result = evaluate_file(&rule, "python", "a.py", "print(x)\ndef f(:\n");
-        assert_eq!(result["findings"], json!([]), "{result}");
+        assert_eq!(result["violations"], json!([]), "{result}");
         assert_eq!(
             result["failures"][0]["code"], "source-incomplete",
             "{result}"

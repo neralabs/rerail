@@ -1,0 +1,39 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-no-process-exit",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-n 18.4.1 n/no-process-exit: a call whose callee is `process.exit` (non-computed member of an identifier named process; upstream's selector reads no scope).",
+  "scope": {
+    "include": ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "kind": "member_expression",
+              "all": [
+                { "has": { "field": "object", "kind": "identifier", "regex": "^process$" } },
+                { "has": { "field": "property", "kind": "property_identifier", "regex": "^exit$" } }
+              ]
+            },
+            "not": { "has": { "field": "arguments", "kind": "template_string" } }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/no-process-exit",
+        "message": "Don't use process.exit(); throw an error instead.",
+        "suppress": { "eslint": { "rules": ["n/no-process-exit"] } }
+      }
+    }
+  ]
+}

@@ -43,17 +43,17 @@ const COMPONENTS: ReadonlyArray<[z.ZodType, string]> = [
   ...semanticSchemaComponents(policyParseSchema, policyFormatArgsSchema),
   [policyPredicateSchema, "PolicyPredicate"],
   [policyQuerySchema, "PolicyQuery"],
-  [policyRuleSchema, "PolicyRule"],
+  [policyRuleSchema, "FileRule"],
   [matchConditionSchema, "MatchCondition"],
-  [cosineRuleSchema, "CosineRule"],
+  [cosineRuleSchema, "ConversationRule"],
   [storedRuleSchema, "StoredRule"],
   [sessionSummarySchema, "SessionSummary"],
   [sessionResponseSchema, "SessionResponse"],
   [eventRecordSchema, "EventRecord"],
-  [policyRunRecordSchema, "PolicyRunRecord"],
+  [policyRunRecordSchema, "AuditRecord"],
   [presentationPreferenceSchema, "PresentationPreference"],
-  [policyControlsSchema, "PolicyControls"],
-  [scanRequestSchema, "ScanRequest"],
+  [policyControlsSchema, "AuditControls"],
+  [scanRequestSchema, "AuditRequest"],
 ];
 for (const [schema, refId] of COMPONENTS) zodToOpenAPIRegistry.add(schema, { _internal: { refId } });
 
@@ -90,7 +90,7 @@ const CATALOG_ETAG_OPERATIONS: ReadonlySet<string> = new Set(["rules_list", "rul
  * GET operations that read execution history, which has no cheap change token: their tag is a
  * digest of the result, so the handler runs and only the response body is saved.
  */
-const RESULT_ETAG_OPERATIONS: ReadonlySet<string> = new Set(["rules_activity", "findings_list", "sessions_list"]);
+const RESULT_ETAG_OPERATIONS: ReadonlySet<string> = new Set(["rules_activity", "violations_list", "sessions_list"]);
 
 const ETAG_OPERATIONS: ReadonlySet<string> = new Set([...CATALOG_ETAG_OPERATIONS, ...RESULT_ETAG_OPERATIONS]);
 

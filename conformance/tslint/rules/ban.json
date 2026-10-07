@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:ban",
   "revision": 1,
+  "mode": "steer",
   "description": "Bans specific functions/methods. TSLint's default bans nothing (an empty doc does not compile), so this doc ports the fixture's option list.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "ban-function",
       "forbid": {
@@ -97,10 +98,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "BAN",
-        "severity": "error",
         "message": "Calls to this function are not allowed."
       }
     },
@@ -130,10 +130,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "BAN",
-        "severity": "error",
         "message": "Calls to 'window.toString' are not allowed."
       }
     },
@@ -163,10 +162,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "BAN",
-        "severity": "error",
         "message": "Calls to '_.map' are not allowed."
       }
     },
@@ -196,10 +194,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "BAN",
-        "severity": "error",
         "message": "Calls to '_.filter' are not allowed. Use the native JavaScript 'myArray.filter' instead."
       }
     },
@@ -229,10 +226,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "BAN",
-        "severity": "error",
         "message": "Calls to '*.forEach' are not allowed. Use a regular for loop instead."
       }
     },
@@ -262,10 +258,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "BAN",
-        "severity": "error",
         "message": "Calls to 'chai.assert.equal' are not allowed. Use 'strictEqual' instead."
       }
     },
@@ -295,10 +290,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "BAN",
-        "severity": "error",
         "message": "Calls to '*._id.toString' are not allowed. Use 'toHexString' instead."
       }
     }

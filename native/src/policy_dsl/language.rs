@@ -204,15 +204,30 @@ impl Language for GrammarDialect {
 }
 
 impl LanguageExt for GrammarDialect {
+    /// The grammar `build.rs` generates from a vendored grammar (Blade; Python, TypeScript and
+    /// TSX, which carry patches: `grammars/tree-sitter-{python,typescript}/PATCHES.md`), else
+    /// ast-grep's. ast-grep is built without its Python and TypeScript parsers, so `SupportLang`
+    /// only lends these dialects its pattern syntax.
     fn get_ts_language(&self) -> TSLanguage {
-        if let Some(language) = self.support() {
-            return language.get_ts_language();
-        }
         unsafe extern "C" {
             fn tree_sitter_blade() -> *const ();
+            fn tree_sitter_python() -> *const ();
+            fn tree_sitter_typescript() -> *const ();
+            fn tree_sitter_tsx() -> *const ();
         }
-        let language = unsafe { tree_sitter_language::LanguageFn::from_raw(tree_sitter_blade) };
-        language.into()
+        let vendored = match self {
+            Self::Blade => tree_sitter_blade,
+            Self::Python => tree_sitter_python,
+            Self::TypeScript => tree_sitter_typescript,
+            Self::Tsx => tree_sitter_tsx,
+            _ => {
+                return self
+                    .support()
+                    .expect("a dialect without a vendored grammar is ast-grep's")
+                    .get_ts_language();
+            }
+        };
+        unsafe { tree_sitter_language::LanguageFn::from_raw(vendored) }.into()
     }
 }
 
@@ -913,6 +928,87 @@ mod tests {
                 "{:?}",
                 dialect.lang
             );
+        }
+    }
+
+    /// TypeScript parses a postfix `!` inside the member access chain, so it asserts its operand,
+    /// never a binary, unary or argumentless `new` expression before it (the vendored grammar's
+    /// patch, `grammars/tree-sitter-typescript/PATCHES.md`; tree-sitter-typescript#299).
+    #[test]
+    fn non_null_assertion_binds_to_its_operand() {
+        let source = "a - b!;\nif (n < x!.y) {}\nc && n < q!.end;\n-u!;\nnew A!();\n\
+                      new B()!.c;\nd!!.e;\n";
+        let expected = [
+            ("b!", "binary_expression"),
+            ("x!", "member_expression"),
+            ("q!", "member_expression"),
+            ("u!", "unary_expression"),
+            ("A!", "new_expression"),
+            ("new B()!", "member_expression"),
+            ("d!!", "member_expression"),
+            ("d!", "non_null_expression"),
+        ];
+        for dialect in [GrammarDialect::TypeScript, GrammarDialect::Tsx] {
+            let root = dialect.ast_grep(source);
+            assert!(!root.root().get_inner_node().has_error(), "{dialect:?}");
+            let assertions = root
+                .root()
+                .dfs()
+                .filter(|node| node.kind() == "non_null_expression")
+                .map(|node| {
+                    let parent = node.parent().expect("an assertion has a parent");
+                    (node.text().into_owned(), parent.kind().into_owned())
+                })
+                .collect::<Vec<_>>();
+            let expected = expected
+                .iter()
+                .map(|&(text, parent)| (text.to_owned(), parent.to_owned()))
+                .collect::<Vec<_>>();
+            assert_eq!(assertions, expected, "{dialect:?}");
+        }
+    }
+
+    /// TypeScript parses type arguments after a member expression only, so a prefix or binary
+    /// operator before a generic call or an instantiation applies to it, never becomes part of its
+    /// callee; where comparisons could also read the input, a generic call is read before `(`
+    /// (Patch 2 in `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn type_arguments_follow_a_primary_expression() {
+        let source = "!q<H>('x');\nawait f<T>();\n-b<T>(c);\ntypeof d<T>(c);\nvoid e<T>(c);\n\
+                      a + g<T>(c);\nx = a < b > (c);\ny = a < b || c > (d);\n!h.i<T>(c)!.j;\n\
+                      k + l<T>;\n";
+        let expected = [
+            ("q<H>('x')", "unary_expression"),
+            ("f<T>()", "await_expression"),
+            ("b<T>(c)", "unary_expression"),
+            ("d<T>(c)", "unary_expression"),
+            ("e<T>(c)", "unary_expression"),
+            ("g<T>(c)", "binary_expression"),
+            ("a < b > (c)", "assignment_expression"),
+            ("h.i<T>(c)", "non_null_expression"),
+            ("l<T>", "binary_expression"),
+        ];
+        for dialect in [GrammarDialect::TypeScript, GrammarDialect::Tsx] {
+            let root = dialect.ast_grep(source);
+            assert!(!root.root().get_inner_node().has_error(), "{dialect:?}");
+            let generic = root
+                .root()
+                .dfs()
+                .filter(|node| {
+                    node.kind() == "instantiation_expression"
+                        || (node.kind() == "call_expression"
+                            && node.field("type_arguments").is_some())
+                })
+                .map(|node| {
+                    let parent = node.parent().expect("an expression has a parent");
+                    (node.text().into_owned(), parent.kind().into_owned())
+                })
+                .collect::<Vec<_>>();
+            let expected = expected
+                .iter()
+                .map(|&(text, parent)| (text.to_owned(), parent.to_owned()))
+                .collect::<Vec<_>>();
+            assert_eq!(generic, expected, "{dialect:?}");
         }
     }
 }

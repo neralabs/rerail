@@ -7,6 +7,7 @@ import { afterEach } from "vitest";
 import type { AdapterDelivery, AdapterEvent, RerailEventLoop } from "../src/adapter-contract.js";
 import { serveHook, type HookInput, type HookOptions, type HookOutput } from "../src/hook-host.js";
 import type { SemanticEmbedder } from "../src/semantic-types.js";
+import { startTestRepository } from "./support/started-repository.js";
 
 /** Replaces the native model so hooks and runtimes run where the addon is absent. */
 export const testEmbedder: SemanticEmbedder = {
@@ -18,8 +19,8 @@ export function hookOptions(root: string): HookOptions {
   return { storageRoot: join(root, "sessions"), databasePath: join(root, "rerail.sqlite"), embedder: testEmbedder };
 }
 
-/** Per-test scratch directories, each its own RERAIL_HOME, removed after every test. */
-export function temporaryDirectories(prefix: string): () => Promise<string> {
+/** Per-test scratch directories, each its own RERAIL_HOME and, unless asked otherwise, a started repository. */
+export function temporaryDirectories(prefix: string): (options?: { started?: boolean }) => Promise<string> {
   const paths: string[] = [];
   const originalRerailHome = process.env.RERAIL_HOME;
   afterEach(async () => {
@@ -27,10 +28,11 @@ export function temporaryDirectories(prefix: string): () => Promise<string> {
     else process.env.RERAIL_HOME = originalRerailHome;
     await Promise.all(paths.splice(0).map(path => rm(path, { recursive: true, force: true })));
   });
-  return async () => {
+  return async ({ started = true } = {}) => {
     const path = await mkdtemp(join(tmpdir(), prefix));
     process.env.RERAIL_HOME = join(path, "home");
     paths.push(path);
+    if (started) startTestRepository(path, hookOptions(path).databasePath);
     return path;
   };
 }

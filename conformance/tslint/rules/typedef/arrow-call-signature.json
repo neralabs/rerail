@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:typedef",
   "revision": 1,
+  "mode": "steer",
   "description": "Requires type definitions for: arrow-call-signature.",
   "scope": {"include": ["**/*"], "exclude": []},
-  "checks": [
+  "clauses": [
     {
       "id": "arrow-call-signature",
       "forbid": {
@@ -45,10 +46,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.AT",
         "code": "TYPEDEF",
-        "severity": "error",
         "message": "expected arrow-call-signature to have a typedef"
       }
     }

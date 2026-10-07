@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:prefer-conditional-expression",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `prefer-conditional-expression` rule with its default options (https://palantir.github.io/tslint/rules/prefer-conditional-expression/). Flags an if/else whose two branches, through single-statement blocks, are each one `$X = <one-line value>` to the same $X. An if that continues an else chain (directly or through single-statement blocks) is not checked, as TSLint skips else-if chains by default.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "conditional-assignment",
       "forbid": {
@@ -171,10 +172,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.IF",
         "code": "PREFER_CONDITIONAL_EXPRESSION",
-        "severity": "error",
         "message": "Use a conditional expression instead of assigning to '$X' in multiple places."
       }
     }

@@ -50,7 +50,7 @@ function walkRule(rule: Record<string, unknown>, shape: RuleShape): number {
   return deepest + 1;
 }
 
-/** Finds every `rule`, `utils` and `constraints` rule object anywhere in the document (checks may nest them under forbid/select/exists). */
+/** Finds every `rule`, `utils` and `constraints` rule object anywhere in the document (clauses may nest them under forbid/select/exists). */
 function walkDocument(value: unknown, shape: RuleShape): void {
   if (Array.isArray(value)) {
     for (const item of value) walkDocument(item, shape);
@@ -68,7 +68,7 @@ function walkDocument(value: unknown, shape: RuleShape): void {
 
 export function documentShape(document: unknown): RuleShape {
   const shape = emptyShape();
-  if (isObject(document) && Array.isArray(document.checks)) shape.checks = document.checks.length;
+  if (isObject(document) && Array.isArray(document.clauses)) shape.checks = document.clauses.length;
   walkDocument(document, shape);
   return shape;
 }

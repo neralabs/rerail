@@ -1,0 +1,118 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-no-before-interactive-script-outside-document",
+  "revision": 1,
+  "mode": "steer",
+  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-before-interactive-script-outside-document: an opening element named by the default import of next/script with a plain strategy=\"beforeInteractive\", unless the path contains `/app/` or its segment after the first `pages` has a name starting with `_document`.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "path": {
+              "notRegex": "(?:^|/)app/|^(?:[^p]|p(?:p|ap|agp|agep)*(?:[^pa]|a[^gp]|ag[^ep]|age[^sp]))*(?:p(?:p|ap|agp|agep)*(?:a|ag|age)?)?pages(?:(?:[^p]|p(?:p|ap|agp|agep)*(?:[^pa]|a[^gp]|ag[^ep]|age[^sp]))*(?:p(?:p|ap|agp|agep)*(?:a|ag|age)?)?/)?_document(?:[^p/]|p(?:p|ap|agp|agep)*(?:[^pa/]|a[^gp/]|ag[^ep/]|age[^sp/]))*(?:p(?:p|ap|agp|agep)*(?:a|ag|age)?)?/*(?:pages.*)?$"
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "jsx_opening_element"
+                  },
+                  {
+                    "kind": "jsx_self_closing_element"
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "pattern": "$N"
+                }
+              },
+              {
+                "has": {
+                  "kind": "jsx_attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "kind": "property_identifier",
+                        "regex": "^strategy$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "kind": "string",
+                        "value": {
+                          "eq": "beforeInteractive"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "kind": "program",
+                  "stopBy": "end",
+                  "has": {
+                    "kind": "import_statement",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "source",
+                          "kind": "string",
+                          "value": {
+                            "eq": "next/script"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "kind": "import_clause",
+                          "has": {
+                            "kind": "identifier",
+                            "pattern": "$N"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/no-before-interactive-script-outside-document",
+        "message": "`next/script`'s `beforeInteractive` strategy should not be used outside of `pages/_document.js`. See: https://nextjs.org/docs/messages/no-before-interactive-script-outside-document",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/no-before-interactive-script-outside-document"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

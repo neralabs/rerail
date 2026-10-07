@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DevNativeServer } from "../src/dev-native-server.js";
 import { SqliteTranscriptReader } from "../src/transcript-store.js";
+import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
 
 describe("DevNativeServer request boundary", () => {
   let root: string | undefined;
@@ -34,6 +35,7 @@ describe("DevNativeServer request boundary", () => {
   it("counts acknowledged host handoffs once in the session HUD", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-native-server-"));
     vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    startTestRepository(root, join(root, "rerail.sqlite"));
     const databasePath = join(root, "rerail.sqlite");
     server = new DevNativeServer({
       workspaceRoot: root,
@@ -65,10 +67,30 @@ describe("DevNativeServer request boundary", () => {
     }
   });
 
+  it("closes the session a rebuild replaces while the checkout is stopped", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-native-server-"));
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    const databasePath = join(root, "rerail.sqlite");
+    startTestRepository(root, databasePath);
+    server = new DevNativeServer({ workspaceRoot: root, modelPath: resolve("model"), databasePath });
+    const session = { workspaceRoot: root, sessionId: "s", host: "omp" as const };
+    await server.handle({ ...session, operation: "initialize", entries: [] });
+    // `/rerail-stop` in the dev Pi bridge stops the checkout, then reattaches with a rebuild.
+    stopTestRepository(root, databasePath);
+    await server.handle({ ...session, operation: "initialize", entries: [], input: { rebuild: true } });
+    const reader = new SqliteTranscriptReader(databasePath);
+    try {
+      expect(reader.sessions().find(recorded => recorded.sessionId === "s")?.endedAt).not.toBeNull();
+    } finally {
+      reader.close();
+    }
+  });
+
   it("retires an abandoned session and closes its transcript resources after the lease", async () => {
     vi.useFakeTimers();
     root = await mkdtemp(join(tmpdir(), "rerail-native-server-"));
     vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    startTestRepository(root, join(root, "rerail.sqlite"));
     const databasePath = join(root, "rerail.sqlite");
     server = new DevNativeServer({
       workspaceRoot: root,
@@ -100,6 +122,7 @@ describe("DevNativeServer request boundary", () => {
     vi.useFakeTimers();
     root = await mkdtemp(join(tmpdir(), "rerail-native-server-"));
     vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    startTestRepository(root, join(root, "rerail.sqlite"));
     const databasePath = join(root, "rerail.sqlite");
     server = new DevNativeServer({
       workspaceRoot: root,

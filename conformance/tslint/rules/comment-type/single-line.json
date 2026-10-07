@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:comment-type",
   "revision": 1,
+  "mode": "steer",
   "description": "Allowed comment types: singleline.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "directive",
       "forbid": {
@@ -27,10 +28,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMMENT_TYPE",
-        "severity": "error",
         "message": "triple-slash directives are not allowed"
       }
     },
@@ -51,10 +51,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMMENT_TYPE",
-        "severity": "error",
         "message": "doc comments are not allowed"
       }
     },
@@ -75,10 +74,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMMENT_TYPE",
-        "severity": "error",
         "message": "multiline comments are not allowed"
       }
     }

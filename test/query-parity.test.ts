@@ -56,10 +56,10 @@ describe("query parity comparison", () => {
 describe("query parity coverage", () => {
   it("counts failures for their policy and check", () => {
     const records = coverage([
-      { path: "policy.json", source: JSON.stringify({ id: "policy-a" }), checks: [{ id: "check-a" }, { id: "check-b" }] },
+      { path: "policy.json", source: JSON.stringify({ id: "policy-a" }), clauses: [{ id: "check-a" }, { id: "check-b" }] },
     ], [
-      { policyId: "policy-a", checkId: "check-a", code: "source-partial", message: "incomplete source" },
-      { policyId: "policy-a", checkId: "check-a", code: "budget-exceeded", message: "budget exhausted" },
+      { ruleId: "policy-a", clauseId: "check-a", code: "source-partial", message: "incomplete source" },
+      { ruleId: "policy-a", clauseId: "check-a", code: "budget-exceeded", message: "budget exhausted" },
     ]);
 
     expect(records).toEqual([

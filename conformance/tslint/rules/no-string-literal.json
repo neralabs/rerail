@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-string-literal",
   "revision": 1,
+  "mode": "steer",
   "description": "Disallows object access via string literals when the key is a valid identifier (use dot access).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "element-access-string",
       "forbid": {
@@ -39,10 +40,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_STRING_LITERAL",
-        "severity": "error",
         "message": "object access via string literals is disallowed"
       }
     }

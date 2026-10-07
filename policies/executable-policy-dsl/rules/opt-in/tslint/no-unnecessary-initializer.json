@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-unnecessary-initializer",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-unnecessary-initializer` rule with its default options (https://palantir.github.io/tslint/rules/no-unnecessary-initializer/). Forbids initializing variables, binding elements, and function/method parameters to `undefined`. Fixes drop the initializer, except where no required parameter follows (TSLint suggests an optional parameter there and has no fix).",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "undefined-initializer",
       "forbid": {
@@ -159,10 +160,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_UNNECESSARY_INITIALIZER",
-        "severity": "error",
         "message": "Unnecessary initialization to 'undefined'.",
         "fix": "$NAME$TYPE"
       }
@@ -225,10 +225,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_UNNECESSARY_INITIALIZER",
-        "severity": "error",
         "message": "Use an optional parameter instead of initializing to 'undefined'. Also, the type declaration does not need to include '| undefined'."
       }
     }

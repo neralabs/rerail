@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:typedef",
   "revision": 1,
+  "mode": "steer",
   "description": "Requires type definitions for: parameter.",
   "scope": {"include": ["**/*"], "exclude": []},
-  "checks": [
+  "clauses": [
     {
       "id": "parameter",
       "forbid": {
@@ -53,10 +54,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TYPEDEF",
-        "severity": "error",
         "message": "expected parameter to have a typedef"
       }
     }

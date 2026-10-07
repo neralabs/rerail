@@ -40,13 +40,14 @@ function consolePolicy(): NativeCompiledPolicyDsl {
   if (runtime === undefined) throw new Error("Native binding must export PolicyDslRuntime");
   return runtime.compile(
     JSON.stringify({
-      checks: [{
-        finding: { anchor: "witness.span", code: "CONSOLE", message: "No console output", severity: "error" },
+      clauses: [{
+        violation: { anchor: "witness.span", code: "CONSOLE", message: "No console output" },
         forbid: { ast: { language: "typescript", rule: { pattern: "console.log($$$ARGS)" } } },
         id: "console",
       }],
       format: "rerail.policy/v1",
       id: "scale:console",
+      mode: "block",
       revision: 1,
       scope: { exclude: [], include: ["**/*"] },
     }),
@@ -68,7 +69,7 @@ function evaluate(compiled: NativeCompiledPolicyDsl, files: SnapshotFile[]) {
   const started = performance.now();
   const result = JSON.parse(compiled.evaluate(input, "diagnostic")) as {
     status: string;
-    findings: Array<{ path: string }>;
+    violations: Array<{ path: string }>;
     failures: unknown[];
     metrics: { files: number; visitedNodes: number };
   };
@@ -83,12 +84,12 @@ describe("TypeScript AST evaluation at scale", () => {
 
     const mixed = evaluate(compiled, [...typescript, ...tsx]);
     expect(mixed.result).toMatchObject({ failures: [], status: "completed" });
-    expect(mixed.result.findings).toHaveLength(typescript.length + tsx.length);
+    expect(mixed.result.violations).toHaveLength(typescript.length + tsx.length);
     expect(mixed.result.metrics.files).toBe(typescript.length + tsx.length);
 
     const typescriptOnly = evaluate(compiled, typescript).result;
     const tsxOnly = evaluate(compiled, tsx).result;
-    expect(tsxOnly.findings).toHaveLength(tsx.length);
+    expect(tsxOnly.violations).toHaveLength(tsx.length);
     expect(mixed.result.metrics.visitedNodes).toBe(typescriptOnly.metrics.visitedNodes + tsxOnly.metrics.visitedNodes);
 
     const bytes = [...typescript, ...tsx].reduce((total, file) => total + file.source.length, 0);

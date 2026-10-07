@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:object-literal-shorthand",
   "revision": 1,
+  "mode": "steer",
   "description": "Enforces method and property shorthand in object literals (TSLint default option: always). Longhand properties carry a fix (`$A`); longhand methods do not (async and generator forms need a different template each).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "longhand-method",
       "forbid": {
@@ -49,10 +50,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "OBJECT_LITERAL_SHORTHAND",
-        "severity": "error",
         "message": "Expected method shorthand in object literal."
       }
     },
@@ -79,10 +79,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "OBJECT_LITERAL_SHORTHAND",
-        "severity": "error",
         "message": "Expected property shorthand in object literal.",
         "fix": "$A"
       }

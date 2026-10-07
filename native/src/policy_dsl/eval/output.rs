@@ -1,4 +1,4 @@
-use crate::policy_dsl::findings::{self, Witness};
+use crate::policy_dsl::findings::{self, Span, Witness};
 use crate::policy_dsl::json::hex_digest;
 use crate::policy_dsl::model::{CompiledCheck, CompiledPolicy, Evaluation};
 use serde_json::{Value, json};
@@ -14,39 +14,28 @@ const COVERAGE_EXAMPLES: usize = 3;
 /// A witness's finding id and reported (anchored) span, and whether the anchor fell back to the
 /// witness span. Complete results, result pages and stored pages order and identify findings by
 /// these, so every result path agrees on them.
-pub(crate) fn finding_identity(
+fn finding_identity(
     policy: &CompiledPolicy,
     check: &CompiledCheck,
     witness: &Witness,
-) -> (String, Value, bool) {
+) -> (String, Span, bool) {
     let (span, fallback) = findings::anchored_span(&check.finding.anchor, witness);
-    let start = witness
-        .span
-        .get("startByte")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let end = witness
-        .span
-        .get("endByte")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
     let mut id = finding_id(
         &policy.id,
         &check.id,
         &check.finding.code,
         &witness.path,
-        start,
-        end,
+        witness.span.start_byte as u64,
+        witness.span.end_byte as u64,
     );
     // `each`: findings at one witness differ by the binding they report, so its range joins the id.
     if let Some(binding) = check
         .finding
         .each
         .as_deref()
-        .and_then(|name| witness.captures.get(name)?.as_array()?.first())
+        .and_then(|name| witness.captures.get(name)?.first())
     {
-        let byte = |key: &str| binding.get(key).and_then(Value::as_u64).unwrap_or(0);
-        let source = format!("{id}\0each\0{}\0{}", byte("startByte"), byte("endByte"));
+        let source = format!("{id}\0each\0{}\0{}", binding.start_byte, binding.end_byte);
         id = format!("sha256:{}", hex_digest(source.as_bytes()));
     }
     (id, span, fallback)
@@ -60,10 +49,10 @@ pub(crate) fn finding_from_witness(
     let (id, span, fallback) = finding_identity(policy, check, &witness);
     let mut finding = json!({
         "id": id,
-        "policyId": policy.id,
-        "checkId": check.id,
+        "ruleId": policy.id,
+        "clauseId": check.id,
         "code": check.finding.code,
-        "severity": check.finding.severity,
+        "mode": policy.rule_mode.as_str(),
         "message": witness.message.unwrap_or_else(|| check.finding.message.clone()),
         "path": witness.path,
         "span": span,
@@ -91,21 +80,15 @@ pub(super) fn finding_id(
     format!("sha256:{}", hex_digest(source.as_bytes()))
 }
 
-pub(crate) fn span_json(
-    lines: &crate::policy_dsl::lines::LineTable,
-    start: usize,
-    end: usize,
-) -> Value {
-    lines.span_json(start, end)
-}
-
 pub(crate) fn evaluation_json(
     mut evaluation: Evaluation,
     revision: Option<u32>,
     added: &[String],
     retracted: &[String],
 ) -> Value {
-    evaluation.findings.sort_by_cached_key(finding_sort_key);
+    evaluation
+        .findings
+        .sort_by(|a, b| result_order(a).cmp(&result_order(b)));
     let status = if evaluation.failures.is_empty() {
         "completed"
     } else {
@@ -114,7 +97,7 @@ pub(crate) fn evaluation_json(
     let coverage = coverage(&evaluation.checks, &evaluation.failures);
     let mut value = json!({
         "status": status,
-        "findings": evaluation.findings,
+        "violations": evaluation.findings,
         "failures": evaluation.failures,
         "coverage": coverage,
         "metrics": {
@@ -161,8 +144,8 @@ pub(crate) fn evaluation_json(
     if let Some(revision) = revision {
         let object = value.as_object_mut().expect("evaluation object");
         object.insert("revision".to_owned(), json!(revision));
-        object.insert("addedFindingIds".to_owned(), json!(added));
-        object.insert("retractedFindingIds".to_owned(), json!(retracted));
+        object.insert("addedViolationIds".to_owned(), json!(added));
+        object.insert("retractedViolationIds".to_owned(), json!(retracted));
     }
     value
 }
@@ -180,8 +163,8 @@ pub(crate) fn coverage(checks: &[(Option<String>, String)], failures: &[Value]) 
     for failure in failures {
         let field = |key: &str| failure.get(key).and_then(Value::as_str);
         let code = field("code").unwrap_or("adapter-error");
-        let policy = field("policyId");
-        let own = field("checkId").map(|check| (policy, check));
+        let policy = field("ruleId");
+        let own = field("clauseId").map(|check| (policy, check));
         let targets = match own.filter(|key| reasons.contains_key(key)) {
             Some(key) => vec![key],
             None => reasons
@@ -220,12 +203,12 @@ pub(crate) fn coverage(checks: &[(Option<String>, String)], failures: &[Value]) 
                 .iter()
                 .map(|(code, (count, paths))| json!({ "code": code, "count": count, "paths": paths }))
                 .collect::<Vec<_>>();
-            let mut entry = json!({ "checkId": check, "status": status, "reasons": reasons });
+            let mut entry = json!({ "clauseId": check, "status": status, "reasons": reasons });
             if let Some(policy) = policy {
                 entry
                     .as_object_mut()
                     .expect("coverage entry")
-                    .insert("policyId".to_owned(), json!(policy));
+                    .insert("ruleId".to_owned(), json!(policy));
             }
             entry
         })
@@ -240,7 +223,7 @@ pub(crate) fn overflow_evaluation(check_id: &str, message: &str) -> Evaluation {
 }
 
 pub(crate) fn failure(check_id: &str, code: &str, message: &str, path: Option<&str>) -> Value {
-    let mut value = json!({ "checkId": check_id, "code": code, "message": message });
+    let mut value = json!({ "clauseId": check_id, "code": code, "message": message });
     if let Some(path) = path {
         value
             .as_object_mut()
@@ -257,28 +240,18 @@ pub(crate) fn finding_ids(findings: &[Value]) -> BTreeSet<String> {
         .collect()
 }
 
-fn finding_sort_key(finding: &Value) -> (String, u64, String, String) {
+/// The order results are reported in: by path, start, code and id.
+pub(crate) fn result_order(value: &Value) -> (&str, u64, &str, &str) {
+    let text = |key: &str| value.get(key).and_then(Value::as_str).unwrap_or("");
     (
-        finding
-            .get("path")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned(),
-        finding
+        text("path"),
+        value
             .get("span")
             .and_then(|span| span.get("startByte"))
             .and_then(Value::as_u64)
             .unwrap_or(0),
-        finding
-            .get("code")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned(),
-        finding
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned(),
+        text("code"),
+        text("id"),
     )
 }
 
@@ -288,14 +261,14 @@ mod tests {
     use serde_json::{Value, json};
 
     fn ast(id: &str, language: &str, rule: Value) -> Value {
-        json!({ "id": id, "forbid": { "ast": { "language": language, "rule": rule } }, "finding": finding() })
+        json!({ "id": id, "forbid": { "ast": { "language": language, "rule": rule } }, "violation": finding() })
     }
 
     /// Evaluates `checks` over `files` (path, python source) under limits edited by `limits`.
     fn evaluate(checks: Value, files: &[(&str, &str)], limits: impl FnOnce(&mut Value)) -> Value {
         let capabilities = capabilities_with(|capabilities| limits(&mut capabilities["limits"]));
         let compiled = compile_document_with(
-            json!({ "format": "rerail.policy/v1", "id": "coverage", "revision": 1, "checks": checks }),
+            json!({ "format": "rerail.policy/v1", "id": "coverage", "revision": 1, "mode": "steer", "clauses": checks }),
             &capabilities,
         )
         .unwrap_or_else(|error| panic!("{}", error.reason));
@@ -345,15 +318,15 @@ mod tests {
         assert_eq!(
             result["coverage"],
             json!([
-                { "checkId": "clean", "status": "complete", "reasons": [] },
-                { "checkId": "partial", "status": "partial", "reasons": [
+                { "clauseId": "clean", "status": "complete", "reasons": [] },
+                { "clauseId": "partial", "status": "partial", "reasons": [
                     { "code": "source-partial", "count": 4, "paths": paths },
                 ] },
-                { "checkId": "incomplete", "status": "partial", "reasons": [
+                { "clauseId": "incomplete", "status": "partial", "reasons": [
                     // A query whose source is incomplete names the first such file it read.
                     { "code": "source-incomplete", "count": 1, "paths": ["d.py"] },
                 ] },
-                { "checkId": "failed", "status": "failed", "reasons": [
+                { "clauseId": "failed", "status": "failed", "reasons": [
                     { "code": "budget-exceeded", "count": 1, "paths": [] },
                     { "code": "source-partial", "count": 4, "paths": paths },
                 ] },
@@ -381,8 +354,8 @@ mod tests {
         assert_eq!(
             result["coverage"],
             json!([
-                { "checkId": "first", "status": "failed", "reasons": reason },
-                { "checkId": "second", "status": "failed", "reasons": reason },
+                { "clauseId": "first", "status": "failed", "reasons": reason },
+                { "clauseId": "second", "status": "failed", "reasons": reason },
             ]),
             "{result}"
         );

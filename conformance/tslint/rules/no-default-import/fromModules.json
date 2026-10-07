@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-default-import",
   "revision": 1,
+  "mode": "steer",
   "description": "Disallows default imports from modules matching fromModules ^tslint-|^\\./|^\\.\\./ (fixture option).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "default-import-clause",
       "forbid": {
@@ -39,10 +40,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_DEFAULT_IMPORT",
-        "severity": "error",
         "message": "Import of default members from this module is forbidden. Import named member instead"
       }
     },
@@ -89,10 +89,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_DEFAULT_IMPORT",
-        "severity": "error",
         "message": "Import of default members from this module is forbidden. Import named member instead"
       }
     }

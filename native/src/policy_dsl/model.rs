@@ -43,7 +43,6 @@ impl PolicyScope {
 #[derive(Clone)]
 pub(super) struct FindingSpec {
     pub(super) code: String,
-    pub(super) severity: String,
     pub(super) message: String,
     pub(super) anchor: Anchor,
     /// The message's `$NAME` references; `None` when it is literal text.
@@ -477,9 +476,27 @@ pub(super) struct CompiledCheck {
     pub(super) decision: bool,
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum RuleMode {
+    Log,
+    Steer,
+    Block,
+}
+
+impl RuleMode {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Log => "log",
+            Self::Steer => "steer",
+            Self::Block => "block",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct CompiledPolicy {
     pub(super) id: String,
+    pub(super) rule_mode: RuleMode,
     pub(super) canonical: String,
     pub(super) digest: String,
     pub(super) required_capabilities: String,
@@ -500,7 +517,8 @@ pub(super) struct FileInput {
 impl FileInput {
     /// `module` is the module path a host derived for a Python file (Ruff's package walk): a
     /// dotted string, or a list of names when one keeps a dot (`["json.d", "__init__"]`). Without
-    /// it a Python file is named by its stem, as Ruff names a file outside any package.
+    /// it a Python file is named by its stem, as Ruff names a file outside any package; a file set
+    /// that holds package markers derives it first (`python_module_in`).
     pub(super) fn new(
         path: String,
         language: String,
@@ -582,6 +600,22 @@ pub(crate) fn python_module_path(
 /// `python_module_path` over the files on disk.
 pub(crate) fn python_module_path_on_disk(file: &std::path::Path) -> Option<Value> {
     python_module_path(file, |directory| directory.join("__init__.py").exists())
+}
+
+/// The directory a file set's path marks as a Python package (`pkg` for `pkg/__init__.py`, `""`
+/// for a root `__init__.py`), if any.
+pub(crate) fn package_marker_directory(path: &str) -> Option<&str> {
+    path.strip_suffix("/__init__.py")
+        .or_else(|| (path == "__init__.py").then_some(""))
+}
+
+/// `python_module_path` of a relative `path` in a file set (a workspace, a repository snapshot)
+/// whose package markers `is_package` reads: the module a host walking the same files on disk
+/// would send.
+pub(crate) fn python_module_in(path: &str, is_package: impl Fn(&str) -> bool) -> Option<Value> {
+    python_module_path(std::path::Path::new(path), |directory| {
+        is_package(directory.to_string_lossy().as_ref())
+    })
 }
 
 #[derive(Clone)]

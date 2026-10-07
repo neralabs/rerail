@@ -1,0 +1,61 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-no-document-import-in-page",
+  "revision": 1,
+  "mode": "steer",
+  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-document-import-in-page: an import from next/document, unless the part of the path after its last `pages` is empty or starts with `/_document`.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "path": {
+              "notRegex": "pages(?:/_document(?:[^p]|p(?:p|ap|agp|agep)*(?:[^pa]|a[^gp]|ag[^ep]|age[^sp]))*(?:p(?:p|ap|agp|agep)*(?:a|ag|age)?)?)?$"
+            }
+          },
+          "rule": {
+            "kind": "import_statement",
+            "all": [
+              {
+                "has": {
+                  "field": "source",
+                  "kind": "string",
+                  "value": {
+                    "eq": "next/document"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/no-document-import-in-page",
+        "message": "`<Document />` from `next/document` should not be imported outside of `pages/_document.js`. See: https://nextjs.org/docs/messages/no-document-import-in-page",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/no-document-import-in-page"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

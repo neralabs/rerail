@@ -6,8 +6,8 @@
  * repaired fixture) and it scores identically on renamed fixtures.
  *
  * The shipped doc is the port's default-options doc with two changes: a description naming the TSLint rule and its
- * page, and a source-tree scope (TypeScript files, no dependency, build-output or generated directories). Checks,
- * findings, anchors and fixes are the port's. Promotion writes the doc and the rule's golden.json entry from the run,
+ * page, and a source-tree scope (TypeScript files, no dependency, build-output or generated directories). Clauses,
+ * violations, anchors and fixes are the port's. Promotion writes the doc and the rule's golden.json entry from the run,
  * then names the port default and verdict sidecar to `git rm`: the pack doc replaces them, and option-variant
  * overrides stay in `rules/<rule>/`.
  *

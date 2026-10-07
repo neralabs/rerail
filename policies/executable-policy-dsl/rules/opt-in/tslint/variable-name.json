@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:variable-name",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `variable-name` rule with its default options (https://palantir.github.io/tslint/rules/variable-name/). Checks variable/parameter/property names for lowerCamelCase or UPPER_CASE; alias exemption via same-metavar patterns.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "format",
       "forbid": {
@@ -168,10 +169,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "VARIABLE_NAME",
-        "severity": "error",
         "message": "variable name must be in lowerCamelCase or UPPER_CASE"
       }
     }

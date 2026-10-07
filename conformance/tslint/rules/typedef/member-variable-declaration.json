@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:typedef",
   "revision": 1,
+  "mode": "steer",
   "description": "Requires type definitions for: member-variable-declaration.",
   "scope": {"include": ["**/*"], "exclude": []},
-  "checks": [
+  "clauses": [
     {
       "id": "member-variable-declaration",
       "forbid": {
@@ -75,10 +76,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TYPEDEF",
-        "severity": "error",
         "message": "expected member-variable-declaration to have a typedef"
       }
     }

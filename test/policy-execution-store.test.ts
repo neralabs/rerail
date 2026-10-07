@@ -4,6 +4,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { SqlitePolicyExecutionReader, SqlitePolicyExecutionStore } from "../src/policy-execution-store.js";
+import { createV14Database } from "./support/v14-database.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -21,7 +22,7 @@ const input = {
   sessionId: "session-a",
   workspaceRoot: "/workspace",
   scope: "touched-files" as const,
-  mode: "resteer" as const,
+  mode: "steer" as const,
   revision: 3,
   catalogRevision: null,
   ruleRevisions: [],
@@ -32,32 +33,31 @@ const input = {
     payloadHash: "sha256:policy-a",
     applicability: "project" as const,
     projectId: "project-a",
-    origin: "migrated" as const,
-    syncState: "local-only" as const,
+    origin: "user" as const,
   }],
 };
 
 describe("SQLite policy execution persistence", () => {
-  it("persists terminal findings and failure payloads across reopen", async () => {
+  it("persists terminal violations and failure payloads across reopen", async () => {
     const path = await temporaryDatabase();
     const first = new SqlitePolicyExecutionStore(path);
     const original = first.start(input);
     first.finish(original, {
       status: "failed",
-      findings: [
+      violations: [
         {
           id: "finding-1",
-          policyId: "policy-a",
-          checkId: "check-a",
+          ruleId: "policy-a",
+          clauseId: "check-a",
           code: "forbidden-call",
-          severity: "error",
+          mode: "block",
           message: "forbidden call",
           path: "src/a.ts",
           captures: {},
           variables: {},
         },
       ],
-      failures: [{ checkId: "check-b", code: "adapter-error", message: "native evaluator exited", stage: "evaluate" }],
+      failures: [{ clauseId: "check-b", code: "adapter-error", message: "native evaluator exited", stage: "evaluate" }],
     });
     const followUp = first.start({ ...input, revision: 4 });
     first.finish(followUp, { status: "completed" });
@@ -66,17 +66,17 @@ describe("SQLite policy execution persistence", () => {
     const reopened = new SqlitePolicyExecutionStore(path);
     expect(reopened.list()).toMatchObject({
       total: 2,
-      runs: expect.arrayContaining([
+      audits: expect.arrayContaining([
         expect.objectContaining({
-          runId: original,
+          auditId: original,
           status: "failed",
           ruleProvenance: input.ruleProvenance,
-          findings: [expect.objectContaining({ id: "finding-1", captures: {}, variables: {} })],
+          violations: [expect.objectContaining({ id: "finding-1", captures: {}, variables: {} })],
           failures: [
-            { checkId: "check-b", code: "adapter-error", message: "native evaluator exited", stage: "evaluate" },
+            { clauseId: "check-b", code: "adapter-error", message: "native evaluator exited", stage: "evaluate" },
           ],
         }),
-        expect.objectContaining({ runId: followUp, status: "completed", findings: [], failures: [] }),
+        expect.objectContaining({ auditId: followUp, status: "completed", violations: [], failures: [] }),
       ]),
     });
     reopened.close();
@@ -95,20 +95,20 @@ describe("SQLite policy execution persistence", () => {
     expect(store.list({ sessionId: "session-a", status: "interrupted" })).toMatchObject({
       total: 1,
 
-      runs: [expect.objectContaining({ runId: interrupted, status: "interrupted", findings: [], failures: [] })],
+      audits: [expect.objectContaining({ auditId: interrupted, status: "interrupted", violations: [], failures: [] })],
     });
     expect(store.list({ sessionId: "session-a", status: "completed" })).toMatchObject({
       total: 1,
-      runs: [expect.objectContaining({ runId: alreadyFinished })],
+      audits: [expect.objectContaining({ auditId: alreadyFinished })],
     });
     expect(store.list({ sessionId: "session-b", status: "running", scope: "repository", mode: "log" })).toMatchObject({
       total: 1,
-      runs: [expect.objectContaining({ runId: otherSession, scope: "repository", mode: "log" })],
+      audits: [expect.objectContaining({ auditId: otherSession, scope: "repository", mode: "log" })],
     });
-    expect(store.list({ sessionId: "session-b", scope: "repository", mode: "resteer" })).toEqual({ total: 0, runs: [] });
+    expect(store.list({ sessionId: "session-b", scope: "repository", mode: "steer" })).toEqual({ total: 0, audits: [] });
     expect(store.list({ sessionId: "session-a", limit: 1, offset: 1 })).toMatchObject({
       total: 2,
-      runs: [expect.any(Object)],
+      audits: [expect.any(Object)],
     });
     store.close();
   });
@@ -118,38 +118,36 @@ describe("SQLite policy execution persistence", () => {
     const runId = store.start(input);
     const finding = {
       id: "finding-1",
-      policyId: "policy-a",
-      checkId: "check-a",
+      ruleId: "policy-a",
+      clauseId: "check-a",
       code: "forbidden-call",
-      severity: "error" as const,
+      mode: "steer" as const,
       message: "forbidden call",
       path: "src/a.ts",
       captures: {},
       variables: {},
     };
-    store.appendResultPage(runId, 0, { findings: [finding], failures: [] });
+    store.appendResultPage(runId, 0, { violations: [finding], failures: [] });
     store.appendResultPage(runId, 1, {
-      findings: [{ ...finding, id: "finding-2", path: "src/b.ts" }],
-      failures: [{ checkId: "check-b", code: "adapter-error", message: "failed", stage: "evaluate" }],
+      violations: [{ ...finding, id: "finding-2", path: "src/b.ts" }],
+      failures: [{ clauseId: "check-b", code: "adapter-error", message: "failed", stage: "evaluate" }],
     });
     store.finishResultPages(runId, "failed");
 
     expect(store.get(runId)).toMatchObject({
       status: "failed",
-      findings: [{ id: "finding-1" }, { id: "finding-2" }],
-      failures: [{ checkId: "check-b" }],
+      violations: [{ id: "finding-1" }, { id: "finding-2" }],
+      failures: [{ clauseId: "check-b" }],
     });
-    expect(new Database(path).prepare("SELECT count(*) AS count FROM policy_run_result_pages").get()).toEqual({ count: 0 });
+    expect(new Database(path).prepare("SELECT count(*) AS count FROM audit_result_pages").get()).toEqual({ count: 0 });
     store.close();
   });
 
   it("upgrades a stamped v3 database additively without disturbing its session rows", async () => {
     const path = await temporaryDatabase();
-    const bootstrap = new SqlitePolicyExecutionStore(path);
-    bootstrap.close();
-    const raw = new Database(path);
+    const raw = createV14Database(path);
     raw.exec(
-      "INSERT INTO sessions (session_id, host, cwd, started_at, ended_at) VALUES ('live', 'omp', '/workspace', 1, NULL); DROP TABLE policy_runs; PRAGMA user_version = 3",
+      "INSERT INTO sessions (session_id, host, cwd, started_at, ended_at) VALUES ('live', 'omp', '/workspace', 1, NULL); DROP TABLE policy_run_result_pages; DROP TABLE policy_runs; PRAGMA user_version = 3",
     );
     raw.close();
 
@@ -159,16 +157,14 @@ describe("SQLite policy execution persistence", () => {
 
     const verified = new Database(path, { readonly: true });
     expect(verified.prepare("SELECT session_id FROM sessions").all()).toEqual([{ session_id: "live" }]);
-    expect(verified.prepare("SELECT count(*) AS total FROM policy_runs").get()).toEqual({ total: 1 });
+    expect(verified.prepare("SELECT count(*) AS total FROM audits").get()).toEqual({ total: 1 });
     verified.close();
   });
   it("migrates v4 execution history to scope and mode without retaining delivery rows", async () => {
     const path = await temporaryDatabase();
-    const bootstrap = new SqlitePolicyExecutionStore(path);
-    bootstrap.close();
-    const raw = new Database(path);
+    const raw = createV14Database(path);
     raw.exec(
-      "DROP TABLE policy_runs; " +
+      "DROP TABLE policy_run_result_pages; DROP TABLE policy_runs; " +
         "CREATE TABLE policy_runs (" +
         "run_id text PRIMARY KEY NOT NULL, session_id text NOT NULL, workspace_root text NOT NULL, kind text NOT NULL, " +
         "revision integer NOT NULL, scope_json text NOT NULL, retry_of text, started_at integer NOT NULL, finished_at integer, " +
@@ -184,14 +180,14 @@ describe("SQLite policy execution persistence", () => {
     const upgraded = new SqlitePolicyExecutionStore(path);
     expect(upgraded.list()).toEqual({
       total: 1,
-      runs: [expect.objectContaining({
-        runId: "evaluation",
+      audits: [expect.objectContaining({
+        auditId: "evaluation",
         scope: "touched-files",
         mode: "log",
         paths: ["src/a.ts"],
         ruleProvenance: [],
         status: "completed",
-        findings: [],
+        violations: [],
         failures: [],
       })],
     });
@@ -200,11 +196,9 @@ describe("SQLite policy execution persistence", () => {
 
   it("migrates v5 kind history to independent scope and mode axes", async () => {
     const path = await temporaryDatabase();
-    const bootstrap = new SqlitePolicyExecutionStore(path);
-    bootstrap.close();
-    const raw = new Database(path);
+    const raw = createV14Database(path);
     raw.exec(
-      "DROP TABLE policy_runs; " +
+      "DROP TABLE policy_run_result_pages; DROP TABLE policy_runs; " +
         "CREATE TABLE policy_runs (" +
         "run_id text PRIMARY KEY NOT NULL, session_id text NOT NULL, workspace_root text NOT NULL, kind text NOT NULL, " +
         "revision integer NOT NULL, scope_json text NOT NULL, started_at integer NOT NULL, finished_at integer, " +
@@ -218,28 +212,26 @@ describe("SQLite policy execution persistence", () => {
     raw.close();
 
     const upgraded = new SqlitePolicyExecutionStore(path);
-    expect(upgraded.list({ scope: "touched-files", mode: "resteer" }).runs).toMatchObject([{
-      runId: "generation",
+    expect(upgraded.list({ scope: "touched-files", mode: "steer" }).audits).toMatchObject([{
+      auditId: "generation",
       paths: ["src/a.ts"],
       ruleProvenance: [],
-      findings: [{ id: "f" }],
+      violations: [{ id: "f" }],
     }]);
-    expect(upgraded.list({ scope: "ai-output", mode: "log" }).runs).toMatchObject([{
-      runId: "ratchet",
+    expect(upgraded.list({ scope: "ai-output", mode: "log" }).audits).toMatchObject([{
+      auditId: "ratchet",
       paths: ["src/b.ts"],
       ruleProvenance: [],
-      failures: [{ checkId: "scope", code: "source-incomplete", message: "missing" }],
+      failures: [{ clauseId: "scope", code: "source-incomplete", message: "missing" }],
     }]);
     upgraded.close();
   });
 
   it("upgrades v6 history to v7 provenance columns without losing completed runs", async () => {
     const path = await temporaryDatabase();
-    const bootstrap = new SqlitePolicyExecutionStore(path);
-    bootstrap.close();
-    const raw = new Database(path);
+    const raw = createV14Database(path);
     raw.exec(
-      "DROP TABLE policy_runs; " +
+      "DROP TABLE policy_run_result_pages; DROP TABLE policy_runs; " +
         "CREATE TABLE policy_runs (" +
         "run_id text PRIMARY KEY NOT NULL, session_id text NOT NULL, workspace_root text NOT NULL, scope text NOT NULL, mode text NOT NULL, " +
         "revision integer NOT NULL, paths_json text NOT NULL, started_at integer NOT NULL, finished_at integer, status text NOT NULL, findings_json text NOT NULL, failures_json text NOT NULL" +
@@ -248,7 +240,7 @@ describe("SQLite policy execution persistence", () => {
     raw.close();
 
     const upgraded = new SqlitePolicyExecutionStore(path);
-    expect(upgraded.get("historic")).toMatchObject({ runId: "historic", status: "completed", catalogRevision: null, ruleRevisions: [] });
+    expect(upgraded.get("historic")).toMatchObject({ auditId: "historic", status: "completed", catalogRevision: null, ruleRevisions: [] });
     const runId = upgraded.start({ ...input, catalogRevision: "catalog-v7", ruleRevisions: [{ ruleId: "rule-a", revision: 4 }] });
     expect(upgraded.get(runId)).toMatchObject({ catalogRevision: "catalog-v7", ruleRevisions: [{ ruleId: "rule-a", revision: 4 }] });
     upgraded.close();
@@ -257,7 +249,7 @@ describe("SQLite policy execution persistence", () => {
   it("keeps a read-only listing empty until the database exists", async () => {
     const path = await temporaryDatabase();
     const reader = new SqlitePolicyExecutionReader(path);
-    expect(reader.list()).toEqual({ runs: [], total: 0 });
+    expect(reader.list()).toEqual({ audits: [], total: 0 });
     reader.close();
   });
 });

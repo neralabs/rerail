@@ -30,7 +30,7 @@ const POLICY_DIRECTORY = fileURLToPath(new URL("../policies/executable-policy-ds
 const FIXTURES = fileURLToPath(new URL("./fixtures/bundled-rules/", import.meta.url));
 const capabilities = readFileSync(join(POLICY_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().PolicyDslRuntime;
-const evaluationSchema = z.object({ findings: z.array(z.object({ code: z.string() })).default([]), failures: z.array(z.unknown()).default([]) });
+const evaluationSchema = z.object({ violations: z.array(z.object({ code: z.string() })).default([]), failures: z.array(z.unknown()).default([]) });
 const ruleFileSchema = z.object({ id: z.string() });
 const fixtureSideSchema = z.object({ path: z.string().min(1), content: z.string() });
 const fixtureSchema = z.object({ flag: fixtureSideSchema, pass: fixtureSideSchema });
@@ -40,7 +40,7 @@ function findings(compiled: NativeCompiledPolicyDsl, path: string, source: strin
   const input = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files: [{ language, path, source }] });
   const result = evaluationSchema.parse(JSON.parse(compiled.evaluate(input, "diagnostic")));
   expect(result.failures).toEqual([]);
-  return result.findings.map(finding => finding.code);
+  return result.violations.map(finding => finding.code);
 }
 
 const bundled = loadBundledRules(bundledRulesDirectory());
@@ -58,10 +58,10 @@ describe("bundled rules", () => {
 
   it.each(documents.map(document => [document.rule.id] as const))("%s fires on its flag fixture and stays silent on its pass fixture", id => {
     const document = documents.find(candidate => candidate.rule.id === id)!;
-    expect(document.kind).toBe("policy");
-    if (document.kind !== "policy") return;
+    expect(document.kind).toBe("file");
+    if (document.kind !== "file") return;
     const fixture = fixtureSchema.parse(JSON.parse(readFileSync(join(FIXTURES, `${stemByRuleId[id]!}.json`), "utf8")));
-    const codes: Record<string, true> = Object.fromEntries(document.rule.checks.map(check => [check.finding?.code, true]));
+    const codes: Record<string, true> = Object.fromEntries(document.rule.clauses.map(check => [check.violation?.code, true]));
     const compiled = runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 
     expect(compiled.inScope(fixture.flag.path), `${id} flag fixture ${fixture.flag.path} is outside the rule's scope`).toBe(true);

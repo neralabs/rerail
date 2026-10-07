@@ -1,6 +1,6 @@
 # SQL-driven transducer execution
 
-Status: the query engine runs production rules as statements over this terminal virtual table (pattern, kind and text terminals). Fixed-word programs run in production as the structural kernel's node-local tests (`policy_dsl/query/structure.rs`); program terminals in `rerail_matches` are exercised by tests only.
+Status: the `rerail_matches` virtual table was deleted on 2026-10-06 (D36 in `docs/design/rerail-query-engine-proposal.md`), with `transducer/sql_backend.rs` and its terminals; policy evaluation runs no SQL. Regex checks are scanned natively (`query::regex_matches`) and AST rules are matched by the grammar matcher (D35). The terminal virtual table, SQL-as-outer-rule-engine and execution-phase sections below are history; the transducer `Program` interpreter is exercised by tests and the benchmark backends only.
 
 ## Current file filter
 

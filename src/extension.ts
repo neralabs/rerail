@@ -1,8 +1,12 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { promisify } from "node:util";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext, ExtensionFactory } from "@oh-my-pi/pi-coding-agent";
+import type * as RepositoryStart from "./repository-start.js";
 import {
   assistantCompletionEvent,
   assistantDeltaEvent,
@@ -16,13 +20,15 @@ import {
   type AdapterSession,
 } from "./adapter-contract.js";
 import { registerCosineRulesCommand } from "./command.js";
-import { isRerailDisabled } from "./checkout-control.js";
+import { nodeExecutable } from "./daemon-control.js";
+import { devWorkspaceEnabled } from "./dev-routing.js";
 import { registerOmpSemanticTools, type NativeSemanticToolRuntime } from "./native-semantic-tools.js";
 import { createDevNativeSession, DevNativeClient, type DevNativeSessionHost } from "./dev-native-client.js";
 import type { ExtensionTranscriptOptions } from "./extension-transcript.js";
 import type { CosineRuleSourceOptions } from "./rule-sources.js";
 import { registerRerailCommands } from "./rerail-command.js";
 import { createOmpPresentation } from "./omp-presentation.js";
+import { readRepositoryState } from "./session-presentation.js";
 import { registerCosineRulesTool } from "./tool.js";
 
 export { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, TURN_ENTRY_TYPE } from "./session-state.js";
@@ -42,6 +48,35 @@ export const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..
 
 export function bundledModelPath(): string {
   return resolve(PACKAGE_ROOT, "model");
+}
+
+const execFileAsync = promisify(execFile);
+/** A stuck `rerail state` (a held SQLite lock, a slow git) fails the attach, which retries, instead of hanging it. */
+const STATE_CHECK_TIMEOUT_MS = 15_000;
+
+/**
+ * Whether Rerail is started in `cwd`. Under Node the built package reads the database itself; it is
+ * loaded at run time so this bundle never links the SQLite binding. OMP runs extensions on Bun,
+ * which cannot load that binding: a running daemon answers, and otherwise the CLI does under Node,
+ * reading the configured database when one is given. A development bridge ships neither, and its
+ * workspace flag is its start switch.
+ */
+async function rerailStarted(cwd: string, databasePath: string | undefined): Promise<boolean> {
+  const readerPath = join(PACKAGE_ROOT, "dist", "repository-start.js");
+  if (process.versions.bun === undefined && existsSync(readerPath)) {
+    // Runtime-selected on purpose: a static import would link better-sqlite3 into the Bun-loaded bundle.
+    const reader = await import(pathToFileURL(readerPath).href) as typeof RepositoryStart;
+    return reader.isRerailStarted(cwd, databasePath);
+  }
+  if (databasePath === undefined) {
+    const answered = await readRepositoryState(cwd, "omp");
+    if (answered !== null) return answered === "started";
+  }
+  const cli = join(PACKAGE_ROOT, "dist", "cli.js");
+  if (!existsSync(cli)) return devWorkspaceEnabled(cwd);
+  const databaseArgs = databasePath === undefined ? [] : ["--database", databasePath];
+  const { stdout } = await execFileAsync(nodeExecutable(), [cli, "state", "--repo", cwd, ...databaseArgs], { cwd, timeout: STATE_CHECK_TIMEOUT_MS });
+  return stdout.trim() === "started";
 }
 
 function streamId(message: AgentMessage): string {
@@ -116,7 +151,7 @@ export function createCosineRulesExtension(options: CosineRulesOptions = {}): Ex
       sendNativeDeliveries(deliveries, async (message, options_) => {
         const context = currentContext;
         pi.sendMessage(message, options_);
-        if (options_.deliverAs !== "steer" || context === undefined
+        if (context === undefined
             || typeof context.hasPendingMessages !== "function"
             || context.isIdle()) return;
         // OMP's public sendMessage is fire-and-forget while the agent is active,
@@ -220,16 +255,18 @@ export function createCosineRulesExtension(options: CosineRulesOptions = {}): Ex
     const initializeNow = async (ctx: ExtensionContext, options_: InitializeOptions = {}): Promise<void> => {
       if (options_.onlyIfCurrent === true && currentContext !== ctx) return;
       const session = { host: "omp", sessionId: ctx.sessionManager.getSessionId(), cwd: ctx.cwd } satisfies AdapterSession;
-      if (isRerailDisabled(ctx.cwd)) {
-        presentation.stop();
+      const databasePath = options.databasePath === undefined ? undefined : resolve(ctx.cwd, options.databasePath);
+      if (!await rerailStarted(ctx.cwd, databasePath)) {
+        // Nothing runs here; the footer still says so, without a daemon to ask.
         await closeRuntimeNow();
         currentContext = ctx;
+        presentation.start(ctx, { off: true });
         return;
       }
       const activation = await createDevNativeSession(nativeHost, ctx, session, options_.rebuild === true, {
         ...options,
         modelPath: resolve(options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath()),
-        ...(options.databasePath === undefined ? {} : { databasePath: resolve(ctx.cwd, options.databasePath) }),
+        ...(databasePath === undefined ? {} : { databasePath }),
         storageRoot: resolve(ctx.cwd, process.env.RERAIL_STORAGE_ROOT ?? ".rerail/sessions"),
       });
       if (activation === "disabled") {
@@ -277,6 +314,9 @@ export function createCosineRulesExtension(options: CosineRulesOptions = {}): Ex
         sessionId: () => activeSession?.sessionId,
         packageRoot: PACKAGE_ROOT,
         cwd: () => currentContext?.cwd ?? process.cwd(),
+        databasePath: () => options.databasePath === undefined
+          ? undefined
+          : resolve(currentContext?.cwd ?? process.cwd(), options.databasePath),
         // Reset retires this session's daemon-owned runtime and reattaches even on failure.
         detach: async () => {
           presentation.stop();

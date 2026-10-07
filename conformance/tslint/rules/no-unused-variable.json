@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-unused-variable",
   "revision": 1,
+  "mode": "steer",
   "description": "Syntactic fragment only: flags an empty named import `import {} from \"m\"` (imports nothing). Detecting unused bindings needs reference resolution.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "empty-named-import",
       "forbid": {
@@ -21,10 +22,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_UNUSED_VARIABLE",
-        "severity": "error",
         "message": "Unused import."
       }
     }

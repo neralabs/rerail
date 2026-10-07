@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:adjacent-overload-signatures",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `adjacent-overload-signatures` rule with its default options (https://palantir.github.io/tslint/rules/adjacent-overload-signatures/). Overloads (same name and static-ness; call and construct signatures by kind) must be adjacent: flags a member or top-level/namespace function whose key appears on an earlier sibling while the previous member (skipping any run of `;`, `,` and comments between members, and comments between statements) has a different key.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "misplaced-member-overload",
       "forbid": {
@@ -330,10 +331,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "ADJACENT_OVERLOAD_SIGNATURES",
-        "severity": "error",
         "message": "All overload signatures of a name should be adjacent"
       }
     },
@@ -451,10 +451,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "ADJACENT_OVERLOAD_SIGNATURES",
-        "severity": "error",
         "message": "All overload signatures of a name should be adjacent"
       }
     }

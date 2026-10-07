@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-use-before-declare",
   "revision": 1,
+  "mode": "steer",
   "description": "Syntactic fragment only: flags an initializer that is a bare identifier declared later in the same declaration list (or by itself). General use-before-declare needs binding resolution.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "same-declaration",
       "forbid": {
@@ -59,10 +60,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_USE_BEFORE_DECLARE",
-        "severity": "error",
         "message": "variable used before declaration"
       }
     }

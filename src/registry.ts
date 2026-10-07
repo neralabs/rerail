@@ -6,6 +6,7 @@ import {
   type NativeSample,
 } from "./native.js";
 import { isSimilarityMatch, parseCosineRule, type CosineRule, type MatchOperator } from "./rule-schema.js";
+import type { RuleMode } from "./rule-mode.js";
 
 export interface CosineRuleRegistryOptions {
   modelPath: string;
@@ -21,6 +22,7 @@ export interface RuleMatch {
   threshold?: number;
   operator?: MatchOperator;
   tokenCount?: number;
+  mode: RuleMode;
   action: CosineRule["action"];
 }
 
@@ -125,6 +127,7 @@ export class CosineRuleRegistry {
         if (rule === undefined) throw new Error(`native matcher returned unknown rule ${match.ruleId}`);
         return {
           ...match,
+          mode: rule.mode,
           action: { ...rule.action },
         };
       });

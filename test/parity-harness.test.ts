@@ -76,7 +76,7 @@ describe("live harness evidence", () => {
   it("correlates steering across bookkeeping entries but rejects malformed proof records", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-ledger-proof-"));
     const directory = join(root, ".rerail", "sessions", "s");
-    const event = { sequence: 1, sessionId: "s", eventId: "write", kind: "tool-result", observedAt: 1, payload: { toolName: "write", input: { path: "api/probe.py" } } };
+    const event = { sequence: 1, sessionId: "s", eventId: "write", kind: "result", observedAt: 1, payload: { toolName: "write", input: { path: "api/probe.py" } } };
     const sample = { type: "sample", item: { metadata: { fields: { eventId: "write", sampleSource: "tool:write", boundary: "tool-call" } } } };
     const delivery = { type: "delivery", delivery: { requested: "steer", mechanism: "native-queue", content: "SQL_EXECUTE_FSTRING" } };
     const ledger = [sample, { type: "hud-tracking-start" }, { type: "future-bookkeeping" }, delivery];
@@ -86,7 +86,7 @@ describe("live harness evidence", () => {
       await persist(ledger);
       expect(await readLedger(root, [event])).toEqual({
         deliveries: 1, steers: 1, content: "SQL_EXECUTE_FSTRING",
-        sample: { source: "tool:write", boundary: "tool-call" }, event: { kind: "tool-result", toolName: "write", mentionsProbe: true },
+        sample: { source: "tool:write", boundary: "tool-call" }, event: { kind: "result", toolName: "write", mentionsProbe: true },
       });
       await persist([delivery, sample]);
       expect((await readLedger(root, [event])).steers).toBe(0);
@@ -100,8 +100,8 @@ describe("live harness evidence", () => {
   });
 
   it("requires a completed violation attempt with the same session, call identity and tool", () => {
-    const call = { kind: "tool-call", eventId: "call:1", sessionId: "s", toolCallId: "1", toolName: "exec_command", input: "cursor.execute" };
-    const result = { kind: "tool-result", eventId: "result:2", sessionId: "s", toolCallId: "2", toolName: "exec_command", output: "done" };
+    const call = { kind: "call", eventId: "call:1", sessionId: "s", toolCallId: "1", toolName: "exec_command", input: "cursor.execute" };
+    const result = { kind: "result", eventId: "result:2", sessionId: "s", toolCallId: "2", toolName: "exec_command", output: "done" };
     const evidence = (...payloads: (typeof call | typeof result | (typeof result & { failed: boolean }))[]) =>
       hasCompletedViolation(payloads.map(payload => ({ kind: payload.kind, payload })));
     const retry = { ...call, eventId: "call:2", toolCallId: "2" };

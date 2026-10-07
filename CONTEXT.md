@@ -24,21 +24,37 @@ The authoritative source check used to determine whether another representation 
 
 Context or behavior required by a Ground-Truth Oracle that is unavailable or not yet proven equivalent in a Generation Check.
 
-## Policy Definition
+## File Rule
 
-The versioned customer-authored constraint evaluated by a Rule, including its execution scope, rationale, evaluator configuration, and steering guidance. Its applicability is stored separately in the machine rule catalog; the v2 policy rule schema remains its write-boundary contract.
+A Rule over repository source files (kind `file`): one versioned, customer-authored `rerail.policy/v1` document holding its Clauses, Rule Path Criteria, rationale, and Rule Mode. Its applicability is stored separately in the machine rule catalog.
 
-## Cosine Rule
+## Clause
 
-A standing semantic query over one event source and boundary with a delivery action. Stored in the machine rule catalog and refreshed by running kernels after catalog commits, including writes made through the same process or another connection.
+One constraint inside a File Rule: an `id`, exactly one form (`forbid`, `require_each`, `budget`, `llm`, or `define` for shared definitions), and, for every form except `define`, the Violation it reports.
+
+## Violation
+
+What a Clause reports where code breaks it: a stable id, the `ruleId` and `clauseId` that produced it, code, message, path, span, and the Rule Mode of its rule. An execution failure is not a Violation.
+
+## Conversation Rule
+
+A Rule over the agent conversation (kind `conversation`): a standing semantic query over one event source and boundary, with a Rule Mode and an action. Stored in the machine rule catalog and refreshed by running kernels after catalog commits, including writes made through the same process or another connection.
+
+## Audit
+
+Any run of rules over a session, live or re-run: the automatic evaluation of generated edits, an explicit audit request, or a full repository audit. An Audit has a scope (`repository`, `touched-files`, or `ai-output`) and a run mode (`steer` or `log`) and records its Violations and execution failures.
+
+## Rule Mode
+
+What Rerail does when a rule of either kind fires, set once on every rule document: `log` records the match or Violation for review and never sends guidance, `steer` sends the rule's guidance to the agent, and `block` stops the action. Until block enforcement lands, a `block` rule is delivered exactly like a `steer` rule. Violations carry the mode of the rule that produced them. An Audit's run mode (`steer` or `log`) is a separate setting with overlapping words: it decides whether a whole Audit sends guidance at all.
 
 ## Rule Applicability
 
-Where a rule definition applies: `global` across the user's machine or `project` across the repositories explicitly assigned to one project. Applicability is independent from a policy's execution scope and a cosine rule's sample boundary.
+Where a rule definition applies: `global` across the user's machine or `project` across the repositories explicitly assigned to one project. Applicability is independent from a File Rule's path criteria and a Conversation Rule's sample boundary.
 
 ## Rule Path Criteria
 
-Repository-relative `scope.include` and `scope.exclude` patterns on a policy. After Rule Applicability selects a rule, these criteria filter its candidate paths; excludes win. They are distinct from applicability and from policy execution scope and mode.
+Repository-relative `scope.include` and `scope.exclude` patterns on a File Rule. After Rule Applicability selects a rule, these criteria filter its candidate paths; excludes win. They are distinct from applicability and from an Audit's scope and run mode.
 
 ## Project
 
@@ -58,7 +74,7 @@ The projects, repository membership, global rules, and project rules in the Rera
 
 ## Execution History
 
-The sessions, events, work links, and policy-run provenance in the Rerail database. Each session carries the repository identity it ran in; per-repository views and `rerail reset` select by it.
+The sessions, events, work links, and Audit provenance in the Rerail database. Each session carries the repository identity it ran in; per-repository views and `rerail reset` select by it.
 
 ## Work Link
 

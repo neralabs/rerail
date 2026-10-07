@@ -10,7 +10,6 @@ import {
   type AdapterEvent,
   type AdapterSession,
 } from "./adapter-contract.js";
-import { isRerailDisabled } from "./checkout-control.js";
 import { registerPiSemanticTools, type NativeSemanticToolRuntime } from "./native-semantic-tools.js";
 import { registerPiCosineRulesCommand, type PiCosineRulesCommandRuntime } from "./pi-command.js";
 import { registerRerailCommands } from "./rerail-command.js";
@@ -40,6 +39,10 @@ export interface PiHostAdapterRuntime {
   cosineTool: PiCosineRulesToolRuntime;
   cosineCommand: Omit<PiCosineRulesCommandRuntime, "reload">;
   packageRoot: string;
+  /** Whether Rerail runs in `cwd`; where it does not, input arriving without a session is ignored. */
+  started(cwd: string): boolean;
+  /** A database configured in place of the Rerail home's, which `/rerail-start` and `/rerail-stop` must change. */
+  configuredDatabase?(cwd: string): string | undefined;
 }
 
 function streamId(message: PiMessage): string {
@@ -121,6 +124,7 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
       packageRoot: runtime.packageRoot,
       host: "pi",
       cwd: () => runtime.currentContext()?.cwd ?? process.cwd(),
+      databasePath: () => runtime.configuredDatabase?.(runtime.currentContext()?.cwd ?? process.cwd()),
       sessionId: () => runtime.activeSession()?.sessionId,
       detach: close,
       reattach: async () => {
@@ -136,7 +140,7 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
     const session = await runtime.sessionFor();
     if (session === undefined) {
       const context = runtime.currentContext();
-      if (context !== undefined && isRerailDisabled(context.cwd)) return;
+      if (context !== undefined && !runtime.started(context.cwd)) return;
       throw new Error("cosine-rules extension received input before session_start");
     }
     await runtime.ingest(userPromptEvent(session.sessionId, `input:${randomUUID()}`, event.text));

@@ -1,0 +1,64 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-no-danger",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-react 7.37.5 react/no-danger (default options): a `dangerouslySetInnerHTML` attribute on a DOM element (a tag whose name starts with a lower-case letter, jsx-ast-utils' elementType).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "jsx_attribute",
+            "has": {
+              "kind": "property_identifier",
+              "regex": "^(?:dangerouslySetInnerHTML)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "has": {
+                "field": "name",
+                "regex": "^[a-z]"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-danger",
+        "message": "Dangerous property 'dangerouslySetInnerHTML' found",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-danger"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

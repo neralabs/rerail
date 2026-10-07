@@ -32,11 +32,12 @@ const LEGACY_DATA_LAYER_RULE = {
   format: "rerail.policy/v1",
   id: "nera-data-layer:connection_mode_split",
   revision: 1,
+  mode: "steer",
   scope: { include: ["**/*.py"], exclude: [] },
-  checks: [
+  clauses: [
     {
       id: "nera-data-layer-connection-mode-split",
-      finding: { code: "connection_mode_split", severity: "error", anchor: "witness.span", message: "Mode-specific connection surface enforcement" },
+      violation: { code: "connection_mode_split", anchor: "witness.span", message: "Mode-specific connection surface enforcement" },
       forbid: {
         ast: {
           language: "python",
@@ -53,13 +54,14 @@ const LEGACY_SEED_RULE = {
   format: "rerail.policy/v1",
   id: "mock-lazy-query-shaping",
   revision: 2,
+  mode: "steer",
   description: "Route reads must stay inside the lazy query plan; materializing before filtering defeats the ServerPlan budget.",
   scope: { include: ["api/nera_api/routes/**/*.py"], exclude: ["api/nera_api/routes/health.py"] },
-  checks: [
+  clauses: [
     {
       id: "list-of-query",
       forbid: { ast: { language: "python", capture: "CALL", rule: { pattern: "list($QUERY)" } } },
-      finding: { anchor: "witness.span", code: "RERAIL-MOCK-002", severity: "warning", message: "Query materialized before filters were applied." },
+      violation: { anchor: "witness.span", code: "RERAIL-MOCK-002", message: "Query materialized before filters were applied." },
     },
   ],
 };
@@ -69,15 +71,16 @@ const LEGACY_FINDING_RULE = {
   format: "rerail.policy/v1",
   id: "legacy-finding-fields",
   revision: 1,
-  checks: [
+  mode: "steer",
+  clauses: [
     {
       id: "print-call",
-      finding: { anchor: "subject.id", code: "NO_PRINT", severity: "error", message: "No print", variables: {} },
+      violation: { anchor: "subject.id", code: "NO_PRINT", message: "No print", variables: {} },
       forbid: { regex: { source: "file.content", pattern: "\\bprint\\(", captures: { CALL: 0 } } },
     },
     {
       id: "gated",
-      finding: { anchor: "witness.span", code: "GATED", severity: "warning", message: "Gated", variables: { level: "high" } },
+      violation: { anchor: "witness.span", code: "GATED", message: "Gated", variables: { level: "high" } },
       forbid: {
         select_when: {
           select: { regex: { source: "file.content", pattern: "\\bprint\\(", captures: [] } },
@@ -95,10 +98,11 @@ function cleanRule(id: string): PolicyRule {
     format: "rerail.policy/v1",
     id,
     revision: 1,
-    checks: [
+    mode: "steer",
+    clauses: [
       {
         id: `${id}:check`,
-        finding: { anchor: "witness.span", code: "CLEAN", severity: "error", message: "clean" },
+        violation: { anchor: "witness.span", code: "CLEAN", message: "clean" },
         forbid: { regex: { source: "file.content", pattern: "\\bclean\\(" } },
       },
     ],
@@ -109,7 +113,7 @@ function cleanRule(id: string): PolicyRule {
 function writeCatalogDocument(path: string, ruleId: string, rule: unknown): void {
   const database = openRerailDatabase(path);
   try {
-    database.run(sql`UPDATE catalog_rules SET document_json = ${JSON.stringify({ kind: "policy", rule })} WHERE rule_id = ${ruleId}`);
+    database.run(sql`UPDATE catalog_rules SET document_json = ${JSON.stringify({ kind: "file", rule })} WHERE rule_id = ${ruleId}`);
   } finally {
     database.$client.close();
   }
@@ -118,7 +122,7 @@ function writeCatalogDocument(path: string, ruleId: string, rule: unknown): void
 function writeLegacyStoreChecks(path: string, ruleId: string, checks: unknown): void {
   const database = openRerailDatabase(path);
   try {
-    database.run(sql`UPDATE rules SET checks_json = ${JSON.stringify(checks)} WHERE id = ${ruleId}`);
+    database.run(sql`UPDATE rules SET clauses_json = ${JSON.stringify(checks)} WHERE id = ${ruleId}`);
   } finally {
     database.$client.close();
   }
@@ -128,7 +132,7 @@ function writeLegacyStoreChecks(path: string, ruleId: string, checks: unknown): 
 function catalogWithLegacyRows(path: string, rules: readonly Record<string, unknown>[], sourceDigest: (rule: unknown) => string | null = () => null): void {
   const catalog = ScopedRuleCatalog.open(path, repository);
   try {
-    for (const rule of rules) catalog.upsertPolicy(cleanRule(String(rule.id)), { sourceDigest: sourceDigest(rule), origin: "bundled" });
+    for (const rule of rules) catalog.upsertPolicy(cleanRule(String(rule.id)), { sourceDigest: sourceDigest(rule), origin: "rerail" });
   } finally {
     catalog.close();
   }
@@ -136,9 +140,9 @@ function catalogWithLegacyRows(path: string, rules: readonly Record<string, unkn
 }
 
 const policyRevision = (stored: { kind: string; rule: unknown } | undefined): number | undefined =>
-  stored?.kind === "policy" ? (stored.rule as PolicyRule).revision : undefined;
+  stored?.kind === "file" ? (stored.rule as PolicyRule).revision : undefined;
 
-const rawDigest = (rule: unknown): string => ruleDocumentDigest({ kind: "policy", rule: rule as PolicyRule });
+const rawDigest = (rule: unknown): string => ruleDocumentDigest({ kind: "file", rule: rule as PolicyRule });
 
 describe("normalizeLegacyPolicyRule", () => {
   it("drops ast.capture and regex.captures in every query position, maps a free-form anchor to witness.span, and drops variables", () => {
@@ -148,15 +152,15 @@ describe("normalizeLegacyPolicyRule", () => {
     expect(policyRuleSchema.safeParse(rule).success).toBe(true);
     expect(rule).toEqual({
       ...LEGACY_FINDING_RULE,
-      checks: [
+      clauses: [
         {
           id: "print-call",
-          finding: { anchor: "witness.span", code: "NO_PRINT", severity: "error", message: "No print" },
+          violation: { anchor: "witness.span", code: "NO_PRINT", message: "No print" },
           forbid: { regex: { source: "file.content", pattern: "\\bprint\\(" } },
         },
         {
           id: "gated",
-          finding: { anchor: "witness.span", code: "GATED", severity: "warning", message: "Gated" },
+          violation: { anchor: "witness.span", code: "GATED", message: "Gated" },
           forbid: {
             select_when: {
               select: { regex: { source: "file.content", pattern: "\\bprint\\(" } },
@@ -167,12 +171,12 @@ describe("normalizeLegacyPolicyRule", () => {
       ],
     });
     expect(changes).toEqual([
-      "checks/0/finding/anchor: subject.id -> witness.span",
-      "checks/0/finding/variables: dropped",
-      "checks/0/forbid/regex/captures: dropped",
-      "checks/1/finding/variables: dropped",
-      "checks/1/forbid/select_when/select/regex/captures: dropped",
-      "checks/1/forbid/select_when/exists/ast/capture: dropped",
+      "clauses/0/violation/anchor: subject.id -> witness.span",
+      "clauses/0/violation/variables: dropped",
+      "clauses/0/forbid/regex/captures: dropped",
+      "clauses/1/violation/variables: dropped",
+      "clauses/1/forbid/select_when/select/regex/captures: dropped",
+      "clauses/1/forbid/select_when/exists/ast/capture: dropped",
     ]);
   });
 
@@ -188,10 +192,11 @@ describe("normalizeLegacyPolicyRule", () => {
       format: "rerail.policy/v1",
       id: "legacy-llm",
       revision: 1,
-      checks: [{ id: "rubric", finding: { anchor: "capture.CALL", code: "LLM", severity: "advisory", message: "m" }, llm: { instruction: "x" } }],
+      mode: "log",
+      clauses: [{ id: "rubric", violation: { anchor: "capture.CALL", code: "LLM", message: "m" }, llm: { instruction: "x" } }],
     });
-    expect((rule as PolicyRule).checks[0]!.finding?.anchor).toBe("witness.span");
-    expect(changes).toEqual(["checks/0/finding/anchor: capture.CALL -> witness.span"]);
+    expect((rule as PolicyRule).clauses[0]!.violation?.anchor).toBe("witness.span");
+    expect(changes).toEqual(["clauses/0/violation/anchor: capture.CALL -> witness.span"]);
   });
 });
 
@@ -201,7 +206,7 @@ describe("reading legacy rows", () => {
     catalogWithLegacyRows(path, LEGACY_RULES);
     const catalog = ScopedRuleCatalog.open(path, repository);
     try {
-      const listed = catalog.list({ kind: "policy" });
+      const listed = catalog.list({ kind: "file" });
       expect(listed.map(stored => stored.rule.id).sort()).toEqual(LEGACY_RULES.map(rule => rule.id).sort());
       for (const stored of listed) expect(policyRuleSchema.safeParse(stored.rule).success).toBe(true);
       expect(catalog.get(LEGACY_SEED_RULE.id)?.rule).toEqual(normalizeLegacyPolicyRule(LEGACY_SEED_RULE).rule);
@@ -228,12 +233,12 @@ describe("reading legacy rows", () => {
     } finally {
       store.close();
     }
-    for (const rule of LEGACY_RULES) writeLegacyStoreChecks(legacyPath, rule.id, rule.checks);
+    for (const rule of LEGACY_RULES) writeLegacyStoreChecks(legacyPath, rule.id, rule.clauses);
     const reopened = new SqliteRuleStore(legacyPath);
     try {
       expect(reopened.policyRules().map(rule => rule.id).sort()).toEqual(LEGACY_RULES.map(rule => rule.id).sort());
       const normalized = normalizeLegacyPolicyRule(LEGACY_DATA_LAYER_RULE).rule as PolicyRule;
-      expect((reopened.get(LEGACY_DATA_LAYER_RULE.id)?.rule as PolicyRule).checks).toEqual(normalized.checks);
+      expect((reopened.get(LEGACY_DATA_LAYER_RULE.id)?.rule as PolicyRule).clauses).toEqual(normalized.clauses);
       expect(reopened.quarantined()).toEqual([]);
     } finally {
       reopened.close();
@@ -261,10 +266,10 @@ describe("reading legacy rows", () => {
         revision: 0,
       });
       const result = JSON.parse(catalog.policy(LEGACY_SEED_RULE.id).evaluate(input, "diagnostic")) as {
-        findings: { code: string; span: { startByte: number; endByte: number } }[];
+        violations: { code: string; span: { startByte: number; endByte: number } }[];
       };
       const start = source.indexOf("list(query)");
-      expect(result.findings).toMatchObject([{ code: "RERAIL-MOCK-002", span: { startByte: start, endByte: start + "list(query)".length } }]);
+      expect(result.violations).toMatchObject([{ code: "RERAIL-MOCK-002", span: { startByte: start, endByte: start + "list(query)".length } }]);
     } finally {
       catalog.close();
     }
@@ -273,17 +278,17 @@ describe("reading legacy rows", () => {
 
   it("skips and diagnoses a row that still fails validation, and every other rule still loads", async () => {
     const path = join(await temporaryRoot(), "catalog.sqlite");
-    catalogWithLegacyRows(path, [LEGACY_SEED_RULE, { format: "rerail.policy/v1", id: "garbage", revision: 1 }]);
+    catalogWithLegacyRows(path, [LEGACY_SEED_RULE, { format: "rerail.policy/v1", id: "garbage", revision: 1, mode: "steer" }]);
     const catalog = ScopedRuleCatalog.open(path, repository);
     const warnings = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
       expect(catalog.list().map(stored => stored.rule.id)).toEqual([LEGACY_SEED_RULE.id]);
       expect(catalog.list().map(stored => stored.rule.id)).toEqual([LEGACY_SEED_RULE.id]);
       const skipped = warnings.mock.calls.map(([text]) => String(text)).filter(text => text.includes("rule garbage"));
-      expect(skipped).toEqual([expect.stringMatching(/^rerail: skipping policy rule garbage \(project:[^)]+\) in .*catalog\.sqlite: checks: /u)]);
+      expect(skipped).toEqual([expect.stringMatching(/^rerail: skipping file rule garbage \(project:[^)]+\) in .*catalog\.sqlite: clauses: /u)]);
       expect(catalog.get("garbage")).toBeUndefined();
       expect(catalog.quarantined()).toEqual([
-        { ruleId: "garbage", kind: "policy", owner: `project:${catalog.context().projectId}`, reason: expect.stringMatching(/checks/u) },
+        { ruleId: "garbage", kind: "file", owner: `project:${catalog.context().projectId}`, reason: expect.stringMatching(/clauses/u) },
       ]);
     } finally {
       warnings.mockRestore();
@@ -311,7 +316,7 @@ describe("reading legacy rows", () => {
     try {
       expect(reopened.list().map(stored => stored.rule.id)).toEqual(["kept"]);
       expect(reopened.get("broken")).toBeUndefined();
-      expect(reopened.quarantined()).toMatchObject([{ ruleId: "broken", kind: "policy", owner: "repository" }]);
+      expect(reopened.quarantined()).toMatchObject([{ ruleId: "broken", kind: "file", owner: "repository" }]);
     } finally {
       reopened.close();
     }
@@ -332,7 +337,7 @@ describe("reading legacy rows", () => {
         catalog.close();
       }
       for (const rule of LEGACY_RULES) writeCatalogDocument(path, rule.id, rule);
-      writeCatalogDocument(path, "garbage", { format: "rerail.policy/v1", id: "garbage", revision: 1 });
+      writeCatalogDocument(path, "garbage", { format: "rerail.policy/v1", id: "garbage", revision: 1 , mode: "steer"});
       const runtime = new RerailRuntime({
         autostart: false,
         workspaceRoot,
@@ -348,7 +353,7 @@ describe("reading legacy rows", () => {
       try {
         expect(reopened.list().map(stored => stored.rule.id)).toEqual(expect.arrayContaining(LEGACY_RULES.map(rule => String(rule.id))));
         expect(reopened.quarantined()).toEqual(expect.arrayContaining([
-          expect.objectContaining({ ruleId: "garbage", kind: "policy", owner: `project:${reopened.context().projectId}` }),
+          expect.objectContaining({ ruleId: "garbage", kind: "file", owner: `project:${reopened.context().projectId}` }),
         ]));
         expect(reopened.get("garbage")).toBeUndefined();
       } finally {
@@ -369,7 +374,7 @@ describe("seeding over legacy rows", () => {
     catalogWithLegacyRows(path, [LEGACY_SEED_RULE], rawDigest);
     const catalog = ScopedRuleCatalog.open(path, repository);
     try {
-      expect(catalog.seed([{ kind: "policy", rule: bundledSeedRule() }])).toEqual({ inserted: 0, refreshed: 1, kept: 0 });
+      expect(catalog.seed([{ kind: "file", rule: bundledSeedRule() }])).toEqual({ inserted: 0, refreshed: 1, kept: 0 });
       expect(policyRevision(catalog.get(LEGACY_SEED_RULE.id))).toBe(3);
     } finally {
       catalog.close();
@@ -382,8 +387,8 @@ describe("seeding over legacy rows", () => {
     const catalog = ScopedRuleCatalog.open(path, repository);
     try {
       const report = catalog.seed([
-        { kind: "policy", rule: bundledSeedRule() },
-        { kind: "policy", rule: policyRuleSchema.parse({ ...normalizeLegacyPolicyRule(LEGACY_DATA_LAYER_RULE).rule as object, revision: 2 }) },
+        { kind: "file", rule: bundledSeedRule() },
+        { kind: "file", rule: policyRuleSchema.parse({ ...normalizeLegacyPolicyRule(LEGACY_DATA_LAYER_RULE).rule as object, revision: 2 }) },
       ]);
       expect(report).toEqual({ inserted: 0, refreshed: 0, kept: 2 });
       expect(policyRevision(catalog.get(LEGACY_SEED_RULE.id))).toBe(2);
@@ -394,11 +399,11 @@ describe("seeding over legacy rows", () => {
 
   it("replaces an untouched bundled row the schema now rejects, but never an invalid row the user owns", async () => {
     const path = join(await temporaryRoot(), "catalog.sqlite");
-    const invalid = { ...LEGACY_SEED_RULE, checks: [] };
+    const invalid = { ...LEGACY_SEED_RULE, clauses: [] };
     catalogWithLegacyRows(path, [invalid], rawDigest);
     const catalog = ScopedRuleCatalog.open(path, repository);
     try {
-      expect(catalog.seed([{ kind: "policy", rule: bundledSeedRule() }])).toEqual({ inserted: 0, refreshed: 1, kept: 0 });
+      expect(catalog.seed([{ kind: "file", rule: bundledSeedRule() }])).toEqual({ inserted: 0, refreshed: 1, kept: 0 });
       expect(policyRevision(catalog.get(LEGACY_SEED_RULE.id))).toBe(3);
     } finally {
       catalog.close();
@@ -408,7 +413,7 @@ describe("seeding over legacy rows", () => {
     catalogWithLegacyRows(userPath, [invalid]);
     const userCatalog = ScopedRuleCatalog.open(userPath, repository);
     try {
-      expect(userCatalog.seed([{ kind: "policy", rule: bundledSeedRule() }])).toEqual({ inserted: 0, refreshed: 0, kept: 1 });
+      expect(userCatalog.seed([{ kind: "file", rule: bundledSeedRule() }])).toEqual({ inserted: 0, refreshed: 0, kept: 1 });
       expect(userCatalog.quarantined()).toHaveLength(1);
     } finally {
       userCatalog.close();
@@ -425,14 +430,14 @@ describe("seeding over legacy rows", () => {
     }
     const database = openRerailDatabase(path);
     try {
-      database.run(sql`UPDATE rules SET checks_json = ${JSON.stringify(LEGACY_SEED_RULE.checks)}, revision = 2,
+      database.run(sql`UPDATE rules SET clauses_json = ${JSON.stringify(LEGACY_SEED_RULE.clauses)}, revision = 2,
         description = ${LEGACY_SEED_RULE.description}, scope_json = ${JSON.stringify(LEGACY_SEED_RULE.scope)} WHERE id = ${LEGACY_SEED_RULE.id}`);
     } finally {
       database.$client.close();
     }
     const reopened = new SqliteRuleStore(path);
     try {
-      expect(reopened.seed([{ kind: "policy", rule: bundledSeedRule() }])).toEqual({ inserted: 0, refreshed: 1, kept: 0 });
+      expect(reopened.seed([{ kind: "file", rule: bundledSeedRule() }])).toEqual({ inserted: 0, refreshed: 1, kept: 0 });
       expect(policyRevision(reopened.get(LEGACY_SEED_RULE.id))).toBe(3);
     } finally {
       reopened.close();

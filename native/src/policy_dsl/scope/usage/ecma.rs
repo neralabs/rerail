@@ -13,7 +13,8 @@ use super::super::{
 use super::{Facts, PrivateDeclaration, PrivateMember, Steps, known};
 use crate::policy_dsl::language::kind_ids;
 use ast_grep_core::{Doc, Node};
-use std::collections::{BTreeSet, HashMap};
+use foldhash::{HashMap, HashMapExt};
+use std::collections::BTreeSet;
 
 /// A variable: a scope and one of its names.
 type Key<'t> = (u32, &'t str);
@@ -142,6 +143,17 @@ fn has_token<D: Doc>(node: &Node<'_, D>, tokens: &[&str]) -> bool {
         .any(|child| !child.is_named() && tokens.contains(&child.kind().as_ref()))
 }
 
+/// A class member's key: tree-sitter-javascript's `field_definition` names it `property`;
+/// tree-sitter-typescript's `public_field_definition` and both grammars' `method_definition`,
+/// `name`.
+fn member_key<'r, D: Doc>(member: &Node<'r, D>) -> Option<Node<'r, D>> {
+    member.field(if member.kind() == "field_definition" {
+        "property"
+    } else {
+        "name"
+    })
+}
+
 struct Walk<'t, 'r, 'a, 'd, D: Doc> {
     table: &'t ScopeTable,
     text: &'a str,
@@ -240,9 +252,8 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
                 "method_definition" => Form::Method,
                 _ => continue,
             };
-            let Some(name) = member
-                .field("name")
-                .filter(|name| name.kind() == "private_property_identifier")
+            let Some(name) =
+                member_key(&member).filter(|name| name.kind() == "private_property_identifier")
             else {
                 continue;
             };
@@ -282,7 +293,7 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
         let declaration = matches!(
             parent.kind().as_ref(),
             "public_field_definition" | "field_definition" | "method_definition"
-        ) && parent.field("name").is_some_and(|name| same(&name, node));
+        ) && member_key(parent).is_some_and(|name| same(&name, node));
         if declaration {
             return;
         }

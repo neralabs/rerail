@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:variable-name",
   "revision": 1,
+  "mode": "steer",
   "description": "Checks variable/parameter/property names for lowerCamelCase or UPPER_CASE; alias exemption via same-metavar patterns. Options: ['require-const-for-all-caps'].",
   "scope": {"include": ["**/*"], "exclude": []},
-  "checks": [
+  "clauses": [
     {
       "id": "format",
       "forbid": {
@@ -73,10 +74,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "VARIABLE_NAME",
-        "severity": "error",
         "message": "variable name must be in lowerCamelCase or UPPER_CASE"
       }
     },
@@ -110,10 +110,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "VARIABLE_NAME",
-        "severity": "error",
         "message": "Only `const` variables may be UPPER_CASE."
       }
     }

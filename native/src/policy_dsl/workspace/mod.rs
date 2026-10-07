@@ -26,7 +26,7 @@ use super::findings::Witness;
 use super::json::invalid;
 use super::model::{CompiledCheck, CompiledPolicy, Evaluation, FileInput};
 use super::scope::ScopeTable;
-use super::{query, tape};
+use super::tape;
 use crate::content_store::StoredFile;
 use crate::policy_dsl::language::GrammarDialect;
 use global::{Partition, QueryPlan};
@@ -35,15 +35,22 @@ use results::ResultPageIndex;
 #[cfg(test)]
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
+#[cfg(test)]
 use std::time::Duration;
 use storage::StorageContext;
 
 type CheckId = (usize, usize);
 type LocalFailure = (&'static str, &'static str);
 type CandidateSets = HashMap<(Option<GrammarDialect>, Vec<CheckId>, Vec<CheckId>), Arc<Candidates>>;
-const FILE_TIME_BUDGET: Duration = Duration::from_millis(500);
+/// Budget polls a file's evaluation (or a global check's) may spend, the same on any machine and
+/// under any load. Over whole corpora (`benchmark/policy-workspace.ts` on laravel and on a Python
+/// and a TypeScript application, release build, Apple silicon) evaluations poll 190 (Python packs)
+/// to 900 (TypeScript packs) times a millisecond, so this is about 55 to 260 ms of their work; a
+/// file whose work polls rarely runs longer (a generated 29,000-line TanStack Query module spends
+/// 17,327 units in 520 ms under the TypeScript packs).
+const FILE_WORK_BUDGET: u64 = 50_000;
 /// Persisted per-file check results are reused only under a key covering every input the result
 /// depends on: source content, file context (`file_context`) and engine build (`candidate_catalog`).
 const REUSE_LOCAL_RESULTS: bool = true;
@@ -52,8 +59,8 @@ const REUSE_LOCAL_RESULTS: bool = true;
 const REUSE_DIRECTORY_RESULTS: bool = true;
 #[cfg(test)]
 thread_local! {
-    /// Tests shorten the per-file deadline on their own thread to force a transient timeout.
-    static TEST_FILE_TIME_BUDGET: Cell<Option<Duration>> = const { Cell::new(None) };
+    /// Tests shorten the per-file work budget on their own thread to force a transient timeout.
+    static TEST_FILE_WORK_BUDGET: Cell<Option<u64>> = const { Cell::new(None) };
     /// Tests stand in another engine build on their own thread.
     static TEST_ENGINE_BUILD_ID: Cell<Option<&'static str>> = const { Cell::new(None) };
     /// Tests inject a failure in the batch local-result storage read.
@@ -63,12 +70,12 @@ thread_local! {
     static TEST_DEADLINE_PASSES_AT: Cell<Option<&'static str>> = const { Cell::new(None) };
 }
 
-fn file_time_budget() -> Duration {
+fn file_work_budget() -> u64 {
     #[cfg(test)]
-    if let Some(budget) = TEST_FILE_TIME_BUDGET.get() {
+    if let Some(budget) = TEST_FILE_WORK_BUDGET.get() {
         return budget;
     }
-    FILE_TIME_BUDGET
+    FILE_WORK_BUDGET
 }
 
 #[cfg(test)]
@@ -129,12 +136,35 @@ struct FileState {
     /// The last evaluation hit its deadline or was cancelled; see `evaluate_file`.
     transient_failure: bool,
     candidates: Arc<Candidates>,
-    witnesses: BTreeMap<CheckId, Vec<Witness>>,
+    witnesses: Witnesses,
     failures: BTreeMap<CheckId, LocalFailure>,
     /// `source-partial` message when the last parse had syntax errors and AST checks ran around them.
     syntax: Option<String>,
     /// Adapter-owned per-file cross-file state, retained with the file across persistence.
     crossfile: crossfile::CrossFileFileState,
+}
+
+/// A file's witnesses by check, and their findings as a complete result serializes them
+/// (`results::rendered`), rendered once: any mutable access drops the rendering.
+#[derive(Default)]
+struct Witnesses {
+    by_check: BTreeMap<CheckId, Vec<Witness>>,
+    rendered: OnceLock<results::Rendered>,
+}
+
+impl std::ops::Deref for Witnesses {
+    type Target = BTreeMap<CheckId, Vec<Witness>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.by_check
+    }
+}
+
+impl std::ops::DerefMut for Witnesses {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.rendered.take();
+        &mut self.by_check
+    }
 }
 
 #[derive(Default)]
@@ -170,9 +200,6 @@ struct WorkspaceState {
     documents: documents::DocumentCache,
     /// Tells this workspace's node references from another's.
     instance: u64,
-    /// Compiled statements for the registered policies, built on first evaluation and dropped
-    /// when a policy is added.
-    sql_plans: Option<Arc<query::SqlPlans>>,
     /// Ordered reporting entries, retained for the current revision so result paging does not
     /// repeatedly restore and sort the entire workspace.
     result_page_index: Option<ResultPageIndex>,

@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:invalid-void",
   "revision": 1,
+  "mode": "steer",
   "description": "Disallows void outside of return types, including generic type arguments (allow-generics false).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "invalid-void",
       "forbid": {
@@ -137,10 +138,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "INVALID_VOID",
-        "severity": "error",
         "message": "void is only valid as a return type"
       }
     }

@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-string-throw",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-string-throw` rule with its default options (https://palantir.github.io/tslint/rules/no-string-throw/). Flags throwing plain strings: string/template literals, parenthesized strings, and '+' concatenations with a string operand, to any depth.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "string-throw",
       "forbid": {
@@ -66,10 +67,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_STRING_THROW",
-        "severity": "error",
         "message": "Throwing plain strings (not instances of Error) gives no stack traces"
       }
     }

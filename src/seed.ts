@@ -14,13 +14,14 @@ export const MOCK_POLICY_RULES: readonly PolicyRule[] = [
     format: "rerail.policy/v1",
     id: "mock-no-console-log",
     revision: 1,
+    mode: "steer",
     description: "Console logging leaks into production bundles; the structured logger carries context and levels.",
     scope: { include: ["web/src/**/*.ts", "web/src/**/*.tsx"], exclude: ["web/src/api/generated/**", "**/*.stories.tsx"] },
-    checks: [
+    clauses: [
       {
         id: "console-call",
         forbid: { regex: { source: "file.content", pattern: "\\bconsole\\.(log|debug)\\(" } },
-        finding: { anchor: "witness.span", code: "RERAIL-MOCK-001", severity: "error", message: "Use the project logger instead of console." },
+        violation: { anchor: "witness.span", code: "RERAIL-MOCK-001", message: "Use the project logger instead of console." },
       },
     ],
   },
@@ -28,13 +29,14 @@ export const MOCK_POLICY_RULES: readonly PolicyRule[] = [
     format: "rerail.policy/v1",
     id: "mock-lazy-query-shaping",
     revision: 2,
+    mode: "steer",
     description: "Route reads must stay inside the lazy query plan; materializing before filtering defeats the ServerPlan budget.",
     scope: { include: ["api/nera_api/routes/**/*.py"], exclude: ["api/nera_api/routes/health.py"] },
-    checks: [
+    clauses: [
       {
         id: "list-of-query",
         forbid: { ast: { language: POLICY_AST_LANGUAGES[0], rule: { pattern: "list($QUERY)" } } },
-        finding: { anchor: "witness.span", code: "RERAIL-MOCK-002", severity: "warning", message: "Query materialized before filters were applied." },
+        violation: { anchor: "witness.span", code: "RERAIL-MOCK-002", message: "Query materialized before filters were applied." },
       },
     ],
   },
@@ -42,13 +44,14 @@ export const MOCK_POLICY_RULES: readonly PolicyRule[] = [
     format: "rerail.policy/v1",
     id: "mock-generated-client-imports",
     revision: 1,
+    mode: "log",
     description: "Frontend API calls go through the Hey API generated client so the OpenAPI schema stays the contract.",
     scope: { include: ["web/src/**/*.ts", "web/src/**/*.tsx"], exclude: ["web/src/api/generated/**"] },
-    checks: [
+    clauses: [
       {
         id: "raw-fetch",
         forbid: { regex: { source: "file.content", pattern: "fetch\\(\\s*[\"'`]/api/" } },
-        finding: { anchor: "witness.span", code: "RERAIL-MOCK-003", severity: "advisory", message: "Call the API through the generated client." },
+        violation: { anchor: "witness.span", code: "RERAIL-MOCK-003", message: "Call the API through the generated client." },
       },
       {
         id: "generated-client-rubric",
@@ -57,7 +60,7 @@ export const MOCK_POLICY_RULES: readonly PolicyRule[] = [
           passConditions: ["The call uses a function imported from web/src/api/generated."],
           failConditions: ["The call is a hand-written fetch to an /api path."],
         },
-        finding: { anchor: "witness.span", code: "RERAIL-MOCK-003", severity: "advisory", message: "This API call may bypass the generated client." },
+        violation: { anchor: "witness.span", code: "RERAIL-MOCK-003", message: "This API call may bypass the generated client." },
       },
     ],
   },
@@ -66,22 +69,22 @@ export const MOCK_POLICY_RULES: readonly PolicyRule[] = [
 export const MOCK_COSINE_RULES: readonly CosineRule[] = [
   {
     id: "mock-cosine-prefer-generated-client",
+    mode: "steer",
     reference: "Call the backend through the generated API client instead of hand-written fetch calls.",
     match: { operator: "gte", threshold: 0.62 },
     sample: { source: "assistant-text", boundary: "sentence", minimumTokens: 6 },
     action: {
-      delivery: "steer",
       content: "Reminder: use the generated client in web/src/api/generated rather than raw fetch.",
     },
     repeat: { mode: "after-gap", gapTurns: 3 },
   },
   {
     id: "mock-cosine-migration-warning",
+    mode: "steer",
     reference: "Editing a database migration or altering a table schema.",
     match: { operator: "gte", threshold: 0.6 },
     sample: { source: "user-input", boundary: "message" },
     action: {
-      delivery: "nextTurn",
       content: "Schema changes need a migration note in the PR description.",
     },
     repeat: { mode: "once" },
@@ -138,7 +141,7 @@ export function seedRerailDatabase(path: string, options: SeedOptions = {}): See
     const events = [
       { eventId: "mock-event-1", kind: "session-lifecycle", observedAt: now - 60_000, payload: { type: "session-initialize" } },
       { eventId: "mock-event-2", kind: "user-prompt", observedAt: now - 50_000, payload: { text: "Add a users page that calls /api/users." } },
-      { eventId: "mock-event-3", kind: "tool-call", observedAt: now - 40_000, payload: { toolName: "write", args: { path: "web/src/users.ts" } } },
+      { eventId: "mock-event-3", kind: "call", observedAt: now - 40_000, payload: { toolName: "write", args: { path: "web/src/users.ts" } } },
       { eventId: "mock-event-4", kind: "turn-end", observedAt: now - 30_000, payload: { turn: 1 } },
     ];
     for (const event of events) transcripts.append({ sessionId, ...event });

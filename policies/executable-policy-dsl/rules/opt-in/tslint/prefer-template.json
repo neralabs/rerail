@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:prefer-template",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `prefer-template` rule with its default options (https://palantir.github.io/tslint/rules/prefer-template/). Prefer template literals over string concatenation (outermost offending `+` expression). TSLint's recursive containsAnyStringLiterals/containsOnlyStringLiterals are recursive utils.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "concat",
       "forbid": {
@@ -195,10 +196,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "PREFER_TEMPLATE",
-        "severity": "error",
         "message": "Use a template literal instead of concatenating with a string literal."
       }
     }

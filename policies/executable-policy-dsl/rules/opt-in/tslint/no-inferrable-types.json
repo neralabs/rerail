@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-inferrable-types",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-inferrable-types` rule with its default options (https://palantir.github.io/tslint/rules/no-inferrable-types/). Disallows explicit number/boolean/string annotations on variables, parameters and properties initialized to a literal of that type (numbers under any chain of unary +/-).",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "inferrable-type",
       "forbid": {
@@ -163,10 +164,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_INFERRABLE_TYPES",
-        "severity": "error",
         "message": "Type $T trivially inferred from a $T literal, remove type annotation"
       }
     }

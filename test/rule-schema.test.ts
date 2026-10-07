@@ -10,6 +10,7 @@ describe("parseCosineRuleDocument", () => {
       rules: [
         {
           id: "checkout-drift",
+          mode: "steer",
           reference: "Guest checkout remains available.",
           match: { operator: "lte", threshold: 0.62 },
           sample: {
@@ -18,7 +19,6 @@ describe("parseCosineRuleDocument", () => {
             minimumTokens: 30,
           },
           action: {
-            delivery: "steer",
             content: "Check the checkout requirement.",
           },
           repeat: { mode: "after-gap", gapTurns: 5 },
@@ -42,10 +42,11 @@ describe("parseCosineRuleDocument", () => {
         rules: [
           {
             id: "invalid",
+            mode: "log",
             reference: "reference",
             match: { operator: "gte", threshold: 1.1 },
             sample: { source: "assistant-text", boundary: "message" },
-            action: { delivery: "observe", content: "record" },
+            action: { content: "record" },
           },
         ],
       }),
@@ -53,18 +54,33 @@ describe("parseCosineRuleDocument", () => {
   });
 
   it("reports the failing field path and accepts tool sources through the shared zod schema", () => {
-    expect(() => parseCosineRule({ id: "x", reference: "r", match: { operator: "gte", threshold: 0.5 }, sample: { source: "tool:", boundary: "message" }, action: { delivery: "steer", content: "c" } }, "rules[0]"))
+    expect(() => parseCosineRule({ id: "x", mode: "steer", reference: "r", match: { operator: "gte", threshold: 0.5 }, sample: { source: "tool:", boundary: "message" }, action: { content: "c" } }, "rules[0]"))
       .toThrow("rules[0].sample.source must be user-input, assistant-text, or tool:<name>");
-    expect(() => parseCosineRule({ id: "x", reference: "r", match: { operator: "gte", threshold: 0.5 }, sample: { source: "user-input", boundary: "message" }, action: { delivery: "steer", content: "c" }, extra: 1 }))
+    expect(() => parseCosineRule({ id: "x", mode: "steer", reference: "r", match: { operator: "gte", threshold: 0.5 }, sample: { source: "user-input", boundary: "message" }, action: { content: "c" }, extra: 1 }))
       .toThrow(/^rule Unrecognized key/u);
     expect(cosineRuleSchema.parse({
       id: "x",
+      mode: "log",
       reference: "r",
       match: { operator: "lte", threshold: -1 },
       sample: { source: "tool:write", boundary: "tool-call", minimumTokens: 8_192 },
-      action: { delivery: "observe", content: "c" },
+      action: { content: "c" },
       repeat: { mode: "after-gap", gapTurns: 2 },
     })).toMatchObject({ sample: { source: "tool:write" }, repeat: { gapTurns: 2 } });
+  });
+
+  it("requires a log, steer, or block mode and accepts no delivery on the action", () => {
+    const rule = {
+      id: "x", mode: "block", reference: "r",
+      match: { operator: "gte", threshold: 0.5 },
+      sample: { source: "user-input", boundary: "message" },
+      action: { content: "c" },
+    };
+    expect(parseCosineRule(rule).mode).toBe("block");
+    const { mode: _mode, ...modeless } = rule;
+    expect(() => parseCosineRule(modeless)).toThrow(/^rule\.mode /u);
+    expect(() => parseCosineRule({ ...rule, mode: "observe" })).toThrow(/^rule\.mode /u);
+    expect(() => parseCosineRule({ ...rule, action: { delivery: "steer", content: "c" } })).toThrow(/^rule\.action Unrecognized key/u);
   });
 });
 
@@ -73,9 +89,10 @@ describe("structural match conditions", () => {
   const ANY_TOOL_CALL = { source: "tool:*", boundary: "tool-call" } as const;
   const toolRule = (overrides: Record<string, unknown> = {}) => ({
     id: "no-force-push",
+    mode: "steer",
     match: { field: "input.command", regex: "\\bgit\\s+push\\b[^\\n]*--force\\b" },
     sample: BASH_CALL,
-    action: { delivery: "steer", content: "Do not force-push." },
+    action: { content: "Do not force-push." },
     ...overrides,
   });
 
@@ -119,8 +136,9 @@ describe("structural match conditions", () => {
 });
 
 describe("rule-schema module", () => {
-  it("imports nothing but zod, because browser bundles share it", () => {
-    const source = readFileSync(resolve("src/rule-schema.ts"), "utf8");
-    expect([...source.matchAll(/^import\b.*?from\s+"([^"]+)"/gmu)].map(match => match[1])).toEqual(["zod"]);
+  it("imports nothing but zod and the import-free rule modes, because browser bundles share it", () => {
+    const imports = (path: string) => [...readFileSync(resolve(path), "utf8").matchAll(/^import\b.*?from\s+"([^"]+)"/gmu)].map(match => match[1]);
+    expect(imports("src/rule-schema.ts")).toEqual(["zod", "./rule-mode.js"]);
+    expect(imports("src/rule-mode.ts")).toEqual([]);
   });
 });

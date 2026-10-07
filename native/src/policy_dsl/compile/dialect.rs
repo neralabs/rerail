@@ -80,7 +80,7 @@ mod tests {
             .err()
             .expect("unknown kind is rejected");
         assert!(
-            error.reason.contains("/checks/0/forbid/ast/rule/kind"),
+            error.reason.contains("/clauses/0/forbid/ast/rule/kind"),
             "{}",
             error.reason
         );
@@ -100,9 +100,9 @@ mod tests {
         .expect("a rule mixing JSX and angle-bracket assertions is rejected");
         assert_eq!(
             error.reason,
-            "/checks/0/forbid/ast/rule/kind: Kind `jsx_opening_element` is invalid. (typescript grammar); \
-             /checks/0/forbid/ast/rule/has/kind: Kind `type_assertion` is invalid. (tsx grammar); \
-             /checks/0/forbid/ast/rule/has/kind: Kind `type_assertion` is invalid. (javascript grammar)"
+            "/clauses/0/forbid/ast/rule/kind: Kind `jsx_opening_element` is invalid. (typescript grammar); \
+             /clauses/0/forbid/ast/rule/has/kind: Kind `type_assertion` is invalid. (tsx grammar); \
+             /clauses/0/forbid/ast/rule/has/kind: Kind `type_assertion` is invalid. (javascript grammar)"
         );
     }
 
@@ -144,7 +144,7 @@ mod tests {
                     "rule": { "pattern": "echo $VALUE;" }
                 }
             },
-            "finding": finding()
+            "violation": finding()
         }));
         let capabilities = serde_json::from_str(CAPABILITIES).expect("capabilities");
         let compiled = compile_document_with(document, &capabilities)
@@ -208,9 +208,9 @@ mod tests {
         })));
         assert_eq!(
             reason,
-            "/checks/0/forbid/ast/rule/any/0/kind: Kind `jsx_attribute` is invalid. (typescript grammar); \
-             /checks/0/forbid/ast/rule/any/1/kind: Kind `type_assertion` is invalid. (tsx grammar); \
-             /checks/0/forbid/ast/rule/any/1/kind: Kind `type_assertion` is invalid. (javascript grammar)"
+            "/clauses/0/forbid/ast/rule/any/0/kind: Kind `jsx_attribute` is invalid. (typescript grammar); \
+             /clauses/0/forbid/ast/rule/any/1/kind: Kind `type_assertion` is invalid. (tsx grammar); \
+             /clauses/0/forbid/ast/rule/any/1/kind: Kind `type_assertion` is invalid. (javascript grammar)"
         );
     }
 }

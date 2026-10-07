@@ -27,9 +27,9 @@ async function isolate(): Promise<string> {
   return cwd;
 }
 function checkoutRule(id: string): CosineRule {
-  return { id, reference: "Guest checkout remains available.", match: { operator: "gte", threshold: 0.99 },
+  return { id, mode: "steer", reference: "Guest checkout remains available.", match: { operator: "gte", threshold: 0.99 },
     sample: { source: "assistant-text", boundary: "sentence", minimumTokens: 1 },
-    action: { delivery: "steer", content: "Check checkout requirements." }, repeat: { mode: "once" } };
+    action: { content: "Check checkout requirements." }, repeat: { mode: "once" } };
 }
 function matches(evidence: HostEvidence) {
   return evidence.branch.filter(entry => entry.type === "custom" && "customType" in entry && entry.customType === "omp-cosine-rules.match");
@@ -48,7 +48,7 @@ describe("installed OMP extension in standalone host", () => {
       preferences.upsert({ repository: cwd, host: "omp", presence });
       preferences.close();
       await mkdir(join(cwd, ".omp"));
-      await writeFile(join(cwd, ".omp", "cosine-rules.json"), JSON.stringify({ version: 1, rules: [checkoutRule("checkout")] }));
+      await writeFile(join(cwd, ".omp", "conversation-rules.json"), JSON.stringify({ version: 1, rules: [checkoutRule("checkout")] }));
     const host = await OmpHost.start(cwd, [
       { content: ["Guest checkout remains available. Next"] }, { content: ["Requirement acknowledged."] },
     ]);

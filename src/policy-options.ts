@@ -264,9 +264,9 @@ export function policyOptionConditionHolds(value: PolicyDslValue, condition: Pol
 }
 
 function policyDefines(document: unknown): Array<[Path, JsonObject]> {
-  const checks = isObject(document) && Array.isArray(document.checks) ? document.checks : [];
+  const checks = isObject(document) && Array.isArray(document.clauses) ? document.clauses : [];
   return checks.flatMap((check, index) =>
-    isObject(check) && !Object.hasOwn(check, "$option") && isObject(check.define) ? [[["checks", index, "define"], check.define] as [Path, JsonObject]] : [],
+    isObject(check) && !Object.hasOwn(check, "$option") && isObject(check.define) ? [[["clauses", index, "define"], check.define] as [Path, JsonObject]] : [],
   );
 }
 
@@ -307,7 +307,7 @@ export function policyOptionValues(document: unknown): Map<string, PolicyDslValu
 /**
  * The document with every `$option` reference replaced by what it stands for (`compile/config.rs`
  * `resolve`). A define's `options` and `config` are read as written, and so are `format`, `id` and
- * `revision`. A reference among the checks stands for a check or, spread, for several; never for a
+ * `revision`. A reference among the clauses stands for a clause or, spread, for several; never for a
  * define. Throws a `PolicyOptionError` where the options or a reference are invalid.
  */
 export function resolvePolicyOptions(document: unknown): unknown {
@@ -316,14 +316,14 @@ export function resolvePolicyOptions(document: unknown): unknown {
   const resolved: JsonObject = {};
   for (const [key, value] of Object.entries(document)) {
     if (key === "format" || key === "id" || key === "revision") resolved[key] = value;
-    else if (key === "checks" && Array.isArray(value)) {
+    else if (key === "clauses" && Array.isArray(value)) {
       resolved[key] = value.flatMap((check, index) => {
-        const path = ["checks", index];
+        const path = ["clauses", index];
         const reference = options.reference(check, path);
         if (reference !== undefined) {
           const items = "spread" in reference ? reference.spread : [reference.value];
           if (items.some(item => isObject(item) && Object.hasOwn(item, "define"))) {
-            fail(path, "a define is written among the checks, not made by a $option reference");
+            fail(path, "a define is written among the clauses, not made by a $option reference");
           }
           return items;
         }
@@ -354,7 +354,7 @@ export function resolvePolicyOptions(document: unknown): unknown {
  */
 export function applyPolicyConfig<T>(document: T, patch: Record<string, PolicyDslValue>): T {
   const copy = structuredClone(document) as unknown;
-  const checks = isObject(copy) && Array.isArray(copy.checks) ? copy.checks : [];
+  const checks = isObject(copy) && Array.isArray(copy.clauses) ? copy.clauses : [];
   for (const [name, value] of Object.entries(patch)) {
     const owner = checks.find(check => isObject(check) && !Object.hasOwn(check, "$option") && isObject(check.define) && isObject(check.define.options) && Object.hasOwn(check.define.options, name));
     if (owner === undefined) fail(["config", name], `\`${name}\` is not an option this document declares`);

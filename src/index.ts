@@ -77,7 +77,6 @@ export {
   type PolicyDslDocument,
   type PolicyDslEvidenceQuery,
   type PolicyDslRelation,
-  type PolicyDslFindingSeverity,
   type PolicyDslFindingAnchor,
   type PolicyDslFindingSpec,
   type PolicyDslPredicate,
@@ -162,7 +161,6 @@ export {
   RULE_KINDS,
   RULE_ORIGINS,
   RULE_SCOPES,
-  RULE_SYNC_STATES,
   RERAIL_SCHEMA_COMPATIBILITY_FLOOR,
   RERAIL_SCHEMA_VERSION,
   catalogRules,
@@ -195,7 +193,6 @@ export {
   type RuleRepositoryRow,
   type RuleRow,
   type RuleScope,
-  type RuleSyncState,
   type SessionRow,
   type WorkLinkRow,
 } from "./schema.js";
@@ -253,9 +250,9 @@ export {
 } from "./seed.js";
 export { type Json } from "./stable-json.js";
 export { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
+export { RULE_MODES, steers, type RuleMode } from "./rule-mode.js";
 export {
   COSINE_RULE_DOCUMENT_VERSION,
-  DELIVERY_MODES,
   cosineRuleDocumentSchema,
   cosineRuleSchema,
   parseCosineRule,
@@ -264,7 +261,6 @@ export {
   parseCosineRuleDocument,
   type CosineRule,
   type CosineRuleDocument,
-  type DeliveryMode,
   type MatchOperator,
   type SampleBoundary,
   type SampleSource,

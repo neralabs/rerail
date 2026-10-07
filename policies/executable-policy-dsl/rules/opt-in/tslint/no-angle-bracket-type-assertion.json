@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-angle-bracket-type-assertion",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-angle-bracket-type-assertion` rule with its default options (https://palantir.github.io/tslint/rules/no-angle-bracket-type-assertion/). Disallows <T>x type assertions; nested assertions report once at the outermost.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "no-angle-bracket-type-assertion",
       "forbid": {
@@ -47,10 +48,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_ANGLE_BRACKET_TYPE_ASSERTION",
-        "severity": "error",
         "message": "Type assertion using the '<>' syntax is forbidden. Use the 'as' syntax instead."
       }
     }

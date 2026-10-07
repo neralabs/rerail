@@ -96,7 +96,7 @@ describe("Cursor plugin contract", () => {
       tool_use_id: "tool-1",
       cwd: "/workspace",
     })).toMatchObject({
-      kind: "tool-result",
+      kind: "result",
       toolCallId: "tool-1",
       toolName: "Write",
       output: "written",
@@ -112,7 +112,8 @@ describe("Cursor plugin contract", () => {
     };
     expect(cursorHookOutput("beforeSubmitPrompt", [delivery])).toEqual({ continue: true });
     expect(cursorHookOutput("postToolUse", [delivery])).toEqual({ additional_context: "Preserve the session." });
-    expect(cursorHookOutput("stop", [delivery])).toEqual({ followup_message: "Preserve the session." });
+    expect(cursorHookOutput("postToolUse", [{ ...delivery, requested: "block" }])).toEqual({ additional_context: "Preserve the session." });
+    expect(cursorHookOutput("stop", [delivery])).toEqual({});
   });
 
   it("maps Cursor session and assistant lifecycle hooks to the shared transcript event vocabulary", () => {
@@ -153,7 +154,7 @@ describe("Cursor plugin contract", () => {
     const diagnostic = "CURSOR_EXECUTE: Direct cursor access bypasses the typed API.";
     expect(await handleCursorEvent(
       { ...common, hook_event_name: "preToolUse" },
-      scriptedLoop({ "tool-call": [delivery("steer", diagnostic)] }),
+      scriptedLoop({ call: [delivery("steer", diagnostic)] }),
       storage,
     )).toEqual({ permission: "allow" });
     expect(await handleCursorEvent(
@@ -168,11 +169,12 @@ describe("Cursor plugin contract", () => {
     )).toEqual({});
   });
 
-  it("durably carries follow-up deliveries to stop, then clears them when the session ends", async () => {
+  it("durably carries prompt steering to the next tool result, then clears it when the session ends", async () => {
     const root = await temporaryDirectory();
     const common = { conversation_id: "cursor-session", generation_id: "generation-1", workspace_roots: [root] };
+    const toolResult = { ...common, hook_event_name: "postToolUse", tool_use_id: "read-1", tool_name: "Read", tool_output: "ok" };
     const promptLoop = scriptedLoop({
-      "user-prompt": [delivery("followUp", "Continue the plan."), delivery("observe", "not user-visible")],
+      "user-prompt": [delivery("steer", "Continue the plan."), delivery("block", "Keep the API typed."), delivery("log", "not user-visible")],
     });
 
     expect(await handleCursorEvent(
@@ -185,16 +187,15 @@ describe("Cursor plugin contract", () => {
       { ...common, hook_event_name: "stop" },
       scriptedLoop({}),
       join(root, "sessions"),
-    )).toEqual({ followup_message: "Continue the plan." });
-    expect(await handleCursorEvent(
-      { ...common, hook_event_name: "stop" },
-      scriptedLoop({}),
-      join(root, "sessions"),
     )).toEqual({});
+    expect(await handleCursorEvent(toolResult, scriptedLoop({}), join(root, "sessions"))).toEqual({
+      additional_context: "Continue the plan.\n\nKeep the API typed.",
+    });
+    expect(await handleCursorEvent(toolResult, scriptedLoop({}), join(root, "sessions"))).toEqual({});
 
     await handleCursorEvent(
       { ...common, hook_event_name: "beforeSubmitPrompt", prompt: "Another turn" },
-      scriptedLoop({ "user-prompt": [delivery("nextTurn", "Discard this.")] }),
+      scriptedLoop({ "user-prompt": [delivery("steer", "Discard this.")] }),
       join(root, "sessions"),
     );
     expect(await handleCursorEvent(
@@ -202,10 +203,6 @@ describe("Cursor plugin contract", () => {
       scriptedLoop({}),
       join(root, "sessions"),
     )).toEqual({});
-    expect(await handleCursorEvent(
-      { ...common, hook_event_name: "stop" },
-      scriptedLoop({}),
-      join(root, "sessions"),
-    )).toEqual({});
+    expect(await handleCursorEvent(toolResult, scriptedLoop({}), join(root, "sessions"))).toEqual({});
   });
 });

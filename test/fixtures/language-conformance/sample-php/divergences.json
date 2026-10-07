@@ -1,0 +1,18 @@
+[
+  {
+    "rule": "forbidden-functions-resolved",
+    "source": "fixtures",
+    "path": "broken.php",
+    "line": 3,
+    "kind": "rerail-unknown",
+    "evidence": "broken.php has a deliberate syntax error (line 6: the parameter list of `function broken(` is never closed; php -l: unexpected token \"{\"). Name resolution is unsound under syntax errors (an error region could hide a declaration of sizeof), so the kernel skips the file (source-incomplete, \"file has syntax errors\") and misses the sizeof call on line 3."
+  },
+  {
+    "rule": "forbidden-functions-resolved",
+    "source": "fixtures",
+    "path": "forbidden.php",
+    "line": 8,
+    "kind": "not-comparable",
+    "evidence": "`delete` is not a PHP function. Inside `namespace App`, PHP resolves the unqualified call `delete($path)` to `App\\delete` and falls back to the global name only for a function that exists, so name resolution cannot claim it is the global `delete`; PHP_CodeSniffer matches the name text."
+  }
+]

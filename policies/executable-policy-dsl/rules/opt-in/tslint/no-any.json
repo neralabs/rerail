@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-any",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-any` rule with its default options (https://palantir.github.io/tslint/rules/no-any/). Disallows usages of `any` as a type declaration.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "any-type",
       "forbid": {
@@ -42,10 +43,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_ANY",
-        "severity": "error",
         "message": "Type declaration of 'any' loses type-safety. Consider replacing it with a more precise type."
       }
     }

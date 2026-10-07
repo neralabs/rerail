@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
-import { realpath } from "node:fs/promises";
+import { mkdir, realpath, rename } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { LEGACY_RULE_CATALOG_FILE, RERAIL_DATABASE_FILE } from "./database.js";
 import { lookupDaemon, startDaemon, stopDaemon } from "./daemon-control.js";
 import { parseArguments, parsePort } from "./daemon.js";
 import {
@@ -33,10 +34,11 @@ interface RegistrationArguments {
   dryRun: boolean;
 }
 
-function parseHarnessNames(values: readonly string[]): Harness[] {
+/** `--harness a,b` or `--agents a,b`: each name must be a coding agent Rerail supports. */
+export function parseHarnessNames(values: readonly string[]): Harness[] {
   return values.map(value => {
     const harness = HARNESSES.find(candidate => candidate === value);
-    if (harness === undefined) throw new Error(`Unknown harness: ${value} (expected one of ${HARNESSES.join(", ")})`);
+    if (harness === undefined) throw new Error(`Unknown coding agent: ${value} (expected one of ${HARNESSES.join(", ")})`);
     return harness;
   });
 }
@@ -112,6 +114,50 @@ async function activateExplicitRoot(context: SetupContext, root: string, remove:
   return updater.currentLink;
 }
 
+/** The folder `just rerail --restore` reads back: `~/.rerail-clean-YYYYMMDD`, or `-YYYYMMDD-HHMMSS` when today's exists. */
+function backupRoot(now = new Date()): string {
+  const pad = (value: number): string => String(value).padStart(2, "0");
+  const day = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+  const daily = join(harnessHome(), `.rerail-clean-${day}`);
+  return existsSync(daily) ? `${daily}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}` : daily;
+}
+
+/** Rules and every repository's history, with their SQLite sidecars, and the catalog from before they shared a file. */
+const BACKED_UP_DATABASES = [RERAIL_DATABASE_FILE, LEGACY_RULE_CATALOG_FILE].flatMap(name => ["", "-wal", "-shm"].map(suffix => `${name}${suffix}`));
+
+/**
+ * After the coding agents are disconnected, nothing reopens the database: stop the daemon, then
+ * move rules and history aside so a later install starts clean and can restore them. The files are
+ * listed only after the stop: closing the daemon's last connection checkpoints the WAL and deletes
+ * the `-wal` and `-shm` sidecars.
+ */
+async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<void> {
+  const target = join(backupRoot(), "rerail-home");
+  const present = () => BACKED_UP_DATABASES.filter(name => existsSync(join(home, name)));
+  if (dryRun) {
+    const listed = present();
+    const moves = listed.length === 0 ? "" : " and move " + listed.join(", ") + " to " + target;
+    process.stdout.write(`Would stop the Rerail daemon${moves}.\n`);
+    return;
+  }
+  process.stdout.write(await stopDaemon(home) === "stopped" ? "Stopped the Rerail daemon.\n" : "The Rerail daemon was not running.\n");
+  const listed = present();
+  if (listed.length === 0) {
+    process.stdout.write("No rules or history to back up.\n");
+    return;
+  }
+  await mkdir(target, { recursive: true, mode: 0o700 });
+  for (const name of listed) {
+    try {
+      await rename(join(home, name), join(target, name));
+    } catch (error) {
+      // A sidecar SQLite removed between the listing and the move holds nothing the main file lacks.
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT" && /-(wal|shm)$/u.test(name))) throw error;
+    }
+  }
+  process.stdout.write(`Backup: ${target} holds your rules and history. Install Rerail again and restore this backup to get them back.\n`);
+}
+
 export async function runInstallCommand(args: readonly string[], context: SetupContext): Promise<number> {
   const { flags, options } = parseArguments(
     args,
@@ -127,11 +173,15 @@ export async function runInstallCommand(args: readonly string[], context: SetupC
     : await activateExplicitRoot(context, explicitRoot, remove, parsed.dryRun);
   // A dry run never creates `<home>/current`, so packaged templates must come from the checkout itself.
   const templateRoot = explicitRoot !== undefined && parsed.dryRun && !remove ? explicitRoot : undefined;
-  process.stdout.write(`${remove ? "Removing" : "Registering"} Rerail harness hooks for ${root}${parsed.dryRun ? " (dry run)" : ""}\n`);
+  process.stdout.write(`${remove ? "Removing Rerail from" : "Connecting Rerail to"} coding agents for ${root}${parsed.dryRun ? " (dry run)" : ""}\n`);
   const report = remove
     ? await unregisterHarnesses(registrationOptions(root, harnessHome(), parsed))
     : await registerHarnesses(registrationOptions(root, harnessHome(), parsed, templateRoot));
   printReport(report, parsed.dryRun);
+  // Removing every coding agent from the managed install is the uninstall. Removing one coding agent, or a
+  // checkout or development bridge registered with `--root`, leaves the shared rules and history in place.
+  const uninstall = remove && parsed.harnesses === undefined && (explicitRoot === undefined || root === context.updater.currentLink);
+  if (uninstall) await backUpRulesAndHistory(context.home, parsed.dryRun);
   if (explicitRoot !== undefined && !remove) {
     process.stdout.write(["", "Next:", ...nextSteps(context.home), ""].join("\n"));
   }
@@ -205,7 +255,7 @@ export async function runSetupCommand(args: readonly string[], context: SetupCon
     "",
     "Next:",
     ...nextSteps(home),
-    "  drop rules into <project>/.<harness>/cosine-rules.json (setup seeded empty ones when --project was given)",
+    "  drop rules into <project>/.<harness>/conversation-rules.json (setup seeded empty ones when --project was given)",
     "",
   ].join("\n"));
   return 0;

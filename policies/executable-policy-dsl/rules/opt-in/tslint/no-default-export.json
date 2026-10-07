@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-default-export",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-default-export` rule with its default options (https://palantir.github.io/tslint/rules/no-default-export/). Disallows default exports in ES6-style modules.",
   "scope": {
     "include": [
@@ -25,7 +26,7 @@
       "**/*.d.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "default-export",
       "forbid": {
@@ -55,10 +56,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_DEFAULT_EXPORT",
-        "severity": "error",
         "message": "Use of default exports is forbidden"
       }
     }

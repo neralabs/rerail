@@ -1,23 +1,13 @@
 use super::AstMatcher;
-#[cfg(test)]
 use super::relation::descend_until;
-#[cfg(test)]
 use super::util::{THREE_VALUED, UNKNOWN, UTIL_EXCEEDED};
-#[cfg(test)]
 use super::{StopBy, spend_util_step};
-#[cfg(test)]
 use crate::policy_dsl::budget;
-#[cfg(test)]
 use ast_grep_core::matcher::Matcher;
-#[cfg(test)]
 use ast_grep_core::meta_var::MetaVarEnv;
-#[cfg(test)]
 use ast_grep_core::{Doc, Node};
-#[cfg(test)]
 use std::borrow::Cow;
-#[cfg(test)]
 use std::cell::Cell;
-#[cfg(test)]
 use std::ops::ControlFlow;
 
 /// `count`: how many nodes along a relation's walk match its rule, bounded by `min`/`max`
@@ -36,7 +26,6 @@ impl Count {
     /// Three-valued: a node whose verdict is unknown may or may not count, and an unknown stop
     /// verdict may hide any number of further nodes. When the bounds could go either way the count
     /// fails with `UNKNOWN` set.
-    #[cfg(test)]
     pub(super) fn holds<'tree, D: Doc>(
         &self,
         node: &Node<'tree, D>,
@@ -46,6 +35,13 @@ impl Count {
         let saved = three && UNKNOWN.replace(false);
         let mut found = 0usize;
         let mut unknown = 0usize;
+        // To the end, a rule looking for a sibling with the same key as a capture bound outside
+        // it is tested at the siblings it may match only (`Related::same_key_siblings`).
+        let listed = match &self.relation {
+            AstMatcher::Precedes(rule, StopBy::End) => rule.same_key_siblings(node, env, true),
+            AstMatcher::Follows(rule, StopBy::End) => rule.same_key_siblings(node, env, false),
+            _ => None,
+        };
         // Each tested node spends a step; a spent budget fails the check for the file.
         let mut test = |rule: &AstMatcher, candidate: Node<'tree, D>| -> ControlFlow<()> {
             if !spend_util_step() || budget::matcher_call_budget_exhausted() {
@@ -66,29 +62,32 @@ impl Count {
             ControlFlow::Continue(())
         };
         let open = Cell::new(false);
-        let walked = match &self.relation {
-            AstMatcher::Inside(rule, stop) => stop.walk(
+        let walked = match (&self.relation, listed) {
+            (AstMatcher::Precedes(rule, _) | AstMatcher::Follows(rule, _), Some(listed)) => {
+                listed.into_iter().try_for_each(|n| test(rule, n))
+            }
+            (AstMatcher::Inside(rule, stop), _) => stop.walk(
                 || node.parent(),
                 || node.ancestors(),
                 |n| test(rule, n),
                 &open,
                 three,
             ),
-            AstMatcher::Precedes(rule, stop) => stop.walk(
+            (AstMatcher::Precedes(rule, stop), _) => stop.walk(
                 || node.next(),
                 || node.next_all(),
                 |n| test(rule, n),
                 &open,
                 three,
             ),
-            AstMatcher::Follows(rule, stop) => stop.walk(
+            (AstMatcher::Follows(rule, stop), _) => stop.walk(
                 || node.prev(),
                 || node.prev_all(),
                 |n| test(rule, n),
                 &open,
                 three,
             ),
-            AstMatcher::Has(rule, stop) => match stop {
+            (AstMatcher::Has(rule, stop), _) => match stop {
                 StopBy::Neighbor => node.children().try_for_each(|n| test(rule, n)),
                 StopBy::End => node.dfs().skip(1).try_for_each(|n| test(rule, n)),
                 StopBy::Rule(stop) => descend_until(node, stop, |n| test(rule, n), &open, three),
@@ -220,13 +219,14 @@ mod tests {
             "format": "rerail.policy/v1",
             "id": "count-captures",
             "revision": 1,
-            "checks": [{
+            "mode": "block",
+            "clauses": [{
                 "id": "ast-match",
                 "forbid": { "ast": { "language": "typescript", "rule": {
                     "kind": "call_expression",
                     "count": { "has": { "pattern": "$ARG", "kind": "identifier", "stopBy": "end" }, "min": 1 },
                 } } },
-                "finding": { "anchor": "capture.ARG", "code": "AST_MATCH", "message": "x", "severity": "error" },
+                "violation": { "anchor": "capture.ARG", "code": "AST_MATCH", "message": "x" },
             }],
         });
         let reason = rejection(PolicyDslRuntime::compile(
@@ -257,7 +257,7 @@ mod tests {
     fn counted_nodes_spend_the_visited_node_budget() {
         let document = check_document(json!({
             "id": "ast-match",
-            "finding": finding(),
+            "violation": finding(),
             "forbid": { "ast": {
                 "language": "typescript",
                 "rule": { "kind": "statement_block", "count": { "has": { "kind": "identifier", "stopBy": "end" }, "max": 100_000 } },
@@ -273,10 +273,82 @@ mod tests {
         let result = evaluate_file(&rule, "typescript", "a.ts", &source);
         assert_eq!(
             result["failures"],
-            json!([{ "checkId": "ast-match", "code": "budget-exceeded", "message": UtilLimit::Work.message(), "path": "a.ts" }]),
+            json!([{ "clauseId": "ast-match", "code": "budget-exceeded", "message": UtilLimit::Work.message(), "path": "a.ts" }]),
             "{result}"
         );
         let result = evaluate_file(&rule, "typescript", "a.ts", "{ x; }\n");
         assert_findings(&result, 1);
+    }
+
+    /// ESLint no-dupe-keys counts each property's earlier siblings of the same key. The walk reads
+    /// only the siblings of that key (`Related::same_key_siblings`), so an object's work grows
+    /// with its size, not with its square, as a walk over every earlier sibling's does; both
+    /// report the same keys, duplicates of mixed kinds among keys without a static name included.
+    #[test]
+    fn same_key_sibling_counts_grow_linearly_and_report_as_full_walks() {
+        use crate::policy_dsl::budget::MatchBudget;
+        use crate::policy_dsl::matcher::set_same_key_off;
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
+        let check = json!({
+            "id": "dupe",
+            "forbid": { "ast": no_dupe_keys_ast() },
+            "violation": { "anchor": "capture.K", "code": "D", "message": "d" },
+        });
+        let policy = compile_document_with(
+            check_document(check),
+            &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
+        )
+        .unwrap_or_else(|error| panic!("{}", error.reason));
+        // Findings, and the budget units their evaluation spent.
+        let run = |full: bool, source: &str| {
+            set_same_key_off(full);
+            let budget = MatchBudget::work(&Arc::new(AtomicBool::new(false)), u64::MAX);
+            let result = evaluate_file(&policy, "typescript", "keys.ts", source);
+            let spent = budget.spent();
+            drop(budget);
+            set_same_key_off(false);
+            assert_eq!(result["failures"], json!([]), "{result}");
+            let starts = result["violations"]
+                .as_array()
+                .expect("findings")
+                .iter()
+                .map(|finding| finding["span"]["startByte"].as_u64().expect("start"))
+                .collect::<Vec<_>>();
+            (starts, spent)
+        };
+        let mut units = Vec::new();
+        for keys in [100, 200, 400, 800] {
+            let mut source = "export const o = {\n".to_owned();
+            for key in 0..keys {
+                source.push_str(&format!("  k{key}: {key},\n"));
+            }
+            let duplicates =
+                "k7: 1, 'k9': 2, [\"k11\"]: 3, 1: 4, [x]: 5, ...y, '1': 6, [x]: 7, 0x1: 8 };\n";
+            source.push_str(duplicates);
+            let tail = source.len() - duplicates.len();
+            let at = |needle: &str| (tail + source[tail..].find(needle).expect(needle)) as u64;
+            let reported = vec![at("k7"), at("'k9'"), at("\"k11\""), at("'1'"), at("0x1")];
+            let (found, spent) = run(false, &source);
+            assert_eq!(found, reported, "{keys} keys");
+            let (walked, walk_spent) = run(true, &source);
+            assert_eq!(
+                walked, reported,
+                "{keys} keys, every earlier sibling walked"
+            );
+            units.push((spent, walk_spent));
+        }
+        for pair in units.windows(2) {
+            let ((before, _), (after, _)) = (pair[0], pair[1]);
+            assert!(
+                after <= before * 9 / 4,
+                "twice the keys spends at most about twice the units: {units:?}"
+            );
+        }
+        let ((_, full_400), (linear_800, full_800)) = (units[2], units[3]);
+        assert!(
+            full_800 >= full_400 * 3 && full_800 >= linear_800 * 10,
+            "the walk over every earlier sibling grows with the square: {units:?}"
+        );
     }
 }

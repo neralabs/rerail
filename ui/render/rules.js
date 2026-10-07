@@ -42,7 +42,7 @@ function countContent(id, f, all) {
 }
 
 function updateRow(row, stored) {
-  const id = stored.rule.id, r = row._r, f = fires(id), all = allFires(id), rr = rerails(id), runs = activityOf(id).evaluations;
+  const id = stored.rule.id, r = row._r, f = fires(id), all = allFires(id), rr = rerails(id), runs = activityOf(id).audits;
   const title = ruleTitle(stored);
   setClass(row, "off", !stored.enabled);
   setAttr(row, "aria-selected", ui.selectedRule === id ? "true" : null);
@@ -86,7 +86,7 @@ function pathLabel(x) {
 }
 
 function findingRow(x) {
-  return h("div.ev", { "data-key": `${x.runId}:${x.id}` },
+  return h("div.ev", { "data-key": `${x.auditId}:${x.id}` },
     h("span.when", null, dayLabel(daysAgo(x.at)) === "Today" ? clock(x.at) : whenLabel(x.at)),
     h("div.what", null, x.message, h("small.mono", { hidden: !x.path }, pathLabel(x))),
     h("button.open", { "data-act": "session", "data-i": x.sessionId }, shortSessionId(x.sessionId, sessionHost(x.sessionId))));
@@ -104,7 +104,7 @@ function emptyChildText(stored, all, lastSeen) {
 function childItems(stored, f, all, lastSeen) {
   if (!f) return [{ key: "empty", text: emptyChildText(stored, all, lastSeen) }];
   const list = ruleFindings(stored.rule.id).slice(0, 3);
-  const items = list.map(x => ({ key: `${x.runId}:${x.id}`, x }));
+  const items = list.map(x => ({ key: `${x.auditId}:${x.id}`, x }));
   if (list.length < f) items.push({ key: "more", more: f - list.length });
   return items;
 }

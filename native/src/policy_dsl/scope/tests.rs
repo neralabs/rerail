@@ -1195,6 +1195,7 @@ fn oracle_differences(
         .filter(|reference| reference.access != Access::Nonlocal)
         .filter_map(|reference| {
             let name = table.reference_name(reference, source, 0)?;
+            let name = name.as_ref();
             // A deleted builtin name is unbound too, as is one a function's bare annotation
             // hides; an unbound `except` name falls back to the builtin.
             let local = table.unbound_locally(reference, name, builtins.contains(name));

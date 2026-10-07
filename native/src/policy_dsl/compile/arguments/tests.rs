@@ -8,7 +8,7 @@ fn compile(language: &str, ast: Value) -> Result<CompiledPolicyDsl> {
     ast["language"] = json!(language);
     compile_document_with(
         check_document(
-            json!({ "id": "ast-match", "forbid": { "ast": ast }, "finding": finding() }),
+            json!({ "id": "ast-match", "forbid": { "ast": ast }, "violation": finding() }),
         ),
         &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
     )
@@ -21,7 +21,7 @@ fn found(language: &str, ast: Value, source: &str) -> Vec<String> {
     let result = evaluate_file(&compiled, language, path, source);
     assert_eq!(result["failures"], json!([]), "{result}");
     let lines = matched_texts(&result, source);
-    result["findings"]
+    result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -293,63 +293,63 @@ fn arguments_objects_are_checked() {
     for (arguments, message) in [
         (
             json!({ "absent": ["a"] }),
-            "/checks/0/forbid/ast/rule/arguments/signature is required",
+            "/clauses/0/forbid/ast/rule/arguments/signature is required",
         ),
         (
             json!({ "signature": "a", "absent": ["a"] }),
-            "/checks/0/forbid/ast/rule/arguments/signature must be an array of slot names",
+            "/clauses/0/forbid/ast/rule/arguments/signature must be an array of slot names",
         ),
         (
             json!({ "signature": ["a"] }),
-            "/checks/0/forbid/ast/rule/arguments must `bind` a slot or list `absent` ones",
+            "/clauses/0/forbid/ast/rule/arguments must `bind` a slot or list `absent` ones",
         ),
         (
             json!({ "signature": ["a", "a"], "absent": ["a"] }),
-            "/checks/0/forbid/ast/rule/arguments/signature/1: `a` is listed twice",
+            "/clauses/0/forbid/ast/rule/arguments/signature/1: `a` is listed twice",
         ),
         (
             json!({ "signature": ["*", "a", "/"], "absent": ["a"] }),
-            "/checks/0/forbid/ast/rule/arguments/signature/2: `/` may appear once, before `*`",
+            "/clauses/0/forbid/ast/rule/arguments/signature/2: `/` may appear once, before `*`",
         ),
         (
             json!({ "signature": ["a", "*", "*"], "absent": ["a"] }),
-            "/checks/0/forbid/ast/rule/arguments/signature/2: `*` may appear once",
+            "/clauses/0/forbid/ast/rule/arguments/signature/2: `*` may appear once",
         ),
         (
             json!({ "signature": ["a-b"], "absent": ["a-b"] }),
-            "/checks/0/forbid/ast/rule/arguments/signature/0: `a-b` is not a slot name (an identifier), `/` or `*`",
+            "/clauses/0/forbid/ast/rule/arguments/signature/0: `a-b` is not a slot name (an identifier), `/` or `*`",
         ),
         (
             json!({ "signature": ["/"], "absent": ["a"] }),
-            "/checks/0/forbid/ast/rule/arguments/signature must name a slot",
+            "/clauses/0/forbid/ast/rule/arguments/signature must name a slot",
         ),
         (
             json!({ "signature": ["a"], "absent": ["b"] }),
-            "/checks/0/forbid/ast/rule/arguments/absent/0: `b` is not a slot of the signature",
+            "/clauses/0/forbid/ast/rule/arguments/absent/0: `b` is not a slot of the signature",
         ),
         (
             json!({ "signature": ["a"], "absent": [] }),
-            "/checks/0/forbid/ast/rule/arguments/absent must not be empty",
+            "/clauses/0/forbid/ast/rule/arguments/absent must not be empty",
         ),
         (
             json!({ "signature": ["a"], "bind": { "$A": "a" } }),
-            "/checks/0/forbid/ast/rule/arguments/bind: `$A` is not a metavariable name (A-Z first, then A-Z, 0-9, _, without `$`)",
+            "/clauses/0/forbid/ast/rule/arguments/bind: `$A` is not a metavariable name (A-Z first, then A-Z, 0-9, _, without `$`)",
         ),
         (
             json!({ "signature": ["a"], "bind": { "A": "a" }, "absent": ["a"] }),
-            "/checks/0/forbid/ast/rule/arguments/absent/0: `a` is bound, so it is passed",
+            "/clauses/0/forbid/ast/rule/arguments/absent/0: `a` is bound, so it is passed",
         ),
         (
             json!({ "signature": ["a"], "bind": {} }),
-            "/checks/0/forbid/ast/rule/arguments/bind must bind a capture",
+            "/clauses/0/forbid/ast/rule/arguments/bind must bind a capture",
         ),
         (
             json!({ "signature": ["a"], "absent": ["a"], "present": ["a"] }),
-            "unknown field `present` at /checks/0/forbid/ast/rule/arguments",
+            "unknown field `present` at /clauses/0/forbid/ast/rule/arguments",
         ),
         (
             json!({ "signature": ["a"], "absent": ["a"], "mode": "ruff" }),
-            "/checks/0/forbid/ast/rule/arguments/mode must be \"language\", \"syntactic\" or \"estree\"",
+            "/clauses/0/forbid/ast/rule/arguments/mode must be \"language\", \"syntactic\" or \"estree\"",
         ),
     ] {
         assert_eq!(python(arguments.clone()), message, "{arguments}");
@@ -359,14 +359,14 @@ fn arguments_objects_are_checked() {
             "typescript",
             json!({ "rule": { "kind": "call_expression", "arguments": { "signature": ["a", "*", "b"], "absent": ["b"] } } })
         )),
-        "/checks/0/forbid/ast/rule/arguments/signature: `/` and `*` mark Python's positional-only and keyword-only slots; JavaScript passes arguments by position only"
+        "/clauses/0/forbid/ast/rule/arguments/signature: `/` and `*` mark Python's positional-only and keyword-only slots; JavaScript passes arguments by position only"
     );
     assert_eq!(
         rejection(compile(
             "typescript",
             json!({ "rule": { "kind": "call_expression", "arguments": { "signature": ["a"], "absent": ["a"], "mode": "syntactic" } } })
         )),
-        "/checks/0/forbid/ast/rule/arguments/mode: `syntactic` finds arguments by position and keyword as Ruff's find_argument does; TypeScript has no keywords"
+        "/clauses/0/forbid/ast/rule/arguments/mode: `syntactic` finds arguments by position and keyword as Ruff's find_argument does; TypeScript has no keywords"
     );
     // A constraint may name a capture only `bind` defines.
     compile(
@@ -405,7 +405,7 @@ fn estree_mode_counts_spreads_as_positions() {
             "python",
             json!({ "rule": { "kind": "call", "arguments": { "signature": ["a"], "absent": ["a"], "mode": "estree" } } })
         )),
-        "/checks/0/forbid/ast/rule/arguments/mode: `estree` reads ESLint's `node.arguments`; use language or syntactic for Python"
+        "/clauses/0/forbid/ast/rule/arguments/mode: `estree` reads ESLint's `node.arguments`; use language or syntactic for Python"
     );
 }
 

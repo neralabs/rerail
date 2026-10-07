@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:quotemark",
   "revision": 1,
+  "mode": "steer",
   "description": "Double quotes in code, single quotes in JSX attributes.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "double",
       "forbid": {
@@ -35,10 +36,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "QUOTEMARK",
-        "severity": "error",
         "message": "' should be \""
       }
     },
@@ -65,10 +65,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "QUOTEMARK",
-        "severity": "error",
         "message": "\" should be '"
       }
     }

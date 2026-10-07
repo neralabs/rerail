@@ -582,17 +582,19 @@ describe("Claude Code commands/rerail.md", () => {
     const first = await registerHarnesses({ root, home, nodePath, harnesses: options });
     expect(change(first.changes, "claude-code", "rerail.md").action).toBe("created");
     const text = await readFile(path, "utf8");
-    // Enumerated per subcommand: the body must never be able to run `start`, `stop`, or `mcp`.
+    // Enumerated per subcommand: the body must never be able to run `daemon` or `mcp-bridge`.
     expect(text).toContain(
-      `allowed-tools: Bash(${command} status), Bash(${command} session *), Bash(${command} disable), Bash(${command} enable), Bash(${command} update *), Bash(${command} reset), Bash(${command} scan *), Bash(${command} settings *)`,
+      `allowed-tools: Bash(${command} status), Bash(${command} session *), Bash(${command} start), Bash(${command} stop), Bash(${command} update *), Bash(${command} reset), Bash(${command} scan *), Bash(${command} settings *)`,
     );
     expect(text).not.toContain(`Bash(${command} *)`);
     expect(text).toContain(`\n${command} $ARGUMENTS\n`);
     expect(text).toContain(`${command} session claude-code '\${CLAUDE_SESSION_ID}'`);
-    for (const action of ["disable", "enable"]) {
+    for (const action of ["start", "stop"]) {
       const commandPath = join(home, ".claude", "commands", `rerail-${action}.md`);
       expect(change(first.changes, "claude-code", `rerail-${action}.md`).action).toBe("created");
-      expect(await readFile(commandPath, "utf8")).toContain(`${command} ${action}`);
+      const body = await readFile(commandPath, "utf8");
+      expect(body).toContain(`allowed-tools: Bash(${command} ${action})\n`);
+      expect(body).toContain(`\n${command} ${action}\n`);
     }
     expect(change(first.changes, "claude-code", "rerail-ui.md").action).toBe("created");
     const ui = await readFile(join(home, ".claude", "commands", "rerail-ui.md"), "utf8");
@@ -611,17 +613,30 @@ describe("Claude Code commands/rerail.md", () => {
 
     const second = await registerHarnesses({ root, home, nodePath, harnesses: options });
     expect(change(second.changes, "claude-code", "rerail.md").action).toBe("unchanged");
-    expect(await readdir(dirname(path))).toEqual(["rerail-disable.md", "rerail-enable.md", "rerail-session.md", "rerail-ui.md", "rerail.md"]);
+    expect(await readdir(dirname(path))).toEqual(["rerail-start.md", "rerail-stop.md", "rerail-session.md", "rerail-ui.md", "rerail.md"]);
 
     const removed = await unregisterHarnesses({ root, home, nodePath, harnesses: options });
     expect(change(removed.changes, "claude-code", "rerail.md").action).toBe("updated");
     await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
-    for (const name of ["disable", "enable", "ui", "session"]) {
-      await expect(lstat(join(home, ".claude", "commands", `rerail-${name}.md`))).rejects.toMatchObject({ code: "ENOENT" });
+    for (const name of ["rerail-start", "rerail-stop", "rerail-ui", "rerail-session"]) {
+      await expect(lstat(join(home, ".claude", "commands", `${name}.md`))).rejects.toMatchObject({ code: "ENOENT" });
     }
 
     const again = await unregisterHarnesses({ root, home, nodePath, harnesses: options });
     expect(change(again.changes, "claude-code", "rerail.md").action).toBe("unchanged");
+  });
+
+  it("removes this package's retired enable/disable commands and leaves anyone else's", async () => {
+    const { home, root, nodePath } = await fixture();
+    const directory = join(home, ".claude", "commands");
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, "rerail-disable.md"), `Run:\n${nodePath} ${join(root, "dist", "cli.js")} disable\n`);
+    await writeFile(join(directory, "rerail-enable.md"), "A user's own command.\n");
+
+    const report = await registerHarnesses({ root, home, nodePath, harnesses: options });
+    expect(change(report.changes, "claude-code", "rerail-disable.md").action).toBe("updated");
+    expect(report.changes.some(entry => entry.path.endsWith("rerail-enable.md"))).toBe(false);
+    expect(await readdir(directory)).toEqual(["rerail-start.md", "rerail-stop.md", "rerail-enable.md", "rerail-session.md", "rerail-ui.md", "rerail.md"]);
   });
 
   it("rewrites a stale command that names another node, backing the old one up", async () => {
@@ -818,16 +833,18 @@ describe("Cursor hooks.json", () => {
     expect(await readFile(path, "utf8")).toBe(original);
   });
 
-  it("installs exact checkout control and rules page slash commands", async () => {
+  it("installs exact start, stop, and rules page slash commands", async () => {
     const { home, root, nodePath } = await fixture();
     const directory = join(home, ".cursor", "commands");
     const command = `${nodePath} ${join(root, "dist", "cli.js")}`;
 
     const first = await registerHarnesses({ root, home, nodePath, harnesses: ["cursor"] });
-    for (const action of ["disable", "enable"]) {
+    for (const action of ["start", "stop"]) {
       const path = join(directory, `rerail-${action}.md`);
       expect(change(first.changes, "cursor", `rerail-${action}.md`).action).toBe("created");
-      expect(await readFile(path, "utf8")).toContain(`${command} ${action}`);
+      const body = await readFile(path, "utf8");
+      expect(body).not.toContain("allowed-tools");
+      expect(body).toContain(`\n${command} ${action}\n`);
     }
     expect(change(first.changes, "cursor", "rerail-ui.md").action).toBe("created");
     const ui = await readFile(join(directory, "rerail-ui.md"), "utf8");
@@ -836,7 +853,7 @@ describe("Cursor hooks.json", () => {
     expect(ui).toContain("Cursor with a built-in browser tool");
     expect(ui).toContain(`desktop browser: \`${command} ui\`.`);
     expect(ui).not.toContain("Orca");
-    expect(await readdir(directory)).toEqual(["rerail-disable.md", "rerail-enable.md", "rerail-ui.md"]);
+    expect(await readdir(directory)).toEqual(["rerail-start.md", "rerail-stop.md", "rerail-ui.md"]);
 
     await unregisterHarnesses({ root, home, nodePath, harnesses: ["cursor"] });
     expect(await readdir(directory)).toEqual([]);
@@ -1064,24 +1081,24 @@ describe("dry run", () => {
     expect(actions).toEqual({
       "omp:/.omp/agent/extensions/rerail": "updated",
       "omp:/.omp/agent/mcp.json": "created",
-      "omp:/project/.omp/cosine-rules.json": "created",
+      "omp:/project/.omp/conversation-rules.json": "created",
       "pi:/.pi/agent/settings.json": "created",
-      "pi:/project/.pi/cosine-rules.json": "created",
+      "pi:/project/.pi/conversation-rules.json": "created",
       "claude-code:/.claude/settings.json": "updated",
       "claude-code:/.claude/commands/rerail.md": "created",
-      "claude-code:/.claude/commands/rerail-disable.md": "created",
-      "claude-code:/.claude/commands/rerail-enable.md": "created",
+      "claude-code:/.claude/commands/rerail-start.md": "created",
+      "claude-code:/.claude/commands/rerail-stop.md": "created",
       "claude-code:/.claude/commands/rerail-ui.md": "created",
       "claude-code:/.claude/commands/rerail-session.md": "created",
-      "claude-code:/project/.claude/cosine-rules.json": "created",
+      "claude-code:/project/.claude/conversation-rules.json": "created",
       "codex:/.codex/hooks.json": "created",
       "codex:/.codex/skills/rerail/SKILL.md": "created",
-      "codex:/project/.codex/cosine-rules.json": "created",
+      "codex:/project/.codex/conversation-rules.json": "created",
       "cursor:/.cursor/hooks.json": "created",
-      "cursor:/.cursor/commands/rerail-disable.md": "created",
-      "cursor:/.cursor/commands/rerail-enable.md": "created",
+      "cursor:/.cursor/commands/rerail-start.md": "created",
+      "cursor:/.cursor/commands/rerail-stop.md": "created",
       "cursor:/.cursor/commands/rerail-ui.md": "created",
-      "cursor:/project/.cursor/cosine-rules.json": "created",
+      "cursor:/project/.cursor/conversation-rules.json": "created",
     });
     expect(report.changes.every((entry) => entry.detail.endsWith("(dry run)"))).toBe(true);
 
@@ -1098,7 +1115,7 @@ describe("dry run", () => {
 });
 
 describe("project rules", () => {
-  it("seeds cosine-rules.json once per selected harness and never overwrites", async () => {
+  it("seeds conversation-rules.json once per selected harness and never overwrites", async () => {
     const { home, root, nodePath } = await fixture();
     const project = join(home, "project");
     const first = await registerHarnesses({
@@ -1108,15 +1125,15 @@ describe("project rules", () => {
       harnesses: ["claude-code", "cursor"],
       projectDir: project,
     });
-    expect(change(first.changes, "claude-code", "cosine-rules.json").action).toBe("created");
-    expect(change(first.changes, "cursor", "cosine-rules.json").action).toBe("created");
-    expect(first.changes.filter((entry) => entry.path.endsWith("cosine-rules.json"))).toHaveLength(2);
-    expect(await readJson(join(project, ".claude", "cosine-rules.json"))).toEqual({ version: 1, rules: [] });
-    expect(await readJson(join(project, ".cursor", "cosine-rules.json"))).toEqual({ version: 1, rules: [] });
+    expect(change(first.changes, "claude-code", "conversation-rules.json").action).toBe("created");
+    expect(change(first.changes, "cursor", "conversation-rules.json").action).toBe("created");
+    expect(first.changes.filter((entry) => entry.path.endsWith("conversation-rules.json"))).toHaveLength(2);
+    expect(await readJson(join(project, ".claude", "conversation-rules.json"))).toEqual({ version: 1, rules: [] });
+    expect(await readJson(join(project, ".cursor", "conversation-rules.json"))).toEqual({ version: 1, rules: [] });
     await expect(lstat(join(project, ".codex"))).rejects.toMatchObject({ code: "ENOENT" });
 
     const custom = '{"version":1,"rules":[{"id":"keep-me"}]}';
-    await writeFile(join(project, ".claude", "cosine-rules.json"), custom);
+    await writeFile(join(project, ".claude", "conversation-rules.json"), custom);
     const second = await registerHarnesses({
       root,
       home,
@@ -1124,10 +1141,10 @@ describe("project rules", () => {
       harnesses: ["claude-code", "cursor"],
       projectDir: project,
     });
-    expect(change(second.changes, "claude-code", "cosine-rules.json").action).toBe("unchanged");
-    expect(change(second.changes, "cursor", "cosine-rules.json").action).toBe("unchanged");
-    expect(await readFile(join(project, ".claude", "cosine-rules.json"), "utf8")).toBe(custom);
-    expect(await readdir(join(project, ".claude"))).toEqual(["cosine-rules.json"]);
+    expect(change(second.changes, "claude-code", "conversation-rules.json").action).toBe("unchanged");
+    expect(change(second.changes, "cursor", "conversation-rules.json").action).toBe("unchanged");
+    expect(await readFile(join(project, ".claude", "conversation-rules.json"), "utf8")).toBe(custom);
+    expect(await readdir(join(project, ".claude"))).toEqual(["conversation-rules.json"]);
 
     const removed = await unregisterHarnesses({
       root,
@@ -1136,7 +1153,7 @@ describe("project rules", () => {
       harnesses: ["claude-code", "cursor"],
       projectDir: project,
     });
-    expect(removed.changes.some((entry) => entry.path.endsWith("cosine-rules.json"))).toBe(false);
-    expect(await readFile(join(project, ".claude", "cosine-rules.json"), "utf8")).toBe(custom);
+    expect(removed.changes.some((entry) => entry.path.endsWith("conversation-rules.json"))).toBe(false);
+    expect(await readFile(join(project, ".claude", "conversation-rules.json"), "utf8")).toBe(custom);
   });
 });

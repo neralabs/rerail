@@ -783,6 +783,30 @@ fn benchmark_go_worktree_oracle_parity() {
     });
 }
 
+const PYTHON_PATTERNS: &[&str] = &[
+    "$F($$$ARGS)",
+    "$X.$A",
+    "return $V",
+    "$L = $R",
+    "if $COND: $$$BODY",
+    "def $NAME($$$PARAMS): $$$BODY",
+    "lambda $$$PARAMS: $BODY",
+    "import $M",
+];
+
+#[test]
+#[ignore = "full Python corpus: native tree-sitter / ast-grep versus Rerail tapes"]
+fn benchmark_python_worktree_oracle_parity() {
+    worktree_oracle_parity(&OracleCorpus {
+        name: "Python",
+        language: GrammarDialect::Python,
+        extensions: &["py", "pyi"],
+        excluded_suffixes: &[],
+        env: "RERAIL_PYTHON_ORACLE",
+        patterns: PYTHON_PATTERNS,
+    });
+}
+
 #[test]
 #[ignore = "full PHP corpus: native tree-sitter / ast-grep versus Rerail tapes"]
 fn benchmark_php_worktree_oracle_parity() {

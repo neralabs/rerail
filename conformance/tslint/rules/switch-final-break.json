@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:switch-final-break",
   "revision": 1,
+  "mode": "steer",
   "description": "The final clause of a switch must not end with a redundant `break;` (TSLint default).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "final-break",
       "forbid": {
@@ -149,10 +150,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "SWITCH_FINAL_BREAK",
-        "severity": "error",
         "message": "Final clause in 'switch' statement should not end with 'break;'."
       }
     }

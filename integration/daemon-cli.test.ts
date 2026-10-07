@@ -1,11 +1,13 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, test } from "vitest";
 import type { DaemonState } from "../src/daemon.js";
+import { startTestRepository } from "../test/support/started-repository.js";
 
 describe("Rerail daemon CLI", () => {
   test("starts in dev mode, exposes health, and stops a legacy-format daemon through the CLI", async () => {
@@ -44,7 +46,7 @@ describe("Rerail daemon CLI", () => {
       const { kernelSocketPath: _socketPath, ...legacyState } = state;
       await writeFile(stateFile, JSON.stringify(legacyState));
       const daemonClosed = once(child, "close");
-      const stop = spawn(process.execPath, [join(process.cwd(), "dist/cli.js"), "stop"], {
+      const stop = spawn(process.execPath, [join(process.cwd(), "dist/cli.js"), "daemon", "stop"], {
         env: { ...process.env, RERAIL_HOME: root },
         stdio: "ignore",
       });
@@ -65,7 +67,7 @@ describe("Rerail daemon CLI", () => {
   test("refuses to bind off loopback unless --allow-remote is passed, before spawning anything", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-daemon-cli-"));
     try {
-      const start = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "start", "--host", "0.0.0.0", "--port", "0"], {
+      const start = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "daemon", "start", "--host", "0.0.0.0", "--port", "0"], {
         env: { ...process.env, RERAIL_HOME: root },
         stdio: ["ignore", "ignore", "pipe"],
       });
@@ -76,6 +78,30 @@ describe("Rerail daemon CLI", () => {
       expect(exitCode).not.toBe(0);
       expect(Buffer.concat(chunks).toString()).toContain("--allow-remote");
       expect(existsSync(join(root, "daemon.json"))).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  test("reads the start state from the database --database names, not the home's default", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-state-cli-"));
+    try {
+      const workspace = join(root, "workspace");
+      await mkdir(workspace);
+      // A configured database the Rerail home does not hold: OMP passes its `databasePath` this way.
+      const configured = join(root, "configured", "rules.db");
+      await mkdir(dirname(configured));
+      startTestRepository(workspace, configured);
+      const state = async (...extra: string[]): Promise<string> => {
+        const { stdout } = await promisify(execFile)(
+          process.execPath,
+          [join(process.cwd(), "dist", "cli.js"), "state", "--repo", workspace, ...extra],
+          { env: { ...process.env, RERAIL_HOME: join(root, "home") } },
+        );
+        return stdout.trim();
+      };
+      expect(await state("--database", configured)).toBe("started");
+      expect(await state()).toBe("never");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

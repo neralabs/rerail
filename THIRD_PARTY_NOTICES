@@ -397,3 +397,18 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+----------------------------------------------------------------------
+
+Bundled grammar: tree-sitter/tree-sitter-typescript 0.23.2, patched
+Files: native/grammars/tree-sitter-typescript/ (LICENSE, common/scanner.h and
+  {typescript,tsx}/src/scanner.c byte-identical to upstream; {typescript,tsx}/src/grammar.json
+  regenerated from the patched grammar; common/tree_sitter/{alloc,array,parser}.h written by
+  tree-sitter-cli 0.27.0)
+Revision: f975a621f4e7f532fe322e13c4f79495e0a7b2e7
+Source: https://github.com/tree-sitter/tree-sitter-typescript
+License: MIT (the verbatim upstream LICENSE is in that directory)
+
+The patches, why each is carried and how grammar.json is regenerated are in
+native/grammars/tree-sitter-typescript/PATCHES.md. As for Blade, native/build.rs
+generates each parser.c from its grammar.json with tree-sitter-generate 0.27.0.

@@ -7,7 +7,7 @@ const span = (startLine: number, startColumn: number, endLine: number, endColumn
 
 function finding(overrides: Partial<ExecutablePolicyFinding> = {}): ExecutablePolicyFinding {
   return {
-    id: "sha256:x", policyId: "p", checkId: "c", code: "NO_LOG", severity: "error",
+    id: "sha256:x", ruleId: "p", clauseId: "c", code: "NO_LOG", mode: "block",
     message: "log of user", path: "src/a.ts", span: span(2, 14, 2, 18), captures: {}, variables: {},
     ...overrides,
   };

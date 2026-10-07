@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateSQLiteDrizzleJson, generateSQLiteMigration } from "drizzle-kit/api";
 import {
+  checkoutStarts,
   catalogRules,
   events,
   presentationPreferences,
@@ -18,6 +19,8 @@ import {
   ruleProjectRepositories,
   ruleProjects,
   ruleRepositories,
+  repositoryStartCarryOver,
+  repositoryStarts,
   rules,
   sessions,
   workLinks,
@@ -46,6 +49,9 @@ export async function renderRerailSchemaStatements(): Promise<string[]> {
   policySessionOwners,
   ruleProjects,
   ruleRepositories,
+  repositoryStarts,
+  repositoryStartCarryOver,
+  checkoutStarts,
   ruleCatalogIdentities,
   ruleProjectRepositories,
   catalogRules,

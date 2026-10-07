@@ -17,7 +17,8 @@ import { createRerailMcpHandler } from "./api/mcp.js";
 import { operations, type RerailApiStores } from "./api/operations.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "./native.js";
 import { loadBundledRules } from "./rule-bootstrap.js";
-import { defaultRerailDatabasePath } from "./database.js";
+import { effectiveRepositoryStartState, effectiveStartState, startStateReader, type RepositoryStartState } from "./repository-start.js";
+import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "./database.js";
 import {
   openScopedRuleCatalog,
   resolveRepositoryContext,
@@ -146,6 +147,8 @@ class DaemonStores implements RerailApiStores {
   #transcripts: SqliteTranscriptStore | undefined;
   #preferences: SqlitePresentationPreferenceStore | undefined;
   #scanControls: SqliteScanControlStore | undefined;
+  #database: RerailDatabase | undefined;
+  #startStates: ((workspace: string) => RepositoryStartState) | undefined;
 
   get repositoryId(): string {
     return this.#repository.repositoryId;
@@ -154,6 +157,8 @@ class DaemonStores implements RerailApiStores {
   constructor(path: string, repository: RepositoryContext, readonly health: () => DaemonHealth) {
     this.#path = path;
     this.#repository = repository;
+    // The read-only views never upgrade, so bring an existing database to the current schema first.
+    if (existsSync(path)) openRerailDatabase(path).$client.close();
     this.reader = new SqliteTranscriptReader(path, { repositoryId: repository.repositoryId });
     this.executions = new SqlitePolicyExecutionReader(path, { repositoryId: repository.repositoryId });
   }
@@ -178,6 +183,18 @@ class DaemonStores implements RerailApiStores {
     return this.#scanControls;
   }
 
+  database(): RerailDatabase {
+    this.#database ??= openRerailDatabase(this.#path);
+    return this.#database;
+  }
+
+  repositoryState(workspace: string): RepositoryStartState {
+    // A daemon with no sessions yet must not create the database to answer that nothing is started.
+    if (!existsSync(this.#path)) return effectiveStartState(workspace, this.#path);
+    this.#startStates ??= startStateReader(this.database());
+    return this.#startStates(workspace);
+  }
+
   close(): void {
     this.reader.close();
     this.#rules?.close();
@@ -185,6 +202,7 @@ class DaemonStores implements RerailApiStores {
     this.#scanControls?.close();
     this.executions.close();
     this.#preferences?.close();
+    this.#database?.$client.close();
   }
 }
 
@@ -608,7 +626,10 @@ export async function runRerailDaemon(argv: readonly string[]): Promise<void> {
   const databasePath = defaultRerailDatabasePath();
   const catalog = openScopedRuleCatalog(workspaceRoot, databasePath);
   const repository = catalog.context();
-  const bootstrap = catalog.seed(loadBundledRules());
+  // The daemon is shared by every repository; it seeds bundled rules only where Rerail is started.
+  const bootstrap = effectiveRepositoryStartState(databasePath, repository) === "started"
+    ? catalog.seed(loadBundledRules())
+    : undefined;
   catalog.close();
   const daemon = await RerailDaemon.start({
     version: await packageVersion(),
@@ -625,7 +646,7 @@ export async function runRerailDaemon(argv: readonly string[]): Promise<void> {
   const health = daemon.health();
   process.stdout.write(`rerail daemon ${health.version} listening at ${daemon.url} (pid ${process.pid})\n`);
   process.stdout.write(`database: ${health.database.path}\n`);
-  process.stdout.write(`rules: ${bootstrap.inserted} seeded, ${bootstrap.refreshed} refreshed, ${bootstrap.kept} kept\n`);
+  if (bootstrap !== undefined) process.stdout.write(`rules: ${bootstrap.inserted} seeded, ${bootstrap.refreshed} refreshed, ${bootstrap.kept} kept\n`);
   process.stdout.write(
     health.native.ok
       ? `native kernel: ok (version ${health.native.kernelVersion})\n`

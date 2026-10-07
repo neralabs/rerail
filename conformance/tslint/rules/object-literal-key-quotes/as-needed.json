@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:object-literal-key-quotes",
   "revision": 1,
+  "mode": "steer",
   "description": "Property names should only be quoted when needed (as-needed).",
   "scope": { "include": ["**/*"], "exclude": [] },
-  "checks": [
+  "clauses": [
     {
       "id": "as-needed",
       "forbid": {
@@ -34,10 +35,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "OBJECT_LITERAL_KEY_QUOTES",
-        "severity": "error",
         "message": "Unnecessarily quoted property found."
       }
     }

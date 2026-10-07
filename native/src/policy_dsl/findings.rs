@@ -25,6 +25,7 @@ use super::model::{
 use super::test_support::{Walk, record_walk};
 mod semantic;
 mod suppression;
+pub(crate) use super::lines::Span;
 use crate::policy_dsl::language::{Family, GrammarDialect, Suppression};
 use ast_grep_core::matcher::NodeMatch;
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
@@ -32,7 +33,8 @@ use ast_grep_core::replacer::{Content, Replacer, TemplateFix};
 use ast_grep_core::{Doc, Node};
 use napi::Result;
 use regex::Regex;
-use serde_json::{Map, Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use std::borrow::Cow;
 #[cfg(test)]
 use std::cell::Cell;
@@ -441,7 +443,7 @@ pub(super) fn bind(
     if let Some(suppress) = &finding.suppress {
         let Some(Query::Ast { matchers, .. }) = query else {
             return Err(invalid(format!(
-                "{path}/suppress: suppress removes an ast query's findings"
+                "{path}/suppress: suppress removes an ast query's violations"
             )));
         };
         // A query's matchers are the dialects of one policy language, so of one family, which
@@ -496,8 +498,8 @@ pub(super) fn bind(
     }
     if query.is_none() && finding.anchor != Anchor::Span {
         return Err(invalid(format!(
-            "{path}/anchor: require_each, budget, and llm findings support only \"witness.span\"; \
-             fact findings carry no source span to anchor within"
+            "{path}/anchor: require_each, budget, and llm violations support only \"witness.span\"; \
+             fact violations carry no source span to anchor within"
         )));
     }
     if let Anchor::Capture(name) = &finding.anchor
@@ -630,7 +632,7 @@ pub(super) fn bind(
         }
         _ => {
             return Err(invalid(format!(
-                "{path}/fix: only forbid checks over an ast or file.content regex query can suggest a fix"
+                "{path}/fix: only forbid clauses over an ast or file.content regex query can suggest a fix"
             )));
         }
     };
@@ -827,7 +829,7 @@ pub(super) fn ast_output<D: Doc>(
     language: GrammarDialect,
     matched: &NodeMatch<'_, D>,
     groups: &[NodeGroup],
-    span: impl Fn(usize, usize) -> Value,
+    span: impl Fn(usize, usize) -> Span,
 ) -> (Option<String>, Option<Value>) {
     let env = matched.get_env();
     let message = finding.message_template.as_ref().map(|template| {
@@ -916,12 +918,95 @@ fn fix_target<'t, D: Doc>(
 #[derive(Clone)]
 pub(crate) struct Witness {
     pub(crate) path: String,
-    pub(crate) span: Value,
-    pub(crate) captures: Value,
+    pub(crate) span: Span,
+    pub(crate) captures: Captures,
     /// The finding message with captures interpolated, when it references any.
     pub(crate) message: Option<String>,
     /// The suggested fix: `{ span, text }` replacing the witness span.
     pub(crate) fix: Option<Value>,
+}
+
+/// The key under which a witness of an evidence producer carries its projected row.
+const PROJECTION: &str = "$project";
+
+/// A witness's captures: each bound name's spans, and an evidence projection when its check
+/// projects one. It serializes as the JSON object of each name's span list and the projection
+/// under `PROJECTION`, in key order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Captures {
+    /// Each name's spans, in name order.
+    spans: Vec<(Box<str>, Vec<Span>)>,
+    projection: Option<Box<Value>>,
+}
+
+impl Captures {
+    pub(crate) fn from_spans(spans: BTreeMap<String, Vec<Span>>) -> Self {
+        Self {
+            spans: spans
+                .into_iter()
+                .map(|(name, spans)| (name.into_boxed_str(), spans))
+                .collect(),
+            projection: None,
+        }
+    }
+
+    /// The spans `name` captured, if it is bound.
+    pub(crate) fn get(&self, name: &str) -> Option<&[Span]> {
+        self.spans
+            .binary_search_by(|(known, _)| known.as_ref().cmp(name))
+            .ok()
+            .map(|index| self.spans[index].1.as_slice())
+    }
+
+    pub(crate) fn projection(&self) -> Option<&Value> {
+        self.projection.as_deref()
+    }
+
+    pub(crate) fn set_projection(&mut self, projection: Option<Value>) {
+        self.projection = projection.map(Box::new);
+    }
+
+    /// The captures a stored witness's JSON object holds; `None` for any other shape.
+    pub(crate) fn from_value(value: &Value) -> Option<Self> {
+        let mut captures = Self::default();
+        for (name, value) in value.as_object()? {
+            if name == PROJECTION {
+                captures.projection = Some(Box::new(value.clone()));
+            } else {
+                let spans = value
+                    .as_array()?
+                    .iter()
+                    .map(|span| Span::deserialize(span).ok())
+                    .collect::<Option<Vec<_>>>()?;
+                captures.spans.push((name.as_str().into(), spans));
+            }
+        }
+        Some(captures)
+    }
+}
+
+impl Serialize for Captures {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(
+            self.spans.len() + usize::from(self.projection.is_some()),
+        ))?;
+        let mut projection = self.projection.as_deref();
+        for (name, spans) in &self.spans {
+            if let Some(value) = projection.filter(|_| PROJECTION < name.as_ref()) {
+                map.serialize_entry(PROJECTION, value)?;
+                projection = None;
+            }
+            map.serialize_entry(name.as_ref(), spans)?;
+        }
+        if let Some(value) = projection {
+            map.serialize_entry(PROJECTION, value)?;
+        }
+        map.end()
+    }
 }
 
 /// A regex witness: named groups that matched become captures; the message and fix
@@ -931,13 +1016,13 @@ pub(super) fn regex_witness(
     regex: &Regex,
     found: &regex::Captures<'_>,
     finding: Option<&FindingSpec>,
-    span: impl Fn(usize, usize) -> Value,
+    span: impl Fn(usize, usize) -> Span,
 ) -> Witness {
     let whole = found.get(0).expect("group 0 always matches");
-    let mut captures = Map::new();
+    let mut captures = BTreeMap::new();
     for name in regex.capture_names().flatten() {
         if let Some(group) = found.name(name) {
-            captures.insert(name.to_owned(), json!([span(group.start(), group.end())]));
+            captures.insert(name.to_owned(), vec![span(group.start(), group.end())]);
         }
     }
     let lookup =
@@ -959,51 +1044,49 @@ pub(super) fn regex_witness(
     Witness {
         path: path.to_owned(),
         span: span(whole.start(), whole.end()),
-        captures: Value::Object(captures),
+        captures: Captures::from_spans(captures),
         message,
         fix,
     }
 }
 
 /// The span a finding reports and whether a capture anchor fell back to the witness span.
-pub(super) fn anchored_span(anchor: &Anchor, witness: &Witness) -> (Value, bool) {
-    let point = |from: &str| {
-        let mut span = witness.span.clone();
-        for field in ["Byte", "Line", "Column"] {
-            let value = witness.span[format!("{from}{field}")].clone();
-            span[format!("start{field}")] = value.clone();
-            span[format!("end{field}")] = value;
-        }
-        span
-    };
+pub(super) fn anchored_span(anchor: &Anchor, witness: &Witness) -> (Span, bool) {
+    let span = witness.span;
     match anchor {
-        Anchor::Span => (witness.span.clone(), false),
-        Anchor::Start => (point("start"), false),
-        Anchor::End => (point("end"), false),
-        Anchor::FileStart => {
-            let mut span = witness.span.clone();
-            for field in ["Byte", "Line", "Column"] {
-                span[format!("start{field}")] = json!(0);
-                span[format!("end{field}")] = json!(0);
-            }
-            (span, false)
-        }
-        Anchor::Capture(name) => {
-            let spans = witness
-                .captures
-                .get(name)
-                .and_then(Value::as_array)
-                .filter(|spans| !spans.is_empty());
-            let Some(spans) = spans else {
-                return (witness.span.clone(), true);
-            };
-            let mut span = spans[0].clone();
-            let last = &spans[spans.len() - 1];
-            for field in ["endByte", "endLine", "endColumn"] {
-                span[field] = last[field].clone();
-            }
-            (span, false)
-        }
+        Anchor::Span => (span, false),
+        Anchor::Start => (
+            Span {
+                end_byte: span.start_byte,
+                end_column: span.start_column,
+                end_line: span.start_line,
+                ..span
+            },
+            false,
+        ),
+        Anchor::End => (
+            Span {
+                start_byte: span.end_byte,
+                start_column: span.end_column,
+                start_line: span.end_line,
+                ..span
+            },
+            false,
+        ),
+        Anchor::FileStart => (Span::default(), false),
+        Anchor::Capture(name) => match witness.captures.get(name) {
+            Some([first, .., last]) => (
+                Span {
+                    end_byte: last.end_byte,
+                    end_column: last.end_column,
+                    end_line: last.end_line,
+                    ..*first
+                },
+                false,
+            ),
+            Some([only]) => (*only, false),
+            _ => (span, true),
+        },
     }
 }
 
@@ -1016,14 +1099,13 @@ mod tests {
         include_str!("../../../policies/executable-policy-dsl/capabilities.json");
 
     fn compile(forbid: Value, finding: Value) -> Result<CompiledPolicyDsl> {
-        compile_check(json!({ "id": "c", "forbid": forbid, "finding": finding }))
+        compile_check(json!({ "id": "c", "forbid": forbid, "violation": finding }))
     }
 
     fn compile_check(check: Value) -> Result<CompiledPolicyDsl> {
         let mut capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
         capabilities["factRelations"] = json!({ "symbols": {} });
-        let document =
-            json!({ "format": "rerail.policy/v1", "id": "p", "revision": 1, "checks": [check] });
+        let document = json!({ "format": "rerail.policy/v1", "id": "p", "revision": 1, "mode": "block", "clauses": [check] });
         PolicyDslRuntime::compile(
             document.to_string(),
             "json".to_owned(),
@@ -1036,11 +1118,11 @@ mod tests {
     }
 
     fn finding(anchor: &str, message: &str) -> Value {
-        json!({ "anchor": anchor, "code": "X", "message": message, "severity": "error" })
+        json!({ "anchor": anchor, "code": "X", "message": message })
     }
 
     fn with_fix(anchor: &str, fix: &str) -> Value {
-        json!({ "anchor": anchor, "code": "X", "message": "m", "severity": "error", "fix": fix })
+        json!({ "anchor": anchor, "code": "X", "message": "m", "fix": fix })
     }
 
     fn findings_for(compiled: &CompiledPolicyDsl, language: &str, source: &str) -> Vec<Value> {
@@ -1055,7 +1137,7 @@ mod tests {
             .expect("evaluation succeeds");
         let result: Value = serde_json::from_str(&output).expect("JSON");
         assert_eq!(result["failures"], json!([]), "{result}");
-        result["findings"].as_array().expect("findings").clone()
+        result["violations"].as_array().expect("findings").clone()
     }
 
     fn only(compiled: &CompiledPolicyDsl, source: &str) -> Value {
@@ -1103,7 +1185,7 @@ mod tests {
                 ast(json!({ "pattern": "foo($A)" })),
                 with_fix("witness.span", "bar($5)")
             )),
-            "/checks/0/finding/fix: `$5` names no capture; the query can bind: A"
+            "/clauses/0/violation/fix: `$5` names no capture; the query can bind: A"
         );
     }
 
@@ -1198,7 +1280,7 @@ mod tests {
                 ast(json!({ "pattern": "f($A)" })),
                 finding("witness.span", "${NOPE}")
             )),
-            r"/checks/0/finding/message: `$NOPE` names no capture; the query can bind: A; write `\$NOPE` for literal text"
+            r"/clauses/0/violation/message: `$NOPE` names no capture; the query can bind: A; write `\$NOPE` for literal text"
         );
     }
 
@@ -1358,7 +1440,7 @@ mod tests {
         };
         let compiled = compile(
             util(),
-            json!({ "anchor": "capture.E", "code": "X", "message": "awaits $E", "severity": "error", "fix": "return $E;" }),
+            json!({ "anchor": "capture.E", "code": "X", "message": "awaits $E", "fix": "return $E;" }),
         )
         .unwrap();
         let found = only(
@@ -1380,7 +1462,7 @@ mod tests {
         };
         let compiled = compile(
             constrained(),
-            json!({ "anchor": "capture.R", "code": "X", "message": "$F adds $L and $R", "severity": "error", "fix": "$F(`${$L}${$R}`)" }),
+            json!({ "anchor": "capture.R", "code": "X", "message": "$F adds $L and $R", "fix": "$F(`${$L}${$R}`)" }),
         )
         .unwrap();
         let found = only(&compiled, "log(a + b);\nlog(c);\n");
@@ -1411,7 +1493,9 @@ mod tests {
         ] {
             assert_eq!(
                 rejection(compile(forbid, finding(&format!("capture.{name}"), "m"))),
-                format!("/checks/0/finding/anchor: `capture.{name}` names no capture; {bindable}")
+                format!(
+                    "/clauses/0/violation/anchor: `capture.{name}` names no capture; {bindable}"
+                )
             );
         }
     }
@@ -1422,7 +1506,7 @@ mod tests {
         let regex = || json!({ "regex": { "source": "file.content", "pattern": pattern } });
         let compiled = compile(
             regex(),
-            json!({ "anchor": "capture.VALUE", "code": "X", "message": "set $KEY to $VALUE", "severity": "error", "fix": "$KEY: $VALUE" }),
+            json!({ "anchor": "capture.VALUE", "code": "X", "message": "set $KEY to $VALUE", "fix": "$KEY: $VALUE" }),
         )
         .unwrap();
         let found = only(&compiled, "  width=10\n");
@@ -1471,7 +1555,7 @@ mod tests {
             let reason = rejection(compile(ast(rule), finding("capture.G", "m")));
             assert_eq!(
                 reason,
-                "/checks/0/finding/anchor: `capture.G` names no capture; the query binds no captures"
+                "/clauses/0/violation/anchor: `capture.G` names no capture; the query binds no captures"
             );
         }
         let reason = rejection(compile(
@@ -1480,7 +1564,7 @@ mod tests {
         ));
         assert_eq!(
             reason,
-            "/checks/0/finding/fix: `$B` is a regex group inside an ast node; an ast fix can use only metavariables"
+            "/clauses/0/violation/fix: `$B` is a regex group inside an ast node; an ast fix can use only metavariables"
         );
     }
 
@@ -1506,42 +1590,42 @@ mod tests {
             (
                 pattern(),
                 finding("subject.span", "m"),
-                "/checks/0/finding/anchor: unknown anchor `subject.span`; expected witness.span, witness.start, witness.end, file.start, or capture.<NAME>",
+                "/clauses/0/violation/anchor: unknown anchor `subject.span`; expected witness.span, witness.start, witness.end, file.start, or capture.<NAME>",
             ),
             (
                 pattern(),
                 finding("capture.B", "m"),
-                "/checks/0/finding/anchor: `capture.B` names no capture; the query can bind: A",
+                "/clauses/0/violation/anchor: `capture.B` names no capture; the query can bind: A",
             ),
             (
                 pattern(),
                 finding("witness.span", "bad $NAME"),
-                "/checks/0/finding/message: `$NAME` names no capture; the query can bind: A; write `\\$NAME` for literal text",
+                "/clauses/0/violation/message: `$NAME` names no capture; the query can bind: A; write `\\$NAME` for literal text",
             ),
             (
                 json!({ "regex": { "source": "file.content", "pattern": "x" } }),
                 finding("capture.X", "m"),
-                "/checks/0/finding/anchor: `capture.X` names no capture; the query binds no captures",
+                "/clauses/0/violation/anchor: `capture.X` names no capture; the query binds no captures",
             ),
             (
                 json!({ "regex": { "source": "file.content", "pattern": "(?<X>x)" } }),
                 finding("witness.span", "$$$X"),
-                "/checks/0/finding/message: `$$$X`: regex groups are single captures; use `$X`",
+                "/clauses/0/violation/message: `$$$X`: regex groups are single captures; use `$X`",
             ),
             (
                 json!({ "regex": { "source": "file.path", "pattern": "(?<X>x)" } }),
                 with_fix("capture.X", "y"),
-                "/checks/0/finding/fix: a file.path regex match is not source text a fix can replace",
+                "/clauses/0/violation/fix: a file.path regex match is not source text a fix can replace",
             ),
             (
                 pattern(),
-                json!({ "anchor": "witness.span", "code": "X", "message": "m", "severity": "error", "fix": ["x"] }),
-                "/checks/0/finding/fix must be an ast-grep fix template string or { template, range }",
+                json!({ "anchor": "witness.span", "code": "X", "message": "m", "fix": ["x"] }),
+                "/clauses/0/violation/fix must be an ast-grep fix template string or { template, range }",
             ),
             (
                 pattern(),
                 with_fix("witness.span", "bar($B)"),
-                "/checks/0/finding/fix: `$B` names no capture; the query can bind: A",
+                "/clauses/0/violation/fix: `$B` names no capture; the query can bind: A",
             ),
         ] {
             assert_eq!(rejection(compile(forbid, finding)), expected);
@@ -1556,7 +1640,7 @@ mod tests {
     }
 
     fn ranged(fix: Value) -> Value {
-        json!({ "anchor": "witness.span", "code": "X", "message": "m", "severity": "error", "fix": fix })
+        json!({ "anchor": "witness.span", "code": "X", "message": "m", "fix": fix })
     }
 
     #[test]
@@ -1614,23 +1698,23 @@ mod tests {
         for (fix, expected) in [
             (
                 json!({ "template": "x", "range": "capture.Z" }),
-                "/checks/0/finding/fix/range: `capture.Z` names no capture; the query can bind: A",
+                "/clauses/0/violation/fix/range: `capture.Z` names no capture; the query can bind: A",
             ),
             (
                 json!({ "template": "x", "range": "witness.start" }),
-                "/checks/0/finding/fix/range: unknown range `witness.start`; expected witness.span or capture.<NAME>",
+                "/clauses/0/violation/fix/range: unknown range `witness.start`; expected witness.span or capture.<NAME>",
             ),
             (
                 json!({ "template": "x" }),
-                "/checks/0/finding/fix/range is required: witness.span or capture.<NAME>",
+                "/clauses/0/violation/fix/range is required: witness.span or capture.<NAME>",
             ),
             (
                 json!({ "template": 1, "range": "capture.A" }),
-                "/checks/0/finding/fix/template must be an ast-grep fix template string",
+                "/clauses/0/violation/fix/template must be an ast-grep fix template string",
             ),
             (
                 json!({ "template": "x", "range": "capture.A", "at": 1 }),
-                "unknown field `at` at /checks/0/finding/fix",
+                "unknown field `at` at /clauses/0/violation/fix",
             ),
         ] {
             assert_eq!(
@@ -1644,7 +1728,7 @@ mod tests {
                 regex,
                 ranged(json!({ "template": "b", "range": "capture.X" }))
             )),
-            "/checks/0/finding/fix/range: a fix range names a capture of an ast query"
+            "/clauses/0/violation/fix/range: a fix range names a capture of an ast query"
         );
     }
 
@@ -1747,17 +1831,17 @@ mod each_limit_tests {
                 "format": "rerail.policy/v1",
                 "id": "bounded-each",
                 "revision": 1,
-                "checks": [{
+                "mode": "steer",
+                "clauses": [{
                     "id": "comment-characters",
                     "forbid": { "ast": { "language": "typescript", "rule": {
                         "kind": "comment",
                         "regex": "(?<X>a)"
                     } } },
-                    "finding": {
+                    "violation": {
                         "anchor": "capture.X",
                         "code": "E",
                         "message": "$X",
-                        "severity": "error",
                         "each": "X"
                     }
                 }]
@@ -1788,7 +1872,7 @@ mod each_limit_tests {
         let result: Value = serde_json::from_str(&output).expect("evaluation JSON");
         assert_eq!(node_group_enumerations(), 2, "{result}");
         assert_eq!(result["metrics"]["witnesses"], 2, "{result}");
-        assert_eq!(result["findings"], json!([]), "{result}");
+        assert_eq!(result["violations"], json!([]), "{result}");
         assert_eq!(result["failures"][0]["code"], "budget-exceeded", "{result}");
     }
 }

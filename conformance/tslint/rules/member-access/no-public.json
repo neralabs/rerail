@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:member-access",
   "revision": 1,
+  "mode": "steer",
   "description": "Option no-public: flags explicit `public` (except on non-readonly parameter properties).",
   "scope": {"include": ["**/*"], "exclude": []},
-  "checks": [
+  "clauses": [
     {
       "id": "public-member",
       "forbid": {
@@ -26,10 +27,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "MEMBER_ACCESS",
-        "severity": "error",
         "message": "'public' is implicit."
       }
     },
@@ -61,10 +61,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "MEMBER_ACCESS",
-        "severity": "error",
         "message": "'public' is implicit."
       }
     }

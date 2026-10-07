@@ -8,7 +8,7 @@ const A005: &str = include_str!("examples/ruff-A005.json");
 
 fn configured(source: &str, config: Value) -> crate::policy_dsl::CompiledPolicyDsl {
     let mut document: Value = serde_json::from_str(source).expect("example");
-    let define = document["checks"]
+    let define = document["clauses"]
         .as_array_mut()
         .expect("checks")
         .iter_mut()
@@ -30,7 +30,7 @@ fn messages(
 ) -> Vec<String> {
     let result = evaluate_file(compiled, language, path, source);
     assert_eq!(result["failures"], json!([]), "{result}");
-    result["findings"]
+    result["violations"]
         .as_array()
         .expect("findings")
         .iter()

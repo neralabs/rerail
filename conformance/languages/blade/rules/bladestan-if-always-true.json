@@ -1,0 +1,93 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bladestan-if-always-true",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Bladestan 0.11.7 (PHPStan 2.2.16 over the compiled template) if.alwaysTrue (IfConstantConditionRule): an if condition PHP's constant evaluation (variables followed through their one reaching binding) finds always truthy; not the comparisons, negations, ternaries, isset and empty PHPStan leaves to other rules, a condition in a trait, or an if an inline @var doc comment precedes (PHPStan reads the variable as the PHPDoc type).",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "rule": {
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "if_statement",
+                    "field": "condition",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "kind": "comment",
+                        "parse": {
+                          "grammar": "phpDoc",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "var_tag_value"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "value": {
+                  "truthy": true,
+                  "follow": true
+                },
+                "not": {
+                  "any": [
+                    {
+                      "kind": "binary_expression",
+                      "has": {
+                        "field": "operator",
+                        "regex": "^(==|!=|<>|===|!==|\\&\\&|\\|\\||<|>|<=|>=|instanceof)$"
+                      }
+                    },
+                    {
+                      "kind": "unary_op_expression",
+                      "regex": "^!"
+                    },
+                    {
+                      "kind": "conditional_expression"
+                    },
+                    {
+                      "kind": "function_call_expression",
+                      "has": {
+                        "field": "function",
+                        "regex": "^(?i:isset|empty)$"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "trait_declaration"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "if.alwaysTrue",
+        "message": "If condition is always true."
+      }
+    }
+  ]
+}

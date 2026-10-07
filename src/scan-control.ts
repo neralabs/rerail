@@ -13,7 +13,7 @@ import {
 } from "./scan-control-schema.js";
 export interface PolicyOwnerClaim { readonly token: string; }
 
-export const DEFAULT_POLICY_SETTINGS: Readonly<PolicySettings> = { scope: "touched-files", mode: "resteer" };
+export const DEFAULT_POLICY_SETTINGS: Readonly<PolicySettings> = { scope: "touched-files", mode: "steer" };
 const GIT_OUTPUT_LIMIT = 10 * 1024 * 1024;
 const GIT_EXECUTABLE = (
   process.platform === "win32"
@@ -53,7 +53,7 @@ function controls(
     settingsPath: databasePath,
     delivery: owner?.delivery ?? "next-event",
     active: row.endedAt === null && (owner?.active ?? false),
-    repositoryDiagnostic: diagnostic ?? null,
+    repositoryAudit: diagnostic ?? null,
   };
 }
 function requireSession(database: RerailDatabase, sessionId: string): { cwd: string; endedAt: number | null } {
@@ -63,7 +63,7 @@ function requireSession(database: RerailDatabase, sessionId: string): { cwd: str
 }
 function parseSettings(value: unknown): PolicySettings { return policySettingsSchema.parse(value); }
 function request(row: typeof policyScanRequests.$inferSelect): ScanRequest {
-  return scanRequestSchema.parse({ ...row, paths: row.paths, runIds: row.runIds });
+  return scanRequestSchema.parse({ ...row, paths: row.paths, auditIds: row.auditIds });
 }
 function processIsLive(processId: number): boolean {
   if (processId === process.pid) return true;
@@ -106,7 +106,7 @@ export class SqliteScanControlStore {
     const workspaceRoot = canonicalWorkspace(session.cwd);
     const diagnostic = this.#database.select({
       sessionId: policyRepositoryDiagnostics.sessionId,
-      runId: policyRepositoryDiagnostics.runId,
+      auditId: policyRepositoryDiagnostics.auditId,
       status: policyRepositoryDiagnostics.status,
       startedAt: policyRepositoryDiagnostics.startedAt,
       finishedAt: policyRepositoryDiagnostics.finishedAt,
@@ -144,7 +144,7 @@ export class SqliteScanControlStore {
       const diagnostic = {
         workspaceRoot,
         sessionId,
-        runId: null,
+        auditId: null,
         status: "running" as const,
         startedAt: Date.now(),
         finishedAt: null,
@@ -175,7 +175,7 @@ export class SqliteScanControlStore {
   ): void {
     const session = requireSession(this.#database, sessionId);
     this.#database.update(policyRepositoryDiagnostics).set({
-      runId, status, error, finishedAt: Date.now(),
+      auditId: runId, status, error, finishedAt: Date.now(),
     }).where(and(
       eq(policyRepositoryDiagnostics.workspaceRoot, canonicalWorkspace(session.cwd)),
       eq(policyRepositoryDiagnostics.sessionId, sessionId),
@@ -242,7 +242,7 @@ export class SqliteScanControlStore {
       createdAt: now,
       startedAt: null,
       finishedAt: error === null ? null : now,
-      runIds: [],
+      auditIds: [],
       error,
     }).run();
     return this.listScans(sessionId).find(scan => scan.id === id)!;
@@ -265,20 +265,20 @@ export class SqliteScanControlStore {
   }
   finish(id: string, status: "completed" | "failed" | "interrupted", runIds: readonly string[], error: string | null = null): void {
     const finishedAt = Date.now();
-    const finished = this.#database.update(policyScanRequests).set({ status, runIds: [...runIds], error, finishedAt })
+    const finished = this.#database.update(policyScanRequests).set({ status, auditIds: [...runIds], error, finishedAt })
       .where(and(eq(policyScanRequests.id, id), eq(policyScanRequests.status, "running"))).returning({ id: policyScanRequests.id }).get();
     if (finished === undefined && status === "interrupted" && runIds.length > 0) {
-      // Closing the session can record interruption before native work returns its run IDs.
-      this.#database.update(policyScanRequests).set({ runIds: [...runIds] })
+      // Closing the session can record interruption before native work returns its audit IDs.
+      this.#database.update(policyScanRequests).set({ auditIds: [...runIds] })
         .where(and(eq(policyScanRequests.id, id), eq(policyScanRequests.status, "interrupted"))).run();
     }
     const scan = this.#database.select().from(policyScanRequests).where(eq(policyScanRequests.id, id)).get();
-    const runId = scan?.runIds.at(-1);
+    const runId = scan?.auditIds.at(-1);
     if (scan === undefined || runId === undefined || scan.startedAt === null || scan.finishedAt === null) return;
     this.#database.insert(policyRepositoryDiagnostics).values({
       workspaceRoot: scan.workspaceRoot,
       sessionId: scan.sessionId,
-      runId,
+      auditId: runId,
       status: scan.status === "queued" || scan.status === "running" ? "interrupted" : scan.status,
       startedAt: scan.startedAt,
       finishedAt: scan.finishedAt,
@@ -287,7 +287,7 @@ export class SqliteScanControlStore {
       target: policyRepositoryDiagnostics.workspaceRoot,
       set: {
         sessionId: scan.sessionId,
-        runId,
+        auditId: runId,
         status: scan.status === "queued" || scan.status === "running" ? "interrupted" : scan.status,
         startedAt: scan.startedAt,
         finishedAt: scan.finishedAt,

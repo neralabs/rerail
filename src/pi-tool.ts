@@ -36,7 +36,7 @@ function toolResult(details: Record<string, unknown>) {
 
 export function registerPiCosineRulesTool(pi: ExtensionAPI, runtime: PiCosineRulesToolRuntime): void {
   pi.registerTool({
-    name: "cosine_rules",
+    name: "conversation_rules",
     label: "Cosine Rules",
     description: "Add, remove, inspect, or test session-scoped cosine-similarity trigger rules.",
     parameters,

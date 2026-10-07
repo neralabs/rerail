@@ -1,0 +1,180 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-handle-callback-err",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-n 18.4.1 n/handle-callback-err (default \"err\"): a function whose first parameter variable is named `err` and has no reference (reads or writes); a method is reported at its parameter list, where its ESTree FunctionExpression starts.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "function",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "utils": {
+            "first-err": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^err$",
+                  "binds": {
+                    "form": "parameter",
+                    "referenced": false
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "required_parameter"
+                    },
+                    {
+                      "kind": "optional_parameter"
+                    }
+                  ],
+                  "has": {
+                    "field": "pattern",
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^err$",
+                        "binds": {
+                          "form": "parameter",
+                          "referenced": false
+                        }
+                      },
+                      {
+                        "kind": "rest_pattern",
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^err$",
+                          "binds": {
+                            "form": "parameter",
+                            "referenced": false
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "assignment_pattern",
+                  "has": {
+                    "field": "left",
+                    "kind": "identifier",
+                    "regex": "^err$",
+                    "binds": {
+                      "form": "parameter",
+                      "referenced": false
+                    }
+                  }
+                },
+                {
+                  "kind": "rest_pattern",
+                  "has": {
+                    "kind": "identifier",
+                    "regex": "^err$",
+                    "binds": {
+                      "form": "parameter",
+                      "referenced": false
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  }
+                ],
+                "has": {
+                  "field": "parameters",
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "matches": "first-err"
+                  }
+                }
+              },
+              {
+                "kind": "arrow_function",
+                "has": {
+                  "field": "parameter",
+                  "kind": "identifier",
+                  "regex": "^err$",
+                  "binds": {
+                    "form": "parameter",
+                    "referenced": false
+                  }
+                }
+              },
+              {
+                "kind": "formal_parameters",
+                "inside": {
+                  "kind": "method_definition",
+                  "field": "parameters"
+                },
+                "has": {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "matches": "first-err"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/handle-callback-err",
+        "message": "Expected error to be handled.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/handle-callback-err"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

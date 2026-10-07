@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-void-expression",
   "revision": 1,
+  "mode": "steer",
   "description": "no-void-expression with ignore-arrow-function-shorthand (syntactic approximation, console.* only).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "void-expression",
       "forbid": {
@@ -105,10 +106,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_VOID_EXPRESSION",
-        "severity": "error",
         "message": "Expression has type `void`. Put it on its own line as a statement."
       }
     }

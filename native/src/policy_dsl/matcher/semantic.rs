@@ -33,16 +33,6 @@ pub(in crate::policy_dsl) enum Semantic {
 }
 
 impl Semantic {
-    pub(crate) fn exports(&self) -> Option<(&[String], bool)> {
-        match self {
-            Self::Parse(test) => Some((test.exports.as_slice(), true)),
-            Self::FormatArgs(test) => Some((test.exports.as_slice(), false)),
-            _ => None,
-        }
-    }
-}
-
-impl Semantic {
     pub(super) fn binds_nothing(&self) -> bool {
         match self {
             Self::Resolves(_) | Self::Value(_) | Self::Layout(_) | Self::Host(_) => true,
@@ -85,14 +75,13 @@ impl Semantic {
         }
     }
 
-    #[cfg(test)]
     pub(super) fn match_node<'tree, D: ast_grep_core::Doc>(
         &self,
         node: ast_grep_core::Node<'tree, D>,
         env: &mut std::borrow::Cow<ast_grep_core::meta_var::MetaVarEnv<'tree, D>>,
     ) -> Option<ast_grep_core::Node<'tree, D>> {
         match self {
-            Self::Calls(test) => match super::facts::calls(test, &node, env.to_mut()) {
+            Self::Calls(test) => match super::call::calls(test, &node, env.to_mut()) {
                 Some(true) => Some(node),
                 Some(false) => None,
                 None => {

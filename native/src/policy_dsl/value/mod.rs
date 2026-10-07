@@ -11,6 +11,9 @@ pub(crate) mod python;
 pub(crate) mod structure;
 pub(crate) mod text_regex;
 
+use crate::policy_dsl::language::GrammarDialect;
+use crate::policy_dsl::tape::TapeDoc;
+use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_core::{Doc, Node};
 pub(crate) use num_bigint::BigInt;
 use num_traits::{FromPrimitive, Signed, ToPrimitive, Zero};
@@ -55,38 +58,90 @@ impl NodeRef {
     /// The node this names in `root`'s tree: the outermost node of that range and kind, first in
     /// preorder. Siblings may overlap (a Blade tape's template tree and its embedded `program`,
     /// a marker and the loop it opens), so a descent that finds no such node tries the next
-    /// sibling that also covers the range.
+    /// sibling that also covers the range. Siblings are read only up to the one the descent
+    /// takes, and past it only when it fails: a lookup in a class of a thousand methods reads
+    /// the methods before the one holding the node, not all of them.
     pub(crate) fn find<'r, D: Doc>(&self, root: Node<'r, D>) -> Option<Node<'r, D>> {
         let (start, end) = (self.start as usize, self.end as usize);
         let covers = |child: &Node<'r, D>| {
             let range = child.range();
             range.start <= start && end <= range.end && range.start < range.end
         };
-        // Siblings left to try, the next one last; empty (unallocated) in a tree without overlaps.
-        let mut pending = Vec::new();
+        // The first child of `node` from position `from` on that covers the range, and where.
+        let covering = |node: &Node<'r, D>, from: usize| {
+            node.children()
+                .enumerate()
+                .skip(from)
+                .find(|(_, child)| covers(child))
+        };
+        // The nodes the descent passed through, and the position of the next child to try there.
+        let mut pending: Vec<(Node<'r, D>, usize)> = Vec::new();
         let mut node = root;
         loop {
             let range = node.range();
             if range.start == start && range.end == end && node.kind_id() == self.kind {
                 return Some(node);
             }
-            let next = {
-                let mut covering = node.children().filter(covers);
-                match covering.next() {
-                    Some(first) => {
-                        let at = pending.len();
-                        pending.extend(covering);
-                        pending[at..].reverse();
-                        Some(first)
+            let mut next = covering(&node, 0);
+            let mut parent = node;
+            node = loop {
+                match next {
+                    Some((at, child)) => {
+                        pending.push((parent, at + 1));
+                        break child;
                     }
-                    None => None,
+                    None => {
+                        let (up, from) = pending.pop()?;
+                        next = covering(&up, from);
+                        parent = up;
+                    }
                 }
             };
-            node = match next {
-                Some(next) => next,
-                None => pending.pop()?,
+        }
+    }
+
+    /// `find` in `root`'s tree, searched from `near`, a node of the same tree. In a tree whose
+    /// siblings never overlap (every grammar's but Blade's template), the nodes covering a nonempty
+    /// range form one path from the root, so the descent starts at the topmost node of `near`'s
+    /// nearest covering ancestor's range instead of reading every sibling before that path from
+    /// the root down: a read in a class of a thousand methods reads its own method's statements.
+    pub(crate) fn find_near<'r, D: Doc>(
+        &self,
+        root: Node<'r, D>,
+        near: &Node<'r, D>,
+    ) -> Option<Node<'r, D>> {
+        let (start, end) = (self.start as usize, self.end as usize);
+        // A file's tree, native or taped; a parsed literal's tree has no dialect to vouch for it.
+        let disjoint = || {
+            let doc: &dyn std::any::Any = root.get_doc();
+            let dialect = match doc.downcast_ref::<StrDoc<GrammarDialect>>() {
+                Some(doc) => Some(*doc.get_lang()),
+                None => doc.downcast_ref::<TapeDoc>().map(|doc| *doc.get_lang()),
+            };
+            dialect.is_some_and(|dialect| dialect != GrammarDialect::Blade)
+        };
+        if start >= end || root.parent().is_some() || !disjoint() {
+            return self.find(root);
+        }
+        let covers = |node: &Node<'r, D>| {
+            let range = node.range();
+            range.start <= start && end <= range.end
+        };
+        let mut from = near.clone();
+        while !covers(&from) {
+            from = match from.parent() {
+                Some(parent) => parent,
+                None => return self.find(root),
             };
         }
+        // An ancestor of the same range comes first in preorder.
+        while let Some(parent) = from
+            .parent()
+            .filter(|parent| parent.range() == from.range())
+        {
+            from = parent;
+        }
+        self.find(from)
     }
 }
 

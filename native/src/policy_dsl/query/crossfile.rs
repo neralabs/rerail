@@ -1,14 +1,22 @@
-//! Cross-file checks as statements over relation rows.
+//! Cross-file checks over relation rows.
 //!
 //! A cross-file check reads relations: rows an AST query projects from every file of its domain
 //! (`require_each` subjects and evidence, `budget` usages). Each file contributes its rows, or is
 //! incomplete (its query failed or could not finish), which no absence or upper bound may ignore.
-//! The check itself is one statement over the rows: an anti-join for `require_each`, a grouped
-//! count for `budget`.
+//! `require_each` is an anti-join: evidence rows are bucketed by the hash of the fields the join
+//! predicate's top-level `eq`s compare with subject fields or literals, and each subject tests the
+//! predicate against its bucket alone (every evidence row when no `eq` seeks), stopping at the
+//! first match. `budget` counts the passing rows per group key, groups in first-row order.
+//!
+//! A `where` predicate (`all`, `any`, `not`, `eq`, `ne`) compares operands by their JSON text: a
+//! field reads its row's value (missing equals only missing), anything else is a JSON literal; so
+//! `"1"` and `1` differ, `1` and `1.0` differ, and objects compare key by key in order.
 
-use rusqlite::{Connection, params};
-use serde_json::{Map, Value};
-use std::collections::BTreeSet;
+use indexmap::IndexMap;
+use serde_json::{Map, Number, Value};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::fmt::Write as _;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 /// One relation's rows and the files whose rows are unknown.
 #[derive(Default)]
@@ -40,243 +48,352 @@ pub(in crate::policy_dsl) struct Group {
     pub(in crate::policy_dsl) partial: bool,
 }
 
-/// Rows loaded between polls of `interrupted`.
+/// A cross-file check `interrupted` stopped before it answered.
+#[derive(Debug, Eq, PartialEq)]
+pub(in crate::policy_dsl) struct Interrupted;
+
+/// Rows visited between polls of `interrupted`.
 const ROWS_PER_POLL: usize = 1024;
 
-/// The statement's error once `interrupted` says so, as SQLite's own interruption reads.
-fn interruption() -> rusqlite::Error {
-    rusqlite::Error::SqliteFailure(
-        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_INTERRUPT),
-        None,
-    )
+/// Counts visited rows: polls `interrupted` at the first and then every `ROWS_PER_POLL`.
+struct Poll {
+    interrupted: fn() -> bool,
+    visited: usize,
 }
 
-/// The relations' rows in one table, keyed by `(alias, row)`: a probe of one relation seeks its
-/// rows alone, in order. On top, an `(alias, field)` expression index for each of `indexed`: the
-/// fields a correlated probe seeks by value. The connection's statements fail once `interrupted`
-/// says so: it is polled while rows load and every few thousand SQLite steps.
-fn open(
-    relations: &[(&str, &Relation)],
-    indexed: &BTreeSet<&str>,
-    interrupted: fn() -> bool,
-) -> rusqlite::Result<Connection> {
-    let connection = Connection::open_in_memory()?;
-    connection.progress_handler(4096, Some(interrupted))?;
-    connection.execute_batch(
-        "CREATE TABLE relation(alias TEXT NOT NULL, row INTEGER NOT NULL, fields TEXT NOT NULL, \
-         PRIMARY KEY(alias, row)) WITHOUT ROWID",
-    )?;
-    {
-        let mut insert =
-            connection.prepare("INSERT INTO relation(alias, row, fields) VALUES (?1, ?2, ?3)")?;
-        for (alias, relation) in relations {
-            for (index, row) in relation.rows.iter().enumerate() {
-                if index % ROWS_PER_POLL == 0 && interrupted() {
-                    return Err(interruption());
-                }
-                insert.execute(params![
-                    alias,
-                    index as i64,
-                    Value::Object(row.clone()).to_string()
-                ])?;
-            }
+impl Poll {
+    fn new(interrupted: fn() -> bool) -> Self {
+        Self {
+            interrupted,
+            visited: 0,
         }
     }
-    #[cfg(test)]
-    INDEXED_FIELDS.with(|recorded| {
-        *recorded.borrow_mut() = indexed.iter().map(|field| (*field).to_owned()).collect();
-    });
-    for (index, field) in indexed.iter().enumerate() {
-        connection.execute_batch(&format!(
-            "CREATE INDEX relation_field_{index} ON relation(alias, fields -> {})",
-            quote(&json_path_key(field))
-        ))?;
+
+    fn visit(&mut self) -> Result<(), Interrupted> {
+        let due = self.visited.is_multiple_of(ROWS_PER_POLL);
+        self.visited += 1;
+        if due && (self.interrupted)() {
+            Err(Interrupted)
+        } else {
+            Ok(())
+        }
     }
-    Ok(connection)
 }
 
 #[cfg(test)]
 thread_local! {
-    /// The fields the last `open` on this thread indexed, and the query plan of the last
-    /// `require_each` statement.
-    static INDEXED_FIELDS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
-    static REQUIRE_EACH_PLAN: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    /// Evidence rows the last `require_each` on this thread tested the join predicate against.
+    static PROBED_ROWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-#[cfg(test)]
-fn record_plan(connection: &Connection, sql: &str) -> rusqlite::Result<()> {
-    let plan = connection
-        .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?
-        .query_map([], |row| row.get::<_, String>(3))?
-        .collect::<rusqlite::Result<Vec<_>>>()?
-        .join("\n");
-    REQUIRE_EACH_PLAN.with(|recorded| *recorded.borrow_mut() = plan);
-    Ok(())
+/// The bound row `require_each`'s evidence fields read; its subject fields read row 0.
+const EVIDENCE: usize = 1;
+
+/// A predicate operand: `alias.field` of a bound alias reads that row's field (the field is
+/// everything after the first dot); anything else is a literal.
+enum Operand<'v> {
+    /// The field of the row bound at this position of the aliases.
+    Field(usize, &'v str),
+    Literal(Value),
 }
 
-fn quote(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "''"))
-}
-
-fn json_path_key(field: &str) -> String {
-    format!("$.\"{}\"", field.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-/// The relation field an operand reads: `(table, field)` for `alias.field` of a bound alias.
-fn bound_field<'v, 't>(
-    value: &'v Value,
-    aliases: &[(&str, &'t str)],
-) -> Option<(&'t str, &'v str)> {
-    let (alias, field) = value.as_str()?.split_once('.')?;
-    let (_, table) = aliases.iter().find(|(name, _)| *name == alias)?;
-    Some((table, field))
-}
-
-/// An operand as the JSON text of its value: `alias.field` of a bound relation reads the row's
-/// field (`->` keeps the JSON type, so `"1"` and `1` differ, as `Value` equality does); anything
-/// else is a literal.
-fn operand(value: &Value, aliases: &[(&str, &str)]) -> String {
-    if let Some((table, field)) = bound_field(value, aliases) {
-        return format!("({table}.fields -> {})", quote(&json_path_key(field)));
+impl<'v> Operand<'v> {
+    fn compile(value: &'v Value, aliases: &[&str]) -> Self {
+        value
+            .as_str()
+            .and_then(|text| Self::field(text, aliases))
+            .unwrap_or_else(|| Self::Literal(value.clone()))
     }
-    quote(&value.to_string())
-}
 
-/// The fields of `table` an `eq` of `predicate` compares with a value from elsewhere: what a
-/// probe of `table` can seek by value. `ne` and anything under `not` seek no value; the probe
-/// still seeks its relation's rows by the table's key. Mirrors `condition`'s reading of the
-/// predicate.
-fn probed_fields<'v>(
-    predicate: Option<&'v Value>,
-    aliases: &[(&str, &str)],
-    table: &str,
-    fields: &mut BTreeSet<&'v str>,
-) {
-    let Some(object) = predicate.and_then(Value::as_object) else {
-        return;
-    };
-    if let Some(items) = object.get("all").or_else(|| object.get("any")) {
-        for item in items.as_array().into_iter().flatten() {
-            probed_fields(Some(item), aliases, table, fields);
+    /// `group_by`/`distinct` names: each a bound field, or else the name as a JSON string.
+    fn named(names: &'v [String], aliases: &[&str]) -> Vec<Self> {
+        names
+            .iter()
+            .map(|name| {
+                Self::field(name, aliases)
+                    .unwrap_or_else(|| Self::Literal(Value::String(name.clone())))
+            })
+            .collect()
+    }
+
+    fn field(text: &'v str, aliases: &[&str]) -> Option<Self> {
+        let (alias, field) = text.split_once('.')?;
+        let bound = aliases.iter().position(|name| *name == alias)?;
+        Some(Self::Field(bound, field))
+    }
+
+    /// The operand's value over `rows` (indexed as the aliases were); `None` for a missing field.
+    fn read<'r>(&'r self, rows: &[&'r Map<String, Value>]) -> Option<&'r Value> {
+        match self {
+            Self::Field(bound, field) => rows[*bound].get(*field),
+            Self::Literal(value) => Some(value),
         }
-        return;
     }
-    if object.contains_key("not") {
-        return;
-    }
-    if let Some([left, right]) = object
-        .get("eq")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-    {
-        let (left, right) = (bound_field(left, aliases), bound_field(right, aliases));
-        for (probed, other) in [(left, right), (right, left)] {
-            if let Some((probed_table, field)) = probed
-                && probed_table == table
-                && other.is_none_or(|(other_table, _)| other_table != table)
+}
+
+enum Predicate<'v> {
+    Constant(bool),
+    All(Vec<Self>),
+    Any(Vec<Self>),
+    Not(Box<Self>),
+    /// `eq` (`true`) or `ne` (`false`) of two operands' JSON text.
+    Equal(Operand<'v>, Operand<'v>, bool),
+}
+
+impl<'v> Predicate<'v> {
+    /// A `where` predicate with `aliases` bound to rows by position. No predicate holds; anything
+    /// unreadable (not an object, an unknown operator, `eq`/`ne` without two operands) does not.
+    /// An object's first of `all`, `any`, `not`, `eq`, `ne` decides; `all`/`any` of no items (or
+    /// of a non-array) hold and do not.
+    fn compile(predicate: Option<&'v Value>, aliases: &[&str]) -> Self {
+        let Some(predicate) = predicate else {
+            return Self::Constant(true);
+        };
+        let Some(object) = predicate.as_object() else {
+            return Self::Constant(false);
+        };
+        let items = |items: &'v Value| {
+            items
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|item| Self::compile(Some(item), aliases))
+                .collect()
+        };
+        if let Some(all) = object.get("all") {
+            return Self::All(items(all));
+        }
+        if let Some(any) = object.get("any") {
+            return Self::Any(items(any));
+        }
+        if let Some(inner) = object.get("not") {
+            return Self::Not(Box::new(Self::compile(Some(inner), aliases)));
+        }
+        for (key, equal) in [("eq", true), ("ne", false)] {
+            if let Some([left, right]) =
+                object.get(key).and_then(Value::as_array).map(Vec::as_slice)
             {
-                fields.insert(field);
+                return Self::Equal(
+                    Operand::compile(left, aliases),
+                    Operand::compile(right, aliases),
+                    equal,
+                );
+            }
+        }
+        Self::Constant(false)
+    }
+
+    fn holds(&self, rows: &[&Map<String, Value>]) -> bool {
+        match self {
+            Self::Constant(holds) => *holds,
+            Self::All(items) => items.iter().all(|item| item.holds(rows)),
+            Self::Any(items) => items.iter().any(|item| item.holds(rows)),
+            Self::Not(inner) => !inner.holds(rows),
+            Self::Equal(left, right, equal) => {
+                let same = match (left.read(rows), right.read(rows)) {
+                    (Some(left), Some(right)) => same_text(left, right),
+                    (left, right) => left.is_none() && right.is_none(),
+                };
+                same == *equal
             }
         }
     }
 }
 
-/// A `where` predicate (`all`, `any`, `not`, `eq`, `ne`) as a SQL condition. `aliases` maps
-/// each bound alias to its table alias in the statement.
-pub(in crate::policy_dsl) fn condition(
-    predicate: Option<&Value>,
-    aliases: &[(&str, &str)],
-) -> String {
-    let Some(predicate) = predicate else {
-        return "1".to_owned();
-    };
-    let Some(object) = predicate.as_object() else {
-        return "0".to_owned();
-    };
-    let join = |items: &Value, separator: &str, empty: &str| {
-        let parts = items
-            .as_array()
-            .map(|items| {
-                items
+/// Whether two values serialize to the same compact JSON text.
+fn same_text(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) => same_number(left, right),
+        (Value::Array(left), Value::Array(right)) => {
+            left.len() == right.len() && left.iter().zip(right).all(|(l, r)| same_text(l, r))
+        }
+        (Value::Object(left), Value::Object(right)) => {
+            left.len() == right.len()
+                && left
                     .iter()
-                    .map(|item| format!("({})", condition(Some(item), aliases)))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        if parts.is_empty() {
-            empty.to_owned()
-        } else {
-            parts.join(separator)
+                    .zip(right)
+                    .all(|((lk, lv), (rk, rv))| lk == rk && same_text(lv, rv))
         }
-    };
-    if let Some(items) = object.get("all") {
-        return join(items, " AND ", "1");
+        _ => left == right,
     }
-    if let Some(items) = object.get("any") {
-        return join(items, " OR ", "0");
+}
+
+/// Integers print their value; floats print their shortest round-trip form, which always has a
+/// `.` or exponent and differs per bit pattern (`-0.0` is not `0.0`).
+fn same_number(left: &Number, right: &Number) -> bool {
+    if left.is_f64() || right.is_f64() {
+        left.is_f64()
+            && right.is_f64()
+            && left.as_f64().map(f64::to_bits) == right.as_f64().map(f64::to_bits)
+    } else {
+        left.as_i64() == right.as_i64() && left.as_u64() == right.as_u64()
     }
-    if let Some(inner) = object.get("not") {
-        return format!("NOT ({})", condition(Some(inner), aliases));
-    }
-    for (key, operator) in [("eq", "IS"), ("ne", "IS NOT")] {
-        if let Some(operands) = object.get(key).and_then(Value::as_array)
-            && operands.len() == 2
-        {
-            return format!(
-                "{} {operator} {}",
-                operand(&operands[0], aliases),
-                operand(&operands[1], aliases)
-            );
+}
+
+/// Hashes a value consistently with `same_text`.
+fn hash_text(value: &Value, hasher: &mut impl Hasher) {
+    match value {
+        Value::Null => hasher.write_u8(0),
+        Value::Bool(value) => {
+            hasher.write_u8(1);
+            value.hash(hasher);
+        }
+        Value::Number(number) => {
+            hasher.write_u8(2);
+            if number.is_f64() {
+                number.as_f64().map(f64::to_bits).hash(hasher);
+            } else {
+                (number.as_i64(), number.as_u64()).hash(hasher);
+            }
+        }
+        Value::String(text) => {
+            hasher.write_u8(3);
+            text.hash(hasher);
+        }
+        Value::Array(items) => {
+            hasher.write_u8(4);
+            hasher.write_usize(items.len());
+            items.iter().for_each(|item| hash_text(item, hasher));
+        }
+        Value::Object(fields) => {
+            hasher.write_u8(5);
+            hasher.write_usize(fields.len());
+            for (key, value) in fields {
+                key.hash(hasher);
+                hash_text(value, hasher);
+            }
         }
     }
-    "0".to_owned()
+}
+
+/// The hash of a probe key: the values its parts read, missing ones included.
+fn key_hash<'r>(parts: impl Iterator<Item = Option<&'r Value>>) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    for part in parts {
+        match part {
+            None => hasher.write_u8(0),
+            Some(value) => {
+                hasher.write_u8(1);
+                hash_text(value, &mut hasher);
+            }
+        }
+    }
+    hasher.finish()
+}
+
+/// The `eq`s every evidence row satisfying `predicate` meets, as (evidence field, operand reading
+/// no evidence). Only conjunctions are followed: past `any`, `not` or `ne` none is necessary.
+fn seeks<'p, 'v>(predicate: &'p Predicate<'v>, found: &mut Vec<(&'v str, &'p Operand<'v>)>) {
+    match predicate {
+        Predicate::All(items) => items.iter().for_each(|item| seeks(item, found)),
+        Predicate::Equal(left, right, true) => {
+            for (sought, other) in [(left, right), (right, left)] {
+                if let Operand::Field(EVIDENCE, field) = sought
+                    && !matches!(other, Operand::Field(EVIDENCE, _))
+                {
+                    found.push((field, other));
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// `require_each`: the subject rows (passing `subject_predicate`) no evidence row satisfies
-/// `predicate` for. Where evidence is incomplete, such a subject is unknown, never missing. Fails
-/// once `interrupted` says so.
+/// `predicate` for, in row order. Where evidence is incomplete, such a subject is unknown, never
+/// missing. Fails once `interrupted` says so.
 pub(in crate::policy_dsl) fn require_each(
     (subject_alias, subject): (&str, &Relation),
     subject_predicate: Option<&Value>,
     (evidence_alias, evidence): (&str, &Relation),
     predicate: Option<&Value>,
     interrupted: fn() -> bool,
-) -> rusqlite::Result<Vec<Requirement>> {
-    let aliases = [(subject_alias, "s"), (evidence_alias, "e")];
-    let mut probed = BTreeSet::new();
-    probed_fields(predicate, &aliases, "e", &mut probed);
-    let connection = open(
-        &[("subject", subject), ("evidence", evidence)],
-        &probed,
-        interrupted,
-    )?;
-    let sql = format!(
-        "SELECT s.row FROM relation s WHERE s.alias = 'subject' AND ({}) \
-         AND NOT EXISTS (SELECT 1 FROM relation e WHERE e.alias = 'evidence' AND ({})) \
-         ORDER BY s.row",
-        condition(subject_predicate, &aliases[..1]),
-        condition(predicate, &aliases),
-    );
+) -> Result<Vec<Requirement>, Interrupted> {
+    let subject_predicate = Predicate::compile(subject_predicate, &[subject_alias]);
+    let predicate = Predicate::compile(predicate, &[subject_alias, evidence_alias]);
+    let mut sought = Vec::new();
+    seeks(&predicate, &mut sought);
+    let mut poll = Poll::new(interrupted);
+    let mut buckets = HashMap::<u64, Vec<usize>>::new();
+    if !sought.is_empty() {
+        for (index, row) in evidence.rows.iter().enumerate() {
+            poll.visit()?;
+            let hash = key_hash(sought.iter().map(|(field, _)| row.get(*field)));
+            buckets.entry(hash).or_default().push(index);
+        }
+    }
     #[cfg(test)]
-    record_plan(&connection, &sql)?;
-    let mut statement = connection.prepare(&sql)?;
+    PROBED_ROWS.with(|probed| probed.set(0));
     let unknown = !evidence.incomplete.is_empty();
-    statement
-        .query_map([], |row| {
-            let index = row.get::<_, i64>(0)? as usize;
-            Ok(if unknown {
+    let mut requirements = Vec::new();
+    for (index, row) in subject.rows.iter().enumerate() {
+        poll.visit()?;
+        if !subject_predicate.holds(&[row]) {
+            continue;
+        }
+        let mut satisfies = |candidate: usize| -> Result<bool, Interrupted> {
+            poll.visit()?;
+            #[cfg(test)]
+            PROBED_ROWS.with(|probed| probed.set(probed.get() + 1));
+            Ok(predicate.holds(&[row, &evidence.rows[candidate]]))
+        };
+        let satisfied = if sought.is_empty() {
+            any_candidate(0..evidence.rows.len(), &mut satisfies)?
+        } else {
+            let hash = key_hash(sought.iter().map(|(_, operand)| operand.read(&[row])));
+            let bucket = buckets.get(&hash).map_or(&[][..], Vec::as_slice);
+            any_candidate(bucket.iter().copied(), &mut satisfies)?
+        };
+        if !satisfied {
+            requirements.push(if unknown {
                 Requirement::Unknown(index)
             } else {
                 Requirement::Missing(index)
-            })
-        })?
-        .collect()
+            });
+        }
+    }
+    Ok(requirements)
+}
+
+/// Whether some candidate satisfies the predicate; stops at the first that does.
+fn any_candidate(
+    candidates: impl Iterator<Item = usize>,
+    satisfies: &mut impl FnMut(usize) -> Result<bool, Interrupted>,
+) -> Result<bool, Interrupted> {
+    for candidate in candidates {
+        if satisfies(candidate)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// One group's count so far.
+struct Tally {
+    first: usize,
+    rows: usize,
+    distinct: HashSet<String>,
+}
+
+/// Appends the JSON text of `operands` over `row` joined by U+001F; a missing field reads `null`.
+fn append_key(key: &mut String, operands: &[Operand<'_>], row: &Map<String, Value>) {
+    for (index, operand) in operands.iter().enumerate() {
+        if index > 0 {
+            key.push('\u{1f}');
+        }
+        match operand.read(&[row]) {
+            Some(value) => {
+                let _ = write!(key, "{value}");
+            }
+            None => key.push_str("null"),
+        }
+    }
 }
 
 /// `budget`: groups of the rows passing `predicate`, by `group_by` operands, whose count (of rows,
 /// or of distinct `distinct` values) is over `maximum`; with incomplete files, every group, marked
 /// partial, since any count may be a lower bound. Rows keep their order; a group's anchor is its
-/// first row. Fails once `interrupted` says so.
+/// first row, and groups come in anchor order. Fails once `interrupted` says so.
 pub(in crate::policy_dsl) fn budget(
     (alias, relation): (&str, &Relation),
     predicate: Option<&Value>,
@@ -284,53 +401,63 @@ pub(in crate::policy_dsl) fn budget(
     distinct: &[String],
     maximum: usize,
     interrupted: fn() -> bool,
-) -> rusqlite::Result<Vec<Group>> {
-    let connection = open(&[("rows", relation)], &BTreeSet::new(), interrupted)?;
-    let aliases = [(alias, "r")];
-    let key = |fields: &[String]| {
-        fields
-            .iter()
-            .map(|field| {
-                format!(
-                    "coalesce({}, 'null')",
-                    operand(&Value::String(field.clone()), &aliases)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(" || char(31) || ")
-    };
-    let group = if group_by.is_empty() {
-        "'all'".to_owned()
-    } else {
-        key(group_by)
-    };
-    let count = if distinct.is_empty() {
-        "count(*)".to_owned()
-    } else {
-        format!("count(DISTINCT {})", key(distinct))
-    };
-    let partial = !relation.incomplete.is_empty();
-    let sql = format!(
-        "SELECT min(r.row), {group}, {count} FROM relation r WHERE r.alias = 'rows' AND ({}) \
-         GROUP BY 2 {} ORDER BY 1",
-        condition(predicate, &aliases),
-        if partial {
-            String::new()
-        } else {
-            format!("HAVING {count} > {maximum}")
-        },
+) -> Result<Vec<Group>, Interrupted> {
+    let aliases = [alias];
+    let predicate = Predicate::compile(predicate, &aliases);
+    let (group_by, distinct) = (
+        Operand::named(group_by, &aliases),
+        Operand::named(distinct, &aliases),
     );
-    let mut statement = connection.prepare(&sql)?;
-    let mut groups = statement
-        .query_map([], |row| {
-            Ok(Group {
-                first: row.get::<_, i64>(0)? as usize,
-                key: row.get(1)?,
-                count: row.get::<_, i64>(2)? as usize,
-                partial,
-            })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut poll = Poll::new(interrupted);
+    let mut tallies = IndexMap::<String, Tally>::new();
+    let (mut key, mut value) = (String::new(), String::new());
+    for (index, row) in relation.rows.iter().enumerate() {
+        poll.visit()?;
+        if !predicate.holds(&[row]) {
+            continue;
+        }
+        key.clear();
+        if group_by.is_empty() {
+            key.push_str("all");
+        } else {
+            append_key(&mut key, &group_by, row);
+        }
+        let slot = match tallies.get_index_of(key.as_str()) {
+            Some(slot) => slot,
+            None => {
+                let tally = Tally {
+                    first: index,
+                    rows: 0,
+                    distinct: HashSet::new(),
+                };
+                tallies.insert_full(key.clone(), tally).0
+            }
+        };
+        let tally = &mut tallies[slot];
+        tally.rows += 1;
+        if !distinct.is_empty() {
+            value.clear();
+            append_key(&mut value, &distinct, row);
+            if !tally.distinct.contains(value.as_str()) {
+                tally.distinct.insert(value.clone());
+            }
+        }
+    }
+    let partial = !relation.incomplete.is_empty();
+    let mut groups = tallies
+        .into_iter()
+        .map(|(key, tally)| Group {
+            first: tally.first,
+            key,
+            count: if distinct.is_empty() {
+                tally.rows
+            } else {
+                tally.distinct.len()
+            },
+            partial,
+        })
+        .filter(|group| partial || group.count > maximum)
+        .collect::<Vec<_>>();
     if partial && groups.is_empty() {
         // Nothing counted and some file unknown: the whole domain is one open group.
         groups.push(Group {
@@ -436,36 +563,30 @@ mod tests {
         }
     }
 
-    /// Once `interrupted` says so, a cross-file statement fails as SQLite's own interruption
-    /// does, instead of loading every row and answering late.
+    /// Once `interrupted` says so, a cross-file check fails instead of reading every row and
+    /// answering late.
     #[test]
-    fn an_interrupted_statement_fails_instead_of_answering() {
+    fn an_interrupted_check_fails_instead_of_answering() {
         fn stopped() -> bool {
             true
         }
         let subjects = relation(vec![json!({"name": "Button"})], &[]);
         let evidence = relation(vec![json!({"name": "Card"})], &[]);
         let join = json!({"eq": ["c.name", "s.name"]});
-        let interrupted = |result: rusqlite::Result<()>| {
-            matches!(
-                result,
-                Err(rusqlite::Error::SqliteFailure(error, _))
-                    if error.code == rusqlite::ErrorCode::OperationInterrupted
-            )
-        };
-        assert!(interrupted(
+        assert_eq!(
             require_each(
                 ("c", &subjects),
                 None,
                 ("s", &evidence),
                 Some(&join),
                 stopped
-            )
-            .map(|_| ())
-        ));
-        assert!(interrupted(
-            budget(("c", &subjects), None, &[], &[], 0, stopped).map(|_| ())
-        ));
+            ),
+            Err(Interrupted)
+        );
+        assert_eq!(
+            budget(("c", &subjects), None, &[], &[], 0, stopped),
+            Err(Interrupted)
+        );
     }
 
     #[test]
@@ -487,7 +608,7 @@ mod tests {
     }
 
     #[test]
-    fn require_each_uses_an_indexed_evidence_probe() {
+    fn require_each_probes_only_the_evidence_rows_with_the_joined_value() {
         let subjects = relation(
             (0..32)
                 .map(|index| json!({"name": format!("subject-{index}"), "note": index}))
@@ -497,6 +618,7 @@ mod tests {
         let evidence = relation(
             (0..2_000)
                 .map(|index| json!({"name": format!("evidence-{index}"), "extra": index}))
+                .chain([json!({"name": "subject-5"})])
                 .collect(),
             &[],
         );
@@ -511,24 +633,19 @@ mod tests {
             )
             .unwrap()
             .len(),
-            32
-        );
-        let plan = REQUIRE_EACH_PLAN.with(|plan| plan.borrow().clone());
-        assert!(
-            plan.contains("SEARCH e USING") && plan.contains("<expr>=?"),
-            "the evidence probe seeks the joined value: {plan}"
+            31
         );
         assert_eq!(
-            INDEXED_FIELDS.with(|indexed| indexed.borrow().clone()),
-            ["name"],
-            "only the evidence field the predicate joins on is indexed"
+            PROBED_ROWS.with(std::cell::Cell::get),
+            1,
+            "the evidence probe reads only rows holding the joined value"
         );
     }
 
-    /// A predicate with no `eq` to seek by still probes the evidence rows alone, never every
-    /// subject and evidence row.
+    /// A predicate with no `eq` to seek by tests the evidence rows in order, stopping at the
+    /// first that satisfies it.
     #[test]
-    fn require_each_without_an_eq_probes_only_evidence_rows() {
+    fn require_each_without_an_eq_probes_evidence_until_the_first_match() {
         let subjects = relation(
             ["a", "b", "c"]
                 .into_iter()
@@ -539,7 +656,7 @@ mod tests {
         let evidence = relation(vec![json!({"owner": "a"}), json!({"owner": "a"})], &[]);
         let differ = json!({"ne": ["subject.owner", "evidence.owner"]});
         let same = json!({"not": differ.clone()});
-        for (predicate, missing) in [(differ, vec![0]), (same, vec![1, 2])] {
+        for (predicate, missing, probed) in [(differ, vec![0], 4), (same, vec![1, 2], 5)] {
             assert_eq!(
                 require_each(
                     ("subject", &subjects),
@@ -555,35 +672,12 @@ mod tests {
                     .collect::<Vec<_>>(),
                 "{predicate}"
             );
-            let plan = REQUIRE_EACH_PLAN.with(|plan| plan.borrow().clone());
-            assert!(
-                plan.contains("SEARCH e USING") && !plan.contains("SCAN e"),
-                "{predicate}: the evidence probe seeks the evidence alias: {plan}"
+            assert_eq!(
+                PROBED_ROWS.with(std::cell::Cell::get),
+                probed,
+                "{predicate}"
             );
         }
-    }
-
-    #[test]
-    fn budget_builds_no_field_indexes() {
-        let usages = relation(
-            vec![
-                json!({"package": "a", "path": "x"}),
-                json!({"package": "a", "path": "y"}),
-            ],
-            &[],
-        );
-        let groups = ["u.package".to_owned()];
-        assert_eq!(
-            budget(("u", &usages), None, &groups, &[], 1, running)
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(
-            INDEXED_FIELDS.with(|indexed| indexed.borrow().clone()),
-            Vec::<String>::new(),
-            "a grouped count reads every row; no probe uses a field index"
-        );
     }
 
     #[test]

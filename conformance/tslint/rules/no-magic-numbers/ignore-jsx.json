@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-magic-numbers",
   "revision": 1,
+  "mode": "steer",
   "description": "Option ignore-jsx: numbers directly inside a JSX `{expression}` are allowed.",
   "scope": {"include": ["**/*"], "exclude": []},
-  "checks": [
+  "clauses": [
     {
       "id": "magic-number",
       "forbid": {
@@ -80,10 +81,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_MAGIC_NUMBERS",
-        "severity": "error",
         "message": "'magic numbers' are not allowed"
       }
     }

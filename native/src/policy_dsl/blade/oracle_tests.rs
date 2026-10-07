@@ -161,86 +161,161 @@ fn reports(records: &Json) -> Vec<Report> {
         .collect()
 }
 
-/// Every variable read in a fixture's view against PHPStan's `variable.undefined` on the compiled
-/// template, the view's data defined outside it (`extract()`): a read Rerail finds defined on every
-/// path (or guarded by `isset`, `empty` or `??`) is not reported; one no path defines is reported
-/// undefined. Where Rerail cannot tell (the view's data, a variable some paths define), it claims
-/// nothing. Every report is at a read Rerail records, and not every read it may be at is one Rerail
-/// finds defined.
-#[test]
-fn blade_definedness_agrees_with_phpstan() {
-    let expected = expected();
-    let mut failures = Vec::new();
-    let (mut claims, mut reads, mut undefined) = (0, 0, 0);
-    for (name, record) in expected["fixtures"].as_object().expect("fixtures") {
-        let source = fixture(name);
-        let reported = reports(&record["phpstan"]);
-        let doc = tape(&source);
-        let table = ScopeTable::build_with(
-            doc.root(),
-            GrammarDialect::Blade,
-            usize::MAX,
-            &|| false,
-            Reading::default(),
-        )
-        .expect("table builds");
-        let flow = table.php.as_deref().expect("a PHP flow");
-        // Each read's claim: `Some(true)` undefined on every path, `Some(false)` defined or
-        // guarded, `None` nothing.
-        let mut claimed: BTreeMap<(usize, String), Option<bool>> = BTreeMap::new();
-        let program = super::program(&doc.root()).expect("an embedded program");
-        for node in descendants(&program) {
-            if node.kind() != "variable_name" {
-                continue;
-            }
-            let start = node.range().start;
-            let Some(read) = flow.read(start) else {
-                continue;
-            };
-            if read.superglobal {
-                continue;
-            }
-            let claim = match (read.quiet, read.defined) {
-                (Quiet::Silent, _) | (_, Defined::Yes) => Some(false),
-                (Quiet::No, Defined::No) => Some(true),
-                _ => None,
-            };
-            reads += 1;
-            claims += usize::from(claim.is_some());
-            undefined += usize::from(claim == Some(true));
-            let variable = read.name.trim_start_matches('$').to_owned();
-            if claim == Some(true)
-                && !reported.iter().any(|report| {
-                    report.kind == "undefined"
-                        && report.name == variable
-                        && report.at.contains(&start)
-                })
-            {
-                failures.push(format!(
-                    "{name}:{start}: Rerail finds ${variable} undefined; PHPStan does not"
-                ));
-            }
-            claimed.insert((start, variable), claim);
+/// Rerail's definedness of a template's variable reads against PHPStan's `variable.undefined` on the
+/// compiled template, tallied.
+#[derive(Default)]
+struct Definedness {
+    /// Variable reads Rerail records (superglobals aside).
+    reads: usize,
+    /// Reads Rerail decides: undefined on every path, or defined (or guarded).
+    claims: usize,
+    undefined: usize,
+    /// Each read by PHPStan's verdict (`undefined`, `maybe`, `compact`, or `defined`: not
+    /// reported) and Rerail's (`undefined`, `defined`, `unknown`).
+    matrix: BTreeMap<(String, &'static str), usize>,
+    reports: usize,
+    /// PHPStan reports of `undefined` Rerail also finds undefined.
+    recalled_undefined: usize,
+    /// PHPStan reports of `undefined`.
+    reported_undefined: usize,
+    /// Reports at no variable the template spells: one Blade or the application's directive
+    /// writes (`$__themeViews`, `$_instance`).
+    unplaced: usize,
+    /// Reports at reads in the arguments of a directive core Blade does not compile, which the
+    /// view does not read.
+    in_foreign_directives: usize,
+    failures: Vec<String>,
+}
+
+/// Compares the reads in `source`'s view with PHPStan's `reported` on its compiled template:
+/// a read Rerail finds defined on every path (or guarded by `isset`, `empty` or `??`) is not
+/// reported; one no path defines is reported undefined. Where Rerail cannot tell (the view's
+/// data, a variable some paths define), it claims nothing. Every report placed at the template's
+/// variables is at a read Rerail records, unless it is in `foreign`, the arguments of directives
+/// core Blade does not compile (where Rerail reads, and so claims, nothing); and not every read it
+/// may be at is one Rerail finds defined.
+fn compare_definedness(
+    name: &str,
+    source: &str,
+    reported: &[Report],
+    foreign: &[Range<usize>],
+    tally: &mut Definedness,
+) {
+    let doc = tape(source);
+    let table = ScopeTable::build_with(
+        doc.root(),
+        GrammarDialect::Blade,
+        usize::MAX,
+        &|| false,
+        Reading::default(),
+    )
+    .expect("table builds");
+    let Some(program) = super::program(&doc.root()) else {
+        assert!(reported.is_empty(), "{name}: PHPStan reports; no program");
+        return;
+    };
+    let flow = table.php.as_deref().expect("a PHP flow");
+    let inside = |at: usize| foreign.iter().any(|span| span.contains(&at));
+    // Each read's claim: `Some(true)` undefined on every path, `Some(false)` defined or
+    // guarded, `None` nothing.
+    let mut claimed: BTreeMap<(usize, String), Option<bool>> = BTreeMap::new();
+    for node in descendants(&program) {
+        if node.kind() != "variable_name" {
+            continue;
         }
-        for report in &reported {
-            let claims: Vec<_> = report
-                .at
-                .iter()
-                .filter_map(|&at| claimed.get(&(at, report.name.clone())))
-                .collect();
-            if claims.is_empty() {
-                failures.push(format!(
+        let start = node.range().start;
+        let Some(read) = flow.read(start) else {
+            continue;
+        };
+        if read.superglobal {
+            continue;
+        }
+        let claim = match (read.quiet, read.defined) {
+            (Quiet::Silent, _) | (_, Defined::Yes) => Some(false),
+            (Quiet::No, Defined::No) => Some(true),
+            _ => None,
+        };
+        tally.reads += 1;
+        tally.claims += usize::from(claim.is_some());
+        tally.undefined += usize::from(claim == Some(true));
+        let variable = read.name.trim_start_matches('$').to_owned();
+        let verdict = reported
+            .iter()
+            .find(|report| report.name == variable && report.at.contains(&start))
+            .map_or("defined", |report| report.kind.as_str());
+        let rerail = match claim {
+            Some(true) => "undefined",
+            Some(false) => "defined",
+            None => "unknown",
+        };
+        *tally.matrix.entry((verdict.to_owned(), rerail)).or_default() += 1;
+        if claim.is_some() && inside(start) {
+            tally.failures.push(format!(
+                "{name}:{start}: Rerail decides ${variable} in a directive core Blade does not compile"
+            ));
+        }
+        if claim == Some(true)
+            && !reported.iter().any(|report| {
+                report.kind == "undefined" && report.name == variable && report.at.contains(&start)
+            })
+        {
+            tally.failures.push(format!(
+                "{name}:{start}: Rerail finds ${variable} undefined; PHPStan does not"
+            ));
+        }
+        claimed.insert((start, variable), claim);
+    }
+    for report in reported {
+        tally.reports += 1;
+        tally.reported_undefined += usize::from(report.kind == "undefined");
+        if report.at.is_empty() {
+            tally.unplaced += 1;
+            continue;
+        }
+        let claims: Vec<_> = report
+            .at
+            .iter()
+            .filter_map(|&at| claimed.get(&(at, report.name.clone())))
+            .collect();
+        if report.kind == "undefined" && claims.contains(&&Some(true)) {
+            tally.recalled_undefined += 1;
+        }
+        if claims.is_empty() {
+            if report.at.iter().all(|&at| inside(at)) {
+                tally.in_foreign_directives += 1;
+            } else {
+                tally.failures.push(format!(
                     "{name}: PHPStan reports ${} {} on line {} (at {:?}); Rerail records no read there",
                     report.name, report.kind, report.line, report.at
                 ));
-            } else if claims.iter().all(|claim| **claim == Some(false)) {
-                failures.push(format!(
-                    "{name}: PHPStan reports ${} {} on line {} (at {:?}); Rerail finds it defined (or guarded)",
-                    report.name, report.kind, report.line, report.at
-                ));
             }
+        } else if claims.iter().all(|claim| **claim == Some(false)) {
+            tally.failures.push(format!(
+                "{name}: PHPStan reports ${} {} on line {} (at {:?}); Rerail finds it defined (or guarded)",
+                report.name, report.kind, report.line, report.at
+            ));
         }
     }
+}
+
+/// Every variable read in a fixture's view against PHPStan's `variable.undefined` on the compiled
+/// template, the view's data defined outside it (`extract()`), as `compare_definedness` reads them.
+#[test]
+fn blade_definedness_agrees_with_phpstan() {
+    let expected = expected();
+    let mut tally = Definedness::default();
+    for (name, record) in expected["fixtures"].as_object().expect("fixtures") {
+        let source = fixture(name);
+        let reported = reports(&record["phpstan"]);
+        compare_definedness(name, &source, &reported, &[], &mut tally);
+    }
+    let Definedness {
+        reads,
+        claims,
+        undefined,
+        failures,
+        ..
+    } = tally;
     assert!(
         failures.is_empty(),
         "{} disagreements:\n{}",
@@ -398,5 +473,130 @@ fn benchmark_blade_region_parity() {
         "{files} files, {regions} regions, {agreeing}/{bytes} bytes agree, {} disagreements, {} unstable",
         disagreements.len(),
         unstable.len()
+    );
+}
+
+/// Definedness over a corpus: the PHPStan reports `generate.php --definedness` recorded for each
+/// template compiled with its application's directives (`BLADE_DEFINEDNESS`) against the view's
+/// reads, as `compare_definedness` reads them, written to `BLADE_DEFINEDNESS_REPORT`. The
+/// directives core Blade does not compile, the application's or text, are measured apart: Rerail
+/// reads nothing in their arguments, and decides nothing there.
+#[test]
+#[ignore = "corpus benchmark: rerail-fixtures/blade/view/generate.php --definedness output"]
+fn benchmark_blade_definedness_corpus() {
+    let input =
+        std::env::var("BLADE_DEFINEDNESS").expect("BLADE_DEFINEDNESS names the generator's output");
+    let report = std::env::var("BLADE_DEFINEDNESS_REPORT")
+        .expect("BLADE_DEFINEDNESS_REPORT names the report");
+    let recorded: Json =
+        serde_json::from_str(&std::fs::read_to_string(input).expect("records")).expect("JSON");
+    let mut tally = Definedness::default();
+    let mut files = 0;
+    let mut skipped = Vec::new();
+    // Directives core Blade does not compile: occurrences by name and whether the application
+    // compiles them (or Blade leaves them as text).
+    let mut foreign: BTreeMap<(String, bool), usize> = BTreeMap::new();
+    let (mut with_application, mut claims_with_application, mut failures_with_application) =
+        (0, 0, 0);
+    for (path, record) in recorded["files"].as_object().expect("files") {
+        let Some(phpstan) = record.get("phpstan") else {
+            skipped.push(serde_json::json!({ "path": path, "record": record }));
+            continue;
+        };
+        files += 1;
+        let source = std::fs::read_to_string(path).expect("template");
+        let mut spans = Vec::new();
+        let mut application = false;
+        for directive in record["directives"].as_array().expect("directives") {
+            if directive["core"] == true {
+                continue;
+            }
+            let custom = directive["custom"] == true;
+            application |= custom;
+            let name = directive["directive"].as_str().expect("name").to_owned();
+            *foreign.entry((name, custom)).or_default() += 1;
+            spans.push(range(&directive["span"]));
+        }
+        let (claims, failures) = (tally.claims, tally.failures.len());
+        compare_definedness(path, &source, &reports(phpstan), &spans, &mut tally);
+        if application {
+            with_application += 1;
+            claims_with_application += tally.claims - claims;
+            failures_with_application += tally.failures.len() - failures;
+        }
+    }
+    let verdicts = |phpstan: &str| -> usize {
+        tally
+            .matrix
+            .iter()
+            .filter(|((verdict, _), _)| verdict == phpstan)
+            .map(|(_, count)| count)
+            .sum()
+    };
+    let agreeing = |phpstan: &str, rerail: &str| -> usize {
+        tally
+            .matrix
+            .get(&(phpstan.to_owned(), rerail))
+            .copied()
+            .unwrap_or_default()
+    };
+    // PHPStan decides a read undefined (reported `undefined`) or defined (not reported).
+    let decided = verdicts("undefined") + verdicts("defined");
+    let recalled = agreeing("undefined", "undefined") + agreeing("defined", "defined");
+    let ratio = |part: usize, whole: usize| {
+        if whole == 0 {
+            Json::Null
+        } else {
+            serde_json::json!((part as f64 / whole as f64 * 10_000.0).round() / 10_000.0)
+        }
+    };
+    let out = serde_json::json!({
+        "illuminate/view": recorded["illuminate/view"],
+        "php": recorded["php"],
+        "phpstan": recorded["phpstan"],
+        "directives": recorded["directives"],
+        "files": files,
+        "skipped": skipped,
+        "reads": tally.reads,
+        "claims": tally.claims,
+        "claimedUndefined": tally.undefined,
+        "decidedRate": ratio(tally.claims, tally.reads),
+        "matrix": tally.matrix.iter().map(|((phpstan, rerail), count)| serde_json::json!({
+            "phpstan": phpstan, "rerail": rerail, "reads": count,
+        })).collect::<Vec<_>>(),
+        "phpstanDecidedReads": decided,
+        "recall": ratio(recalled, decided),
+        "phpstanReports": tally.reports,
+        "phpstanUndefinedReports": tally.reported_undefined,
+        "recalledUndefinedReports": tally.recalled_undefined,
+        "unplacedReports": tally.unplaced,
+        "foreignDirectives": {
+            "occurrences": foreign.iter().map(|((name, custom), count)| serde_json::json!({
+                "directive": name, "compiledByApplication": custom, "count": count,
+            })).collect::<Vec<_>>(),
+            "reportsInArguments": tally.in_foreign_directives,
+            "filesWithApplicationDirectives": with_application,
+            "claimsInThoseFiles": claims_with_application,
+            "contradictionsInThoseFiles": failures_with_application,
+        },
+        "contradictions": tally.failures,
+    });
+    std::fs::write(
+        &report,
+        serde_json::to_string_pretty(&out).expect("JSON") + "\n",
+    )
+    .expect("report");
+    eprintln!(
+        "{files} files, {} reads, {} decided, recall {recalled}/{decided}, {} contradictions, {} skipped",
+        tally.reads,
+        tally.claims,
+        tally.failures.len(),
+        skipped.len()
+    );
+    assert!(
+        tally.failures.is_empty(),
+        "{} contradictions:\n{}",
+        tally.failures.len(),
+        tally.failures.join("\n")
     );
 }

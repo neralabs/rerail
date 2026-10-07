@@ -64,7 +64,7 @@ export const policyDialectFamily = (dialect: PolicyDialectLabel): PolicyLanguage
 export const POLICY_DIALECT_SUFFIXES: ReadonlyMap<string, PolicyDialectLabel> = new Map(
   (Object.values(POLICY_DIALECTS) as PolicyDialect[]).flatMap(dialect => dialect.extensions.map(extension => [extension, dialect.label] as const)),
 );
-/** The AST dialect of `path` by `languageOfPath` over the dialects' extensions. */
+/** The dialect a path routes to, as the host's walk and the native repository index route it (see `languageOfPath`). */
 export const policyDialectForPath = (path: string): PolicyDialectLabel | undefined => languageOfPath(POLICY_DIALECT_SUFFIXES, path);
 export const policyLanguageImplements = (language: PolicyAstLanguage, capability: PolicySemanticCapability): boolean =>
   semanticLanguageImplements(language, policyLanguageFamily(language), capability);

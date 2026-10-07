@@ -262,19 +262,19 @@ function hookExecEntry(context: Context, executable: string): JsonObject {
 /** The Claude Code slash command that runs the launcher through the same node and package root as the hooks. */
 function claudeCommandText(context: Context): string {
   const command = directCommand(context, "cli.js");
-  // One grant per subcommand the body may run; `Bash(<cli> *)` would also cover `start`, `stop`, `mcp`, ...
-  const allowed = ["status", "session *", "disable", "enable", "update *", "reset", "scan *", "settings *"]
+  // One grant per subcommand the body may run; `Bash(<cli> *)` would also cover `daemon`, `mcp-bridge`, ...
+  const allowed = ["status", "session *", "start", "stop", "update *", "reset", "scan *", "settings *"]
     .map(subcommand => `Bash(${command} ${subcommand})`)
     .join(", ");
   return [
     "---",
-    "description: Rerail session status and launcher — enable, disable, update, reset, scan, settings",
+    "description: Rerail session status and launcher — start, stop, update, reset, scan, settings",
     `allowed-tools: ${allowed}`,
     "---",
     "",
-    "Show Rerail for this exact session when `$ARGUMENTS` is empty. Otherwise `$ARGUMENTS` is a complete Rerail CLI command: `status`, `disable`, `enable`, `update check`, `update`, `update rollback`, `reset`, `scan ...`, or `settings ...`. Map `check` to `update check` and `rollback` to `update rollback`.",
+    "Show Rerail for this exact session when `$ARGUMENTS` is empty. Otherwise `$ARGUMENTS` is a complete Rerail CLI command: `status`, `start`, `stop`, `update check`, `update`, `update rollback`, `reset`, `scan ...`, or `settings ...`. Map `check` to `update check` and `rollback` to `update rollback`.",
     "",
-    "`disable` persists a checkout-local `.rerail/disabled` marker. It stops event recording, policy evaluation, steering, and daemon autostart for this checkout without stopping the shared daemon. `enable` removes the marker.",
+    "`stop` stops Rerail in this checkout and the worktrees that follow it (from the main checkout, every linked worktree without its own setting): nothing is recorded, audited or steered there, and rules and history are kept. `start` starts them again, setting the repo up the first time.",
     "",
     "A `scan` or `settings` invocation MUST include `--session <session-id>` explicitly; use the exact session identity, never guess a latest session. The session may belong to any repository recorded in the Rerail database.",
     "",
@@ -298,19 +298,29 @@ function claudeCommandText(context: Context): string {
 }
 
 type PromptCommandHarness = "claude-code" | "cursor";
-type CheckoutCommandAction = "disable" | "enable";
+type StartCommandAction = "start" | "stop";
 type PageCommand = "ui" | "session";
-type PromptCommand = "rerail" | CheckoutCommandAction | PageCommand;
+type PromptCommand = "rerail" | StartCommandAction | PageCommand;
 
 /** Cursor prompt commands cannot see the conversation id, so only Claude Code gets `/rerail` and `/rerail-session`. */
 const PROMPT_COMMANDS: Record<PromptCommandHarness, readonly PromptCommand[]> = {
-  "claude-code": ["rerail", "disable", "enable", "ui", "session"],
-  cursor: ["disable", "enable", "ui"],
+  "claude-code": ["rerail", "start", "stop", "ui", "session"],
+  cursor: ["start", "stop", "ui"],
 };
 
-function checkoutSlashCommandText(context: Context, harness: PromptCommandHarness, action: CheckoutCommandAction): string {
+/** Command files earlier versions installed and this one replaces; removed when they are ours. */
+const RETIRED_PROMPT_COMMANDS: readonly string[] = ["rerail-disable", "rerail-enable"];
+
+function promptCommandName(command: PromptCommand): string {
+  if (command === "rerail") return "rerail";
+  return command === "start" || command === "stop" ? `rerail-${command}` : `rerail-${command}`;
+}
+
+function startSlashCommandText(context: Context, harness: PromptCommandHarness, action: StartCommandAction): string {
   const command = `${directCommand(context, "cli.js")} ${action}`;
-  const description = `${action === "disable" ? "Disable" : "Enable"} Rerail for the current checkout`;
+  const description = action === "start"
+    ? "Start Rerail in this checkout, setting the repo up the first time"
+    : "Stop Rerail in this checkout; rules and history are kept";
   const body = [
     `${description}.`,
     "",
@@ -374,9 +384,9 @@ function promptCommandText(context: Context, harness: PromptCommandHarness, comm
   switch (command) {
     case "rerail":
       return claudeCommandText(context);
-    case "disable":
-    case "enable":
-      return checkoutSlashCommandText(context, harness, command);
+    case "start":
+    case "stop":
+      return startSlashCommandText(context, harness, command);
     case "ui":
     case "session":
       return pageCommandText(context, harness, command);
@@ -860,23 +870,38 @@ async function planCodexSkill(context: Context): Promise<Plan> {
     () => writeTextFile(path, text, existing));
 }
 
-/** Prompt commands share root ownership checks, atomic installation, and conservative removal. */
-async function planPromptCommand(context: Context, harness: PromptCommandHarness, command: PromptCommand): Promise<Plan> {
-  const name = command === "rerail" ? "rerail" : `rerail-${command}`;
+function promptCommandPath(context: Context, harness: PromptCommandHarness, name: string): string {
   const path = join(context.home, CONFIG_DIRS[harness], "commands", `${name}.md`);
   assertInside(path, context.home, "home");
-  const existing = await readTextFile(path);
-  const unchanged = (detail: string): Plan => ({ change: { harness, path, action: "unchanged", detail } });
-  if (context.mode === "register") {
-    const text = promptCommandText(context, harness, command);
-    if (existing.exists && existing.text === text) return unchanged(`/${name} command: already in place`);
-    return planMutation(context, harness, path, existing.exists ? "updated" : "created", `register the /${name} command`,
-      () => writeTextFile(path, text, existing));
-  }
-  if (!existing.exists) return unchanged(`no /${name} command: nothing to remove`);
+  return path;
+}
+
+/** Removes a prompt command only when it runs this package's CLI; anyone else's file is left in place. */
+function planPromptCommandRemoval(context: Context, harness: PromptCommandHarness, name: string, path: string, existing: TextFile): Plan {
+  if (!existing.exists) return { change: { harness, path, action: "unchanged", detail: `no /${name} command: nothing to remove` } };
   if (!existing.text.includes(join(context.root, "dist", "cli.js")))
-    return unchanged(`/${name} command is not rerail's: left in place`);
+    return { change: { harness, path, action: "unchanged", detail: `/${name} command is not rerail's: left in place` } };
   return planMutation(context, harness, path, "updated", `remove the /${name} command`, () => unlink(path));
+}
+
+/** Prompt commands share root ownership checks, atomic installation, and conservative removal. */
+async function planPromptCommand(context: Context, harness: PromptCommandHarness, command: PromptCommand): Promise<Plan> {
+  const name = promptCommandName(command);
+  const path = promptCommandPath(context, harness, name);
+  const existing = await readTextFile(path);
+  if (context.mode === "unregister") return planPromptCommandRemoval(context, harness, name, path, existing);
+  const text = promptCommandText(context, harness, command);
+  if (existing.exists && existing.text === text) return { change: { harness, path, action: "unchanged", detail: `/${name} command: already in place` } };
+  return planMutation(context, harness, path, existing.exists ? "updated" : "created", `register the /${name} command`,
+    () => writeTextFile(path, text, existing));
+}
+
+/** A retired command file of ours, in either mode; absent or foreign files produce no plan at all. */
+async function planRetiredPromptCommand(context: Context, harness: PromptCommandHarness, name: string): Promise<Plan | undefined> {
+  const path = promptCommandPath(context, harness, name);
+  const existing = await readTextFile(path);
+  const plan = planPromptCommandRemoval(context, harness, name, path, existing);
+  return plan.change.action === "unchanged" ? undefined : plan;
 }
 
 function planHarness(harness: Harness, context: Context): Promise<Plan> {
@@ -903,10 +928,10 @@ function planHarness(harness: Harness, context: Context): Promise<Plan> {
 }
 
 function planProjectRules(harness: Harness, projectDir: string, context: Context): Plan {
-  const path = join(projectDir, PROJECT_DIRS[harness], "cosine-rules.json");
+  const path = join(projectDir, PROJECT_DIRS[harness], "conversation-rules.json");
   assertInside(path, projectDir, "project directory");
   if (existsSync(path)) return { change: { harness, path, action: "unchanged", detail: "existing rules file kept" } };
-  return planMutation(context, harness, path, "created", "seed empty cosine-rules.json",
+  return planMutation(context, harness, path, "created", "seed empty conversation-rules.json",
     () => writeTextFile(path, `${JSON.stringify(EMPTY_RULES_DOCUMENT, null, 2)}\n`, { exists: false, mode: 0o644 }));
 }
 
@@ -964,6 +989,10 @@ async function run(options: RegistrationOptions, mode: Mode): Promise<Registrati
     if (harness === "codex") plans.push(await planCodexSkill(context));
     if (harness === "claude-code" || harness === "cursor") {
       for (const command of PROMPT_COMMANDS[harness]) plans.push(await planPromptCommand(context, harness, command));
+      for (const name of RETIRED_PROMPT_COMMANDS) {
+        const plan = await planRetiredPromptCommand(context, harness, name);
+        if (plan !== undefined) plans.push(plan);
+      }
     }
     if (mode === "register" && projectDir !== undefined) plans.push(planProjectRules(harness, projectDir, context));
   }

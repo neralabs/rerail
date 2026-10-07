@@ -4,10 +4,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import Database from "better-sqlite3";
 import { SqliteScanControlStore } from "../src/scan-control.js";
-import { SqlitePolicyExecutionStore } from "../src/policy-execution-store.js";
 import { SqliteTranscriptStore } from "../src/transcript-store.js";
+import { createV14Database } from "./support/v14-database.js";
 
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
@@ -28,7 +27,7 @@ describe("scan controls", () => {
     const { controls, transcripts } = await fixture();
     controls.updateSettings("a", { scope: "repository", mode: "log" });
     expect(controls.getSettings("a").settings).toEqual({ scope: "repository", mode: "log" });
-    expect(controls.getSettings("b").settings).toEqual({ scope: "touched-files", mode: "resteer" });
+    expect(controls.getSettings("b").settings).toEqual({ scope: "touched-files", mode: "steer" });
     controls.close();
     const reopened = new SqliteScanControlStore(transcripts.path);
     expect(reopened.getSettings("a").settings).toEqual({ scope: "repository", mode: "log" });
@@ -41,9 +40,9 @@ describe("scan controls", () => {
     controls.finishRepositoryDiagnostic("a", "failed-run", "failed", "Evaluation failed");
     transcripts.openSession({ host: "omp", sessionId: "later", cwd: root });
     expect(controls.claimRepositoryDiagnostic("later")).toBe(false);
-    expect(controls.getSettings("later").repositoryDiagnostic).toMatchObject({
+    expect(controls.getSettings("later").repositoryAudit).toMatchObject({
       sessionId: "a",
-      runId: "failed-run",
+      auditId: "failed-run",
       status: "failed",
       error: "Evaluation failed",
     });
@@ -51,30 +50,25 @@ describe("scan controls", () => {
   });
 
   it("preserves the first historic repository scan when upgrading saved workspaces", async () => {
-    const { root, controls, transcripts } = await fixture();
-    controls.updateSettings("a", { scope: "repository", mode: "log" });
+    const root = await mkdtemp(join(tmpdir(), "rerail-scan-control-"));
+    directories.push(root);
+    const path = join(root, "rerail.sqlite");
     const workspaceRoot = realpathSync(root);
-    const executions = new SqlitePolicyExecutionStore(transcripts.path);
-    const runId = executions.start({
-      sessionId: "a",
-      workspaceRoot,
-      scope: "repository",
-      mode: "log",
-      revision: 1,
-      catalogRevision: null,
-      ruleRevisions: [],
-      paths: [],
-    });
-    executions.finish(runId, { status: "completed", findings: [], failures: [] });
-    executions.close(); controls.close(); transcripts.close();
-    const raw = new Database(join(root, "rerail.sqlite"));
-    raw.exec("UPDATE policy_settings SET settings_json = json_set(settings_json, '$.initialMode', 'resteer'); PRAGMA user_version = 7");
+    const raw = createV14Database(path);
+    raw.prepare("INSERT INTO sessions (session_id, host, cwd, started_at, ended_at) VALUES ('a', 'omp', ?, 1, NULL)").run(root);
+    raw.prepare("INSERT INTO policy_settings (workspace_root, settings_json, updated_at) VALUES (?, ?, 1)")
+      .run(workspaceRoot, JSON.stringify({ scope: "repository", mode: "log", initialMode: "resteer" }));
+    raw.prepare(
+      "INSERT INTO policy_runs (run_id, session_id, workspace_root, scope, mode, revision, paths_json, started_at, finished_at, status, "
+      + "findings_json, failures_json, rule_provenance_json) VALUES ('historic', 'a', ?, 'repository', 'log', 1, '[]', 2, 3, 'completed', '[]', '[]', '[]')",
+    ).run(workspaceRoot);
+    raw.exec("DROP TABLE policy_repository_diagnostics; DROP TABLE rerail_schema_revision; PRAGMA user_version = 7");
     raw.close();
 
-    const upgraded = new SqliteScanControlStore(join(root, "rerail.sqlite"));
+    const upgraded = new SqliteScanControlStore(path);
     expect(upgraded.getSettings("a")).toMatchObject({
       settings: { scope: "repository", mode: "log" },
-      repositoryDiagnostic: { sessionId: "a", runId, status: "completed" },
+      repositoryAudit: { sessionId: "a", auditId: "historic", status: "completed" },
     });
     expect(upgraded.claimRepositoryDiagnostic("a")).toBe(false);
     upgraded.close();
@@ -93,12 +87,12 @@ describe("scan controls", () => {
     controls.finish(queued.id, "interrupted", ["partial-run"], "Late native completion");
     expect(controls.listScans("a").find(scan => scan.id === queued.id)).toEqual({
       ...interrupted,
-      runIds: ["partial-run"],
+      auditIds: ["partial-run"],
     });
     controls.finish(queued.id, "completed", ["replacement-run"]);
     expect(controls.listScans("a").find(scan => scan.id === queued.id)).toEqual({
       ...interrupted,
-      runIds: ["partial-run"],
+      auditIds: ["partial-run"],
     });
     controls.close(); transcripts.close();
   });
@@ -124,8 +118,8 @@ describe("scan controls", () => {
     });
     expect(controls.claim("a", owner)).toMatchObject({ id: queued.id, status: "running" });
     controls.finish(queued.id, "completed", ["diff-run"]);
-    expect(controls.getSettings("a").repositoryDiagnostic).toMatchObject({
-      runId: "diff-run",
+    expect(controls.getSettings("a").repositoryAudit).toMatchObject({
+      auditId: "diff-run",
       status: "completed",
     });
     controls.close(); transcripts.close();

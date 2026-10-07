@@ -107,7 +107,7 @@ function evaluator(evaluateGeneratedEdits: ExecutablePolicyEvaluator["evaluateGe
   return { openWorkspace: vi.fn(async () => undefined), acceptsPath: () => true, evaluateGeneratedEdits, close: vi.fn(async () => undefined) };
 }
 function response(batch: ExecutablePolicyEditBatch) {
-  return { revision: batch.revision, disposition: "continue" as const, findings: [], failures: [] };
+  return { revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] };
 }
 
 describe("ExecutablePolicyBridge", () => {
@@ -191,7 +191,7 @@ describe("ExecutablePolicyBridge", () => {
     passes.push(turn.catch(() => undefined));
     expect(await settled(turn)).toBe(false);
     baseline.release();
-    await expect(turn).resolves.toEqual({ revision: 1, disposition: "continue", findings: [], failures: [] });
+    await expect(turn).resolves.toEqual({ revision: 1, disposition: "continue", violations: [], failures: [] });
     // A complete reconciliation must neither replay stale baseline bytes nor emit untouched code.
     expect(evaluateGeneratedEdits).toHaveBeenCalledTimes(1);
 
@@ -306,7 +306,7 @@ describe("ExecutablePolicyBridge", () => {
     passes.push(final.catch(() => undefined));
     baseline.release();
 
-    await expect(final).resolves.toEqual({ revision: 1, disposition: "continue", findings: [], failures: [] });
+    await expect(final).resolves.toEqual({ revision: 1, disposition: "continue", violations: [], failures: [] });
     expect(evaluateGeneratedEdits.mock.calls).toEqual([["session-1", {
       revision: 1,
       checkpoints: ["final"],

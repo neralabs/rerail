@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { seedContractPolicyForRoot } from "./contract-policy.js";
+import { startTestRepository } from "../test/support/started-repository.js";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createAgentSession,
@@ -25,6 +26,7 @@ describe("Pi native executable policy kernel", () => {
   it("delivers a CURSOR_EXECUTE policy finding through Pi's native session queue", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "rerail-pi-kernel-"));
     process.env.RERAIL_HOME = join(cwd, "home");
+    startTestRepository(cwd);
     seedContractPolicyForRoot(cwd);
     temporaryDirectories.push(cwd);
     await mkdir(join(cwd, "api"));

@@ -7,14 +7,15 @@ import { registerCosineRulesTool } from "../src/tool.js";
 
 const rule = {
   id: "checkout",
+  mode: "steer",
   reference: "Guest checkout remains available.",
   match: { operator: "gte", threshold: 0.99 },
   sample: { source: "assistant-text", boundary: "message" },
-  action: { delivery: "steer", content: "Check checkout." },
+  action: { content: "Check checkout." },
   repeat: { mode: "once" },
 } as const;
 
-describe("cosine_rules tool", () => {
+describe("conversation_rules tool", () => {
   it("adds, tests, lists, and removes session rules", async () => {
     const registry = new CosineRuleRegistry({ modelPath: resolve("model") });
     registry.replace([]);

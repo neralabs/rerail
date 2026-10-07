@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:type-literal-delimiter",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `type-literal-delimiter` rule with its default options (https://palantir.github.io/tslint/rules/type-literal-delimiter/). Type literal members must be separated by ';' (no trailing ';' on single-line literals, TSLint default). A missing delimiter is reported on the member's last character, anchored through a named group in the member's regex.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "comma",
       "forbid": {
@@ -51,10 +52,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TYPE_LITERAL_DELIMITER",
-        "severity": "error",
         "message": "Expected type literal to use ';' instead of ','."
       }
     },
@@ -91,10 +91,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TYPE_LITERAL_DELIMITER",
-        "severity": "error",
         "message": "Did not expect single-line type literal to have a trailing ';'."
       }
     },
@@ -152,10 +151,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.LAST",
         "code": "TYPE_LITERAL_DELIMITER",
-        "severity": "error",
         "message": "Expected type literal to use ';' to separate members."
       }
     }

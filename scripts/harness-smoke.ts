@@ -3,7 +3,8 @@ import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RerailDaemon } from "../src/daemon.js";
-import { defaultRerailDatabasePath } from "../src/database.js";
+import { defaultRerailDatabasePath, openRerailDatabase } from "../src/database.js";
+import { startRepository } from "../src/repository-start.js";
 import { openScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
 import { AdapterEventSchema } from "../src/event-protocol.js";
 import { SqliteTranscriptReader } from "../src/transcript-store.js";
@@ -18,18 +19,27 @@ function seedExecutablePolicyRule(rerailHome: string, project: string): void {
     format: "rerail.policy/v1",
     id: "rerail-smoke:CURSOR_EXECUTE",
     revision: 1,
+    mode: "steer",
     scope: { include: ["api/**/*"], exclude: [] },
-    checks: [
+    clauses: [
       {
         id: "cursor-execute",
         forbid: { regex: { pattern: "cursor\\.execute\\s*\\(", source: "file.content" } },
-        finding: { anchor: "witness.span", code: "CURSOR_EXECUTE", severity: "error", message: "Direct cursor access bypasses the typed API and backend portability." },
+        violation: { anchor: "witness.span", code: "CURSOR_EXECUTE", message: "Direct cursor access bypasses the typed API and backend portability." },
       },
     ],
   };
-  const catalog = openScopedRuleCatalog(project, defaultRerailDatabasePath({ ...process.env, RERAIL_HOME: rerailHome }));
+  const databasePath = defaultRerailDatabasePath({ ...process.env, RERAIL_HOME: rerailHome });
+  const catalog = openScopedRuleCatalog(project, databasePath);
   try {
     catalog.upsertPolicy(rule, { applicability: "project", enabled: true });
+    // Rerail is off until started; the smoke project is started as `rerail start` would leave it.
+    const database = openRerailDatabase(databasePath);
+    try {
+      startRepository(database, catalog.context().repositoryId);
+    } finally {
+      database.$client.close();
+    }
   } finally {
     catalog.close();
   }
@@ -228,11 +238,11 @@ async function createProject(project: string, prompt: string, nonce: string): Pr
       rules: [
         {
           id: `rerail-smoke-${nonce}`,
+          mode: "steer",
           reference: prompt,
           match: { operator: "gte", threshold: 0.95 },
           sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
           action: {
-            delivery: "steer",
             content: `RERAIL_COSINE_MATCH ${nonce}. Echo this exact marker in your final reply.`,
           },
           repeat: { mode: "once" },
@@ -245,7 +255,7 @@ async function createProject(project: string, prompt: string, nonce: string): Pr
   await Promise.all(
     [".claude", ".codex", ".cursor", ".omp", ".pi"].map(async (directory) => {
       await mkdir(join(project, directory), { recursive: true });
-      await writeFile(join(project, directory, "cosine-rules.json"), rules);
+      await writeFile(join(project, directory, "conversation-rules.json"), rules);
     }),
   );
   await writeFile(
@@ -518,8 +528,8 @@ export function hasCompletedViolation(events: readonly { kind: string; payload: 
     const event = AdapterEventSchema.safeParse(payload).data;
     return event?.kind === kind ? [event] : [];
   });
-  return native.some((call, index) => call.kind === "tool-call" && contains(call.input, "cursor.execute") &&
-    native.some((result, resultIndex) => resultIndex > index && result.kind === "tool-result" && !result.failed &&
+  return native.some((call, index) => call.kind === "call" && contains(call.input, "cursor.execute") &&
+    native.some((result, resultIndex) => resultIndex > index && result.kind === "result" && !result.failed &&
       result.sessionId === call.sessionId && result.toolCallId === call.toolCallId && result.toolName === call.toolName));
 }
 /** Extension-level failures the harness prints instead of throwing; any one of these is a Rerail bug, not a policy verdict. */
@@ -568,7 +578,7 @@ export async function inspectOutcome(
   const normalized = events.map((event) => ({ kind: event.kind, payload: event.payload }));
   // Every policy evaluation must have evaluated: a `budget-exceeded` runtime unknown means the kernel refused
   // the snapshot and no finding could have been produced, whatever the delivery ledger says afterwards.
-  const evaluations = normalized.filter((event) => event.kind === "policy-evaluation" || contains(event.payload, "budget-exceeded"));
+  const evaluations = normalized.filter((event) => contains(event.payload, "budget-exceeded"));
   append(
     assertions,
     "policies evaluated within budget",
@@ -603,7 +613,7 @@ export async function inspectOutcome(
     deliveries.some((entry) => contains(entry, "CURSOR_EXECUTE")),
     "a separate persisted executable-policy delivery contains CURSOR_EXECUTE",
   );
-  return bounded(JSON.stringify({ toolCalls: normalized.filter((event) => event.kind === "tool-call"), deliveries }));
+  return bounded(JSON.stringify({ toolCalls: normalized.filter((event) => event.kind === "call"), deliveries }));
 }
 
 async function requireHarnessPrerequisites(harness: Harness): Promise<string> {

@@ -119,7 +119,7 @@ describe("oss-tool-rules import bundle", () => {
     await rm(directory, { recursive: true, force: true });
   });
 
-  it("imports every rule as a cosine-kind structural rule, enabled per enabled.txt", () => {
+  it("imports every rule as a conversation-kind structural rule, enabled per enabled.txt", () => {
     const bundle = join(directory, "import-bundle.json");
     execFileSync("python3", [join(PACK_DIRECTORY, "make_bundle.py"), "--out", bundle], { stdio: "pipe" });
     const enabled = readFileSync(join(PACK_DIRECTORY, "enabled.txt"), "utf8")
@@ -128,7 +128,7 @@ describe("oss-tool-rules import bundle", () => {
     const catalog = ScopedRuleCatalog.open(join(directory, "catalog.sqlite"), { repositoryId: "repo", workspaceRoot: "/repo" });
     try {
       expect(importScopedRules(catalog, bundle)).toBe(pack.length);
-      expect(catalog.list().map(stored => stored.kind)).toEqual(pack.map(() => "cosine"));
+      expect(catalog.list().map(stored => stored.kind)).toEqual(pack.map(() => "conversation"));
       expect(catalog.cosineRules().map(rule => rule.id).sort()).toEqual(enabled.map(id => `oss:${id}`).sort());
     } finally {
       catalog.close();

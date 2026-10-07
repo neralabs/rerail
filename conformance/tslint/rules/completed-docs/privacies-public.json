@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:completed-docs",
   "revision": 1,
+  "mode": "steer",
   "description": "public methods.",
   "scope": { "include": ["**/*"], "exclude": [] },
-  "checks": [
+  "clauses": [
     {
       "id": "methods",
       "forbid": {
@@ -58,10 +59,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for methods."
       }
     }

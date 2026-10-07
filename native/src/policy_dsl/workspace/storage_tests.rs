@@ -107,10 +107,11 @@ fn needle_policy() -> CompiledPolicyDsl {
     });
     let policy = json!({
         "format": "rerail.policy/v1", "id": "storage-needle", "revision": 1,
+        "mode": "steer",
         "scope": { "include": ["**/*.py"], "exclude": [] },
-        "checks": [{
-            "id": "needle", "finding": { "anchor": "witness.span", "code": "NEEDLE",
-                "message": "found needle", "severity": "error" },
+        "clauses": [{
+            "id": "needle", "violation": { "anchor": "witness.span", "code": "NEEDLE",
+                "message": "found needle" },
             "forbid": { "regex": { "pattern": "NEEDLE", "source": "file.content" } }
         }]
     });
@@ -131,7 +132,7 @@ fn apply_source(workspace: &PolicyDslWorkspace, revision: u32, source: &str) -> 
         request_direct: None,
     };
     let result: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
-    result["evaluation"]["findings"]
+    result["evaluation"]["violations"]
         .as_array()
         .unwrap()
         .iter()

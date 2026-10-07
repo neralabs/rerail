@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:arrow-return-shorthand",
   "revision": 1,
+  "mode": "steer",
   "description": "Arrow bodies whose only statement (comments aside) is `return <expr>` should use the expression form (option multiline).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "block-body",
       "forbid": {
@@ -69,10 +70,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "ARROW_RETURN_SHORTHAND",
-        "severity": "error",
         "message": "This arrow function body can be simplified by omitting the curly braces and the keyword 'return'."
       }
     }

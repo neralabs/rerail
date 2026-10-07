@@ -10,7 +10,7 @@ fn compile_check(language: &str, ast: Value, finding: Value) -> Result<CompiledP
     let mut ast = ast;
     ast["language"] = json!(language);
     compile_document_with(
-        check_document(json!({ "id": "parse", "forbid": { "ast": ast }, "finding": finding })),
+        check_document(json!({ "id": "parse", "forbid": { "ast": ast }, "violation": finding })),
         &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
     )
 }
@@ -64,7 +64,7 @@ fn captures_are_exported_as_mapped_spans_and_decoded_text() {
     let compiled = compile_check(
         "python",
         json!({ "rule": rule }),
-        json!({ "anchor": "capture.C", "code": "X", "message": "found $C in $S", "severity": "error" }),
+        json!({ "anchor": "capture.C", "code": "X", "message": "found $C in $S" }),
     );
     // `$S` is no capture: the parsed tree's names are the only ones exported.
     assert!(rejection(compiled).contains("`$S` names no capture; the query can bind: C"),);
@@ -73,11 +73,11 @@ fn captures_are_exported_as_mapped_spans_and_decoded_text() {
         json!({ "rule": { "pattern": "$A = $S", "has": { "kind": "string", "parse": {
             "grammar": "testChars", "has": { "kind": "char", "value": { "eq": "y" }, "capture": "C" },
         } } } }),
-        json!({ "anchor": "capture.C", "code": "X", "message": "found $C in $S", "severity": "error", "fix": "$A = '$C'" }),
+        json!({ "anchor": "capture.C", "code": "X", "message": "found $C in $S", "fix": "$A = '$C'" }),
     )
     .unwrap_or_else(|error| panic!("{}", error.reason));
     let result = evaluate_file(&compiled, "python", "a.py", source);
-    let finding = &result["findings"][0];
+    let finding = &result["violations"][0];
     // The capture anchors the escape it was decoded from; the message and fix read its value.
     let span = &finding["span"];
     let text = &source[span["startByte"].as_u64().expect("start") as usize
@@ -208,60 +208,60 @@ fn parse_rules_are_checked() {
     for (rule, expected) in [
         (
             json!({ "kind": "string", "capture": "S" }),
-            "/checks/0/forbid/ast/rule/capture: capture binds a node of a parsed tree; use it inside parse (a pattern's metavariables capture host nodes)",
+            "/clauses/0/forbid/ast/rule/capture: capture binds a node of a parsed tree; use it inside parse (a pattern's metavariables capture host nodes)",
         ),
         (
             json!({ "parse": { "grammar": "yaml", "kind": "text" } }),
-            "/checks/0/forbid/ast/rule/parse/grammar: `yaml` is not a grammar; expected one of percentFormat, braceFormat, annotation, eslintDirective, printfFormat, scanfFormat, phpDoc, testChars",
+            "/clauses/0/forbid/ast/rule/parse/grammar: `yaml` is not a grammar; expected one of percentFormat, braceFormat, annotation, eslintDirective, printfFormat, scanfFormat, phpDoc, testChars",
         ),
         (
             json!({ "parse": { "grammar": "ecmaRegex", "kind": "text" } }),
-            "/checks/0/forbid/ast/rule/parse/grammar: `ecmaRegex` is not supported yet",
+            "/clauses/0/forbid/ast/rule/parse/grammar: `ecmaRegex` is not supported yet",
         ),
         (
             json!({ "parse": { "kind": "text" } }),
-            "/checks/0/forbid/ast/rule/parse/grammar must be a non-empty string",
+            "/clauses/0/forbid/ast/rule/parse/grammar must be a non-empty string",
         ),
         (
             json!({ "parse": { "grammar": "testChars", "flags": "u", "kind": "text" } }),
-            "/checks/0/forbid/ast/rule/parse/flags: `testChars` has no flags",
+            "/clauses/0/forbid/ast/rule/parse/flags: `testChars` has no flags",
         ),
         (
             json!({ "parse": { "grammar": "testChars" } }),
-            "/checks/0/forbid/ast/rule/parse must contain at least one matcher of the parsed tree",
+            "/clauses/0/forbid/ast/rule/parse must contain at least one matcher of the parsed tree",
         ),
         (
             json!({ "parse": { "grammar": "testChars", "kind": "identifier" } }),
-            "/checks/0/forbid/ast/rule/parse/kind: `identifier` is not a testChars kind; expected one of text, char, error",
+            "/clauses/0/forbid/ast/rule/parse/kind: `identifier` is not a testChars kind; expected one of text, char, error",
         ),
         (
             json!({ "parse": { "grammar": "testChars", "pattern": "x" } }),
-            "/checks/0/forbid/ast/rule/parse/pattern: `pattern` is not supported inside parse (testChars trees)",
+            "/clauses/0/forbid/ast/rule/parse/pattern: `pattern` is not supported inside parse (testChars trees)",
         ),
         (
             json!({ "parse": { "grammar": "testChars", "has": { "resolves": { "global": ["x"] } } } }),
-            "/checks/0/forbid/ast/rule/parse/has/resolves: `resolves` is not supported inside parse (testChars trees)",
+            "/clauses/0/forbid/ast/rule/parse/has/resolves: `resolves` is not supported inside parse (testChars trees)",
         ),
         (
             json!({ "parse": { "grammar": "testChars", "kinds": "text" } }),
-            "unknown field `kinds` at /checks/0/forbid/ast/rule/parse",
+            "unknown field `kinds` at /clauses/0/forbid/ast/rule/parse",
         ),
         (
             json!({ "parse": { "grammar": "testChars", "has": { "kind": "char", "capture": "$C" } } }),
-            "/checks/0/forbid/ast/rule/parse/has/capture: `$C` is not a capture name (A-Z, 0-9, _, without `$`)",
+            "/clauses/0/forbid/ast/rule/parse/has/capture: `$C` is not a capture name (A-Z, 0-9, _, without `$`)",
         ),
         (
             json!({ "parse": { "grammar": "testChars", "value": { "eq": "x", "follow": true } } }),
-            "/checks/0/forbid/ast/rule/parse/value/follow: a parsed node has no binding to follow",
+            "/clauses/0/forbid/ast/rule/parse/value/follow: a parsed node has no binding to follow",
         ),
         (
             json!({ "parse": { "grammar": "testChars", "compare": { "left": "A", "op": "eq", "right": "B", "text": "tokens" } } }),
-            "/checks/0/forbid/ast/rule/parse/compare/text: a parsed tree compares by source, unquoted, value or node",
+            "/clauses/0/forbid/ast/rule/parse/compare/text: a parsed tree compares by source, unquoted, value or node",
         ),
         // A comparison inside the tree reads only the tree's captures.
         (
             json!({ "pattern": "$A = $B", "has": { "kind": "string", "parse": { "grammar": "testChars", "has": { "kind": "char", "capture": "C" }, "compare": { "left": "A", "op": "eq", "right": "C" } } } }),
-            "/checks/0/forbid/ast/rule/has/parse/compare/left: `$A` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)",
+            "/clauses/0/forbid/ast/rule/has/parse/compare/left: `$A` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)",
         ),
     ] {
         assert_eq!(python_rejection(rule.clone()), expected, "{rule}");
@@ -273,6 +273,6 @@ fn parse_rules_are_checked() {
             json!({ "rule": { "kind": "string", "parse": { "grammar": "testChars", "kind": "text" } } }),
             finding()
         )),
-        "/checks/0/forbid/ast/rule/parse/grammar: `testChars` parses Python literals"
+        "/clauses/0/forbid/ast/rule/parse/grammar: `testChars` parses Python literals"
     );
 }

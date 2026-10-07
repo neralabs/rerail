@@ -2,13 +2,14 @@
   "format": "rerail.policy/v1",
   "id": "tslint:array-type",
   "revision": 1,
+  "mode": "steer",
   "description": "Array types, option generic: forbid T[].",
   "scope": { "include": ["**/*"], "exclude": [] },
-  "checks": [
+  "clauses": [
     {
       "id": "array-suffix",
       "forbid": { "ast": { "language": "typescript", "rule": {"kind":"array_type"} } },
-      "finding": { "anchor": "witness.span", "code": "ARRAY_TYPE", "severity": "error", "message": "Array type using 'T[]' is forbidden. Use 'Array<T>' instead." }
+      "violation": { "anchor": "witness.span", "code": "ARRAY_TYPE", "message": "Array type using 'T[]' is forbidden. Use 'Array<T>' instead." }
     }
   ]
 }

@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-console",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-console` rule with its default options (https://palantir.github.io/tslint/rules/no-console/). Bans all console methods (TSLint default: no method list).",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "console-access",
       "forbid": {
@@ -35,10 +36,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_CONSOLE",
-        "severity": "error",
         "message": "Calls to 'console.<method>' are not allowed."
       }
     }

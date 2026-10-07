@@ -6,6 +6,7 @@ import type { AdapterDelivery } from "../src/adapter-contract.js";
 import { claudeHookOutput, handleClaudeEvent, runClaudeHook } from "../src/claude-hook.js";
 import type { HookOptions } from "../src/hook-host.js";
 import { hookOptions, scriptedLoop, serveText, temporaryDirectories, transcriptQuery, transcriptRows } from "./hook-fixtures.js";
+import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-claude-hook-");
 
@@ -36,10 +37,10 @@ describe("Claude Code one-shot hook", () => {
       last_assistant_message: "Done.",
     }, options)).toEqual({});
 
-    expect(transcriptRows(root, ["session-start", "user-prompt", "tool-call", "turn-end"])).toEqual([
+    expect(transcriptRows(root, ["session-start", "user-prompt", "call", "turn-end"])).toEqual([
       ["claude-session:SessionStart", "session-start"],
       ["claude-session:prompt:p1", "user-prompt"],
-      ["claude-session:tool-call:tool-1", "tool-call"],
+      ["claude-session:tool-call:tool-1", "call"],
       ["claude-session:turn:p1", "turn-end"],
     ]);
   });
@@ -51,7 +52,7 @@ describe("Claude Code one-shot hook", () => {
       hookOptions(root),
     );
     expect(output).toEqual({});
-    await expect(readFile(join(root, "rerail.sqlite"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(transcriptQuery(root, "SELECT session_id FROM sessions")).toEqual([]);
   });
 
   it("records the session at CLAUDE_PROJECT_DIR when the hook cwd has moved below it", async () => {
@@ -67,20 +68,23 @@ describe("Claude Code one-shot hook", () => {
     expect(transcriptQuery(root, "SELECT cwd FROM sessions")).toEqual([{ cwd: root }]);
   });
 
-  it("does not start or record hook activity when this checkout is disabled", async () => {
-    const root = await temporaryDirectory();
-    await mkdir(join(root, ".rerail"));
-    await writeFile(join(root, ".rerail", "disabled"), "");
+  it("does not start or record hook activity where Rerail is not started", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const start = { session_id: "claude-session", cwd: root, hook_event_name: "SessionStart" as const, source: "startup" };
 
-    expect(await runClaudeHook(
-      { session_id: "claude-session", cwd: root, hook_event_name: "SessionStart", source: "startup" },
-      hookOptions(root),
-    )).toEqual({});
+    expect(await runClaudeHook(start, hookOptions(root))).toEqual({});
     await expect(readFile(join(root, "rerail.sqlite"))).rejects.toMatchObject({ code: "ENOENT" });
+
+    startTestRepository(root, hookOptions(root).databasePath);
+    stopTestRepository(root, hookOptions(root).databasePath);
+    expect(await runClaudeHook(start, hookOptions(root))).toEqual({});
+    expect(transcriptQuery(root, "SELECT session_id FROM sessions")).toEqual([]);
   });
 
   it("answers {} on stdout and exits cleanly when stdin is malformed or the runtime fails", async () => {
     const root = await temporaryDirectory();
+    // The runtime failure below reads the default database, so the repository is started there too.
+    startTestRepository(root);
     const serve = (stdin: string, options: HookOptions) => serveText(input => runClaudeHook(input, options), stdin);
 
     const malformed = await serve("{not json", hookOptions(root));
@@ -95,7 +99,7 @@ describe("Claude Code one-shot hook", () => {
     expect(runtimeFailure.stderr).toMatch(/^rerail hook: /);
   });
 
-  it("routes deliveries through additionalContext, Stop continuation, or the pending file", async () => {
+  it("routes steer and block deliveries through additionalContext or the pending file", async () => {
     const root = await temporaryDirectory();
     const storageRoot = join(root, "sessions");
     const common = { session_id: "claude-session", cwd: root };
@@ -103,13 +107,13 @@ describe("Claude Code one-shot hook", () => {
       hookSpecificOutput: z.object({ hookEventName: z.string(), additionalContext: z.string() }),
     });
 
-    const startLoop = scriptedLoop({ "session-start": [delivery("steer", "Read the conventions."), delivery("observe", "hidden")] });
+    const startLoop = scriptedLoop({ "session-start": [delivery("steer", "Read the conventions."), delivery("log", "hidden")] });
     expect(await handleClaudeEvent({ ...common, hook_event_name: "SessionStart", source: "startup" }, startLoop, storageRoot)).toEqual({
       hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: "Read the conventions." },
     });
 
     const toolLoop = scriptedLoop({
-      "tool-call": [delivery("steer", "Careful with auth."), delivery("followUp", "Run the tests."), delivery("nextTurn", "Summarize next time.")],
+      call: [delivery("steer", "Careful with auth."), delivery("block", "Do not edit generated files."), delivery("log", "Recorded only.")],
     });
     const toolOutput = ContextOutput.parse(await handleClaudeEvent({
       ...common,
@@ -118,9 +122,12 @@ describe("Claude Code one-shot hook", () => {
       tool_use_id: "tool-1",
       tool_input: {},
     }, toolLoop, storageRoot));
-    expect(toolOutput.hookSpecificOutput).toEqual({ hookEventName: "PreToolUse", additionalContext: "Careful with auth." });
+    expect(toolOutput.hookSpecificOutput).toEqual({
+      hookEventName: "PreToolUse",
+      additionalContext: "Careful with auth.\n\nDo not edit generated files.",
+    });
 
-    const displayLoop = scriptedLoop({ "assistant-delta": [delivery("steer", "Deferred steer.")] });
+    const displayLoop = scriptedLoop({ "assistant-delta": [delivery("steer", "Deferred steer."), delivery("block", "Deferred block.")] });
     expect(await handleClaudeEvent({
       ...common,
       hook_event_name: "MessageDisplay",
@@ -130,41 +137,15 @@ describe("Claude Code one-shot hook", () => {
       final: true,
     }, displayLoop, storageRoot)).toEqual({});
 
-    expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1" }, scriptedLoop({}), storageRoot)).toEqual({
-      hookSpecificOutput: { hookEventName: "Stop", additionalContext: "Run the tests." },
-    });
+    expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1" }, scriptedLoop({}), storageRoot)).toEqual({});
 
     expect(await handleClaudeEvent({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, scriptedLoop({}), storageRoot)).toEqual({
-      hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "Summarize next time.\n\nDeferred steer." },
+      hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "Deferred steer.\n\nDeferred block." },
     });
 
     expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p2" }, scriptedLoop({}), storageRoot)).toEqual({});
     expect(claudeHookOutput("SessionEnd", [delivery("steer", "ignored")])).toEqual({});
-    expect(claudeHookOutput("StopFailure", [delivery("followUp", "ignored")])).toEqual({});
-  });
-
-  it("defers next-turn context but continues immediately for a follow-up produced at Stop", async () => {
-    const root = await temporaryDirectory();
-    const storageRoot = join(root, "sessions");
-    const common = { session_id: "claude-session", cwd: root };
-
-    // A rule firing on this prompt asks for "next turn": not this prompt.
-    const promptLoop = scriptedLoop({ "user-prompt": [delivery("nextTurn", "Next time, plan first."), delivery("steer", "Now: mind the API.")] });
-    expect(await handleClaudeEvent({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "go" }, promptLoop, storageRoot)).toEqual({
-      hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "Now: mind the API." },
-    });
-
-    // A follow-up produced at Stop starts another assistant cycle without waiting for a user prompt.
-    const stopLoop = scriptedLoop({ "turn-end": [delivery("followUp", "Also run the linter.")] });
-    expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1" }, stopLoop, storageRoot)).toEqual({
-      hookSpecificOutput: { hookEventName: "Stop", additionalContext: "Also run the linter." },
-    });
-
-    // The next prompt carries only the deferred next-turn context.
-    expect(await handleClaudeEvent({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "again" }, scriptedLoop({}), storageRoot)).toEqual({
-      hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "Next time, plan first." },
-    });
-    expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p2" }, scriptedLoop({}), storageRoot)).toEqual({});
+    expect(claudeHookOutput("Stop", [delivery("block", "ignored")])).toEqual({});
   });
 
   it("discards pending context when Claude reports that the session has ended", async () => {
@@ -172,11 +153,11 @@ describe("Claude Code one-shot hook", () => {
     const storageRoot = join(root, "sessions");
     const common = { session_id: "claude-session", cwd: root };
 
-    await handleClaudeEvent(
-      { ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "first" },
-      scriptedLoop({ "user-prompt": [delivery("nextTurn", "Do not reuse this.")] }),
+    expect(await handleClaudeEvent(
+      { ...common, hook_event_name: "Stop", prompt_id: "p1" },
+      scriptedLoop({ "turn-end": [delivery("steer", "Do not reuse this.")] }),
       storageRoot,
-    );
+    )).toEqual({});
     expect(await handleClaudeEvent(
       { ...common, hook_event_name: "SessionEnd", reason: "clear" },
       scriptedLoop({}),

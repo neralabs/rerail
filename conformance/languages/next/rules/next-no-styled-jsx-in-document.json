@@ -1,0 +1,81 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-no-styled-jsx-in-document",
+  "revision": 1,
+  "mode": "steer",
+  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-styled-jsx-in-document: a <style> opening element with a `jsx` attribute in a file whose path, between its first and second `pages`, names a document.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "path": {
+              "regex": "^(?:[^p]|p(?:p|ap|agp|agep)*(?:[^pa]|a[^gp]|ag[^ep]|age[^sp]))*(?:p(?:p|ap|agp|agep)*(?:a|ag|age)?)?pages(?:(?:(?:[^p]|p(?:p|ap|agp|agep)*(?:[^pa]|a[^gp]|ag[^ep]|age[^sp]))*(?:p(?:p|ap|agp|agep)*(?:a|ag|age)?)?/)?_document(?:[^p/]|p(?:p|ap|agp|agep)*(?:[^pa/]|a[^gp/]|ag[^ep/]|age[^sp/]))*(?:p(?:p|ap|agp|agep)*(?:a|ag|age)?)?/*|/_document/index(?:\\.[^./]*)?/*)(?:pages.*)?$"
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "jsx_opening_element"
+                  },
+                  {
+                    "kind": "jsx_self_closing_element"
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^style$"
+                }
+              },
+              {
+                "has": {
+                  "kind": "jsx_attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "kind": "property_identifier",
+                        "regex": "^jsx$"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/no-styled-jsx-in-document",
+        "message": "`styled-jsx` should not be used in `pages/_document.js`. See: https://nextjs.org/docs/messages/no-styled-jsx-in-document",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/no-styled-jsx-in-document"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

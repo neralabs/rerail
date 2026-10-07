@@ -1,27 +1,58 @@
-//! One Python file's call summary: its definitions, what each calls by qualified name, and the
-//! module-level names it re-exports. Rule-independent and file-local: callees are names, not
-//! definitions, so a summary changes only when its own file does.
+//! One Python file's call summary: its definitions, what each calls by qualified name, the
+//! module- and class-level names it binds, and its classes' bases. Rule-independent and
+//! file-local: callees are names, not definitions, so a summary changes only when its own file
+//! does.
 //!
-//! A callee is named statically or not at all. `f()`, `mod.f()`, `a.b.C.m()` and a method's
-//! `self.m()` are named through the file's scope table; `obj.m()`, `f()()` and `a[0]()` name
-//! nothing and give no edge (type inference would be needed). A builtin names nothing either. An
-//! unbound name, which a star import may bind, is open: its callee is unknown.
+//! A callee is named where its binding is statically decided, else it is open (unknown), never
+//! absent. `f()`, `mod.f()`, `a.b.C.m()` are named through the file's scope table, a name bound to
+//! another (`run = helper`) through that name; a method's `self.m()`, `cls.m()` and `cls()` are
+//! late bound (`pkg.C.m^`: the class's method and every override a workspace subclass declares).
+//! A builtin, and a literal's method, name nothing and give no edge. Open: an unbound name (a star
+//! import may bind it), a parameter, a value no name denotes (`obj.m()` of a local or a call's
+//! result, `f()()`, `a[0]()`, a lambda, `super().m()`), a name bound on several paths unless all
+//! are definitions, and a definition read before a later binding replaces it.
+//!
+//! A definition a decorator may replace is `DECORATED` (its call runs what the decorator
+//! returned: open, though that usually calls it); one a later unconditional binding of its scope
+//! replaces is `SHADOWED` (the name, read once the scope ran, is no longer it).
 
 use super::names::Name;
+use crate::policy_dsl::identifier::{python_identifier, python_name};
 use crate::policy_dsl::module_path::ModulePath;
 use crate::policy_dsl::scope::options::{DEFAULT_PYTHON_MINOR, PythonOptions};
-use crate::policy_dsl::scope::{Binding, Form, Import, ScopeTable};
-use crate::policy_dsl::value::NodeRef;
+use crate::policy_dsl::scope::{Binding, Form, Import, ScopeKind, ScopeTable};
 use ast_grep_core::{Doc, Node};
-use std::collections::HashMap;
+use foldhash::{HashMap, HashMapExt};
 
 /// Bumped whenever extraction changes what a summary holds for the same file.
-pub(crate) const EXTRACTOR_VERSION: u32 = 6;
+pub(crate) const EXTRACTOR_VERSION: u32 = 9;
 
 pub(crate) const ASYNC: u8 = 1;
 pub(crate) const CLASS: u8 = 2;
 /// The definition's body calls something unknown.
 pub(crate) const OPEN: u8 = 4;
+/// Python: a decorator that is not known to return the definition itself binds its name.
+pub(crate) const DECORATED: u8 = 32;
+/// Python: a later binding of the name that runs whenever its scope's body runs to its end
+/// replaces the definition.
+pub(crate) const SHADOWED: u8 = 64;
+
+/// Python `supers` kinds, `(class, target, kind)`: a base, in order (`php::PARENT`'s value: the
+/// graph indexes subclasses alike); a base or class keyword no static name denotes (`(class,
+/// class)`); the metaclass.
+pub(crate) const BASE: u8 = 0;
+pub(crate) const UNKNOWN_BASE: u8 = 6;
+pub(crate) const METACLASS: u8 = 7;
+
+/// Decorators that return the definition they decorate (`functools.wraps(f)` when called).
+const TRANSPARENT: [&str; 6] = [
+    "abc.abstractmethod",
+    "typing.final",
+    "typing.override",
+    "typing.no_type_check",
+    "typing_extensions.final",
+    "typing_extensions.override",
+];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Summary {
@@ -35,14 +66,18 @@ pub(crate) struct Summary {
     pub(crate) edges: Vec<(u32, u32)>,
     /// Every callee name any call of the file names, in a definition or not. Sorted, distinct.
     pub(crate) targets: Vec<u32>,
-    /// Module-level names other modules may call through: `(this module's name for it, the name
-    /// it denotes)`, from imports and from assignments of a name.
+    /// Module- and class-level names other code may call through: `(this module's name for it,
+    /// the name it denotes)`, from imports and from assignments of a name.
     pub(crate) aliases: Vec<(u32, u32)>,
+    /// Module- and class-level names bound, on some path that may be the last, to a value no name
+    /// denotes (a call's result, a lambda, a loop target): a call through one is unknown. Sorted,
+    /// distinct.
+    pub(crate) opaque: Vec<u32>,
     /// Modules `from m import *` reads at module level.
     pub(crate) stars: Vec<u32>,
     /// PHP: what each class-like extends, implements and uses, and its trait adaptations:
     /// `(class or class.method, target, kind)` (`php::PARENT` and the other kinds), in
-    /// declaration order.
+    /// declaration order. Python: each class's bases and metaclass (`BASE` and the other kinds).
     pub(crate) supers: Vec<(u32, u32, u8)>,
     /// The file has syntax errors, or its scope table could not be built: what its definitions
     /// call is not all known.
@@ -115,7 +150,7 @@ impl Summary {
         let mut extractor = Extractor::new(table, module);
         extractor.walk(root);
         if let Some(table) = table {
-            extractor.aliases(root, table);
+            extractor.members(root, table);
         }
         extractor.stars(root);
         let mut summary = extractor.finish();
@@ -133,7 +168,7 @@ impl Summary {
                 .sum::<usize>()
                 + 13 * self.defs.len()
                 + 8 * (self.edges.len() + self.aliases.len())
-                + 4 * (self.targets.len() + self.stars.len())
+                + 4 * (self.targets.len() + self.opaque.len() + self.stars.len())
                 + 9 * self.supers.len(),
         );
         let put = |out: &mut Vec<u8>, value: u32| out.extend_from_slice(&value.to_le_bytes());
@@ -161,7 +196,7 @@ impl Summary {
                 put(&mut out, *b);
             }
         }
-        for ids in [&self.targets, &self.stars] {
+        for ids in [&self.targets, &self.opaque, &self.stars] {
             put(&mut out, ids.len() as u32);
             for id in ids {
                 put(&mut out, *id);
@@ -224,6 +259,7 @@ impl Summary {
                 .collect::<Option<Vec<_>>>()
         };
         let targets = ids()?;
+        let opaque = ids()?;
         let stars = ids()?;
         let supers = (0..reader.count(9)?)
             .map(|_| {
@@ -238,6 +274,7 @@ impl Summary {
             edges,
             targets,
             aliases,
+            opaque,
             stars,
             supers,
             open,
@@ -273,8 +310,28 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// What a method's body calls through its first parameter: that parameter's name and the class.
-type Receiver = (String, String);
+/// A method's receiver: its first parameter, the class whose body holds the method, and whether
+/// the parameter is the class (a classmethod's `cls`) rather than an instance.
+#[derive(Clone)]
+struct Receiver {
+    parameter: String,
+    class: String,
+    class_bound: bool,
+}
+
+impl Receiver {
+    /// A call through the receiver, late bound (`pkg.C.m^`): `self.m()` and `cls.m()` the method,
+    /// `cls()` the class (`pkg.C.^`), `self()` its `__call__`. A deeper attribute is an
+    /// attribute's value: unknown.
+    fn late(&self, tail: &[String]) -> Found {
+        match tail {
+            [] if self.class_bound => Found::Name(format!("{}.^", self.class)),
+            [] => Found::Name(format!("{}.__call__^", self.class)),
+            [method] => Found::Name(format!("{}.{method}^", self.class)),
+            _ => Found::Open,
+        }
+    }
+}
 
 /// The lexical context a node is visited in.
 #[derive(Clone)]
@@ -296,6 +353,51 @@ enum Found {
     Open,
 }
 
+/// Names followed through bindings (`run = helper`) before a callee is unknown.
+const MAX_FOLLOW: u8 = 4;
+
+/// Expression kinds whose value is a builtin type's: their methods name nothing.
+const LITERALS: [&str; 16] = [
+    "string",
+    "concatenated_string",
+    "integer",
+    "float",
+    "true",
+    "false",
+    "none",
+    "ellipsis",
+    "list",
+    "dictionary",
+    "set",
+    "tuple",
+    "list_comprehension",
+    "dictionary_comprehension",
+    "set_comprehension",
+    "generator_expression",
+];
+
+/// Constructs whose parts may not run whenever the statement around them does.
+const CONDITIONAL: [&str; 18] = [
+    "if_statement",
+    "elif_clause",
+    "else_clause",
+    "for_statement",
+    "while_statement",
+    "try_statement",
+    "except_clause",
+    "except_group_clause",
+    "finally_clause",
+    "with_statement",
+    "match_statement",
+    "case_clause",
+    "conditional_expression",
+    "boolean_operator",
+    "list_comprehension",
+    "dictionary_comprehension",
+    "set_comprehension",
+    "generator_expression",
+];
+
 struct Extractor<'t> {
     table: Option<&'t ScopeTable>,
     /// The file's module path, against which relative imports resolve.
@@ -308,7 +410,9 @@ struct Extractor<'t> {
     edges: Vec<(u32, u32)>,
     targets: Vec<u32>,
     aliases: Vec<(u32, u32)>,
+    opaque: Vec<u32>,
     stars: Vec<u32>,
+    supers: Vec<(u32, u32, u8)>,
     open_sites: bool,
 }
 
@@ -324,7 +428,9 @@ impl<'t> Extractor<'t> {
             edges: Vec::new(),
             targets: Vec::new(),
             aliases: Vec::new(),
+            opaque: Vec::new(),
             stars: Vec::new(),
+            supers: Vec::new(),
             open_sites: false,
         }
     }
@@ -339,15 +445,26 @@ impl<'t> Extractor<'t> {
         id
     }
 
+    /// The definition whose node starts at `start`. Definitions are made in pre-order, which is
+    /// by node start.
+    fn def_index(&self, start: u32) -> Option<usize> {
+        let index = self.defs.partition_point(|def| def.start < start);
+        (self.defs.get(index)?.start == start).then_some(index)
+    }
+
+    /// `def`'s qualified name followed by `tail`.
+    fn def_name(&self, def: usize, tail: &[String]) -> String {
+        qualify(&self.names[self.defs[def].name as usize], tail)
+    }
+
     fn finish(mut self) -> Summary {
-        // Definitions were made in pre-order, which is by node start.
         debug_assert!(self.defs.is_sorted_by_key(|def| def.start));
         let module = self.module.clone().map(|module| self.intern(&module));
         for list in [&mut self.edges, &mut self.aliases] {
             list.sort_unstable();
             list.dedup();
         }
-        for list in [&mut self.targets, &mut self.stars] {
+        for list in [&mut self.targets, &mut self.opaque, &mut self.stars] {
             list.sort_unstable();
             list.dedup();
         }
@@ -358,15 +475,18 @@ impl<'t> Extractor<'t> {
             edges: self.edges,
             targets: self.targets,
             aliases: self.aliases,
+            opaque: self.opaque,
             stars: self.stars,
-            supers: Vec::new(),
+            supers: self.supers,
             open: false,
             open_sites: self.open_sites,
             bytes: 0,
         }
     }
 
-    /// Visits nodes in document order (pre-order), so definitions are made by node start.
+    /// Visits nodes in document order (pre-order), so definitions are made by node start. A
+    /// lambda's calls are its enclosing definition's: it runs them when it runs the lambda, or
+    /// passes the lambda on.
     fn walk<D: Doc>(&mut self, root: &Node<'_, D>) {
         let top = Context {
             owner: None,
@@ -386,12 +506,8 @@ impl<'t> Extractor<'t> {
             let kind = node.kind();
             let inner = match kind.as_ref() {
                 "function_definition" | "class_definition" => {
-                    self.definition(&node, &contexts[context])
+                    self.definition(root, &node, &contexts[context])
                 }
-                "lambda" => Some(Context {
-                    owner: None,
-                    ..contexts[context].clone()
-                }),
                 _ => None,
             };
             if kind == "call"
@@ -414,11 +530,10 @@ impl<'t> Extractor<'t> {
                     // A function's body runs in its own context, a class body in the class's; the
                     // rest (decorators, defaults, bases) where the definition is.
                     let body = node.field("body").map(|body| body.range());
-                    let lambda = kind == "lambda";
                     contexts.push(inner);
                     let inner = contexts.len() - 1;
                     for child in node.children() {
-                        let into = if lambda || Some(child.range()) == body {
+                        let into = if Some(child.range()) == body {
                             inner
                         } else {
                             context
@@ -432,12 +547,12 @@ impl<'t> Extractor<'t> {
             stack[before..].reverse();
         }
         for (owner, site, tail) in local {
-            let Some(def) = self.defs.iter().find(|def| def.start == site).copied() else {
+            let Some(def) = self.def_index(site) else {
                 // The binding's site is no definition this walk made: no callee is known.
                 self.open(owner);
                 continue;
             };
-            let name = qualify(&self.names[def.name as usize], &tail);
+            let name = self.def_name(def, &tail);
             let name = self.intern(&name);
             self.call(owner, name);
         }
@@ -458,16 +573,28 @@ impl<'t> Extractor<'t> {
     }
 
     /// Makes the definition `node` is and returns the context of its body.
-    fn definition<D: Doc>(&mut self, node: &Node<'_, D>, outer: &Context) -> Option<Context> {
+    fn definition<D: Doc>(
+        &mut self,
+        root: &Node<'_, D>,
+        node: &Node<'_, D>,
+        outer: &Context,
+    ) -> Option<Context> {
         let class = node.kind() == "class_definition";
-        let qualified = format!("{}{}", outer.prefix, node.field("name")?.text());
-        let flags = if class {
+        let qualified = format!(
+            "{}{}",
+            outer.prefix,
+            python_identifier(&node.field("name")?)
+        );
+        let mut flags = if class {
             CLASS
         } else if is_async(node) {
             ASYNC
         } else {
             0
         };
+        if self.replaced(root, node, outer) {
+            flags |= DECORATED;
+        }
         let def = self.defs.len() as u32;
         let name = self.intern(&qualified);
         self.defs.push(Def {
@@ -476,6 +603,9 @@ impl<'t> Extractor<'t> {
             end: node.range().end as u32,
             flags,
         });
+        if class {
+            self.bases(node, name, outer);
+        }
         Some(if class {
             Context {
                 owner: outer.owner,
@@ -489,65 +619,241 @@ impl<'t> Extractor<'t> {
                 prefix: format!("{qualified}.<locals>."),
                 class: None,
                 receiver: outer.class.as_ref().and_then(|class| {
-                    receiver_parameter(node).map(|parameter| (parameter, class.clone()))
+                    receiver_parameter(node).map(|(parameter, class_bound)| Receiver {
+                        parameter,
+                        class: class.clone(),
+                        class_bound,
+                    })
                 }),
             }
         })
     }
 
-    /// Module-level names others may call through: imports, and assignments of a name.
-    fn aliases<D: Doc>(&mut self, root: &Node<'_, D>, table: &ScopeTable) {
-        let Some(module) = self.module.clone() else {
+    /// Whether a decorator of `definition` may bind its name to another value than the
+    /// definition: any but `staticmethod`, `classmethod`, the `TRANSPARENT` ones,
+    /// `functools.wraps(f)`, and a function of this file that returns its argument.
+    fn replaced<D: Doc>(
+        &self,
+        root: &Node<'_, D>,
+        definition: &Node<'_, D>,
+        outer: &Context,
+    ) -> bool {
+        let Some(decorated) = definition
+            .parent()
+            .filter(|parent| parent.kind() == "decorated_definition")
+        else {
+            return false;
+        };
+        let Some(table) = self.table else {
+            return true;
+        };
+        decorated
+            .children()
+            .filter(|child| child.kind() == "decorator")
+            .any(|decorator| {
+                let Some(expression) = decorator
+                    .children()
+                    .find(|child| child.is_named() && child.kind() != "comment")
+                else {
+                    return true;
+                };
+                let expression = unparenthesized(&expression);
+                let called = expression.kind() == "call";
+                let Some(callee) = (if called {
+                    expression.field("function")
+                } else {
+                    Some(expression)
+                }) else {
+                    return true;
+                };
+                let receiver = outer.receiver.as_ref();
+                let transparent = match follow(table, self.path, &callee, receiver, Vec::new(), 0) {
+                    Some(Found::Name(name)) if called => name == "functools.wraps",
+                    Some(Found::Name(name)) => TRANSPARENT.contains(&name.as_str()),
+                    None => {
+                        !called
+                            && callee.kind() == "identifier"
+                            && matches!(
+                                python_identifier(&callee).as_ref(),
+                                "staticmethod" | "classmethod"
+                            )
+                    }
+                    Some(Found::Local(site, tail)) => {
+                        !called && tail.is_empty() && self.identity(root, site)
+                    }
+                    Some(Found::Open) => false,
+                };
+                !transparent
+            })
+    }
+
+    /// Whether this file's function at `site` returns its first argument, as it got it, on every
+    /// path.
+    fn identity<D: Doc>(&self, root: &Node<'_, D>, site: u32) -> bool {
+        let Some(def) = self.def_index(site).map(|def| self.defs[def]) else {
+            return false;
+        };
+        def.flags & (CLASS | ASYNC | DECORATED) == 0
+            && node_at(
+                root,
+                def.start as usize..def.end as usize,
+                "function_definition",
+            )
+            .is_some_and(|function| returns_its_argument(&function))
+    }
+
+    /// `class`'s bases, in order, and its metaclass, as `supers` entries: a base by the name it
+    /// denotes (`builtins.X` for a builtin; `object` is every class's), and a splat or a base no
+    /// name denotes as `UNKNOWN_BASE`. Other class keywords go to `__init_subclass__`.
+    fn bases<D: Doc>(&mut self, class: &Node<'_, D>, key: u32, outer: &Context) {
+        let Some(arguments) = class.field("superclasses") else {
             return;
         };
-        let Some(scope) = table.scopes.first() else {
-            return;
-        };
-        let mut entries = Vec::new();
-        for (name, bindings) in &scope.bindings {
-            for binding in bindings {
-                let target = match (&binding.import, binding.site.form) {
-                    (Some(Import::Qualified(qualified)), _) => {
-                        // `import a.b` binds `a` to `a`, which aliases nothing.
-                        if binding.submodule.is_some() || qualified.as_ref() == name.as_ref() {
-                            continue;
-                        }
-                        qualified.to_string()
-                    }
-                    (Some(Import::Relative { level, rest }), _) => {
-                        match self.path.and_then(|m| m.relative(*level, rest, &[])) {
-                            Some(target) => target,
-                            None => continue,
-                        }
-                    }
-                    (None, Form::Assignment | Form::Annotated) => {
-                        let Some(value) = binding
-                            .site
-                            .value
-                            .and_then(|value| value.find(root.clone()))
-                        else {
-                            continue;
-                        };
-                        match reference(table, self.path, &value, None) {
-                            Some(Found::Name(target)) => target,
-                            Some(Found::Local(site, tail)) => {
-                                match self.defs.iter().find(|def| def.start == site) {
-                                    Some(def) => qualify(&self.names[def.name as usize], &tail),
-                                    None => continue,
-                                }
-                            }
-                            _ => continue,
-                        }
+        for argument in arguments
+            .children()
+            .filter(|child| child.is_named() && child.kind() != "comment")
+        {
+            let (expression, kind) = match argument.kind().as_ref() {
+                "keyword_argument" => match (argument.field("name"), argument.field("value")) {
+                    (Some(name), Some(value)) if python_identifier(&name) == "metaclass" => {
+                        (value, METACLASS)
                     }
                     _ => continue,
-                };
-                entries.push((format!("{module}.{name}"), target));
+                },
+                "list_splat" | "dictionary_splat" => {
+                    self.supers.push((key, key, UNKNOWN_BASE));
+                    continue;
+                }
+                _ => (argument, BASE),
+            };
+            let mut head = unparenthesized(&expression);
+            // `Generic[T]`, `Base[int]`: the class the alias gives as its MRO entry.
+            if head.kind() == "subscript"
+                && let Some(value) = head.field("value")
+            {
+                head = unparenthesized(&value);
+            }
+            let found = match self.table {
+                Some(table) => follow(
+                    table,
+                    self.path,
+                    &head,
+                    outer.receiver.as_ref(),
+                    Vec::new(),
+                    0,
+                ),
+                None => Some(Found::Open),
+            };
+            let target = match found {
+                Some(Found::Name(name)) => Some(name),
+                Some(Found::Local(site, tail)) => {
+                    self.def_index(site).map(|def| self.def_name(def, &tail))
+                }
+                Some(Found::Open) => None,
+                None if head.kind() == "identifier" => {
+                    let builtin = python_identifier(&head);
+                    if builtin == "object" || (kind == METACLASS && builtin == "type") {
+                        continue;
+                    }
+                    Some(format!("builtins.{builtin}"))
+                }
+                None => None,
+            };
+            match target {
+                Some(target) => {
+                    let target = self.intern(&target);
+                    self.supers.push((key, target, kind));
+                }
+                None => self.supers.push((key, key, UNKNOWN_BASE)),
             }
         }
-        entries.sort();
-        for (alias, target) in entries {
+    }
+
+    /// The module's and its classes' names other code may call through (`aliases`, `opaque`),
+    /// from the bindings that may be their last; and the definitions no longer bound once their
+    /// scope's body has run (`SHADOWED`).
+    fn members<D: Doc>(&mut self, root: &Node<'_, D>, table: &ScopeTable) {
+        let mut aliases = Vec::new();
+        let mut opaque = Vec::new();
+        for (index, scope) in table.scopes.iter().enumerate() {
+            let prefix = if index == 0 {
+                self.module.clone()
+            } else if scope.kind == ScopeKind::Class {
+                self.def_index(scope.range.start as u32)
+                    .map(|def| self.def_name(def, &[]))
+            } else {
+                None
+            };
+            for (name, bindings) in &scope.bindings {
+                let last = last_bindings(root, bindings);
+                for (at, binding) in bindings.iter().enumerate() {
+                    if matches!(binding.import, Some(Import::Definition))
+                        && !last.contains(&at)
+                        && let Some(def) = binding
+                            .site
+                            .node
+                            .and_then(|site| self.def_index(site.start))
+                    {
+                        self.defs[def].flags |= SHADOWED;
+                    }
+                }
+                let Some(prefix) = &prefix else {
+                    continue;
+                };
+                for at in last {
+                    match self.member(root, table, &bindings[at]) {
+                        Some(Some(target)) => aliases.push((format!("{prefix}.{name}"), target)),
+                        Some(None) => opaque.push(format!("{prefix}.{name}")),
+                        None => {}
+                    }
+                }
+            }
+        }
+        // Interned in a stable order: a summary is the same for the same file.
+        aliases.sort();
+        for (alias, target) in aliases {
             let pair = (self.intern(&alias), self.intern(&target));
             self.aliases.push(pair);
+        }
+        opaque.sort();
+        for name in opaque {
+            let id = self.intern(&name);
+            self.opaque.push(id);
+        }
+    }
+
+    /// What a module or class member's `binding` makes it: an alias of a name (`Some(Some)`), a
+    /// value no name denotes (`Some(None)`), or nothing a call follows (`None`: a definition,
+    /// which the graph links by name, a literal, a builtin, a deletion).
+    fn member<D: Doc>(
+        &self,
+        root: &Node<'_, D>,
+        table: &ScopeTable,
+        binding: &Binding,
+    ) -> Option<Option<String>> {
+        match (&binding.import, binding.site.form) {
+            (Some(Import::Definition), _) | (None, Form::Deletion) => None,
+            (Some(Import::Qualified(qualified)), _) => Some(Some(qualified.to_string())),
+            (Some(Import::Relative { level, rest }), _) => {
+                Some(self.path.and_then(|path| path.relative(*level, rest, &[])))
+            }
+            (None, Form::Assignment | Form::Annotated | Form::Named) => {
+                let Some(value) = binding
+                    .site
+                    .value
+                    .and_then(|value| value.find(root.clone()))
+                else {
+                    return Some(None);
+                };
+                match follow(table, self.path, &value, None, Vec::new(), 0)? {
+                    Found::Name(target) => Some(Some(target)),
+                    Found::Local(site, tail) => {
+                        Some(self.def_index(site).map(|def| self.def_name(def, &tail)))
+                    }
+                    Found::Open => Some(None),
+                }
+            }
+            _ => Some(None),
         }
     }
 
@@ -562,7 +868,7 @@ impl<'t> Extractor<'t> {
             let Some(from) = statement.field("module_name") else {
                 continue;
             };
-            let text = from.text();
+            let text = python_name(from.text());
             let target = if from.kind() == "relative_import" {
                 let level = text.chars().take_while(|c| *c == '.').count();
                 let rest = text[level..].trim();
@@ -582,7 +888,7 @@ impl<'t> Extractor<'t> {
 }
 
 /// What the call `call` in `summary`'s file denotes: the same answer extraction recorded for it.
-/// `None` where no static name denotes the callee.
+/// `None` where the call can run no workspace definition.
 pub(crate) fn callee_at<D: Doc>(
     table: &ScopeTable,
     path: Option<&ModulePath>,
@@ -613,10 +919,12 @@ fn enclosing_receiver<D: Doc>(summary: &Summary, node: &Node<'_, D>) -> Option<R
         return None;
     }
     let class = summary.def_at(class.range().start as u32)?;
-    Some((
-        receiver_parameter(&function)?,
-        summary.name(class.name).to_owned(),
-    ))
+    let (parameter, class_bound) = receiver_parameter(&function)?;
+    Some(Receiver {
+        parameter,
+        class: summary.name(class.name).to_owned(),
+        class_bound,
+    })
 }
 
 /// The nearest function or class definition whose body holds `node`.
@@ -639,61 +947,278 @@ fn callee<D: Doc>(
     call: &Node<'_, D>,
     receiver: Option<&Receiver>,
 ) -> Option<Found> {
-    reference(table, path, &call.field("function")?, receiver)
+    follow(
+        table,
+        path,
+        &call.field("function")?,
+        receiver,
+        Vec::new(),
+        0,
+    )
 }
 
-/// What a name or attribute chain denotes: `f`, `mod.f`, `a.b.C.m`, `self.m` in a method.
-fn reference<D: Doc>(
+/// What a callee expression denotes, with the attribute names `after` read from it: `f`,
+/// `mod.f`, `a.b.C.m`, `self.m` in a method, `run` where `run = helper`. `None` where it can be
+/// no workspace definition (a builtin, a literal's method, a deleted name).
+///
+/// A name's binding decides it where it is the one live at the read: the read sees the last
+/// bindings of the name's scope (from a function nested in it, as Ruff reads it, or past all of
+/// them), and they are one binding or definitions alone; or the read comes before a later binding,
+/// outside any loop, and its binding runs unconditionally. Several last bindings of a module's
+/// name are what the graph links for the module's member.
+fn follow<D: Doc>(
     table: &ScopeTable,
     path: Option<&ModulePath>,
     expression: &Node<'_, D>,
     receiver: Option<&Receiver>,
+    after: Vec<String>,
+    depth: u8,
 ) -> Option<Found> {
     let mut head = unparenthesized(expression);
     let mut tail = Vec::new();
     while head.kind() == "attribute" {
-        tail.push(head.field("attribute")?.text().into_owned());
-        head = unparenthesized(&head.field("object")?);
-    }
-    if head.kind() != "identifier" {
-        return None;
+        let (Some(attribute), Some(object)) = (head.field("attribute"), head.field("object"))
+        else {
+            return Some(Found::Open);
+        };
+        tail.push(python_identifier(&attribute).into_owned());
+        head = unparenthesized(&object);
     }
     tail.reverse();
-    let name = head.text();
-    let found = table.reference(&head.range())?;
-    let base = match table.resolve(found, &name).filter(|b| b.shadows()) {
-        // A builtin is outside every workspace.
-        None if PythonOptions::new(DEFAULT_PYTHON_MINOR).declares(&name) => return None,
-        None => return Some(Found::Open),
-        Some(binding) if binding.is_deletion() => return None,
-        Some(Binding {
-            import: Some(import),
-            site,
-            ..
-        }) => match import {
-            Import::Qualified(qualified) => qualified.to_string(),
-            Import::Relative { level, rest } => {
-                match path.and_then(|path| path.relative(*level, rest, &[])) {
-                    Some(name) => name,
-                    None => return Some(Found::Open),
-                }
-            }
-            Import::Definition => {
-                return Some(match site.node {
-                    Some(NodeRef { start, .. }) => Found::Local(start, tail),
-                    None => Found::Open,
-                });
-            }
-        },
-        Some(binding) => {
-            let (parameter, class) = receiver?;
-            if binding.site.form != Form::Parameter || name != parameter.as_str() {
-                return None;
-            }
-            class.clone()
-        }
+    tail.extend(after);
+    if head.kind() != "identifier" {
+        // A literal's methods are its builtin type's; any other value (a call's result, a
+        // subscript, a lambda, `super()`) is known only at run time.
+        return (!LITERALS.contains(&head.kind().as_ref())).then_some(Found::Open);
+    }
+    let name = python_identifier(&head);
+    let Some(reference) = table.reference(&head.range()) else {
+        return Some(Found::Open);
     };
-    Some(Found::Name(qualify(&base, &tail)))
+    let Some((scope, index)) = table
+        .resolve_python_index(reference, &name)
+        .filter(|found| table.binding_at(*found, &name).shadows())
+    else {
+        // A builtin is outside every workspace; an unbound name a star import may bind.
+        return (!PythonOptions::new(DEFAULT_PYTHON_MINOR).declares(&name)).then_some(Found::Open);
+    };
+    let bindings = &table.scopes[scope as usize].bindings[name.as_ref()];
+    let binding = &bindings[index];
+    if binding.is_deletion() {
+        return None;
+    }
+    if binding.site.form == Form::Parameter {
+        // A method's receiver is its class's or a subclass's; any other parameter, the caller's.
+        return Some(
+            match receiver.filter(|receiver| receiver.parameter == name.as_ref()) {
+                Some(receiver) => receiver.late(&tail),
+                None => Found::Open,
+            },
+        );
+    }
+    let root = expression.root().root();
+    if index + 1 < bindings.len() && !crosses_function(table, reference.scope, scope) {
+        return if !matches!(binding.import, Some(Import::Definition))
+            && unconditional(&root, binding)
+            && !in_loop(&head)
+        {
+            bound(table, path, &root, binding, tail, receiver, depth)
+        } else {
+            Some(Found::Open)
+        };
+    }
+    let last = last_bindings(&root, bindings);
+    let live = last
+        .iter()
+        .map(|at| &bindings[*at])
+        .filter(|binding| !binding.is_deletion())
+        .collect::<Vec<_>>();
+    match live.as_slice() {
+        [] => None,
+        [only] => bound(table, path, &root, only, tail, receiver, depth),
+        several
+            if several
+                .iter()
+                .all(|binding| matches!(binding.import, Some(Import::Definition))) =>
+        {
+            bound(table, path, &root, binding, tail, receiver, depth)
+        }
+        _ if scope == 0 => Some(match path.and_then(ModulePath::import_name) {
+            Some(module) => Found::Name(qualify(&format!("{module}.{name}"), &tail)),
+            None => Found::Open,
+        }),
+        _ => Some(Found::Open),
+    }
+}
+
+/// What one binding makes a callee with attribute names `tail`.
+fn bound<D: Doc>(
+    table: &ScopeTable,
+    path: Option<&ModulePath>,
+    root: &Node<'_, D>,
+    binding: &Binding,
+    tail: Vec<String>,
+    receiver: Option<&Receiver>,
+    depth: u8,
+) -> Option<Found> {
+    Some(match (&binding.import, binding.site.form) {
+        (Some(Import::Qualified(qualified)), _) => Found::Name(qualify(qualified, &tail)),
+        (Some(Import::Relative { level, rest }), _) => {
+            match path.and_then(|path| path.relative(*level, rest, &[])) {
+                Some(name) => Found::Name(qualify(&name, &tail)),
+                None => Found::Open,
+            }
+        }
+        (Some(Import::Definition), _) => match binding.site.node {
+            Some(node) => Found::Local(node.start, tail),
+            None => Found::Open,
+        },
+        (None, Form::Assignment | Form::Annotated | Form::Named) if depth < MAX_FOLLOW => {
+            match binding
+                .site
+                .value
+                .and_then(|value| value.find(root.clone()))
+            {
+                Some(value) => return follow(table, path, &value, receiver, tail, depth + 1),
+                None => Found::Open,
+            }
+        }
+        _ => Found::Open,
+    })
+}
+
+/// Whether a read in scope `from` of a binding of scope `to` lies in a function or lambda nested
+/// in `to`, which runs after `to`'s body (Ruff's deferred reading).
+fn crosses_function(table: &ScopeTable, from: u32, to: u32) -> bool {
+    let mut current = Some(from);
+    while let Some(index) = current.filter(|index| *index != to) {
+        let scope = &table.scopes[index as usize];
+        if matches!(scope.kind, ScopeKind::Function | ScopeKind::Lambda) {
+            return true;
+        }
+        current = scope.parent;
+    }
+    false
+}
+
+/// The bindings of a name that may be its last once the scope's body has run: those from the
+/// last that runs whenever the body does (`unconditional`). A bare annotation binds nothing; a
+/// binding made from a function body (`global`, `nonlocal`) may run at any time.
+fn last_bindings<D: Doc>(root: &Node<'_, D>, bindings: &[Binding]) -> Vec<usize> {
+    let mut last = Vec::new();
+    if let [only] = bindings {
+        if !only.is_annotation() {
+            last.push(0);
+        }
+        return last;
+    }
+    for (at, binding) in bindings.iter().enumerate() {
+        if binding.is_annotation() {
+            continue;
+        }
+        if !binding.deferred && !binding.outer && unconditional(root, binding) {
+            last.clear();
+        }
+        last.push(at);
+    }
+    last
+}
+
+/// Whether `binding`'s statement runs whenever its scope's body runs to its end: no branch, loop,
+/// `try`, `with` or `match` lies between it and the scope.
+fn unconditional<D: Doc>(root: &Node<'_, D>, binding: &Binding) -> bool {
+    let Some(site) = binding.site.node.and_then(|site| site.find(root.clone())) else {
+        return false;
+    };
+    for ancestor in site.ancestors() {
+        let kind = ancestor.kind();
+        if matches!(
+            kind.as_ref(),
+            "module" | "function_definition" | "class_definition" | "lambda"
+        ) {
+            return true;
+        }
+        if CONDITIONAL.contains(&kind.as_ref()) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether `node` lies in a loop of the function, class or module whose body holds it.
+fn in_loop<D: Doc>(node: &Node<'_, D>) -> bool {
+    for ancestor in node.ancestors() {
+        match ancestor.kind().as_ref() {
+            "for_statement" | "while_statement" => return true,
+            "function_definition" | "class_definition" | "lambda" | "module" => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The node of `kind` spanning exactly `range`.
+fn node_at<'r, D: Doc>(
+    root: &Node<'r, D>,
+    range: std::ops::Range<usize>,
+    kind: &str,
+) -> Option<Node<'r, D>> {
+    let mut node = root.clone();
+    loop {
+        if node.range() == range && node.kind() == kind {
+            return Some(node);
+        }
+        let inner = node.children().find(|child| {
+            let span = child.range();
+            span.start <= range.start && range.end <= span.end
+        })?;
+        node = inner;
+    }
+}
+
+/// Whether `function` returns its first parameter, unrebound, on every path: its body ends in a
+/// `return`, every `return` returns the parameter, and it neither yields nor binds the name.
+fn returns_its_argument<'r, D: Doc>(function: &Node<'r, D>) -> bool {
+    let (Some(parameter), Some(body)) = (first_parameter(function), function.field("body")) else {
+        return false;
+    };
+    let named = |node: &Node<'r, D>| -> Vec<Node<'r, D>> {
+        node.children()
+            .filter(|child| child.is_named() && child.kind() != "comment")
+            .collect::<Vec<_>>()
+    };
+    if named(&body)
+        .last()
+        .is_none_or(|last| last.kind() != "return_statement")
+    {
+        return false;
+    }
+    let is_parameter = |node: Option<Node<'r, D>>| {
+        node.is_some_and(|node| {
+            node.kind() == "identifier" && python_identifier(&node) == parameter.as_str()
+        })
+    };
+    let mut stack = vec![body];
+    while let Some(node) = stack.pop() {
+        match node.kind().as_ref() {
+            "function_definition" | "class_definition" | "lambda" => {}
+            "yield" | "global_statement" | "nonlocal_statement" | "delete_statement" => {
+                return false;
+            }
+            "return_statement" => match named(&node).as_slice() {
+                [value] if is_parameter(Some(value.clone())) => {}
+                _ => return false,
+            },
+            "assignment" | "augmented_assignment" | "for_statement"
+                if is_parameter(node.field("left")) =>
+            {
+                return false;
+            }
+            "named_expression" if is_parameter(node.field("name")) => return false,
+            _ => stack.extend(node.children()),
+        }
+    }
+    true
 }
 
 fn qualify(base: &str, tail: &[String]) -> String {
@@ -729,20 +1254,46 @@ fn is_async<D: Doc>(function: &Node<'_, D>) -> bool {
         .is_some_and(|first| first.kind() == "async")
 }
 
-/// A method's receiver parameter: its first, where it is a plain or typed name and the method is
-/// not a `@staticmethod`.
-fn receiver_parameter<D: Doc>(function: &Node<'_, D>) -> Option<String> {
-    let decorated = function
+/// A method's receiver parameter, where the method is not a `@staticmethod`, and whether it is
+/// the class: a `@classmethod`'s, or `__new__`'s, `__init_subclass__`'s and
+/// `__class_getitem__`'s, which Python passes the class.
+fn receiver_parameter<D: Doc>(function: &Node<'_, D>) -> Option<(String, bool)> {
+    let decorators = function
         .parent()
-        .filter(|p| p.kind() == "decorated_definition");
-    if decorated.is_some_and(|parent| {
-        parent.children().any(|child| {
-            child.kind() == "decorator"
-                && child.text().trim_start_matches('@').trim() == "staticmethod"
+        .filter(|parent| parent.kind() == "decorated_definition")
+        .map(|parent| {
+            parent
+                .children()
+                .filter(|child| child.kind() == "decorator")
+                .map(|child| {
+                    python_name(child.text())
+                        .trim_start_matches('@')
+                        .trim()
+                        .to_owned()
+                })
+                .collect::<Vec<_>>()
         })
-    }) {
+        .unwrap_or_default();
+    if decorators
+        .iter()
+        .any(|decorator| decorator == "staticmethod")
+    {
         return None;
     }
+    let class_bound = decorators
+        .iter()
+        .any(|decorator| decorator == "classmethod")
+        || function.field("name").is_some_and(|name| {
+            matches!(
+                python_identifier(&name).as_ref(),
+                "__new__" | "__init_subclass__" | "__class_getitem__"
+            )
+        });
+    Some((first_parameter(function)?, class_bound))
+}
+
+/// A function's first parameter, where it is a plain or typed name.
+fn first_parameter<D: Doc>(function: &Node<'_, D>) -> Option<String> {
     let parameters = function.field("parameters")?;
     let first = parameters.children().find(|child| child.is_named())?;
     let name = match first.kind().as_ref() {
@@ -751,5 +1302,5 @@ fn receiver_parameter<D: Doc>(function: &Node<'_, D>) -> Option<String> {
         "default_parameter" | "typed_default_parameter" => first.field("name")?,
         _ => return None,
     };
-    Some(name.text().into_owned())
+    Some(python_identifier(&name).into_owned())
 }

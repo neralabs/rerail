@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:member-ordering",
   "revision": 1,
+  "mode": "steer",
   "description": "Options [{\"order\": \"fields-first\"}]; alphabetize is not ported (needs comparison of two captured names). One check: a member of rank i fails when an earlier sibling member of the same body is ranked after i (TSLint compares with the last non-failing member, which holds the highest rank seen so far).",
   "scope": {"include": ["**/*"], "exclude": []},
-  "checks": [
+  "clauses": [
     {
       "id": "member-rank",
       "forbid": {
@@ -242,10 +243,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "MEMBER_ORDERING",
-        "severity": "error",
         "message": "Member declaration not allowed after a member of a later-ranked category."
       }
     }

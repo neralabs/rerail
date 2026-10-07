@@ -208,10 +208,10 @@ describe("daemon native client branch encoding", () => {
     vi.stubEnv("RERAIL_HOME", join(root, "home"));
     const daemon = await startNativeTestDaemon(root);
     const rule = {
-      id: "branch-encoded", reference: "Keep the branch encoded.",
+      id: "branch-encoded", mode: "steer", reference: "Keep the branch encoded.",
       match: { operator: "gte", threshold: 0.99 },
       sample: { source: "assistant-text", boundary: "sentence", minimumTokens: 1 },
-      action: { delivery: "steer", content: "Encode the branch." },
+      action: { content: "Encode the branch." },
       repeat: { mode: "always" },
     };
     const branch = [
@@ -454,6 +454,25 @@ describe("daemon native client polling resilience", () => {
     await client.close();
   });
 
+  it("rejects a daemon reply that names a requested kind outside the rule modes instead of delivering it", async () => {
+    const delivered: AdapterDelivery[] = [];
+    vi.stubGlobal("fetch", async (_url: URL, init: RequestInit) => {
+      const retired = readBody(init).operation === "cosine" ? [{ ...delivery("Recorded only."), requested: "observe" }] : [];
+      return Response.json({ deliveries: retired, entries: [], result: null });
+    });
+    const client = new DevNativeClient({
+      instance: { workspaceRoot: "/workspace", url: new URL("http://127.0.0.1:4737") },
+      host: "omp", sessionId: "skewed", entries: () => [],
+      appendEntry() {},
+      deliver(_client, deliveries) { delivered.push(...deliveries); },
+    });
+    await client.initialize({});
+    await client.activate();
+    await expect(client.cosine({ action: "list" })).rejects.toThrow("Rerail native response has an invalid shape");
+    expect(delivered).toEqual([]);
+    await client.close();
+  });
+
   it("hands a persistent outage and a rejected token to the host for a rebuild", async () => {
     vi.useFakeTimers();
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
@@ -548,7 +567,7 @@ describe("daemon native client polling resilience", () => {
     expect(stderr).toHaveBeenCalledTimes(2);
     expect(stderr).toHaveBeenLastCalledWith(expect.stringContaining("could not restart its daemon after 3 attempts"));
     expect(stderr).toHaveBeenLastCalledWith(expect.stringContaining("daemon still starting"));
-    expect(stderr).toHaveBeenLastCalledWith(expect.stringContaining("/rerail-enable"));
+    expect(stderr).toHaveBeenLastCalledWith(expect.stringContaining("/rerail-start"));
 
     // Terminal: minutes pass without another spawn or another word, and the stream stays shut, so
     // events are dropped and counted rather than sent to a daemon that is not there.

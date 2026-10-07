@@ -163,7 +163,7 @@ fn damaged_trees_select_identically_on_native_and_restored_tape() {
         json!({"kind": "statement_block", "has": {"kind": "debugger_statement"}}),
     ];
     for source in [
-        "const m = importOriginal<typeof import(\"./api\")>();\nconsole.log(m);\n",
+        "const m = importOriginal(1 load(\"./api\"));\nconsole.log(m);\n",
         "debugger;\nfunction f( {\n  debugger;\n",
         "function f() {\n  debugger;\n  x = 1;\n",
     ] {
@@ -445,7 +445,7 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             continue;
         }
         let document: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-        collect(&document["checks"], &mut rules);
+        collect(&document["clauses"], &mut rules);
     }
     assert_eq!(rules.len(), 38, "pinned catalog query inventory");
     // Every catalog grammar needs a fixture here; an unknown language fails rather than being skipped.
@@ -1091,6 +1091,75 @@ fn utility_plans_reached_from_disjoint_scopes_test_only_those_scopes() {
         assert!(
             utility_visits <= inline_visits,
             "utility {utility} tested {utility_visits} roots; inline {inline_visits}"
+        );
+    }
+}
+
+/// A relation selects its inner rule among the nodes it relates to the scope's roots (their
+/// siblings, parents or children), and a root-kind test of a narrow scope reads the scope, not
+/// the kinds' postings: the budget units a selection spends do not grow with code no root is near.
+/// The shapes are the TypeScript pack's (no-this-alias, no-self-compare, eqeqeq), which spent most
+/// of a large file's work budget reading every node of it once per relation.
+#[test]
+fn relation_selections_spend_units_on_the_related_nodes_only() {
+    use crate::policy_dsl::budget::MatchBudget;
+    use std::sync::atomic::AtomicBool;
+    let rules = [
+        json!({ "kind": "variable_declarator", "has": {
+            "stopBy": "neighbor", "kind": "identifier", "precedes": { "stopBy": "end", "regex": "^=$" },
+        } }),
+        json!({ "kind": "binary_expression", "has": {
+            "stopBy": "neighbor", "regex": "^===$", "follows": { "stopBy": "end", "not": { "kind": "comment" } },
+        } }),
+        json!({ "regex": "^==$", "inside": { "stopBy": "neighbor", "kind": "binary_expression" } }),
+        json!({ "kind": "variable_declarator", "has": {
+            "stopBy": "neighbor", "any": [{ "kind": "identifier" }, { "kind": "number" }],
+        } }),
+    ];
+    let source = |filler: usize| {
+        let mut source = (0..20)
+            .map(|n| format!("const s{n} = this;\nif (a{n} === b{n} || c{n} == 1) {{}}\n"))
+            .collect::<String>();
+        // Identifiers, `=` tokens and comments, but no declarator or binary expression.
+        for n in 0..filler {
+            source.push_str(&format!("x{n}.y = f(a{n}, b{n}.c, [d{n}]); // n\n"));
+        }
+        source
+    };
+    for rule in &rules {
+        let matcher = compile_rule(
+            rule,
+            GrammarDialect::TypeScript,
+            "test/rule",
+            &mut Vec::new(),
+        )
+        .unwrap();
+        let plan = AnchorPlan::compile(&matcher);
+        let units = |filler: usize| {
+            let source = source(filler);
+            let native = AstGrep::doc(StrDoc::new(&source, GrammarDialect::TypeScript));
+            let index = FileAnchorIndex::build(&native, &[&plan], usize::MAX, || false);
+            let budget = MatchBudget::work(&Arc::new(AtomicBool::new(false)), u64::MAX);
+            let selection = index.select(&plan);
+            let spent = budget.spent();
+            drop(budget);
+            let found = match &selection {
+                Selection::All => panic!("{rule}: a complete index selects roots"),
+                Selection::Roots(roots) => roots
+                    .iter()
+                    .filter_map(|&ordinal| matched(index.node(ordinal), &matcher))
+                    .collect::<Vec<_>>(),
+            };
+            assert_eq!(found, actual(&native, &matcher), "{rule}: sound selection");
+            assert_eq!(found.len(), 20, "{rule}");
+            (spent, index.len())
+        };
+        let (small, small_nodes) = units(500);
+        let (large, large_nodes) = units(8_000);
+        assert!(large_nodes > 10 * small_nodes, "{rule}");
+        assert!(
+            large <= small + 2,
+            "{rule}: {small} units with {small_nodes} nodes, {large} with {large_nodes}"
         );
     }
 }

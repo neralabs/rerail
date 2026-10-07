@@ -11,9 +11,10 @@ const astRule = (
   format: "rerail.policy/v1",
   id: `test:${language}`,
   revision: 1,
-  checks: [{
+  mode: "steer",
+  clauses: [{
     id: "check",
-    finding: { code: "TEST", severity: "error", anchor: "witness.span", message: "Test", ...(suppress === undefined ? {} : { suppress }) },
+    violation: { code: "TEST", anchor: "witness.span", message: "Test", ...(suppress === undefined ? {} : { suppress }) },
     forbid: { ast: { language, rule, ...(languageOptions === undefined ? {} : { languageOptions }) } },
   }],
 });

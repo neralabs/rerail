@@ -1,0 +1,63 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "phpcs-generic-php-backtick-operator",
+  "revision": 1,
+  "mode": "steer",
+  "description": "PHP_CodeSniffer 4.0.4 Generic.PHP.BacktickOperator: each backtick of a shell command expression (PHP_CodeSniffer reports the opening and the closing one).",
+  "scope": {
+    "include": [
+      "**/*.php"
+    ],
+    "exclude": [
+      "**/*.blade.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "opening",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "kind": "shell_command_expression"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "Generic.PHP.BacktickOperator",
+        "message": "Use of the backtick operator is forbidden",
+        "suppress": {
+          "phpcs": {
+            "sniffs": [
+              "Generic.PHP.BacktickOperator.Found"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "closing",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "kind": "shell_command_expression"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.end",
+        "code": "Generic.PHP.BacktickOperator",
+        "message": "Use of the backtick operator is forbidden",
+        "suppress": {
+          "phpcs": {
+            "sniffs": [
+              "Generic.PHP.BacktickOperator.Found"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

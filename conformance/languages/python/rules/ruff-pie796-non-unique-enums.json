@@ -1,0 +1,460 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "python-conformance:ruff-pie796-non-unique-enums",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's PIE796 (non-unique-enums): in a class with an `enum.Enum` base, a plain assignment whose value equals the value of an earlier assignment in the same body as Ruff's ComparableExpr (`text: \"structure\"`: literals by type and value, `1 == 0x1`, `'a' == \"a\"`, `-1 == -(1)`, not `1 == 1.0 == True`; names compared without NFKC normalization); `enum.auto()` values (alone or in a tuple) are skipped, and in stubs (`.pyi`) so are `...` and `typing.cast(T, ...)`. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/PIE796.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it, and its `.py`/`.pyi` split read per file (`ast.file.path`): the suite's `select_when` gate holds wherever a matching file exists anywhere in the workspace, so in a repository it would read stubs as modules and modules as stubs.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "auto-call": {
+            "any": [
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "matches": "enum-auto"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "auto-call"
+                }
+              }
+            ]
+          },
+          "enum-auto": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "enum.auto"
+              ]
+            }
+          },
+          "enum-base": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "enum.Enum"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "non-unique-enums",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "member": {
+              "params": [
+                "X"
+              ],
+              "rule": {
+                "kind": "expression_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "assignment",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^:$"
+                    }
+                  },
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "assignment"
+                      }
+                    },
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^=$"
+                    },
+                    "not": {
+                      "kind": "assignment"
+                    },
+                    "pattern": "$X",
+                    "all": [
+                      {
+                        "not": {
+                          "any": [
+                            {
+                              "matches": "auto-call"
+                            },
+                            {
+                              "any": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "tuple"
+                                    },
+                                    {
+                                      "kind": "expression_list"
+                                    }
+                                  ]
+                                }
+                              ],
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "auto-call"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "matches": {
+                  "member": {
+                    "X": "$V"
+                  }
+                }
+              },
+              {
+                "count": {
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": {
+                      "member": {
+                        "X": "$U"
+                      }
+                    },
+                    "compare": {
+                      "left": "U",
+                      "op": "eq",
+                      "right": "V",
+                      "text": "structure"
+                    }
+                  },
+                  "min": 1
+                }
+              }
+            ],
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "block",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "class_definition",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "enum-base"
+                  }
+                }
+              }
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "\\.py$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PIE796",
+        "message": "Enum contains duplicate value: `$V`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PIE796"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "non-unique-enums-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "member": {
+              "params": [
+                "X"
+              ],
+              "rule": {
+                "kind": "expression_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "assignment",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^:$"
+                    }
+                  },
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "assignment"
+                      }
+                    },
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^=$"
+                    },
+                    "not": {
+                      "kind": "assignment"
+                    },
+                    "pattern": "$X",
+                    "all": [
+                      {
+                        "not": {
+                          "any": [
+                            {
+                              "any": [
+                                {
+                                  "matches": "auto-call"
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "tuple"
+                                        },
+                                        {
+                                          "kind": "expression_list"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "auto-call"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "matches": "unknown-value"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "typing-cast": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.cast",
+                  "typing_extensions.cast",
+                  "_typeshed.cast"
+                ]
+              }
+            },
+            "ellipsis": {
+              "any": [
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "ellipsis"
+                  }
+                }
+              ]
+            },
+            "unknown-value": {
+              "any": [
+                {
+                  "matches": "ellipsis"
+                },
+                {
+                  "matches": "cast-ellipsis"
+                }
+              ]
+            },
+            "cast-ellipsis": {
+              "any": [
+                {
+                  "kind": "call",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "not": {
+                          "follows": {
+                            "stopBy": "neighbor",
+                            "regex": "(?s)."
+                          }
+                        },
+                        "matches": "typing-cast"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "argument_list",
+                        "count": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "not": {
+                              "regex": "^[(),]$"
+                            }
+                          },
+                          "min": 2,
+                          "max": 2
+                        },
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "keyword_argument"
+                              },
+                              {
+                                "kind": "dictionary_splat"
+                              }
+                            ]
+                          }
+                        },
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "ellipsis",
+                          "follows": {
+                            "stopBy": "neighbor",
+                            "regex": "^,$"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "cast-ellipsis"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "matches": {
+                  "member": {
+                    "X": "$V"
+                  }
+                }
+              },
+              {
+                "count": {
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": {
+                      "member": {
+                        "X": "$U"
+                      }
+                    },
+                    "compare": {
+                      "left": "U",
+                      "op": "eq",
+                      "right": "V",
+                      "text": "structure"
+                    }
+                  },
+                  "min": 1
+                }
+              }
+            ],
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "block",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "class_definition",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "enum-base"
+                  }
+                }
+              }
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PIE796",
+        "message": "Enum contains duplicate value: `$V`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PIE796"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

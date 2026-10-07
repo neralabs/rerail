@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   encodePolicyWorkspaceRequest,
   loadNativeBinding,
+  RESULT_PAGE_BYTES,
   type NativePolicyDslWorkspace,
   type NativeRepositoryIndexOptions,
 } from "./native.js";
@@ -35,6 +36,7 @@ import {
 } from "./policy-execution.js";
 import { defaultRerailDatabasePath } from "./database.js";
 import { SqlitePolicyExecutionStore } from "./policy-execution-store.js";
+import { RULE_MODES, steers } from "./rule-mode.js";
 import { compareDeterministicStrings } from "./stable-json.js";
 import { assertContentStoreOwner } from "./main-instance.js";
 import { contentStorePath } from "./rerail-build.js";
@@ -50,7 +52,6 @@ const SCAN_MAX_DURATION_MS = 5 * 60_000;
 const SCAN_MAX_FILES = 100_000;
 const SCAN_MAX_FAILURES = 20;
 const SCAN_MAX_SOURCE_BYTES = 512 * 1024 * 1024;
-const RESULT_PAGE_BYTES = 8 * 1024 * 1024;
 export const IGNORED_DIRECTORIES = new Set([
   ".git",
   ".hg",
@@ -106,10 +107,10 @@ const sourceSpanSchema = z.strictObject({
 });
 const findingSchema = z.strictObject({
   id: z.string().min(1),
-  policyId: z.string().min(1),
-  checkId: z.string().min(1),
+  ruleId: z.string().min(1),
+  clauseId: z.string().min(1),
   code: z.string().min(1),
-  severity: z.enum(["advisory", "warning", "error"]),
+  mode: z.enum(RULE_MODES),
   message: z.string(),
   path: z.string().optional(),
   span: sourceSpanSchema.optional(),
@@ -118,16 +119,16 @@ const findingSchema = z.strictObject({
   fix: z.strictObject({ span: sourceSpanSchema, text: z.string() }).optional(),
 });
 const failureSchema = z.strictObject({
-  policyId: z.string().optional(),
-  checkId: z.string().min(1),
+  ruleId: z.string().exactOptional(),
+  clauseId: z.string().min(1),
   code: z.enum(["budget-exceeded", "missing-capability", "source-incomplete", "source-partial", "adapter-error"]),
   message: z.string(),
   path: z.string().optional(),
   stage: z.enum(["read", "parse", "evaluate", "scan", "scope", "persistence"]).optional(),
 });
 const coverageSchema: z.ZodType<PolicyCheckCoverage> = z.strictObject({
-  checkId: z.string().min(1),
-  policyId: z.string().optional(),
+  clauseId: z.string().min(1),
+  ruleId: z.string().exactOptional(),
   status: z.enum(POLICY_COVERAGE_STATUSES),
   reasons: z.array(z.strictObject({
     code: failureSchema.shape.code,
@@ -135,12 +136,12 @@ const coverageSchema: z.ZodType<PolicyCheckCoverage> = z.strictObject({
     paths: z.array(z.string()),
   })),
 });
-// The enforcer reports findings and failures; it validates the native per-check coverage and does not keep it, since a
-// delta result's coverage covers its replaced paths only.
+// The enforcer reports violations and failures; it validates the native per-clause coverage and does not keep it, since
+// a delta result's coverage covers its replaced paths only.
 const evaluationSchema = z
   .strictObject({
     status: z.enum(["completed", "failed"]),
-    findings: z.array(findingSchema),
+    violations: z.array(findingSchema),
     failures: z.array(failureSchema),
     coverage: z.array(coverageSchema),
     metrics: z.strictObject({
@@ -154,7 +155,7 @@ const resultPageSchema = z.strictObject({
   revision: z.number().int().nonnegative(),
   cursor: z.number().int().nonnegative(),
   done: z.boolean(),
-  findings: z.array(findingSchema),
+  violations: z.array(findingSchema),
   failures: z.array(failureSchema),
   coverage: z.array(coverageSchema),
   bytes: z.number().int().nonnegative(),
@@ -260,7 +261,7 @@ export function pythonModulePath(absolute: string): string | string[] | undefine
 function emptyEvaluation(): Evaluation {
   return {
     status: "completed",
-    findings: [],
+    violations: [],
     failures: [],
     metrics: { files: 0, visitedNodes: 0, witnesses: 0 },
   };
@@ -272,7 +273,7 @@ function failure(
   path?: string,
   stage?: PolicyExecutionFailure["stage"],
 ): PolicyExecutionFailure {
-  return { checkId, code, message, ...(path === undefined ? {} : { path }), ...(stage === undefined ? {} : { stage }) };
+  return { clauseId: checkId, code, message, ...(path === undefined ? {} : { path }), ...(stage === undefined ? {} : { stage }) };
 }
 function scanBudgetFailure(message: string): PolicyExecutionFailure {
   return failure("scan", "budget-exceeded", message, undefined, "scan");
@@ -336,7 +337,7 @@ export class NativeExecutablePolicyEnforcer implements ExecutablePolicyEvaluator
     this.#workspaceRoot = resolve(options.workspaceRoot);
     this.#delivery = options.delivery;
     this.#scope = options.scope ?? "touched-files";
-    this.#mode = options.mode ?? "resteer";
+    this.#mode = options.mode ?? "steer";
     this.#responseMode = this.#mode;
     this.#ownedExecutions =
       options.executions === undefined
@@ -571,7 +572,7 @@ export class NativeExecutablePolicyEnforcer implements ExecutablePolicyEvaluator
     const failures: PolicyExecutionFailure[] = [];
     for (const { ruleId, owner, reason } of quarantined) {
       const message = `policy rule ${ruleId} (${owner}) is skipped: ${reason}`;
-      const problem = { ...failure("catalog", "adapter-error", message, undefined, "parse"), policyId: ruleId };
+      const problem = { ...failure("catalog", "adapter-error", message, undefined, "parse"), ruleId };
       this.#readFailures.set(`quarantined:${owner}:${ruleId}`, problem);
       failures.push(problem);
     }
@@ -741,7 +742,7 @@ export class NativeExecutablePolicyEnforcer implements ExecutablePolicyEvaluator
     const failures = result.failures.map((item) => ({ ...item, stage: "evaluate" as const }));
     const scopeFailure = this.#scopeFailureForEdit(stored.scope, path, edit);
     if (scopeFailure !== undefined) this.#readFailures.set(path, scopeFailure);
-    const findings = scopeFailure === undefined ? this.#selectFindings(stored.scope, edit, result.findings) : [];
+    const findings = scopeFailure === undefined ? this.#selectFindings(stored.scope, edit, result.violations) : [];
     this.#finishRun(
       stored.runId,
       scopeFailure === undefined && result.status === "completed" ? "completed" : "failed",
@@ -867,7 +868,7 @@ export class NativeExecutablePolicyEnforcer implements ExecutablePolicyEvaluator
       if (evaluation !== null && runId !== undefined)
         this.#record(() =>
           this.#executions.progress(runId, {
-            findings: evaluation.findings,
+            violations: evaluation.violations,
             failures: [...failures, ...evaluation.failures],
           }),
         );
@@ -942,7 +943,7 @@ export class NativeExecutablePolicyEnforcer implements ExecutablePolicyEvaluator
     if (runId !== undefined)
       this.#record(() =>
         this.#executions.progress(runId, {
-          findings: result.findings,
+          violations: result.violations,
           failures: [...failures, ...result.failures],
         }),
       );
@@ -969,9 +970,9 @@ export class NativeExecutablePolicyEnforcer implements ExecutablePolicyEvaluator
     const streamed = await this.#resultPages(workspace, runId, mode === "log" && !generatedEdit, failures);
     const result: Evaluation = {
       status: streamed.failures.length === 0 ? "completed" : "failed",
-      findings: streamed.findings,
+      violations: streamed.violations,
       failures: streamed.failures,
-      metrics: { files: 0, visitedNodes: 0, witnesses: streamed.findings.length },
+      metrics: { files: 0, visitedNodes: 0, witnesses: streamed.violations.length },
     };
     const unboundedFailures = [
       ...failures,
@@ -989,20 +990,20 @@ export class NativeExecutablePolicyEnforcer implements ExecutablePolicyEvaluator
       if (unboundedFailures.length > SCAN_MAX_FAILURES)
         this.#record(() =>
           this.#executions.appendResultPage?.(runId, streamed.pageCount, {
-            findings: [],
+            violations: [],
             failures: [scanBudgetFailure(`Repository scan stopped after reaching ${SCAN_MAX_FAILURES} failures`)],
           }),
         );
       this.#record(() => this.#executions.finishResultPages?.(runId, status));
     } else {
-      this.#finishRun(runId, status, result.findings, allFailures);
+      this.#finishRun(runId, status, result.violations, allFailures);
     }
     if (this.#scope === "repository" && revision === this.#revision) {
-      this.#reportableFindings = result.findings;
+      this.#reportableFindings = result.violations;
       this.#responseMode = mode;
       this.#evaluation = { ...result, failures: allFailures };
     }
-    await this.#publish(revision, scope === "repository" ? [] : sourcePaths, result.findings, mode, generatedEdit);
+    await this.#publish(revision, scope === "repository" ? [] : sourcePaths, result.violations, mode, generatedEdit);
   }
 
   async #waitForEvaluationIdle(): Promise<void> {
@@ -1145,7 +1146,7 @@ export class NativeExecutablePolicyEnforcer implements ExecutablePolicyEvaluator
     runId: string | undefined,
     allowPersistentPaging: boolean,
     precedingFailures: readonly PolicyExecutionFailure[],
-  ): Promise<Pick<Evaluation, "findings" | "failures"> & { paged: boolean; pageCount: number }> {
+  ): Promise<Pick<Evaluation, "violations" | "failures"> & { paged: boolean; pageCount: number }> {
     const paged =
       allowPersistentPaging &&
       runId !== undefined &&
@@ -1160,7 +1161,7 @@ export class NativeExecutablePolicyEnforcer implements ExecutablePolicyEvaluator
     if (paged && precedingFailures.length > 0) {
       this.#record(() =>
         this.#executions.appendResultPage?.(runId!, pageIndex, {
-          findings: [],
+          violations: [],
           failures: precedingFailures.slice(0, SCAN_MAX_FAILURES),
         }),
       );
@@ -1175,16 +1176,16 @@ export class NativeExecutablePolicyEnforcer implements ExecutablePolicyEvaluator
         remainingFailures -= pageFailures.length;
         this.#record(() =>
           this.#executions.appendResultPage?.(runId!, pageIndex, {
-            findings: page.findings,
+            violations: page.violations,
             failures: pageFailures,
           }),
         );
       } else {
-        findings.push(...page.findings);
+        findings.push(...page.violations);
       }
       failures.push(...page.failures);
       pageIndex += 1;
-      if (page.done) return { findings, failures, paged, pageCount: pageIndex };
+      if (page.done) return { violations: findings, failures, paged, pageCount: pageIndex };
       if (page.cursor <= cursor) throw new Error("Native result stream did not advance");
       cursor = page.cursor;
       await yieldToHost();
@@ -1240,9 +1241,9 @@ export class NativeExecutablePolicyEnforcer implements ExecutablePolicyEvaluator
         const previous = this.#workspaceEvaluations.get(workspace) ?? emptyEvaluation();
         const evaluation: Evaluation = {
           ...parsed.evaluation,
-          findings: [
-            ...previous.findings.filter((finding) => finding.path === undefined || !replaced.has(finding.path)),
-            ...parsed.evaluation.findings,
+          violations: [
+            ...previous.violations.filter((finding) => finding.path === undefined || !replaced.has(finding.path)),
+            ...parsed.evaluation.violations,
           ],
           failures: [
             ...previous.failures.filter((failure) => failure.path === undefined || !replaced.has(failure.path)),
@@ -1287,7 +1288,7 @@ export class NativeExecutablePolicyEnforcer implements ExecutablePolicyEvaluator
     mode: PolicyMode,
     generatedEdit = false,
   ): Promise<void> {
-    if (this.#sessionId === undefined || this.#closing || mode !== "resteer") return;
+    if (this.#sessionId === undefined || this.#closing || mode !== "steer") return;
     if (
       sourceScope.length === 0
         ? revision < this.#revision
@@ -1295,7 +1296,7 @@ export class NativeExecutablePolicyEnforcer implements ExecutablePolicyEvaluator
     )
       return;
     const scope = [...sourceScope].sort(compareDeterministicStrings);
-    const steerable = findings.filter((finding) => finding.severity !== "advisory");
+    const steerable = findings.filter((finding) => steers(finding.mode));
     if (steerable.length === 0) return;
     const steering = executablePolicySteering(steerable);
     await this.#delivery.requestDelivery(this.#sessionId, "steer", steering.content, {
@@ -1311,12 +1312,11 @@ export class NativeExecutablePolicyEnforcer implements ExecutablePolicyEvaluator
     const findings = this.#reportableFindings;
     return {
       revision,
-      findings,
+      violations: findings,
       failures: [...this.#evaluation.failures, ...this.#readFailures.values()],
-      disposition:
-        this.#responseMode === "resteer" && findings.some((finding) => finding.severity !== "advisory")
-          ? "resteer"
-          : "continue",
+      disposition: this.#responseMode === "steer" && findings.some((finding) => steers(finding.mode))
+        ? "steer"
+        : "continue",
     };
   }
 
@@ -1350,7 +1350,7 @@ export class NativeExecutablePolicyEnforcer implements ExecutablePolicyEvaluator
         paths,
         ruleProvenance: prepared === null ? [] : [...provenance],
       });
-      if (this.#closing) this.#executions.finish(runId, { status: "interrupted", findings: [], failures: [] });
+      if (this.#closing) this.#executions.finish(runId, { status: "interrupted", violations: [], failures: [] });
     });
     return runId;
   }
@@ -1372,7 +1372,7 @@ export class NativeExecutablePolicyEnforcer implements ExecutablePolicyEvaluator
     failures: PolicyExecutionFailure[],
   ): void {
     if (runId !== undefined && !this.#closing)
-      this.#record(() => this.#executions.finish(runId, { status, findings, failures }));
+      this.#record(() => this.#executions.finish(runId, { status, violations: findings, failures }));
   }
   #recordImmediate(
     scope: PolicyScope,

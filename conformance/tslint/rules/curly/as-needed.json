@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:curly",
   "revision": 1,
+  "mode": "steer",
   "description": "Flags blocks with a single statement under if/else/loops (as-needed).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "unnecessary-block",
       "forbid": {
@@ -101,10 +102,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "CURLY_AS_NEEDED",
-        "severity": "error",
         "message": "Block contains only one statement; remove the curly braces."
       }
     }

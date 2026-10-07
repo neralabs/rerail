@@ -17,6 +17,7 @@ import { decodeTranscriptPayload, SqliteTranscriptReader, SqliteTranscriptStore 
 import { testEmbedder } from "./hook-fixtures.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "./native-daemon-fixture.js";
 import { DevNativeClient } from "../src/dev-native-client.js";
+import { startTestRepository } from "./support/started-repository.js";
 
 const temporaryDirectories: string[] = [];
 const temporaryConnections: Array<{ close(): void }> = [];
@@ -35,6 +36,7 @@ async function temporaryDirectory(): Promise<string> {
   const path = await mkdtemp(join(tmpdir(), "rerail-transcripts-"));
   process.env.RERAIL_HOME = join(path, "home");
   temporaryDirectories.push(path);
+  startTestRepository(path);
   return path;
 }
 
@@ -64,7 +66,7 @@ describe("SQLite transcript persistence", () => {
     store.append({ sessionId: "session-1", eventId: "event-2", kind: "assistant-message", observedAt: 130, payload: { text: "world" } });
     const circular: { count: bigint; self?: unknown } = { count: 1n };
     circular.self = circular;
-    store.append({ sessionId: "session-1", eventId: "event-3", kind: "tool-result", observedAt: 135, payload: circular });
+    store.append({ sessionId: "session-1", eventId: "event-3", kind: "result", observedAt: 135, payload: circular });
     store.closeSession("session-1", 140);
     expect(store.sessions()).toEqual([{
       repositoryId: null,
@@ -124,8 +126,8 @@ describe("SQLite transcript persistence", () => {
     await runtime.ingest({ kind: "session-start", eventId: "start", session });
     await runtime.ingest({ kind: "user-prompt", eventId: "user", sessionId: session.sessionId, text: "inspect this" });
     await runtime.ingest({ kind: "assistant-message", eventId: "assistant", sessionId: session.sessionId, messageId: "message-1", text: "checking" });
-    await runtime.ingest({ kind: "tool-call", eventId: "call", toolCallId: "call-1", sessionId: session.sessionId, toolName: "read", input: { path: "src/a.ts" } });
-    await runtime.ingest({ kind: "tool-result", eventId: "result", toolCallId: "call-1", sessionId: session.sessionId, toolName: "read", output: { text: "contents" } });
+    await runtime.ingest({ kind: "call", eventId: "call", toolCallId: "call-1", sessionId: session.sessionId, toolName: "read", input: { path: "src/a.ts" } });
+    await runtime.ingest({ kind: "result", eventId: "result", toolCallId: "call-1", sessionId: session.sessionId, toolName: "read", output: { text: "contents" } });
     await runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId: session.sessionId, text: "done" });
     await runtime.ingest({ kind: "session-end", eventId: "end", sessionId: session.sessionId });
     await runtime.dispose();
@@ -140,8 +142,8 @@ describe("SQLite transcript persistence", () => {
       ["start", "session-start"],
       ["user", "user-prompt"],
       ["assistant", "assistant-message"],
-      ["call", "tool-call"],
-      ["result", "tool-result"],
+      ["call", "call"],
+      ["result", "result"],
       ["turn", "turn-end"],
       ["end", "session-end"],
     ]);
@@ -168,7 +170,7 @@ describe("SQLite transcript persistence", () => {
       await client.initialize({ cwd: root, modelPath: resolve("model"), rules: [] });
       client.activate();
       await client.ingest({
-        kind: "tool-call", eventId: "non-json-call", sessionId: "non-json",
+        kind: "call", eventId: "non-json-call", sessionId: "non-json",
         toolCallId: "call", toolName: "submit", input,
       });
       const reader = new Database(defaultRerailDatabasePath(), { readonly: true });
@@ -254,7 +256,7 @@ describe("SQLite transcript persistence", () => {
     } as unknown as ExtensionContext;
     createCosineRulesExtension({
       modelPath: resolve("model"),
-      rules: [{ ...MOCK_COSINE_RULES[0]!, id: "host-only", action: { delivery: "observe", content: "Host rule" } }],
+      rules: [{ ...MOCK_COSINE_RULES[0]!, id: "host-only", mode: "log", action: { content: "Host rule" } }],
       registerTool: false,
       registerCommand: false,
     })(extensionApi);
@@ -326,10 +328,10 @@ describe("SQLite transcript persistence", () => {
       "session-start",
       "user-prompt",
       "assistant-delta",
-      "tool-call",
-      "tool-result",
-      "tool-call",
-      "tool-result",
+      "call",
+      "result",
+      "call",
+      "result",
       "session-end",
     ]);
     database.close();
@@ -508,17 +510,17 @@ describe("SQLite transcript persistence", () => {
     const coverage = {
       repositoryId: rules.context().repositoryId,
       activeRuleCount: 3,
-      cosineRuleSignature: rules.ruleSignature("cosine"),
-      policyRuleSignature: rules.ruleSignature("policy"),
+      conversationRuleSignature: rules.ruleSignature("conversation"),
+      fileRuleSignature: rules.ruleSignature("file"),
     };
     store.recordRuleCoverage(session, coverage);
     expect(reader.hud(session.sessionId)).toEqual({ activeRuleCount: 3, steeringCount: 0 });
-    rules.setEnabled({ filter: { kind: "cosine" } }, false);
+    rules.setEnabled({ filter: { kind: "conversation" } }, false);
     expect(reader.hud(session.sessionId).activeRuleCount).toBeNull();
     // A local registry mutation does not establish synchronization with a changed DB.
     store.recordRuleCoverage(session, { ...coverage, activeRuleCount: 4 });
     expect(reader.hud(session.sessionId).activeRuleCount).toBeNull();
-    store.recordRuleCoverage(session, { ...coverage, activeRuleCount: 2, cosineRuleSignature: rules.ruleSignature("cosine") });
+    store.recordRuleCoverage(session, { ...coverage, activeRuleCount: 2, conversationRuleSignature: rules.ruleSignature("conversation") });
     expect(reader.hud(session.sessionId).activeRuleCount).toBe(2);
     rules.remove([MOCK_COSINE_RULES[0]!.id]);
     expect(reader.hud(session.sessionId).activeRuleCount).toBeNull();

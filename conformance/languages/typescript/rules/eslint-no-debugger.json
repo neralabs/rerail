@@ -1,0 +1,45 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-no-debugger",
+  "revision": 1,
+  "mode": "steer",
+  "description": "ESLint 10.11.0 no-debugger, default options. Port of ESLint's `no-debugger` rule (https://eslint.org/docs/latest/rules/no-debugger). Reports every `debugger` statement.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "debugger-statement",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "debugger_statement"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-debugger",
+        "message": "Unexpected 'debugger' statement.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-debugger"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

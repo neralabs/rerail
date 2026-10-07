@@ -1,5 +1,5 @@
 //! What a matcher does with captures, read from its terms alone: the names it binds, reads and
-//! mentions (capture ordering, `all` order checks, the query engine's three-valued composition),
+//! mentions (capture ordering, `all` order checks, three-valued `all`, memoized utility scopes),
 //! and the metavariables its patterns define (finding templates, `finding.each`).
 
 mod semantic;
@@ -274,8 +274,8 @@ fn collect_mentions(
                 collect_mentions(item, summaries, names);
             }
         }
-        AstMatcher::Not(item)
-        | AstMatcher::Inside(item, _)
+        AstMatcher::Not(item) => collect_mentions(item, summaries, names),
+        AstMatcher::Inside(item, _)
         | AstMatcher::Has(item, _)
         | AstMatcher::Precedes(item, _)
         | AstMatcher::Follows(item, _) => collect_mentions(item, summaries, names),
@@ -391,8 +391,8 @@ fn collect_in(
                 collect_in(item, variables, summaries, framed);
             }
         }
-        AstMatcher::Not(item)
-        | AstMatcher::Inside(item, _)
+        AstMatcher::Not(item) => collect_in(item, variables, summaries, framed),
+        AstMatcher::Inside(item, _)
         | AstMatcher::Has(item, _)
         | AstMatcher::Precedes(item, _)
         | AstMatcher::Follows(item, _) => collect_in(item, variables, summaries, framed),

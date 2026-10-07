@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-unnecessary-class",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-unnecessary-class` rule with its default options (https://palantir.github.io/tslint/rules/no-unnecessary-class/). Flags non-extending class declarations (abstract too) that are empty, constructor-only, or static-only, at the `class` keyword.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "empty",
       "forbid": {
@@ -94,10 +95,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.KW",
         "code": "NO_UNNECESSARY_CLASS_EMPTY_CLASS",
-        "severity": "error",
         "message": "This class has no members."
       }
     },
@@ -225,10 +225,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.KW",
         "code": "NO_UNNECESSARY_CLASS_CONSTRUCTOR_ONLY",
-        "severity": "error",
         "message": "Every member of this class is a constructor. Use functions instead."
       }
     },
@@ -356,10 +355,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.KW",
         "code": "NO_UNNECESSARY_CLASS_STATIC_ONLY",
-        "severity": "error",
         "message": "Every member of this class is static. Use namespaces or plain objects instead."
       }
     }

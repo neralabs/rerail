@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:triple-equals",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `triple-equals` rule with its default options (https://palantir.github.io/tslint/rules/triple-equals/). Requires === and !== in place of == and != (TSLint default: no exceptions).",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "loose-eq",
       "forbid": {
@@ -45,10 +46,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TRIPLE_EQUALS",
-        "severity": "error",
         "message": "== should be ==="
       }
     },
@@ -72,10 +72,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TRIPLE_EQUALS",
-        "severity": "error",
         "message": "!= should be !=="
       }
     }

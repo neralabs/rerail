@@ -6,22 +6,97 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderRerailSchemaModule, SCHEMA_SQL_PATH } from "../scripts/generate-schema-sql.js";
 import { openRerailDatabase } from "../src/database.js";
-import { RERAIL_SCHEMA_STATEMENTS } from "../src/schema-sql.js";
-import { parseCosineRuleDocument } from "../src/rule-schema.js";
-import { RERAIL_SCHEMA_VERSION } from "../src/schema.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
+import { policyRuleSchema, type PolicyRule } from "../src/policy-schema.js";
+import type { RuleMode } from "../src/rule-mode.js";
+import { RERAIL_SCHEMA_COMPATIBILITY_FLOOR, RERAIL_SCHEMA_VERSION } from "../src/schema.js";
+import { parseCosineRule, parseCosineRuleDocument, type CosineRule } from "../src/rule-schema.js";
+import { SqliteRuleStore, type RuleDocument } from "../src/rule-store.js";
+import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
+import { ruleDocumentDigest } from "../src/stable-json.js";
 import { SqlitePresentationPreferenceStore } from "../src/presentation-preference-store.js";
 import { MOCK_COSINE_RULES, MOCK_POLICY_RULES, MOCK_SESSION_ID, mockSessionId, seedRerailDatabase } from "../src/seed.js";
 import { SqliteTranscriptReader, SqliteTranscriptStore } from "../src/transcript-store.js";
+import { createV14Database, v14TableStatement } from "./support/v14-database.js";
 
 const TOOL_CALL_RULES = parseCosineRuleDocument(JSON.parse(readFileSync(resolve("test/fixtures/tool-call-rules.json"), "utf8")));
 
-/** The v10 `rules` table: today's DDL with the one CHECK clause v11 relaxed put back. */
+/** The v11 `rules` table: the v14 DDL without the `mode` column and its CHECK. */
+function rulesTableV11(): string {
+  const current = v14TableStatement("rules");
+  const column = "\n\t`mode` text NOT NULL,";
+  const constraint = `\n\tCONSTRAINT "rules_mode" CHECK("rules"."mode" IN ('log', 'steer', 'block')),`;
+  expect(current).toContain(column);
+  expect(current).toContain(constraint);
+  return current.replace(column, "").replace(constraint, "");
+}
+
+/** The v10 `rules` table: v11's with the one CHECK clause v11 relaxed put back. */
 function rulesTableV10(): string {
-  const current = RERAIL_SCHEMA_STATEMENTS.find(statement => statement.startsWith("CREATE TABLE IF NOT EXISTS `rules`"))!;
+  const v11 = rulesTableV11();
   const relaxed = `("rules"."reference" IS NOT NULL OR json_extract("rules"."match_json", '$.operator') IS NULL)`;
-  expect(current).toContain(relaxed);
-  return current.replace(relaxed, `"rules"."reference" IS NOT NULL`);
+  expect(v11).toContain(relaxed);
+  return v11.replace(relaxed, `"rules"."reference" IS NOT NULL`);
+}
+
+/** Digest of a document under any kind a schema has stored. */
+const digestOf = (kind: string, rule: object): string => ruleDocumentDigest({ kind, rule } as unknown as RuleDocument);
+
+/** A policy as v11 stored it (a severity on every finding, no mode) and the v15 body the upgrades turn it into. */
+function legacyPolicy(id: string, severities: readonly string[], mode: RuleMode, description = "Bundled policy") {
+  const checks = severities.map((severity, index) => ({
+    id: `check-${index}`,
+    forbid: { regex: { source: "file.content", pattern: "legacy" } },
+    finding: { anchor: "witness.span", code: "LEGACY", severity, message: "Legacy finding" },
+  }));
+  const legacy = { format: "rerail.policy/v1", id, revision: 1, description, checks };
+  const current: PolicyRule = policyRuleSchema.parse({
+    format: "rerail.policy/v1",
+    id,
+    revision: 1,
+    description,
+    mode,
+    clauses: checks.map(({ finding: { severity: _severity, ...violation }, ...clause }) => ({ ...clause, violation })),
+  });
+  return { legacy, current };
+}
+
+/** A cosine rule as v11 stored it (`action.delivery`, no mode) and the body the upgrades turn it into. */
+function legacyCosine(id: string, delivery: string, mode: RuleMode, reference = "Legacy reference") {
+  const legacy = {
+    id,
+    reference,
+    match: { operator: "gte", threshold: 0.6 },
+    sample: { source: "user-input", boundary: "message" },
+    action: { delivery, content: "Legacy guidance" },
+  };
+  const current: CosineRule = parseCosineRule({ ...legacy, mode, action: { content: legacy.action.content } });
+  return { legacy, current };
+}
+
+function insertLegacyPolicy(
+  database: Database.Database,
+  rule: Omit<ReturnType<typeof legacyPolicy>["legacy"], "checks"> & { checks: readonly object[] },
+  sourceDigest: string | null,
+): void {
+  database.prepare(
+    "INSERT INTO rules (id, kind, revision, enabled, scope, created_at, updated_at, source_digest, format, description, checks_json) VALUES (?, 'policy', ?, 1, 'repository', 1, 1, ?, ?, ?, ?)",
+  ).run(rule.id, rule.revision, sourceDigest, rule.format, rule.description, JSON.stringify(rule.checks));
+}
+
+function insertLegacyCosine(database: Database.Database, rule: ReturnType<typeof legacyCosine>["legacy"], sourceDigest: string | null): void {
+  database.prepare(
+    "INSERT INTO rules (id, kind, revision, enabled, scope, created_at, updated_at, source_digest, reference, match_json, sample_json, action_json) VALUES (?, 'cosine', 1, 1, 'repository', 1, 1, ?, ?, ?, ?, ?)",
+  ).run(rule.id, sourceDigest, rule.reference, JSON.stringify(rule.match), JSON.stringify(rule.sample), JSON.stringify(rule.action));
+}
+
+/** Every row the rule-mode and v15 upgrades rewrite, to show a second pass changes nothing. */
+function upgradedRows(path: string): unknown[] {
+  const database = new Database(path, { readonly: true });
+  try {
+    return ["rules", "catalog_rules", "audits"].map(table => database.prepare(`SELECT * FROM ${table}`).all());
+  } finally {
+    database.close();
+  }
 }
 
 const temporaryDirectories: string[] = [];
@@ -43,17 +118,21 @@ describe("Rerail schema", () => {
 
   it("adds presentation settings to a v6 database without changing its durable records", async () => {
     const path = await temporaryDatabase();
-    seedRerailDatabase(path, { cwd: "/workspace", now: 100_000 });
-    const legacy = new Database(path);
+    const legacy = createV14Database(path);
     legacy.exec(`
+      INSERT INTO sessions (session_id, host, cwd, started_at, ended_at) VALUES ('${MOCK_SESSION_ID}', 'omp', '/workspace', 40000, 80000);
+      INSERT INTO events (session_id, event_id, kind, observed_at, payload_json) VALUES ('${MOCK_SESSION_ID}', 'mock-event-1', 'user-prompt', 50000, '{"text":"hi"}');
+      INSERT INTO work_links (session_id, kind, reference, url, created_at) VALUES ('${MOCK_SESSION_ID}', 'git-branch', 'feature/x', NULL, 100000);
       INSERT INTO policy_runs (run_id, session_id, workspace_root, scope, mode, revision, paths_json,
         started_at, status, findings_json, failures_json, rule_provenance_json, rule_revisions_json)
         VALUES ('running', '${MOCK_SESSION_ID}', '/workspace', 'repository', 'log', 1, '[]', 100000, 'running', '[]', '[]', '[]', '[]');
       DROP TABLE presentation_preferences;
+      DROP TABLE rerail_schema_revision;
       PRAGMA user_version = 6;
     `);
-    const tables = ["sessions", "events", "rules", "work_links", "policy_runs"];
-    const records = tables.map(table => legacy.prepare(`SELECT * FROM ${table}`).all());
+    const tables = ["sessions", "events", "work_links"];
+    const [sessions = [], ...records] = tables.map(table => legacy.prepare(`SELECT * FROM ${table}`).all() as Array<Record<string, unknown>>);
+    const { run_id: auditId, findings_json: violationsJson, ...run } = legacy.prepare("SELECT * FROM policy_runs").get() as Record<string, unknown>;
     legacy.close();
 
     const preferences = new SqlitePresentationPreferenceStore(path);
@@ -65,7 +144,10 @@ describe("Rerail schema", () => {
     }
     const upgraded = new Database(path, { readonly: true });
     try {
-      expect(tables.map(table => upgraded.prepare(`SELECT * FROM ${table}`).all())).toEqual(records);
+      // v16 adds `start_gated`; a session an older release recorded gets 0, so the start carry-over may count it.
+      expect(tables.map(table => upgraded.prepare(`SELECT * FROM ${table}`).all()))
+        .toEqual([sessions.map(session => ({ ...session, start_gated: 0 })), ...records]);
+      expect(upgraded.prepare("SELECT * FROM audits").all()).toEqual([{ ...run, audit_id: auditId, violations_json: violationsJson }]);
     } finally {
       upgraded.close();
     }
@@ -112,7 +194,7 @@ describe("SqliteRuleStore", () => {
     const storedCosine = store.upsertCosine(cosine, { now: 1_000, scope: "global" });
 
     expect(storedPolicy).toEqual({
-      kind: "policy",
+      kind: "file",
       enabled: true,
       scope: "repository",
       revision: policy.revision,
@@ -122,7 +204,7 @@ describe("SqliteRuleStore", () => {
       rule: policy,
     });
     expect(storedCosine).toEqual({
-      kind: "cosine",
+      kind: "conversation",
       enabled: true,
       scope: "global",
       revision: 1,
@@ -135,14 +217,15 @@ describe("SqliteRuleStore", () => {
 
     const database = new Database(path, { readonly: true });
     expect(database.prepare(
-      "SELECT id, kind, format, json_extract(scope_json, '$.include[0]') AS firstInclude, json_array_length(checks_json) AS checkCount, reference FROM rules ORDER BY id",
+      "SELECT id, kind, format, json_extract(scope_json, '$.include[0]') AS firstInclude, json_array_length(clauses_json) AS clauseCount, reference FROM rules ORDER BY id",
     ).all()).toEqual([
-      { id: cosine.id, kind: "cosine", format: null, firstInclude: null, checkCount: null, reference: cosine.reference },
-      { id: policy.id, kind: "policy", format: "rerail.policy/v1", firstInclude: policy.scope!.include[0], checkCount: policy.checks.length, reference: null },
+      { id: cosine.id, kind: "conversation", format: null, firstInclude: null, clauseCount: null, reference: cosine.reference },
+      { id: policy.id, kind: "file", format: "rerail.policy/v1", firstInclude: policy.scope!.include[0], clauseCount: policy.clauses.length, reference: null },
     ]);
-    expect(database.prepare(
-      "SELECT id FROM rules WHERE EXISTS (SELECT 1 FROM json_each(checks_json) WHERE json_extract(value, '$.finding.severity') = 'error')",
-    ).all()).toEqual([{ id: policy.id }]);
+    expect(database.prepare("SELECT id, mode FROM rules ORDER BY id").all()).toEqual([
+      { id: cosine.id, mode: cosine.mode },
+      { id: policy.id, mode: policy.mode },
+    ]);
     database.close();
   });
 
@@ -150,12 +233,12 @@ describe("SqliteRuleStore", () => {
     const store = new SqliteRuleStore(await temporaryDatabase());
     const policy = MOCK_POLICY_RULES[0]!;
 
-    expect(() => store.upsertPolicy({ ...policy, checks: [] })).toThrow();
-    expect(() => store.upsertPolicy({ ...policy, format: "rerail.policy/v2" })).toThrow(/rerail\.policy\/v1/u);
-    expect(() => store.upsertPolicy({ ...policy, checks: [{ ...policy.checks[0]!, budget: { query: { evidence: { as: "x", query: { ast: { language: "python", rule: { kind: "call" } } }, project: { path: "file.path" } } }, count: { lte: 1 } } }] })).toThrow(/exactly one constraint form/u);
-    expect(() => store.upsertPolicy({ ...policy, checks: [policy.checks[0]!, { ...policy.checks[0]! }] })).toThrow(/Duplicate check id/u);
-    expect(() => store.upsertPolicy({ ...policy, checks: [{ ...policy.checks[0]!, forbid: { regex: { source: "stdin", pattern: "x" } } }] })).toThrow();
-    expect(() => store.upsertCosine({ id: "bad", reference: "x", match: { operator: "gte", threshold: 2 }, sample: { source: "user-input", boundary: "message" }, action: { delivery: "steer", content: "y" } })).toThrow(/threshold/u);
+    expect(() => store.upsertPolicy({ ...policy, clauses: [] })).toThrow();
+    expect(() => store.upsertPolicy({ ...policy, format: "rerail.policy/v1" })).toThrow(/rerail\.policy\/v1/u);
+    expect(() => store.upsertPolicy({ ...policy, clauses: [{ ...policy.clauses[0]!, budget: { query: { evidence: { as: "x", query: { ast: { language: "python", rule: { kind: "call" } } }, project: { path: "file.path" } } }, count: { lte: 1 } } }] })).toThrow(/exactly one constraint form/u);
+    expect(() => store.upsertPolicy({ ...policy, clauses: [policy.clauses[0]!, { ...policy.clauses[0]! }] })).toThrow(/Duplicate clause id/u);
+    expect(() => store.upsertPolicy({ ...policy, clauses: [{ ...policy.clauses[0]!, forbid: { regex: { source: "stdin", pattern: "x" } } }] })).toThrow();
+    expect(() => store.upsertCosine({ id: "bad", reference: "x", match: { operator: "gte", threshold: 2 }, sample: { source: "user-input", boundary: "message" }, mode: "steer", action: { content: "y" } })).toThrow(/threshold/u);
     expect(store.list()).toEqual([]);
     store.close();
   });
@@ -178,13 +261,12 @@ describe("SqliteRuleStore", () => {
   it("upgrades a v10 rules table so structural rules fit beside its existing cosine rows", async () => {
     const path = await temporaryDatabase();
     const cosine = MOCK_COSINE_RULES[0]!;
-    new SqliteRuleStore(path).close();
-    const legacy = new Database(path);
+    const legacy = createV14Database(path);
     // A v10 file predates the compatibility-floor stamp, so it has no revision table either.
     legacy.exec(`DROP TABLE rules; DROP TABLE rerail_schema_revision; ${rulesTableV10()}; PRAGMA user_version = 10;`);
     legacy.prepare(
       "INSERT INTO rules (id, kind, revision, enabled, scope, created_at, updated_at, reference, match_json, sample_json, action_json, repeat_json) VALUES (?, 'cosine', 3, 1, 'repository', 1, 2, ?, ?, ?, ?, ?)",
-    ).run(cosine.id, cosine.reference, JSON.stringify(cosine.match), JSON.stringify(cosine.sample), JSON.stringify(cosine.action), cosine.repeat === undefined ? null : JSON.stringify(cosine.repeat));
+    ).run(cosine.id, cosine.reference, JSON.stringify(cosine.match), JSON.stringify(cosine.sample), JSON.stringify({ delivery: "steer", ...cosine.action }), cosine.repeat === undefined ? null : JSON.stringify(cosine.repeat));
     expect(() => legacy.prepare(
       "INSERT INTO rules (id, kind, revision, enabled, scope, created_at, updated_at, match_json, sample_json, action_json) VALUES ('x', 'cosine', 1, 1, 'repository', 1, 1, '{}', '{}', '{}')",
     ).run()).toThrow(/rules_cosine_columns/u);
@@ -193,27 +275,212 @@ describe("SqliteRuleStore", () => {
     const store = new SqliteRuleStore(path);
     expect(store.get(cosine.id)).toMatchObject({ revision: 3, createdAt: 1, updatedAt: 2, rule: cosine });
     store.upsertCosine(TOOL_CALL_RULES[0]!, { now: 5 });
-    expect(store.list({ kind: "cosine" }).map(stored => stored.rule.id)).toEqual([cosine.id, TOOL_CALL_RULES[0]!.id].sort());
+    expect(store.list({ kind: "conversation" }).map(stored => stored.rule.id)).toEqual([cosine.id, TOOL_CALL_RULES[0]!.id].sort());
     store.close();
 
     const upgraded = new Database(path, { readonly: true });
-    expect(upgraded.pragma("user_version", { simple: true })).toBe(10);
+    expect(upgraded.pragma("user_version", { simple: true })).toBe(RERAIL_SCHEMA_COMPATIBILITY_FLOOR);
     expect(upgraded.prepare("SELECT revision FROM rerail_schema_revision").pluck().get()).toBe(RERAIL_SCHEMA_VERSION);
     expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'rules_kind_enabled'").all()).toHaveLength(1);
-    expect(() => upgraded.prepare("SELECT 1 FROM rules_legacy_v11").all()).toThrow(/no such table/u);
+    expect(() => upgraded.prepare("SELECT 1 FROM rules_legacy").all()).toThrow(/no such table/u);
     upgraded.close();
+  });
+
+  it("folds v11 finding severities and cosine deliveries into one rule mode and reaches v15, once", async () => {
+    const path = await temporaryDatabase();
+    const legacy = createV14Database(path);
+    legacy.exec(`DROP TABLE rules; ${rulesTableV11()}; PRAGMA user_version = 11;`);
+    const bundled = legacyPolicy("bundled", ["advisory", "warning", "error"], "steer");
+    const edited = legacyPolicy("edited", ["advisory"], "log");
+    const created = legacyPolicy("created", ["warning", "advisory"], "steer");
+    const seededFrom = legacyPolicy("edited", ["advisory"], "log", "Before the user's edit").legacy;
+    insertLegacyPolicy(legacy, bundled.legacy, digestOf("policy", bundled.legacy));
+    insertLegacyPolicy(legacy, edited.legacy, digestOf("policy", seededFrom));
+    insertLegacyPolicy(legacy, created.legacy, null);
+    const cosines = [["observe", "log"], ["steer", "steer"], ["followUp", "steer"], ["nextTurn", "steer"]] as const;
+    for (const [delivery, mode] of cosines) {
+      const { legacy: rule } = legacyCosine(`cosine-${delivery}`, delivery, mode);
+      insertLegacyCosine(legacy, rule, digestOf("cosine", rule));
+    }
+    const finding = { policyId: "bundled", checkId: "check-1", code: "LEGACY", message: "Legacy finding", captures: {}, variables: {} };
+    legacy.prepare(
+      "INSERT INTO policy_runs (run_id, session_id, workspace_root, scope, mode, revision, paths_json, started_at, status, findings_json, failures_json, rule_provenance_json, rule_revisions_json) VALUES ('run', 'session', '/workspace', 'repository', 'log', 1, '[]', 1, 'completed', ?, '[]', '[]', '[]')",
+    ).run(JSON.stringify([
+      { id: "a", ...finding, severity: "warning", path: "a.py" },
+      { id: "b", ...finding, severity: "advisory", path: "b.py" },
+    ]));
+    legacy.close();
+
+    const store = new SqliteRuleStore(path);
+    expect(Object.fromEntries(store.list().map(stored => [stored.rule.id, stored.rule.mode]))).toEqual({
+      bundled: "steer",
+      edited: "log",
+      created: "steer",
+      ...Object.fromEntries(cosines.map(([delivery, mode]) => [`cosine-${delivery}`, mode])),
+    });
+    expect(store.get("bundled")).toMatchObject({ kind: "file", rule: bundled.current, sourceDigest: digestOf("file", bundled.current) });
+    expect(store.get("edited")).toMatchObject({ rule: edited.current, sourceDigest: digestOf("policy", seededFrom) });
+    expect(store.get("created")).toMatchObject({ rule: created.current, sourceDigest: null });
+    expect(store.get("cosine-followUp")).toMatchObject({
+      kind: "conversation",
+      rule: legacyCosine("cosine-followUp", "followUp", "steer").current,
+      sourceDigest: digestOf("conversation", legacyCosine("cosine-followUp", "followUp", "steer").current),
+    });
+    // The unedited bundled row reads as seeded from the bundle, so it follows the next bundle; the edited one stays.
+    expect(store.seed([{ kind: "file", rule: bundled.current }])).toEqual({ inserted: 0, refreshed: 0, kept: 1 });
+    expect(store.seed([
+      { kind: "file", rule: { ...bundled.current, description: "Updated bundle" } },
+      { kind: "file", rule: { ...edited.current, description: "Updated bundle" } },
+    ])).toEqual({ inserted: 0, refreshed: 1, kept: 1 });
+    expect(store.get("bundled")?.rule).toMatchObject({ description: "Updated bundle" });
+    expect(store.get("edited")?.rule).toMatchObject({ description: "Bundled policy" });
+    store.close();
+
+    const raw = new Database(path);
+    const violations = JSON.parse(raw.prepare("SELECT violations_json FROM audits").pluck().get() as string) as Record<string, unknown>[];
+    const violation = { ruleId: "bundled", clauseId: "check-1", code: "LEGACY", message: "Legacy finding", captures: {}, variables: {} };
+    expect(violations).toEqual([
+      { id: "a", ...violation, mode: "steer", path: "a.py" },
+      { id: "b", ...violation, mode: "log", path: "b.py" },
+    ]);
+    expect(Object.keys(violations[0]!)).toEqual(["id", ...Object.keys(violation), "mode", "path"]);
+    raw.pragma("user_version = 11");
+    raw.close();
+    const before = upgradedRows(path);
+    openRerailDatabase(path).$client.close();
+    expect(upgradedRows(path)).toEqual(before);
+  });
+
+  it("rewrites the findings of a revision-12 database's result pages", async () => {
+    const path = await temporaryDatabase();
+    const legacy = createV14Database(path);
+    const finding = { policyId: "p", checkId: "c", code: "LEGACY", message: "Legacy finding", captures: {}, variables: {} };
+    const findings = JSON.stringify([{ id: "a", ...finding, severity: "error" }, { id: "b", ...finding, severity: "advisory" }]);
+    legacy.prepare(
+      "INSERT INTO policy_runs (run_id, session_id, workspace_root, scope, mode, revision, paths_json, started_at, status, findings_json, failures_json, rule_provenance_json, rule_revisions_json) VALUES ('run', 'session', '/workspace', 'repository', 'log', 1, '[]', 1, 'completed', ?, '[]', '[]', '[]')",
+    ).run(findings);
+    legacy.prepare("INSERT INTO policy_run_result_pages (run_id, page_index, findings_json, failures_json) VALUES ('run', 0, ?, '[]')").run(findings);
+    legacy.exec("UPDATE rerail_schema_revision SET revision = 12; PRAGMA user_version = 10;");
+    legacy.close();
+
+    openRerailDatabase(path).$client.close();
+    const upgraded = new Database(path, { readonly: true });
+    const modes = (sql: string) => (JSON.parse(upgraded.prepare(sql).pluck().get() as string) as Record<string, unknown>[])
+      .map(({ id, mode, severity }) => ({ id, mode, severity }));
+    const expected = [{ id: "a", mode: "steer", severity: undefined }, { id: "b", mode: "log", severity: undefined }];
+    expect(modes("SELECT violations_json FROM audit_result_pages")).toEqual(expected);
+    expect(modes("SELECT violations_json FROM audits")).toEqual(expected);
+    expect(upgraded.pragma("user_version", { simple: true })).toBe(RERAIL_SCHEMA_COMPATIBILITY_FLOOR);
+    upgraded.close();
+  });
+
+  it("rewrites v11 catalog documents and re-stamps their digests", async () => {
+    const path = await temporaryDatabase();
+    const repository = { repositoryId: "repo", workspaceRoot: "/repo" };
+    const bundled = legacyPolicy("bundled", ["warning"], "steer");
+    const edited = legacyCosine("edited", "nextTurn", "steer");
+    const seededFrom = legacyCosine("edited", "nextTurn", "steer", "Before the user's edit").legacy;
+    const legacy = createV14Database(path);
+    legacy.exec(
+      "INSERT INTO rule_projects (project_id, name, created_at, updated_at) VALUES ('repository:repo', 'repo', 1, 1);"
+      + "INSERT INTO rule_repositories (repository_id, last_known_path, created_at, updated_at) VALUES ('repo', '/repo', 1, 1);"
+      + "INSERT INTO rule_project_repositories (project_id, repository_id, added_at) VALUES ('repository:repo', 'repo', 1);",
+    );
+    const insert = legacy.prepare(
+      "INSERT INTO catalog_rules (owner_kind, owner_id, rule_id, kind, revision, enabled, document_json, payload_hash, source_digest, origin, created_at, updated_at) "
+      + "VALUES ('project', 'repository:repo', ?, ?, 1, 1, ?, ?, ?, 'bundled', 1000, 1000)",
+    );
+    insert.run("bundled", "policy", JSON.stringify({ kind: "policy", rule: bundled.legacy }), digestOf("policy", bundled.legacy), digestOf("policy", bundled.legacy));
+    insert.run("edited", "cosine", JSON.stringify({ kind: "cosine", rule: edited.legacy }), digestOf("cosine", edited.legacy), digestOf("cosine", seededFrom));
+    legacy.exec(
+      "INSERT INTO rule_catalog_identities (rule_id, kind) VALUES ('bundled', 'policy'), ('edited', 'cosine');"
+      + `DROP TABLE rules; ${rulesTableV11()}; PRAGMA user_version = 11;`,
+    );
+    legacy.close();
+
+    const upgraded = ScopedRuleCatalog.open(path, repository);
+    expect(upgraded.get("bundled")).toMatchObject({
+      kind: "file",
+      rule: bundled.current,
+      payloadHash: digestOf("file", bundled.current),
+      sourceDigest: digestOf("file", bundled.current),
+    });
+    expect(upgraded.get("edited")).toMatchObject({
+      kind: "conversation",
+      rule: edited.current,
+      payloadHash: digestOf("conversation", edited.current),
+      sourceDigest: digestOf("cosine", seededFrom),
+    });
+    expect(upgraded.seed([
+      { kind: "file", rule: { ...bundled.current, description: "Updated bundle" } },
+      { kind: "conversation", rule: { ...edited.current, reference: "Updated bundle" } },
+    ], 2_000)).toEqual({ inserted: 0, refreshed: 1, kept: 1 });
+    expect(upgraded.get("bundled")?.rule).toMatchObject({ description: "Updated bundle" });
+    expect(upgraded.get("edited")?.rule).toMatchObject({ reference: "Legacy reference" });
+    upgraded.close();
+  });
+
+  it("leaves a define check unchanged and takes the mode from the checks that report", async () => {
+    const path = await temporaryDatabase();
+    const repository = { repositoryId: "repo", workspaceRoot: "/repo" };
+    const define = { id: "options", define: { options: { strict: { type: "boolean", default: true } } } };
+    const withDefine = (id: string) => {
+      const { legacy, current } = legacyPolicy(id, ["advisory", "warning"], "steer");
+      return {
+        legacy: { ...legacy, checks: [define, ...legacy.checks] },
+        current: policyRuleSchema.parse({ ...current, clauses: [define, ...current.clauses] }),
+      };
+    };
+    const stored = withDefine("stored");
+    const cataloged = withDefine("cataloged");
+    const legacy = createV14Database(path);
+    legacy.exec(
+      "INSERT INTO rule_projects (project_id, name, created_at, updated_at) VALUES ('repository:repo', 'repo', 1, 1);"
+      + "INSERT INTO rule_repositories (repository_id, last_known_path, created_at, updated_at) VALUES ('repo', '/repo', 1, 1);"
+      + "INSERT INTO rule_project_repositories (project_id, repository_id, added_at) VALUES ('repository:repo', 'repo', 1);"
+      + "INSERT INTO rule_catalog_identities (rule_id, kind) VALUES ('cataloged', 'policy');",
+    );
+    legacy.prepare(
+      "INSERT INTO catalog_rules (owner_kind, owner_id, rule_id, kind, revision, enabled, document_json, payload_hash, source_digest, origin, created_at, updated_at) "
+      + "VALUES ('project', 'repository:repo', 'cataloged', 'policy', 1, 1, ?, ?, ?, 'bundled', 1000, 1000)",
+    ).run(JSON.stringify({ kind: "policy", rule: cataloged.legacy }), digestOf("policy", cataloged.legacy), digestOf("policy", cataloged.legacy));
+    legacy.exec(`DROP TABLE rules; ${rulesTableV11()}; PRAGMA user_version = 11;`);
+    insertLegacyPolicy(legacy, stored.legacy, digestOf("policy", stored.legacy));
+    legacy.close();
+
+    const store = new SqliteRuleStore(path);
+    expect(store.get("stored")).toMatchObject({ kind: "file", rule: stored.current, sourceDigest: digestOf("file", stored.current) });
+    expect((store.get("stored")?.rule as PolicyRule).clauses[0]).toEqual(define);
+    store.close();
+    const upgraded = ScopedRuleCatalog.open(path, repository);
+    expect(upgraded.get("cataloged")).toMatchObject({ kind: "file", rule: cataloged.current, sourceDigest: digestOf("file", cataloged.current) });
+    upgraded.close();
+  });
+
+  it("refuses to guess a mode for a value v11 never accepted", async () => {
+    const path = await temporaryDatabase();
+    const legacy = createV14Database(path);
+    legacy.exec(`DROP TABLE rules; ${rulesTableV11()}; PRAGMA user_version = 11;`);
+    insertLegacyCosine(legacy, legacyCosine("shouting", "steer", "steer").legacy, null);
+    legacy.prepare("UPDATE rules SET action_json = json_set(action_json, '$.delivery', 'shout')").run();
+    legacy.close();
+
+    expect(() => openRerailDatabase(path)).toThrow("Cannot upgrade rule shouting to rule modes: action delivery \"shout\" has no rule mode");
+    const unchanged = new Database(path, { readonly: true });
+    expect(unchanged.pragma("user_version", { simple: true })).toBe(11);
+    expect(unchanged.prepare("SELECT json_extract(action_json, '$.delivery') AS delivery FROM rules").get()).toEqual({ delivery: "shout" });
+    unchanged.close();
   });
 
   it("rebuilds the rules table of a floor-stamped revision-11 file that already has result pages", async () => {
     const path = await temporaryDatabase();
-    new SqliteRuleStore(path).close();
-    const stamped = new Database(path);
+    const stamped = createV14Database(path);
     stamped.exec(`DROP TABLE rules; ${rulesTableV10()}; UPDATE rerail_schema_revision SET revision = 11; PRAGMA user_version = 10;`);
     stamped.close();
 
     const store = new SqliteRuleStore(path);
     store.upsertCosine(TOOL_CALL_RULES[0]!, { now: 5 });
-    expect(store.list({ kind: "cosine" }).map(stored => stored.rule.id)).toEqual([TOOL_CALL_RULES[0]!.id]);
+    expect(store.list({ kind: "conversation" }).map(stored => stored.rule.id)).toEqual([TOOL_CALL_RULES[0]!.id]);
     store.close();
   });
 
@@ -222,8 +489,18 @@ describe("SqliteRuleStore", () => {
     new SqliteRuleStore(path).close();
     const database = new Database(path);
     expect(() => database.prepare(
-      "INSERT INTO rules (id, kind, revision, enabled, scope, created_at, updated_at, match_json, sample_json, action_json) VALUES ('x', 'cosine', 1, 1, 'repository', 1, 1, '{\"operator\":\"gte\",\"threshold\":0.5}', '{}', '{}')",
-    ).run()).toThrow(/rules_cosine_columns/u);
+      "INSERT INTO rules (id, kind, mode, revision, enabled, scope, created_at, updated_at, match_json, sample_json, action_json) VALUES ('x', 'conversation', 'steer', 1, 1, 'repository', 1, 1, '{\"operator\":\"gte\",\"threshold\":0.5}', '{}', '{}')",
+    ).run()).toThrow(/rules_conversation_columns/u);
+    database.close();
+  });
+
+  it("stores only the three rule modes", async () => {
+    const path = await temporaryDatabase();
+    new SqliteRuleStore(path).close();
+    const database = new Database(path);
+    expect(() => database.prepare(
+      "INSERT INTO rules (id, kind, mode, revision, enabled, scope, created_at, updated_at, format, clauses_json) VALUES ('x', 'file', 'error', 1, 1, 'repository', 1, 1, 'rerail.policy/v1', '[]')",
+    ).run()).toThrow(/rules_mode/u);
     database.close();
   });
 
@@ -231,7 +508,7 @@ describe("SqliteRuleStore", () => {
     const store = new SqliteRuleStore(await temporaryDatabase());
     store.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "shared" });
 
-    expect(() => store.upsertPolicy({ ...MOCK_POLICY_RULES[0]!, id: "shared" })).toThrow(/exists with kind cosine/u);
+    expect(() => store.upsertPolicy({ ...MOCK_POLICY_RULES[0]!, id: "shared" })).toThrow(/exists with kind conversation/u);
     store.close();
   });
 
@@ -256,7 +533,7 @@ describe("SqliteRuleStore", () => {
     store.upsertCosine(MOCK_COSINE_RULES[0]!, { now: 1 });
     store.upsertCosine(MOCK_COSINE_RULES[1]!, { now: 1, enabled: false, scope: "global" });
 
-    expect(store.list({ kind: "policy" }).map(stored => stored.rule.id)).toEqual(MOCK_POLICY_RULES.map(rule => rule.id).sort());
+    expect(store.list({ kind: "file" }).map(stored => stored.rule.id)).toEqual(MOCK_POLICY_RULES.map(rule => rule.id).sort());
     expect(store.list({ enabled: false }).map(stored => stored.rule.id)).toEqual([MOCK_COSINE_RULES[1]!.id]);
     expect(store.list({ scope: "global" }).map(stored => stored.rule.id)).toEqual([MOCK_COSINE_RULES[1]!.id]);
     expect(store.cosineRules()).toEqual([MOCK_COSINE_RULES[0]]);
@@ -281,12 +558,13 @@ describe("SqliteRuleStore", () => {
     expect(ids({ text: "lazy query" })).toEqual(["mock-lazy-query-shaping"]);
     expect(ids({ text: "100%" })).toEqual([]);
     expect(ids({ source: "user-input" })).toEqual(["mock-cosine-migration-warning"]);
-    expect(ids({ boundary: "sentence", delivery: "steer" })).toEqual(["mock-cosine-prefer-generated-client"]);
-    expect(ids({ kind: "policy", delivery: "steer" })).toEqual([]);
+    expect(ids({ boundary: "sentence", mode: "steer" })).toEqual(["mock-cosine-prefer-generated-client"]);
+    expect(ids({ kind: "file", mode: "steer" })).toEqual(["mock-lazy-query-shaping", "mock-no-console-log"]);
+    expect(ids({ mode: "log" })).toEqual(["mock-generated-client-imports"]);
 
     expect(store.setEnabled({ filter: { text: "generated client" } }, false, 7)).toBe(2);
     expect(ids({ enabled: false })).toEqual(["mock-cosine-prefer-generated-client", "mock-generated-client-imports"]);
-    expect(store.setEnabled({ filter: { kind: "cosine" } }, false)).toBe(1);
+    expect(store.setEnabled({ filter: { kind: "conversation" } }, false)).toBe(1);
     expect(store.setEnabled({ filter: {} }, true)).toBe(3);
     expect(store.setEnabled({ ids: [] }, false)).toBe(0);
     store.close();
@@ -326,11 +604,11 @@ describe("seedRerailDatabase", () => {
     expect(second).toEqual(first);
     const rules = new SqliteRuleStore(path);
     expect(rules.list().map(stored => [stored.rule.id, stored.kind, stored.enabled])).toEqual([
-      ["mock-cosine-migration-warning", "cosine", false],
-      ["mock-cosine-prefer-generated-client", "cosine", true],
-      ["mock-generated-client-imports", "policy", true],
-      ["mock-lazy-query-shaping", "policy", true],
-      ["mock-no-console-log", "policy", true],
+      ["mock-cosine-migration-warning", "conversation", false],
+      ["mock-cosine-prefer-generated-client", "conversation", true],
+      ["mock-generated-client-imports", "file", true],
+      ["mock-lazy-query-shaping", "file", true],
+      ["mock-no-console-log", "file", true],
     ]);
     expect(rules.get("mock-no-console-log")?.createdAt).toBe(100_000);
     rules.close();

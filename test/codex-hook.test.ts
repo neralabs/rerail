@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 import type { AdapterDelivery } from "../src/adapter-contract.js";
 import { codexHookOutput, handleCodexEvent, runCodexHook } from "../src/codex-hook.js";
 import type { HookOptions } from "../src/hook-host.js";
-import { hookOptions, scriptedLoop, serveText, temporaryDirectories, transcriptRows } from "./hook-fixtures.js";
+import { hookOptions, scriptedLoop, serveText, temporaryDirectories, transcriptQuery, transcriptRows } from "./hook-fixtures.js";
+import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-codex-hook-");
 
@@ -36,10 +37,10 @@ describe("Codex one-shot hook", () => {
       last_assistant_message: "Done.",
     }, options)).toEqual({});
 
-    expect(transcriptRows(root, ["session-start", "user-prompt", "tool-call", "assistant-message", "turn-end"])).toEqual([
+    expect(transcriptRows(root, ["session-start", "user-prompt", "call", "assistant-message", "turn-end"])).toEqual([
       ["codex-session:session-start:startup", "session-start"],
       ["codex-session:prompt:t1", "user-prompt"],
-      ["codex-session:tool-call:call-1", "tool-call"],
+      ["codex-session:tool-call:call-1", "call"],
       ["codex-session:assistant:t1", "assistant-message"],
       ["codex-session:turn:t1", "turn-end"],
     ]);
@@ -52,19 +53,20 @@ describe("Codex one-shot hook", () => {
       hookOptions(root),
     );
     expect(output).toEqual({});
-    await expect(readFile(join(root, "rerail.sqlite"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(transcriptQuery(root, "SELECT session_id FROM sessions")).toEqual([]);
   });
 
-  it("does not start or record hook activity when this checkout is disabled", async () => {
-    const root = await temporaryDirectory();
-    await mkdir(join(root, ".rerail"));
-    await writeFile(join(root, ".rerail", "disabled"), "");
+  it("does not start or record hook activity where Rerail is not started", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const start = { session_id: "codex-session", cwd: root, hook_event_name: "SessionStart", source: "startup" };
 
-    expect(await runCodexHook(
-      { session_id: "codex-session", cwd: root, hook_event_name: "SessionStart", source: "startup" },
-      hookOptions(root),
-    )).toEqual({});
+    expect(await runCodexHook(start, hookOptions(root))).toEqual({});
     await expect(readFile(join(root, "rerail.sqlite"))).rejects.toMatchObject({ code: "ENOENT" });
+
+    startTestRepository(root, hookOptions(root).databasePath);
+    stopTestRepository(root, hookOptions(root).databasePath);
+    expect(await runCodexHook(start, hookOptions(root))).toEqual({});
+    expect(transcriptQuery(root, "SELECT session_id FROM sessions")).toEqual([]);
   });
 
   it("does not activate host Rerail below a repository-operations workspace where Rerail is disabled", async () => {
@@ -78,11 +80,13 @@ describe("Codex one-shot hook", () => {
       { session_id: "codex-session", cwd: worktree, hook_event_name: "SessionStart", source: "startup" },
       hookOptions(root),
     )).toEqual({});
-    await expect(readFile(join(root, "rerail.sqlite"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(transcriptQuery(root, "SELECT session_id FROM sessions")).toEqual([]);
   });
 
   it("answers {} on stdout and exits cleanly when stdin is malformed or the runtime fails", async () => {
     const root = await temporaryDirectory();
+    // The runtime failure below reads the default database, so the repository is started there too.
+    startTestRepository(root);
     const serve = (stdin: string, options: HookOptions) => serveText(input => runCodexHook(input, options), stdin);
 
     const malformed = await serve("[]", hookOptions(root));
@@ -97,18 +101,18 @@ describe("Codex one-shot hook", () => {
     expect(runtimeFailure.stderr).toMatch(/^rerail hook: /);
   });
 
-  it("routes deliveries through additionalContext, Stop continuation, or the pending file", async () => {
+  it("routes steer and block deliveries through additionalContext, Stop continuation, or the pending file", async () => {
     const root = await temporaryDirectory();
     const storageRoot = join(root, "sessions");
     const common = { session_id: "codex-session", cwd: root };
 
-    const startLoop = scriptedLoop({ "session-start": [delivery("steer", "Read the conventions."), delivery("observe", "hidden")] });
+    const startLoop = scriptedLoop({ "session-start": [delivery("steer", "Read the conventions."), delivery("log", "hidden")] });
     expect(await handleCodexEvent({ ...common, hook_event_name: "SessionStart", source: "startup" }, startLoop, storageRoot)).toEqual({
       hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: "Read the conventions." },
     });
 
     const toolLoop = scriptedLoop({
-      "tool-result": [delivery("steer", "Generated file."), delivery("followUp", "Run the tests."), delivery("nextTurn", "Summarize next time.")],
+      result: [delivery("steer", "Generated file."), delivery("block", "Run the tests."), delivery("log", "Recorded only.")],
     });
     expect(await handleCodexEvent({
       ...common,
@@ -119,7 +123,7 @@ describe("Codex one-shot hook", () => {
       tool_response: "ok",
     }, toolLoop, storageRoot)).toEqual({});
 
-    const stopLoop = scriptedLoop({ "turn-end": [delivery("steer", "Deferred steer.")] });
+    const stopLoop = scriptedLoop({ "turn-end": [delivery("steer", "Deferred steer."), delivery("block", "Deferred block.")] });
     expect(await handleCodexEvent({
       ...common,
       hook_event_name: "Stop",
@@ -127,7 +131,7 @@ describe("Codex one-shot hook", () => {
       last_assistant_message: "Done.",
     }, stopLoop, storageRoot)).toEqual({
       decision: "block",
-      reason: "Generated file.\n\nRun the tests.\n\nDeferred steer.",
+      reason: "Generated file.\n\nRun the tests.\n\nDeferred steer.\n\nDeferred block.",
     });
     expect(stopLoop.events.map(event => event.kind)).toEqual(["assistant-message", "turn-end"]);
 
@@ -135,11 +139,27 @@ describe("Codex one-shot hook", () => {
       { ...common, hook_event_name: "UserPromptSubmit", turn_id: "t2", prompt: "next" },
       scriptedLoop({}),
       storageRoot,
-    )).toEqual({
-      hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "Summarize next time." },
-    });
+    )).toEqual({});
 
     expect(await handleCodexEvent({ ...common, hook_event_name: "Stop", turn_id: "t2", last_assistant_message: "Done." }, scriptedLoop({}), storageRoot)).toEqual({});
     expect(codexHookOutput("SessionEnd", [delivery("steer", "ignored")])).toEqual({});
+  });
+
+  it("carries steering pended after a tool to the next tool call when one comes before Stop", async () => {
+    const root = await temporaryDirectory();
+    const storageRoot = join(root, "sessions");
+    const common = { session_id: "codex-session", cwd: root, turn_id: "t1" };
+
+    expect(await handleCodexEvent(
+      { ...common, hook_event_name: "PostToolUse", tool_name: "Bash", tool_use_id: "call-1", tool_response: "ok" },
+      scriptedLoop({ result: [delivery("block", "Revert the generated edit.")] }),
+      storageRoot,
+    )).toEqual({});
+    expect(await handleCodexEvent(
+      { ...common, hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: "call-2", tool_input: { command: "ls" } },
+      scriptedLoop({}),
+      storageRoot,
+    )).toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: "Revert the generated edit." } });
+    expect(await handleCodexEvent({ ...common, hook_event_name: "Stop", last_assistant_message: "Done." }, scriptedLoop({}), storageRoot)).toEqual({});
   });
 });

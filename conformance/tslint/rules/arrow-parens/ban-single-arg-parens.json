@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:arrow-parens",
   "revision": 1,
+  "mode": "steer",
   "description": "Bans parentheses around a single simple arrow-function parameter.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "single-arg-parens",
       "forbid": {
@@ -69,10 +70,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "ARROW_PARENS",
-        "severity": "error",
         "message": "Parentheses are prohibited around the parameter in this single parameter arrow function"
       }
     }

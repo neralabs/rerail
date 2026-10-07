@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-unnecessary-type-assertion",
   "revision": 1,
+  "mode": "steer",
   "description": "Type-free subset: non-null assertions on expressions that are syntactically never null/undefined (literals, arithmetic/concatenation, new, functions).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "non-null-on-non-nullable",
       "forbid": {
@@ -89,10 +90,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_UNNECESSARY_TYPE_ASSERTION",
-        "severity": "error",
         "message": "This assertion is unnecessary since it does not change the type of the expression."
       }
     }

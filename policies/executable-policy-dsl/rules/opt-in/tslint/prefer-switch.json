@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:prefer-switch",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `prefer-switch` rule with its default options (https://palantir.github.io/tslint/rules/prefer-switch/). Flags an if/else-if chain (any length, recursive utils) with an else, whose conditions are `||` trees of `$X === <simple>` with one simple $X, comparing at least 3 values in total (TSLint's min-cases, default 3). Simple operands are identifiers, literals, this, substitution-free templates, property accesses and non-++/-- prefix unaries of simple operands. The else-if directly under a flagged if is not flagged again.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "if-chain",
       "forbid": {
@@ -282,10 +283,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "PREFER_SWITCH",
-        "severity": "error",
         "message": "Use a switch statement instead of using multiple '===' checks."
       }
     }

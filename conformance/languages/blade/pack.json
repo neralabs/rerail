@@ -1,0 +1,72 @@
+{
+  "pack": "blade",
+  "family": "blade",
+  "ticket": "NER-1698",
+  "capabilities": ["syntax", "value", "compare", "arguments", "scope", "calls", "formatArgs", "phpDoc"],
+  "corpora": [
+    {
+      "name": "bookstack",
+      "repository": "https://github.com/BookStackApp/BookStack",
+      "commit": "f585a7d9100a99cba8479c1ef5fd56e05562daea",
+      "paths": [
+        "resources/views"
+      ],
+      "exclude": []
+    },
+    {
+      "name": "filament",
+      "repository": "https://github.com/filamentphp/filament",
+      "commit": "ca4f55bb5e05df56ba1609595c082d44c2511620",
+      "paths": [
+        "packages",
+        "tests/resources",
+        "docs-assets/app"
+      ],
+      "exclude": []
+    },
+    {
+      "name": "bagisto",
+      "repository": "https://github.com/bagisto/bagisto",
+      "commit": "635cab68b3229896f854b1b3b3e2dbffcfb6aba8",
+      "paths": [
+        "packages/Webkul"
+      ],
+      "exclude": []
+    }
+  ],
+  "tools": [
+    { "name": "bladestan", "version": "0.11.7" },
+    { "name": "blade-parser", "version": "2.1.0" },
+    { "name": "tlint", "version": "9.7.0" }
+  ],
+  "exemptCapabilities": [
+    {
+      "capability": "calls",
+      "reason": "No pinned reference linter has a rule that reads a template's callees transitively, which is what Rerail's calls capability answers.",
+      "evidence": "Checked Bladestan 0.11.7, tlint 9.7.0 and stillat/blade-parser 2.1.0. Bladestan runs PHPStan 2.2.16's rules over the compiled template, and every PHPStan rule that looks at a call (CallToFunctionParametersRule, the impossible-check rules, RandomIntParametersRule) reads only the direct callee's declaration or name, as for the PHP pack. tlint's Blade lints match directive names and echo spacing line by line. blade-parser's only rule over what a template reaches, RecursiveIncludeValidator, compares an `@include`'s literal view name with the template's own file name: one direct edge, never a chain. None answers whether a template reaches a call of X through any chain of calls.",
+      "coveredBy": [
+        "T2: rerail/native/src/policy_dsl/blade/tests.rs (blade_calls_are_the_php_blade_compiles, blade_calls_reach_workspace_definitions) and the PHP calls oracle the view's calls go through (rerail-fixtures/php/calls/php, calls::php_tests::php_calls_agree_with_phpstan_and_the_runtime)",
+        "T3: benchmark_blade_region_parity (the view program a template's calls are summarized from: every byte Blade copies from laravel's 128 templates agrees, and every remaining run over BookStack, Filament and Bagisto is in a template with a listed grammar gap or a string holding `@{{ }}`, docs/design/rerail-languages.md, Blade, Oracle) and benchmark_php_calls_corpus (the PHP calls code a template's calls go through)"
+      ]
+    }
+  ],
+  "rules": [
+    {"id": "bladestan-variable-undefined", "upstream": {"tool": "bladestan", "rule": "variable.undefined"}, "policy": "rules/bladestan-variable-undefined.json", "capabilities": ["scope"], "match": "line"},
+    {"id": "bladestan-argument-sprintf", "upstream": {"tool": "bladestan", "rule": "argument.sprintf"}, "policy": "rules/bladestan-argument-sprintf.json", "capabilities": ["formatArgs", "scope", "syntax"], "match": "line"},
+    {"id": "bladestan-array-duplicate-key", "upstream": {"tool": "bladestan", "rule": "array.duplicateKey"}, "policy": "rules/bladestan-array-duplicate-key.json", "capabilities": ["compare", "syntax"], "match": "line"},
+    {"id": "bladestan-random-int-parameters", "upstream": {"tool": "bladestan", "rule": "argument.type"}, "policy": "rules/bladestan-random-int-parameters.json", "capabilities": ["arguments", "compare", "value", "scope"], "match": "line"},
+    {"id": "bladestan-if-always-true", "upstream": {"tool": "bladestan", "rule": "if.alwaysTrue"}, "policy": "rules/bladestan-if-always-true.json", "capabilities": ["value", "phpDoc"], "match": "line"},
+    {"id": "bladestan-if-always-false", "upstream": {"tool": "bladestan", "rule": "if.alwaysFalse"}, "policy": "rules/bladestan-if-always-false.json", "capabilities": ["value", "phpDoc"], "match": "line"},
+    {"id": "bladestan-identical-always-true", "upstream": {"tool": "bladestan", "rule": "identical.alwaysTrue"}, "policy": "rules/bladestan-identical-always-true.json", "capabilities": ["value", "syntax"], "match": "line"},
+    {"id": "bladestan-missing-function-return-type", "upstream": {"tool": "bladestan", "rule": "missingType.return"}, "policy": "rules/bladestan-missing-function-return-type.json", "capabilities": ["phpDoc", "syntax"], "match": "line"},
+    {"id": "tlint-no-json-directive", "upstream": {"tool": "tlint", "rule": "NoJsonDirective"}, "policy": "rules/tlint-no-json-directive.json", "capabilities": ["syntax"], "match": "line"},
+    {"id": "tlint-no-dump-directives", "upstream": {"tool": "tlint", "rule": "NoDumpDirectives"}, "policy": "rules/tlint-no-dump-directives.json", "capabilities": ["syntax"], "match": "line"},
+    {"id": "tlint-no-ray-directive", "upstream": {"tool": "tlint", "rule": "NoRayDirective"}, "policy": "rules/tlint-no-ray-directive.json", "capabilities": ["syntax"], "match": "line"},
+    {"id": "tlint-space-after-blade-directives", "upstream": {"tool": "tlint", "rule": "SpaceAfterBladeDirectives"}, "policy": "rules/tlint-space-after-blade-directives.json", "capabilities": ["syntax"], "match": "line"},
+    {"id": "tlint-spaces-around-blade-render-content", "upstream": {"tool": "tlint", "rule": "SpacesAroundBladeRenderContent"}, "policy": "rules/tlint-spaces-around-blade-render-content.json", "capabilities": ["syntax"], "match": "line"},
+    {"id": "blade-parser-debug-directive", "upstream": {"tool": "blade-parser", "rule": "DebugDirectiveValidator"}, "policy": "rules/blade-parser-debug-directive.json", "capabilities": ["syntax"], "match": "line"},
+    {"id": "blade-parser-duplicate-condition-expressions", "upstream": {"tool": "blade-parser", "rule": "DuplicateConditionExpressionsValidator"}, "policy": "rules/blade-parser-duplicate-condition-expressions.json", "capabilities": ["compare", "syntax"], "match": "line"},
+    {"id": "blade-parser-for-else-structure", "upstream": {"tool": "blade-parser", "rule": "ForElseStructureValidator"}, "policy": "rules/blade-parser-for-else-structure.json", "capabilities": ["syntax"], "match": "line"},
+    {"id": "blade-parser-component-shorthand-variable-parameter", "upstream": {"tool": "blade-parser", "rule": "ComponentShorthandVariableParameterValidator"}, "policy": "rules/blade-parser-component-shorthand-variable-parameter.json", "capabilities": ["syntax"], "match": "line"}
+  ]
+}

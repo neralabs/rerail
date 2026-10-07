@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-duplicate-imports",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-duplicate-imports` rule with its default options (https://palantir.github.io/tslint/rules/no-duplicate-imports/). Disallows multiple imports from the same module: an import whose module text equals an earlier import's in the same statement list; in an external module, imports inside string-named ambient modules share the outer list (TSLint's module-augmentation case).",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "duplicate-import",
       "forbid": {
@@ -115,10 +116,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_DUPLICATE_IMPORTS",
-        "severity": "error",
         "message": "Multiple imports from the same module can be combined into one."
       }
     }

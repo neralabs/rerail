@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-unnecessary-qualifier",
   "revision": 1,
+  "mode": "steer",
   "description": "Approximation: flags capitalised namespace-like qualifiers used inside a namespace/module/enum body. Cannot check the qualifier names the enclosing namespace or that it is not shadowed.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "type-qualifier",
       "forbid": {
@@ -56,10 +57,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_UNNECESSARY_QUALIFIER",
-        "severity": "error",
         "message": "Qualifier is unnecessary since the namespace is in scope."
       }
     },
@@ -115,10 +115,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_UNNECESSARY_QUALIFIER",
-        "severity": "error",
         "message": "Qualifier is unnecessary since the namespace is in scope."
       }
     }

@@ -495,7 +495,7 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
                     .bindings
                     .get(read.name.as_ref())?
                     .get(*index)?;
-                binding.site.value?.find(self.root.clone())
+                binding.site.value?.find_near(self.root.clone(), variable)
             })
             .collect()
     }
@@ -1047,6 +1047,7 @@ pub(crate) fn extract<D: Doc>(
         edges: extractor.edges,
         targets: extractor.targets,
         aliases: Vec::new(),
+        opaque: Vec::new(),
         stars: Vec::new(),
         supers: extractor.supers,
         open: has_errors || reader.is_none(),

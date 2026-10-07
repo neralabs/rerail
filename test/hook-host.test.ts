@@ -1,18 +1,20 @@
-import { mkdir, readFile, rename } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery } from "../src/adapter-contract.js";
-import { emitHookOutput, pendingPath, persistPending, readPending, serveHook, takePending, withSessionLock, type HookInput, type HookOptions, type HookOutput } from "../src/hook-host.js";
+import { openRerailDatabase } from "../src/database.js";
+import { emitHookOutput, pendingPath, persistPending, readPending, runHostHook, serveHook, takePending, withSessionLock, type HookInput, type HookOptions, type HookOutput } from "../src/hook-host.js";
 import { runClaudeHook } from "../src/claude-hook.js";
 import { runCodexHook } from "../src/codex-hook.js";
 import { runCursorHook } from "../src/cursor-hook.js";
-import { hookOptions, serveText, temporaryDirectories, transcriptQuery } from "./hook-fixtures.js";
+import { resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
+import { hookOptions, serveText, temporaryDirectories, testEmbedder, transcriptQuery } from "./hook-fixtures.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-hook-host-");
 
 function delivery(content: string, ruleIds: readonly string[] = []): AdapterDelivery {
-  return { sessionId: "session-1", requested: "nextTurn", mechanism: "deferred-context", content, ruleIds };
+  return { sessionId: "session-1", requested: "steer", mechanism: "deferred-context", content, ruleIds };
 }
 
 function receiptCount(root: string): number {
@@ -49,10 +51,10 @@ describe("hook steering handoffs", () => {
     const options = hookOptions(root);
     const path = pendingPath(options.storageRoot!, host, "session-1");
     await persistPending(path, [
-      { ...delivery("first", ["rule:a"]), requested: "steer" },
-      { ...delivery("second", ["rule:b", "rule:a"]), requested: "steer" },
-      { ...delivery(" ", ["rule:blank"]), requested: "steer" },
-      delivery("later", ["rule:later"]),
+      delivery("first", ["rule:a"]),
+      delivery("second", ["rule:b", "rule:a"]),
+      delivery(" ", ["rule:blank"]),
+      { ...delivery("recorded only", ["rule:log"]), requested: "log" },
     ]);
     const output = await run(input(root), options);
     expect(output).toEqual(expected);
@@ -75,9 +77,9 @@ describe("hook steering handoffs", () => {
     expect(receiptCount(root)).toBe(1);
     // The receipt credits only the rules behind the guidance that was written, in first-seen order.
     expect(receiptPayloads(root)).toEqual([{ ruleIds: ["rule:a", "rule:b"] }]);
-    expect(await readPending(path)).toEqual([delivery("later", ["rule:later"])]);
+    expect(await readPending(path)).toEqual([]);
 
-    await persistPending(path, [{ ...delivery(" "), requested: "steer" }, { ...delivery("observe only"), requested: "observe" }]);
+    await persistPending(path, [delivery(" "), { ...delivery("log only"), requested: "log" }]);
     const empty = await run(input(root), options);
     await emitHookOutput(empty, new Writable({ write(_chunk, _encoding, callback) { callback(); } }));
     expect(receiptCount(root)).toBe(1);
@@ -143,6 +145,17 @@ describe("hook host durable state", () => {
     expect(await readPending(path)).toEqual([]);
   });
 
+  it("keeps only steering entries from a pending file", async () => {
+    const root = await temporaryDirectory();
+    const path = pendingPath(root, "codex", "session-1");
+    await mkdir(join(path, ".."), { recursive: true });
+    await writeFile(path, JSON.stringify(["steer", "block", "log", "followUp", "nextTurn", "observe"].map(requested => ({
+      ...delivery(requested), requested,
+    }))));
+
+    expect(await readPending(path)).toEqual([delivery("steer"), { ...delivery("block"), requested: "block" }]);
+  });
+
   it("serializes one-shot work per harness session and releases the lock after failure", async () => {
     const root = await temporaryDirectory();
     const order: string[] = [];
@@ -167,5 +180,56 @@ describe("hook host durable state", () => {
       throw new Error("ingest failed");
     })).rejects.toThrow("ingest failed");
     await expect(withSessionLock(root, "codex", "session-1", async () => "recovered")).resolves.toBe("recovered");
+  });
+});
+
+describe("hooks in a development workspace", () => {
+  it("records a flagged workspace's session only in its container, never in the host database", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const workspace = join(root, "workspace");
+    await mkdir(join(workspace, ".nera"), { recursive: true });
+    const { repositoryId } = resolveRepositoryContext(workspace);
+    const hostDatabasePath = join(root, "host", "rerail.sqlite");
+    openRerailDatabase(hostDatabasePath).$client.close();
+    // The local test runtime records into `databasePath` in-process, so any host-side path would land a row there.
+    const options: HookOptions = { storageRoot: join(root, "sessions"), databasePath: hostDatabasePath, embedder: testEmbedder };
+    const prompt = (sessionId: string) => runHostHook("claude-code", workspace, sessionId, options, async loop => {
+      await loop.ingest({ kind: "session-start", eventId: `${sessionId}:start`, session: { host: "claude-code", sessionId, cwd: workspace } });
+      await loop.ingest({ kind: "user-prompt", eventId: `${sessionId}:prompt`, sessionId, text: "Mind the API." });
+      return {};
+    });
+    const hostRows = () => {
+      // A writable open runs the start carry-over, so a leaked session would switch the repository on here.
+      const database = openRerailDatabase(hostDatabasePath);
+      try {
+        return {
+          sessions: database.$client.prepare("SELECT session_id FROM sessions WHERE cwd = ? OR repository_id = ?").pluck().all(workspace, repositoryId),
+          starts: database.$client.prepare("SELECT state FROM repository_starts WHERE repository_id = ?").pluck().all(repositoryId),
+        };
+      } finally {
+        database.$client.close();
+      }
+    };
+
+    await writeFile(join(workspace, ".nera", "instance.env"), 'NERA_RERAIL_ENABLED="true"\nNERA_RERAIL_PUBLIC_URL="http://127.0.0.1:4737"\n');
+    const container: Array<{ path: string; body: { configuration: Record<string, unknown> } }> = [];
+    vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { event: { eventId: string }; configuration: Record<string, unknown> };
+      container.push({ path: url.pathname, body });
+      return Response.json({ eventId: body.event.eventId, deliveries: [] });
+    });
+    try {
+      await prompt("flagged");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(container.map(request => request.path)).toEqual(["/kernel/events", "/kernel/events"]);
+    expect(container.every(request => !("databasePath" in request.body.configuration))).toBe(true);
+    expect(hostRows()).toEqual({ sessions: [], starts: [] });
+
+    // The same hook without the flag takes the host path and does reach the host database.
+    await rm(join(workspace, ".nera", "instance.env"));
+    await prompt("unflagged");
+    expect(hostRows().sessions).toEqual(["unflagged"]);
   });
 });

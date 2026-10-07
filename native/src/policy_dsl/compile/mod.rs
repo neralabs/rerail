@@ -29,14 +29,13 @@ use super::json::{
 };
 use super::language::{PolicyLanguage, Semantic};
 use super::matcher::{
-    AnchorPlan, AstMatcher, Capture, Constrained, GrammarMatcher, Reading, UtilTable,
-    collect_variables, reads_values,
+    AnchorPlan, AstMatcher, Capture, Constrained, GrammarMatcher, Reading, RequiredText,
+    UtilOrigin, UtilTable, collect_variables, reads_values,
 };
 use super::model::{
     Anchor, Capabilities, CheckKind, CompiledCheck, FindingSpec, Limits, PolicyScope, Query,
-    RegexSource,
+    RegexSource, RuleMode,
 };
-use super::query::PolicyStatements;
 use super::soundness::sound_under_errors;
 use crate::policy_dsl::language::{GrammarDialect, PatternSource, rule_pattern};
 pub(super) use ast_rule::compile_ast_rule;
@@ -250,37 +249,44 @@ fn compile_glob_set(patterns: &[String], path: &str) -> Result<GlobSet> {
         .map_err(|error| invalid(format!("{path}: {error}")))
 }
 
-/// The policy's id, scope, checks and required capabilities, and the statement each grammar matcher
-/// runs as (`GrammarMatcher::statement` indexes them).
+/// The policy's id, scope, checks and required capabilities.
 pub(super) fn compile_document(
     document: &Value,
     capabilities: &Capabilities,
-) -> Result<(
-    String,
-    PolicyScope,
-    Vec<CompiledCheck>,
-    Value,
-    PolicyStatements,
-)> {
+) -> Result<(String, RuleMode, PolicyScope, Vec<CompiledCheck>, Value)> {
     let (resolved, options) = config::resolve(document)?;
     let document = &resolved;
     let root = object(document, "/")?;
     reject_unknown(
         root,
-        &["format", "id", "revision", "description", "scope", "checks"],
+        &[
+            "format",
+            "id",
+            "revision",
+            "mode",
+            "description",
+            "scope",
+            "clauses",
+        ],
         "/",
     )?;
     if required_str(document, "format", "/")? != "rerail.policy/v1" {
         return Err(invalid("/format must equal rerail.policy/v1"));
     }
     let id = required_str(document, "id", "/")?.to_owned();
+    let rule_mode = match document.get("mode").and_then(Value::as_str) {
+        Some("log") => RuleMode::Log,
+        Some("steer") => RuleMode::Steer,
+        Some("block") => RuleMode::Block,
+        _ => return Err(invalid("/mode must equal log, steer, or block")),
+    };
     let scope = compile_scope(document.get("scope"))?;
     let checks = document
-        .get("checks")
+        .get("clauses")
         .and_then(Value::as_array)
-        .ok_or_else(|| invalid("/checks must be an array"))?;
+        .ok_or_else(|| invalid("/clauses must be an array"))?;
     if checks.is_empty() {
-        return Err(invalid("/checks must not be empty"));
+        return Err(invalid("/clauses must not be empty"));
     }
     let defines = Defines {
         utils: collect_defines(checks, capabilities)?,
@@ -291,7 +297,7 @@ pub(super) fn compile_document(
     let mut requires_llm = false;
     let mut ids = BTreeSet::new();
     for (index, check) in checks.iter().enumerate() {
-        let path = format!("/checks/{index}");
+        let path = format!("/clauses/{index}");
         let id = if is_define(check) {
             required_str(check, "id", &path)?.to_owned()
         } else {
@@ -308,58 +314,13 @@ pub(super) fn compile_document(
             id
         };
         if !ids.insert(id.clone()) {
-            return Err(invalid(format!("duplicate check id `{id}` at {path}")));
+            return Err(invalid(format!("duplicate clause id `{id}` at {path}")));
         }
     }
-    // Production runs every AST rule as a query statement: a rule the compiler cannot lower is a
-    // policy error, not a rule silently evaluated another way. Each statement is compiled here,
-    // once, and evaluation runs it.
-    let mut statements = PolicyStatements::default();
-    for check in &mut compiled {
-        let id = &check.id;
-        let each = check.finding.each.is_some();
-        let mut queries = match &mut check.kind {
-            CheckKind::Forbid(query) => vec![(query, each)],
-            CheckKind::RequireEach { subject, evidence } => vec![
-                (&mut Arc::make_mut(&mut subject.ast).query, false),
-                (&mut Arc::make_mut(&mut evidence.ast).query, false),
-            ],
-            CheckKind::Budget { query, .. } => {
-                vec![(&mut Arc::make_mut(&mut query.ast).query, false)]
-            }
-            CheckKind::Llm => Vec::new(),
-        };
-        while let Some((query, each)) = queries.pop() {
-            match query {
-                Query::SelectWhen { select, exists } => {
-                    // An `exists` side only decides a condition: it reports nothing, so it never
-                    // enumerates (`select_when::Leaf::reported`).
-                    queries.push((select, each));
-                    queries.push((exists, false));
-                }
-                Query::Ast { matchers, calls } => {
-                    for matcher in matchers {
-                        matcher.statement =
-                            statements.compile(matcher, each).map_err(|reason| {
-                                invalid(format!(
-                                    "check `{id}`: its {} rule cannot run as a query statement: \
-                                 {reason}",
-                                    matcher.language.to_string().to_lowercase()
-                                ))
-                            })?;
-                    }
-                    // A `calls` term's seed query runs per file too, reporting nothing.
-                    for term in calls {
-                        queries.push((&mut Arc::make_mut(term).seed, false));
-                    }
-                }
-                Query::Regex { .. } => {}
-            }
-        }
-    }
+
     if compiled.is_empty() {
         return Err(invalid(
-            "/checks must hold a check besides define: a define reports nothing",
+            "/clauses must hold a clause besides define: a define reports nothing",
         ));
     }
     let ast = required_ast
@@ -368,10 +329,10 @@ pub(super) fn compile_document(
         .collect::<Vec<_>>();
     Ok((
         id,
+        rule_mode,
         scope,
         compiled,
         json!({ "ast": ast, "llm": requires_llm }),
-        statements,
     ))
 }
 
@@ -386,13 +347,13 @@ fn compile_check(
     let check = object(value, path)?;
     reject_unknown(
         check,
-        &["id", "forbid", "require_each", "budget", "llm", "finding"],
+        &["id", "forbid", "require_each", "budget", "llm", "violation"],
         path,
     )?;
     let id = required_str(value, "id", path)?.to_owned();
     let finding_value = value
-        .get("finding")
-        .ok_or_else(|| invalid(format!("{path}/finding is required")))?;
+        .get("violation")
+        .ok_or_else(|| invalid(format!("{path}/violation is required")))?;
     let forms = CHECK_FORMS
         .into_iter()
         .filter(|key| check.contains_key(*key))
@@ -532,7 +493,7 @@ fn compile_check(
         }
         _ => unreachable!(),
     };
-    let mut finding = parse_finding(finding_value, &format!("{path}/finding"))?;
+    let mut finding = parse_finding(finding_value, &format!("{path}/violation"))?;
     findings::bind(
         &mut finding,
         finding_value.get("fix").and_then(|fix| match fix {
@@ -540,7 +501,7 @@ fn compile_check(
             other => other.as_str(),
         }),
         &kind,
-        &format!("{path}/finding"),
+        &format!("{path}/violation"),
     )?;
     Ok(CompiledCheck {
         id,
@@ -799,11 +760,13 @@ fn compile_query_as(
             .map_err(|error| invalid(error.to_string()))?;
             let calls = crate::policy_dsl::calls::CallsCollector::new(salt, seed);
             let mut bindable = BTreeSet::new();
+            let origins = util_origins(&utils, language_name)?;
             for (dialect, language) in &grammars {
                 let mut gaps = Vec::new();
                 let table = Arc::new(UtilTable::new(
                     utils.keys().cloned().collect(),
                     utils.values().map(|util| !util.params.is_empty()).collect(),
+                    origins.iter().cloned().map(Some).collect(),
                 ));
                 let scope = UtilScope {
                     table: Arc::downgrade(&table),
@@ -882,18 +845,21 @@ fn compile_query_as(
                 bindable.extend(names.into_iter().map(str::to_owned));
                 if !matches!(matcher, AstMatcher::Never) {
                     let anchors = Arc::new(AnchorPlan::compile(&matcher));
+                    let three_valued = reads_values(&matcher, &mut BTreeSet::new());
+                    let text = (!three_valued)
+                        .then(|| RequiredText::of(&matcher).map(Arc::new))
+                        .flatten();
                     matchers.push(GrammarMatcher {
                         language: *language,
                         sound_under_errors: sound_under_errors(&matcher),
-                        three_valued: reads_values(&matcher, &mut BTreeSet::new()),
+                        three_valued,
                         matcher,
                         anchors,
+                        text,
                         utils: table,
                         file: file.clone(),
                         applies,
                         transform: transform.clone(),
-                        // `compile_document` compiles the statement once the check is whole.
-                        statement: usize::MAX,
                     });
                 }
             }
@@ -1231,7 +1197,6 @@ fn parse_finding(value: &Value, path: &str) -> Result<FindingSpec> {
         finding,
         &[
             "code",
-            "severity",
             "anchor",
             "message",
             "variables",
@@ -1241,12 +1206,6 @@ fn parse_finding(value: &Value, path: &str) -> Result<FindingSpec> {
         ],
         path,
     )?;
-    let severity = required_str(value, "severity", path)?;
-    if !matches!(severity, "advisory" | "warning" | "error") {
-        return Err(invalid(format!(
-            "{path}/severity must equal advisory, warning, or error"
-        )));
-    }
     let anchor = Anchor::parse(
         required_str(value, "anchor", path)?,
         &format!("{path}/anchor"),
@@ -1293,13 +1252,12 @@ fn parse_finding(value: &Value, path: &str) -> Result<FindingSpec> {
         && !object(variables, &format!("{path}/variables"))?.is_empty()
     {
         return Err(invalid(format!(
-            "{path}/variables: finding variables are not supported yet; \
-             findings carry only the kernel's own variables (subjectId, count, anchorFallback)"
+            "{path}/variables: violation variables are not supported yet; \
+             violations carry only the kernel's own variables (subjectId, count, anchorFallback)"
         )));
     }
     Ok(FindingSpec {
         code: required_str(value, "code", path)?.to_owned(),
-        severity: severity.to_owned(),
         message: required_str(value, "message", path)?.to_owned(),
         anchor,
         message_template: None,
@@ -1391,6 +1349,30 @@ fn declared_captures(
     }
 }
 
+/// Each utility's `UtilOrigin`, in `utils` order: a digest of it and of every utility it reaches.
+fn util_origins(utils: &BTreeMap<String, UtilDef>, language: &str) -> Result<Vec<UtilOrigin>> {
+    use sha2::{Digest, Sha256};
+    utils
+        .iter()
+        .map(|(id, util)| {
+            let mut reached = reachable(std::iter::once(util.rule), utils);
+            reached.insert(id.clone());
+            let body = serde_json::to_vec(&(
+                language,
+                id,
+                reached
+                    .iter()
+                    .map(|id| (id, &utils[id].params, utils[id].rule))
+                    .collect::<Vec<_>>(),
+            ))
+            .map_err(|error| invalid(error.to_string()))?;
+            Ok(UtilOrigin {
+                digest: Sha256::digest(&body).into(),
+            })
+        })
+        .collect()
+}
+
 /// Refuse predicates a policy language's semantic family does not implement before any dialect
 /// reaches a family-specific compiler.
 pub(super) fn refuse_unavailable_semantics(
@@ -1440,21 +1422,21 @@ mod tests {
     fn duplicate_keys_are_rejected_in_json_and_yaml() {
         // A JSON object keeps the last of two equal keys, so the first term vanished silently.
         // ast-grep 0.45.3 rejects the rule ("duplicate field `not`").
-        let json_source = r#"{"format": "rerail.policy/v1", "id": "p", "revision": 1, "checks": [{
+        let json_source = r#"{"format": "rerail.policy/v1", "id": "p", "revision": 1, "mode": "steer", "clauses": [{
             "id": "c",
             "forbid": {"ast": {"language": "python", "rule":
                 {"kind": "identifier", "not": {"regex": "^a$"}, "not": {"regex": "^b$"}}}},
-            "finding": {"anchor": "witness.span", "code": "X", "message": "x", "severity": "error"}}]}"#;
+            "violation": {"anchor": "witness.span", "code": "X", "message": "x"}}]}"#;
         let reason = rejection(PolicyDslRuntime::compile(
             json_source.to_owned(),
             "json".to_owned(),
             CAPABILITIES.to_owned(),
         ));
         assert!(
-            reason.starts_with("duplicate key `not` at /checks/0/forbid/ast/rule at line 4"),
+            reason.starts_with("duplicate key `not` at /clauses/0/forbid/ast/rule at line 4"),
             "{reason}"
         );
-        let yaml_source = "format: rerail.policy/v1\nid: p\nrevision: 1\nid: q\nchecks: []\n";
+        let yaml_source = "format: rerail.policy/v1\nid: p\nrevision: 1\nid: q\nclauses: []\n";
         let reason = rejection(PolicyDslRuntime::compile(
             yaml_source.to_owned(),
             "yaml".to_owned(),
@@ -1465,11 +1447,11 @@ mod tests {
             "{reason}"
         );
         // Equal keys in different objects are fine.
-        let distinct = r#"{"format": "rerail.policy/v1", "id": "p", "revision": 1, "checks": [{
+        let distinct = r#"{"format": "rerail.policy/v1", "id": "p", "revision": 1, "mode": "steer", "clauses": [{
             "id": "c",
             "forbid": {"ast": {"language": "python", "rule":
                 {"kind": "identifier", "not": {"regex": "^a$", "not": {"regex": "^b$"}}}}},
-            "finding": {"anchor": "witness.span", "code": "X", "message": "x", "severity": "error"}}]}"#;
+            "violation": {"anchor": "witness.span", "code": "X", "message": "x"}}]}"#;
         PolicyDslRuntime::compile(
             distinct.to_owned(),
             "json".to_owned(),
@@ -1483,20 +1465,67 @@ mod tests {
         let forbid = json!({ "regex": { "source": "file.content", "pattern": "x" } });
         let compile = |finding: Value| {
             compile_document_with(
-                check_document(json!({ "id": "c", "forbid": forbid, "finding": finding })),
+                check_document(json!({ "id": "c", "forbid": forbid, "violation": finding })),
                 &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
             )
         };
         let mut variables = finding();
         variables["variables"] = json!({ "name": "x" });
-        assert!(
-            rejection(compile(variables)).starts_with(
-                "/checks/0/finding/variables: finding variables are not supported yet"
-            )
-        );
+        assert!(rejection(compile(variables)).starts_with(
+            "/clauses/0/violation/variables: violation variables are not supported yet"
+        ));
         let mut empty = finding();
         empty["variables"] = json!({});
         assert!(compile(empty).is_ok());
+    }
+
+    fn regex_document(finding: Value) -> Value {
+        check_document(json!({
+            "id": "c",
+            "forbid": { "regex": { "source": "file.content", "pattern": "x" } },
+            "violation": finding,
+        }))
+    }
+
+    #[test]
+    fn mode_is_required_and_severity_is_unknown() {
+        let capabilities = serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities");
+        let mut missing = regex_document(finding());
+        missing.as_object_mut().expect("document").remove("mode");
+        let mut non_string = regex_document(finding());
+        non_string["mode"] = json!(1);
+        let mut severity_name = regex_document(finding());
+        severity_name["mode"] = json!("advisory");
+        for document in [missing, non_string, severity_name] {
+            assert_eq!(
+                rejection(compile_document_with(document, &capabilities)),
+                "/mode must equal log, steer, or block"
+            );
+        }
+        let mut with_severity = finding();
+        with_severity["severity"] = json!("error");
+        assert_eq!(
+            rejection(compile_document_with(
+                regex_document(with_severity),
+                &capabilities
+            )),
+            "unknown field `severity` at /clauses/0/violation"
+        );
+    }
+
+    #[test]
+    fn findings_carry_the_rule_mode() {
+        let capabilities = serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities");
+        for mode in ["log", "steer", "block"] {
+            let mut document = regex_document(finding());
+            document["mode"] = json!(mode);
+            let compiled = compile_document_with(document, &capabilities)
+                .unwrap_or_else(|error| panic!("{}", error.reason));
+            let result = evaluate_file(&compiled, "typescript", "a.ts", "x;\n");
+            assert_findings(&result, 1);
+            assert_eq!(result["violations"][0]["mode"], mode);
+            assert!(result["violations"][0].get("severity").is_none());
+        }
     }
 
     /// A constraint may name what a call binds through a cycle of parameterized calls, whichever

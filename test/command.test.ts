@@ -6,10 +6,11 @@ import { CosineRuleRegistry } from "../src/registry.js";
 
 const rule = {
   id: "checkout",
+  mode: "log",
   reference: "Guest checkout remains available.",
   match: { operator: "gte", threshold: 0.99 },
   sample: { source: "assistant-text", boundary: "message" },
-  action: { delivery: "observe", content: "record" },
+  action: { content: "record" },
   repeat: { mode: "always" },
 } as const;
 

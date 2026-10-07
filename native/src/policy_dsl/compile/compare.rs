@@ -897,31 +897,31 @@ mod tests {
         let with = |compare: Value| json!({ "pattern": "f($A, $$$REST)", "not": { "pattern": "f($N, $$$)" }, "compare": compare });
         assert_eq!(
             reject(with(json!({ "left": "A", "op": "lt", "right": "N" }))),
-            "/checks/0/forbid/ast/rule/compare/right: `$N` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
+            "/clauses/0/forbid/ast/rule/compare/right: `$N` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
         );
         assert_eq!(
             reject(with(json!({ "left": "REST", "op": "lt", "right": "A" }))),
-            "/checks/0/forbid/ast/rule/compare/left: `$$$REST` captures a node list; compare applies to single-node captures only"
+            "/clauses/0/forbid/ast/rule/compare/left: `$$$REST` captures a node list; compare applies to single-node captures only"
         );
         assert_eq!(
             reject(with(json!({ "left": "$A", "op": "lt", "right": "A" }))),
-            "/checks/0/forbid/ast/rule/compare/left: `$A` is not a metavariable name (A-Z, 0-9, _, without `$`)"
+            "/clauses/0/forbid/ast/rule/compare/left: `$A` is not a metavariable name (A-Z, 0-9, _, without `$`)"
         );
         assert_eq!(
             reject(with(json!({ "left": "A", "right": "A" }))),
-            "/checks/0/forbid/ast/rule/compare/op is required"
+            "/clauses/0/forbid/ast/rule/compare/op is required"
         );
         assert_eq!(
             reject(with(
                 json!({ "left": "A", "op": "lt", "right": "A", "collation": "locale" })
             )),
-            "/checks/0/forbid/ast/rule/compare/collation: unknown value `locale`; expected one of ordinal, fold-lower, fold-upper, lowercase-first, natural, natural-fold-lower"
+            "/clauses/0/forbid/ast/rule/compare/collation: unknown value `locale`; expected one of ordinal, fold-lower, fold-upper, lowercase-first, natural, natural-fold-lower"
         );
         assert_eq!(
             reject(with(
                 json!({ "left": "A", "op": "lt", "right": "A", "numeric": true })
             )),
-            "unknown field `numeric` at /checks/0/forbid/ast/rule/compare"
+            "unknown field `numeric` at /clauses/0/forbid/ast/rule/compare"
         );
         // An unused utility that binds its own names compiles like any other.
         compiled(json!({
@@ -987,7 +987,7 @@ mod tests {
             rejection(compile_typescript_rule(base(json!({
                 "inside": { "kind": "program", "stopBy": { "kind": "object", "has": { "kind": "pair", "pattern": "$J" }, "compare": { "left": "J", "op": "eq", "right": "K" } } },
             })))),
-            "/checks/0/forbid/ast/rule/inside/stopBy/compare/right: `$K` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
+            "/clauses/0/forbid/ast/rule/inside/stopBy/compare/right: `$K` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
         );
         compile_typescript_rule(base(json!({
             "inside": { "kind": "program", "stopBy": { "kind": "object", "has": { "kind": "pair", "has": { "kind": "property_identifier", "pattern": "$J" } }, "not": { "has": { "kind": "pair", "has": { "kind": "property_identifier", "pattern": "$I" }, "compare": { "left": "I", "op": "eq", "right": "J" } } } } },
@@ -1001,7 +1001,7 @@ mod tests {
                     { "not": { "compare": { "left": "J", "op": "eq", "right": "K" } } },
                 ],
             })))),
-            "/checks/0/forbid/ast/rule/all/1/not/compare/left: `$J` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
+            "/clauses/0/forbid/ast/rule/all/1/not/compare/left: `$J` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
         );
         // A utility referenced inside the negation binds into it too.
         compiled(json!({
@@ -1054,7 +1054,7 @@ mod tests {
                 "rule": { "kind": "variable_declarator", "has": { "matches": "u" }, "not": { "has": name } },
                 "utils": util,
             }))),
-            "/checks/0/forbid/ast/utils/u/all/0/compare/left: `$N` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
+            "/clauses/0/forbid/ast/utils/u/all/0/compare/left: `$N` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
         );
     }
 
@@ -1068,31 +1068,31 @@ mod tests {
         let has = json!({ "kind": "if_statement" });
         assert_eq!(
             reject(json!({ "has": has })),
-            "/checks/0/forbid/ast/rule/count must set min to at least 1, or set max; otherwise every node passes"
+            "/clauses/0/forbid/ast/rule/count must set min to at least 1, or set max; otherwise every node passes"
         );
         assert_eq!(
             reject(json!({ "has": has, "min": 0 })),
-            "/checks/0/forbid/ast/rule/count must set min to at least 1, or set max; otherwise every node passes"
+            "/clauses/0/forbid/ast/rule/count must set min to at least 1, or set max; otherwise every node passes"
         );
         assert_eq!(
             reject(json!({ "has": has, "min": 3, "max": 2 })),
-            "/checks/0/forbid/ast/rule/count: min must not exceed max"
+            "/clauses/0/forbid/ast/rule/count: min must not exceed max"
         );
         assert_eq!(
             reject(json!({ "has": has, "min": -1 })),
-            "/checks/0/forbid/ast/rule/count/min must be a non-negative integer"
+            "/clauses/0/forbid/ast/rule/count/min must be a non-negative integer"
         );
         assert_eq!(
             reject(json!({ "has": has, "inside": has, "min": 1 })),
-            "/checks/0/forbid/ast/rule/count must contain exactly one relation: inside, has, precedes, or follows"
+            "/clauses/0/forbid/ast/rule/count must contain exactly one relation: inside, has, precedes, or follows"
         );
         assert_eq!(
             reject(json!({ "has": has, "min": 1, "each": true })),
-            "unknown field `each` at /checks/0/forbid/ast/rule/count"
+            "unknown field `each` at /clauses/0/forbid/ast/rule/count"
         );
         assert_eq!(
             reject(json!({ "has": { "kind": "if_statement", "stopBy": "far" }, "min": 1 })),
-            "/checks/0/forbid/ast/rule/count/has/stopBy has unsupported value `far`; expected \"neighbor\", \"end\" or a rule object"
+            "/clauses/0/forbid/ast/rule/count/has/stopBy has unsupported value `far`; expected \"neighbor\", \"end\" or a rule object"
         );
         // A count is a matcher on its own; comparisons inside it are checked like any other.
         compile_typescript_rule(json!({ "count": { "has": has, "min": 1 } })).expect("count alone");
@@ -1100,7 +1100,7 @@ mod tests {
             reject(
                 json!({ "has": { "pattern": "$A", "compare": { "left": "A", "op": "lt", "right": "B" } }, "min": 1 })
             ),
-            "/checks/0/forbid/ast/rule/count/has/compare/right: `$B` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
+            "/clauses/0/forbid/ast/rule/count/has/compare/right: `$B` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
         );
     }
 
@@ -1115,7 +1115,7 @@ mod tests {
         });
         assert_eq!(
             rejection(compile_typescript_rule(undefined)),
-            "/checks/0/forbid/ast/rule/nthChild/ofRule/compare/left: `$MISSING` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
+            "/clauses/0/forbid/ast/rule/nthChild/ofRule/compare/left: `$MISSING` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
         );
         compile_typescript_rule(json!({
             "kind": "identifier",
@@ -1160,7 +1160,7 @@ mod tests {
             }
             compile_document_with(
                 check_document(
-                    json!({ "id": "ast-match", "forbid": { "ast": ast }, "finding": finding() }),
+                    json!({ "id": "ast-match", "forbid": { "ast": ast }, "violation": finding() }),
                 ),
                 &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
             )

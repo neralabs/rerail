@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { steers, type RuleMode } from "./rule-mode.js";
 
 export type RerailHost = "omp" | "pi" | "claude-code" | "codex" | "cursor";
 export type AssistantObservation = "streaming" | "completed";
@@ -8,7 +9,6 @@ export type DeliveryMechanism =
   | "observe"
   | "native-queue"
   | "additional-context"
-  | "continuation"
   | "deferred-context";
 
 export interface AdapterCapabilityProfile {
@@ -16,7 +16,7 @@ export interface AdapterCapabilityProfile {
   assistantObservation: AssistantObservation;
   toolSurface: ToolSurface;
   persistence: PersistenceSurface;
-  delivery: Readonly<Record<"observe" | "steer" | "followUp" | "nextTurn", DeliveryMechanism>>;
+  delivery: Readonly<Record<RuleMode, DeliveryMechanism>>;
   lifecycleEvents: readonly string[];
   sampleEvents: Readonly<Record<"user" | "assistant" | "tool" | "turn", string>>;
 }
@@ -28,10 +28,9 @@ export const ADAPTER_CAPABILITIES = {
     toolSurface: "native",
     persistence: "session-entries",
     delivery: {
-      observe: "observe",
+      log: "observe",
       steer: "native-queue",
-      followUp: "native-queue",
-      nextTurn: "native-queue",
+      block: "native-queue",
     },
     lifecycleEvents: ["session_start", "session_switch", "session_branch", "session_tree", "session_shutdown"],
     sampleEvents: {
@@ -47,10 +46,9 @@ export const ADAPTER_CAPABILITIES = {
     toolSurface: "native",
     persistence: "session-entries",
     delivery: {
-      observe: "observe",
+      log: "observe",
       steer: "native-queue",
-      followUp: "native-queue",
-      nextTurn: "native-queue",
+      block: "native-queue",
     },
     lifecycleEvents: ["session_start", "session_tree", "session_shutdown"],
     sampleEvents: {
@@ -66,10 +64,9 @@ export const ADAPTER_CAPABILITIES = {
     toolSurface: "event",
     persistence: "jsonl-ledger",
     delivery: {
-      observe: "observe",
+      log: "observe",
       steer: "additional-context",
-      followUp: "continuation",
-      nextTurn: "deferred-context",
+      block: "additional-context",
     },
     lifecycleEvents: ["SessionStart", "SessionEnd"],
     sampleEvents: {
@@ -85,10 +82,9 @@ export const ADAPTER_CAPABILITIES = {
     toolSurface: "event",
     persistence: "jsonl-ledger",
     delivery: {
-      observe: "observe",
+      log: "observe",
       steer: "additional-context",
-      followUp: "continuation",
-      nextTurn: "deferred-context",
+      block: "additional-context",
     },
     lifecycleEvents: ["SessionStart"],
     sampleEvents: {
@@ -104,10 +100,9 @@ export const ADAPTER_CAPABILITIES = {
     toolSurface: "event",
     persistence: "jsonl-ledger",
     delivery: {
-      observe: "observe",
+      log: "observe",
       steer: "deferred-context",
-      followUp: "continuation",
-      nextTurn: "deferred-context",
+      block: "deferred-context",
     },
     lifecycleEvents: ["sessionStart", "sessionEnd"],
     sampleEvents: {
@@ -158,8 +153,8 @@ export type AdapterEvent =
     })
   | (ContextualAdapterEvent & { kind: "assistant-message"; messageId: string; text: string })
   | (ContextualAdapterEvent & { kind: "assistant-abort"; messageId: string })
-  | (ContextualAdapterEvent & { kind: "tool-call"; toolCallId: string; toolName: string; input: unknown })
-  | (ContextualAdapterEvent & { kind: "tool-result"; toolCallId: string; toolName: string; output: unknown; failed?: boolean | undefined })
+  | (ContextualAdapterEvent & { kind: "call"; toolCallId: string; toolName: string; input: unknown })
+  | (ContextualAdapterEvent & { kind: "result"; toolCallId: string; toolName: string; output: unknown; failed?: boolean | undefined })
   | (ContextualAdapterEvent & { kind: "turn-end"; text: string });
 
 export function userPromptEvent(sessionId: string, eventId: string, text: string): AdapterEvent {
@@ -201,7 +196,7 @@ export function toolCallEvent(
   toolName: string,
   input: unknown,
 ): AdapterEvent {
-  return { kind: "tool-call", eventId, sessionId, toolCallId, toolName, input };
+  return { kind: "call", eventId, sessionId, toolCallId, toolName, input };
 }
 
 export function toolResultEvent(
@@ -212,7 +207,7 @@ export function toolResultEvent(
   output: unknown,
   failed?: boolean,
 ): AdapterEvent {
-  return { kind: "tool-result", eventId, sessionId, toolCallId, toolName, output, failed };
+  return { kind: "result", eventId, sessionId, toolCallId, toolName, output, failed };
 }
 
 export function turnEndEvent(sessionId: string, eventId: string, text: string): AdapterEvent {
@@ -231,7 +226,7 @@ export interface AdapterSample {
 
 export interface AdapterDelivery {
   sessionId: string;
-  requested: "observe" | "steer" | "followUp" | "nextTurn";
+  requested: RuleMode;
   mechanism: DeliveryMechanism;
   content: string;
   /** Distinct rule ids whose findings were rendered into `content`, first-seen order; empty when the delivery is not policy steering. */
@@ -250,11 +245,11 @@ type NativeRuleMessage = {
 
 export async function sendNativeDeliveries(
   deliveries: readonly AdapterDelivery[],
-  send: (message: NativeRuleMessage, options: { deliverAs: Exclude<AdapterDelivery["requested"], "observe"> }) => void | Promise<void>,
+  send: (message: NativeRuleMessage, options: { deliverAs: "steer" }) => void | Promise<void>,
   record: (sessionId: string, receiptId: string, ruleIds: readonly string[]) => void | Promise<void>,
 ): Promise<void> {
   for (const delivery of deliveries) {
-    if (delivery.requested === "observe") continue;
+    if (!steers(delivery.requested)) continue;
     await send(
       {
         customType: RULE_MESSAGE_TYPE,
@@ -266,7 +261,7 @@ export async function sendNativeDeliveries(
           sessionId: delivery.sessionId,
         },
       },
-      { deliverAs: delivery.requested },
+      { deliverAs: "steer" },
     );
     if (delivery.content.trim() === "") continue;
     try {

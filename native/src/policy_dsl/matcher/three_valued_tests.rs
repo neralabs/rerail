@@ -1,13 +1,10 @@
 //! Three-valued matching, driven by the test-only `testUnknown` leaf: unknown where its regex
 //! matches the node's text, true elsewhere.
 
-use super::util::THREE_VALUED;
-use super::{AstMatcher, Verdict, facts};
 use crate::policy_dsl::language::GrammarDialect;
 use crate::policy_dsl::test_support::*;
 use ast_grep_core::AstGrep;
 use ast_grep_core::tree_sitter::StrDoc;
-use regex::Regex;
 use serde_json::{Value, json};
 
 fn texts(rule: Value, source: &str) -> Vec<String> {
@@ -342,25 +339,6 @@ fn a_transform_comparison_waits_for_the_captures_it_reads() {
     assert_eq!(matched_texts(&result, source), ["X(a) F=X"]);
 }
 
-#[test]
-fn a_rule_no_statement_can_run_is_a_policy_error() {
-    // A three-valued `all` threads one bit per term through its statement's environment; 64 terms
-    // do not fit. Production has no other way to run the rule, so the policy must not compile.
-    let within = json!({ "kind": "identifier", "all": vec![u_or_x(); 63] });
-    assert!(compile_typescript_rule(within).is_ok());
-    let beyond = json!({ "kind": "identifier", "all": vec![u_or_x(); 64] });
-    let error = compile_typescript_rule(beyond)
-        .err()
-        .expect("a compile error");
-    assert!(
-        error
-            .reason
-            .contains("cannot run as a query statement: three-valued `all` of more than 63 terms"),
-        "{}",
-        error.reason
-    );
-}
-
 /// An `any` branch whose verdict is unknown and that could bind ends the search unknown, as a
 /// strict relation search does: a later branch must not substitute its captures for the ones the
 /// unknown branch would have bound (SPEC-S4). An unknown branch that binds nothing lets a later
@@ -383,30 +361,66 @@ fn a_later_any_branch_does_not_stand_in_for_an_unknown_binding_branch() {
     assert_eq!(reference_texts(any(first), source), ["f(u) A=f"]);
 }
 
-/// A predicate's verdict follows the check it runs in, passed explicitly, whatever an earlier check
-/// left on the thread: unknown in a three-valued check, no match in a two-valued one.
+/// An occurrence search reads like a relation's: a later occurrence that matches decides past an
+/// unknown one, and leaves no unknown verdict behind for the terms after it; a binding rule is
+/// strict, ending the search unknown at the unknown occurrence.
 #[test]
-fn a_predicate_verdict_is_explicit_without_begin_check() {
-    let root = AstGrep::doc(StrDoc::new("u;\n", GrammarDialect::TypeScript));
-    let node = root
-        .root()
-        .dfs()
-        .find(|node| node.kind() == "identifier")
-        .expect("identifier");
-    let term = AstMatcher::TestUnknown(Regex::new("^u$").expect("regex"));
-    for three in [true, false] {
-        let saved = THREE_VALUED.replace(!three);
-        let verdict = facts::predicate_verdict(&term, node.clone(), three).expect("no limit");
-        THREE_VALUED.set(saved);
-        let verdict = match verdict {
-            Verdict::Match(_) => "match",
-            Verdict::NoMatch => "no match",
-            Verdict::Unknown => "unknown",
-        };
-        assert_eq!(
-            verdict,
-            if three { "unknown" } else { "no match" },
-            "{three}"
-        );
-    }
+fn an_occurrence_search_decides_past_unknown_occurrences_unless_its_rule_binds() {
+    let source = "let v = 0;\ng(v);\nh(v);\n";
+    let declared = |rule: Value| json!({ "kind": "identifier", "inside": { "kind": "variable_declarator" }, "all": [rule] });
+    let binds = |mut occurrence: Value| {
+        occurrence["inside"] = json!({ "stopBy": "end", "kind": "call_expression", "regex": "^(g|h)\\(", "testUnknown": "^g\\(" });
+        json!({ "binds": { "occurrence": occurrence } })
+    };
+    assert_eq!(texts(declared(binds(json!({}))), source), ["v"]);
+    let false_beside = |occurrence: Value| {
+        declared(json!({ "not": { "all": [binds(occurrence), { "regex": "^never$" }] } }))
+    };
+    assert_eq!(texts(false_beside(json!({})), source), ["v"]);
+    let binding = json!({ "pattern": "$A" });
+    assert_eq!(
+        texts(declared(binds(binding.clone())), source),
+        Vec::<String>::new()
+    );
+    assert_eq!(texts(false_beside(binding), source), ["v"]);
+}
+
+/// An `any` whose branch is unknown where its `binds` holds stays unknown there, and is no match
+/// only where the `binds` names no binding. Under `not`, an unknown wrongly read as no match
+/// would be reported.
+#[test]
+fn a_binds_branch_never_turns_an_unknown_into_no_match() {
+    let check = json!({
+        "id": "binds",
+        "forbid": { "ast": { "language": "python", "rule": {
+            "kind": "identifier",
+            "pattern": "$N",
+            "not": { "any": [
+                { "testUnknown": "^u", "binds": { "form": "assignment" } },
+                { "binds": { "form": "import" } },
+            ] },
+        } } },
+        "violation": { "anchor": "capture.N", "code": "G", "message": "g" },
+    });
+    let compiled = compile_document_with(
+        check_document(check),
+        &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
+    )
+    .unwrap_or_else(|error| panic!("{}", error.reason));
+    let source = "u1 = 1\nu2\nimport os\nos\nx = u1\n";
+    let result = evaluate_file(&compiled, "python", "binds.py", source);
+    assert_eq!(result["failures"], json!([]), "{result}");
+    let mut starts = result["violations"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .map(|finding| finding["span"]["startByte"].as_u64().expect("start"))
+        .collect::<Vec<_>>();
+    starts.sort_unstable();
+    // `u1`'s binding is unknown (no finding); `x`'s binding matches; the import binds its
+    // `dotted_name`, not the `os` identifier inside it; that identifier and the references `u2`,
+    // `os` and `u1` name no binding, so the `any` is no match there and `not` reports them.
+    let at = |needle: &str, from: usize| (from + source[from..].find(needle).expect(needle)) as u64;
+    let expected = vec![at("u2", 0), at("os", 10), at("os\n", 18), at("u1", 10)];
+    assert_eq!(starts, expected, "{result}");
 }

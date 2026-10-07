@@ -9,7 +9,9 @@ use super::ingest::candidate_dispatch;
 use super::persisted::file_context;
 use super::{CheckId, FileState};
 use crate::WORK_POOL;
-use crate::content_store::{CandidateCheck, HashKey, LocalResultPublication, StoredLocalResult};
+use crate::content_store::{
+    CandidateCheck, HashKey, LocalResultPublication, StoredLocalResult, compress,
+};
 use crate::policy_dsl::budget::matcher_budget_exhausted;
 use crate::policy_dsl::calls::summary::Summary;
 use crate::policy_dsl::calls::{self, CallsView, FileSeeds, TermId};
@@ -24,7 +26,6 @@ use ast_grep_language::LanguageExt;
 use napi::Result;
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::io::Cursor;
 use std::sync::atomic::AtomicBool;
 #[cfg(test)]
 use std::sync::atomic::Ordering;
@@ -64,7 +65,7 @@ pub(super) struct CallsState {
     seeds: HashMap<Arc<str>, FileSeeds>,
     /// The files a consumer applies to: the stamp their consumer results are under, with the terms
     /// silent in the file under it, and the terms their consumers read. The silent terms answer
-    /// the quiet consumers, which are not stored, after eviction drops the graph.
+    /// an evicted file's quiet consumers, which are not stored.
     stamps: BTreeMap<String, (Option<Stamped>, Arc<[TermId]>)>,
     view: Option<Arc<CallsView>>,
     /// The files whose summary or seeds changed since `view` was built.
@@ -321,14 +322,6 @@ impl CallsState {
         }
     }
 
-    /// Drops the call graph and closure of an inactive workspace: the next refresh links them
-    /// again from the summaries, which stay (every worktree of a codebase shares them).
-    pub(super) fn evict(&mut self) {
-        self.view = None;
-        self.dirty.clear();
-        self.resummarized.clear();
-    }
-
     /// Forgets a removed file.
     pub(super) fn forget(&mut self, path: &str) {
         if self.summaries.remove(path).is_some() {
@@ -355,6 +348,8 @@ impl CallsState {
                     .iter()
                     .map(|(path, summary)| (Arc::from(path.as_str()), Arc::clone(summary)))
                     .collect();
+                #[cfg(test)]
+                GRAPHS_LINKED.with(|count| count.set(count.get() + 1));
                 self.view = Some(Arc::new(CallsView::build(
                     self.terms.questions(),
                     summaries,
@@ -444,6 +439,31 @@ impl CallsState {
         if let Some((known, _)) = self.stamps.get_mut(path) {
             *known = Some((stamp, silent));
         }
+    }
+
+    /// Every consumer file's stamp and silent terms under the current graph, and under one
+    /// linked afresh from the same summaries and seeds.
+    #[cfg(test)]
+    pub(super) fn stamps_against_fresh_link(&self) -> [BTreeMap<String, Stamped>; 2] {
+        let fresh = CallsView::build(
+            self.terms.questions(),
+            self.summaries
+                .iter()
+                .map(|(path, summary)| (Arc::from(path.as_str()), Arc::clone(summary)))
+                .collect(),
+            &self.seeds,
+        );
+        let current = self.view.as_deref().expect("the graph is linked");
+        [current, &fresh].map(|view| {
+            self.stamps
+                .iter()
+                .filter_map(|(path, (_, terms))| {
+                    let summary = self.summaries.get(path)?;
+                    let silent = view.silent(summary, terms).into();
+                    Some((path.clone(), (view.stamp(summary, terms), silent)))
+                })
+                .collect()
+        })
     }
 }
 
@@ -572,8 +592,7 @@ pub(super) fn summary_publication(file: &FileState) -> Result<Option<LocalResult
         return Ok(None);
     };
     let bytes = summary.encode();
-    let frame = zstd::stream::encode_all(Cursor::new(&bytes), 3)
-        .map_err(|error| invalid(error.to_string()))?;
+    let frame = compress(&bytes, 3).map_err(|error| invalid(error.to_string()))?;
     Ok(Some(LocalResultPublication {
         candidate: summary_candidate(),
         context: file_context(&file.input),
@@ -587,6 +606,12 @@ pub(super) fn summary_publication(file: &FileState) -> Result<Option<LocalResult
 pub(super) static SUMMARIES_EXTRACTED: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
+#[cfg(test)]
+thread_local! {
+    /// Call graphs linked from every summary (not updated in place) on this thread.
+    pub(super) static GRAPHS_LINKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The key consumer results are stored under: the file context and the stamp they were
 /// evaluated under.
 pub(super) fn calls_context(context: HashKey, stamp: HashKey) -> HashKey {
@@ -597,15 +622,16 @@ pub(super) fn calls_context(context: HashKey, stamp: HashKey) -> HashKey {
     HashKey::sha256(&bytes)
 }
 
-/// Extracts `file`'s call summary unless this source revision has one: from the tape it was
-/// evaluated with, else from a parse now. A file that cannot be parsed in time has an open
-/// summary of its module alone.
+/// Extracts `file`'s call summary unless this source revision has one: from the document the
+/// file's evaluation read (`restored`), else from its tape, else from a parse now. A file that
+/// cannot be parsed in time has an open summary of its module alone.
 pub(super) fn summarize_file(
     file: &mut FileState,
     grammars: &mut BTreeMap<String, Arc<tape::Grammar>>,
     closed: &AtomicBool,
     metrics: &mut Metrics,
     keep_table: bool,
+    restored: Option<tape::TapeDoc>,
 ) -> Result<()> {
     let Some(language) = file_language(&file.input).filter(|language| calls::summarizes(*language))
     else {
@@ -655,17 +681,22 @@ pub(super) fn summarize_file(
     let (summary, shared) = match file.tape.as_ref().filter(|_| taped) {
         None => (opaque(file), false),
         Some((_, image)) => {
-            let lines = Arc::new(LineTable::new(
-                &file.input.source,
-                Terminators::of(language),
-            ));
-            match tape::TapeDoc::restore_with_lines(
-                Arc::clone(&file.input.source),
-                grammar,
-                image,
-                lines,
-                &matcher_budget_exhausted,
-            ) {
+            // The evaluation's document is this revision's tape restored; past the deadline it
+            // is restored again, which fails as a restore past the deadline does.
+            let doc = match restored.filter(|_| !matcher_budget_exhausted()) {
+                Some(doc) => Ok(doc),
+                None => tape::TapeDoc::restore_with_lines(
+                    Arc::clone(&file.input.source),
+                    grammar,
+                    image,
+                    Arc::new(LineTable::new(
+                        &file.input.source,
+                        Terminators::of(language),
+                    )),
+                    &matcher_budget_exhausted,
+                ),
+            };
+            match doc {
                 Err(_) => (opaque(file), false),
                 Ok(doc) => {
                     let errors = !doc.syntax_error_ranges().is_empty();
@@ -720,4 +751,29 @@ pub(super) fn summarize_file(
     #[cfg(test)]
     SUMMARIES_EXTRACTED.fetch_add(1, Ordering::Relaxed);
     Ok(())
+}
+
+/// What `file` keeps of its scope tables once its job is done. A file whose consumers' pass is
+/// still to run (`consumes`) keeps the table `calls` terms read there, without its usage index,
+/// which no `calls` term reads; any other file keeps none. An evaluation that needs another table
+/// or the index builds it again.
+pub(super) fn retain_scopes(file: &mut FileState, consumes: bool) {
+    if !consumes {
+        file.scopes = None;
+        return;
+    }
+    let reading = calls::reading(&file.input.path);
+    let language = file_language(&file.input);
+    let Some((_, tables)) = file.scopes.as_mut() else {
+        return;
+    };
+    tables.retain(|table| Some(table.language) == language && table.reading == reading);
+    for table in tables.iter_mut() {
+        if let Some(table) = Arc::get_mut(table) {
+            table.usage.take();
+        }
+    }
+    if tables.is_empty() {
+        file.scopes = None;
+    }
 }

@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:array-type",
   "revision": 1,
+  "mode": "steer",
   "description": "Array types, option array-simple: T[] for simple element types, Array<T> otherwise (isSimpleType recursion through parens and nested Array<T> to any depth).",
   "scope": {"include": ["**/*"], "exclude": []},
-  "checks": [
+  "clauses": [
     {
       "id": "generic-array",
       "forbid": {
@@ -35,10 +36,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "ARRAY_TYPE",
-        "severity": "error",
         "message": "Array type using 'Array<T>' is forbidden for simple types. Use 'T[]' instead."
       }
     },
@@ -70,10 +70,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "ARRAY_TYPE",
-        "severity": "error",
         "message": "Array type using 'Array<T>' is forbidden for simple types. Use 'T[]' instead."
       }
     },
@@ -107,10 +106,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "ARRAY_TYPE",
-        "severity": "error",
         "message": "Array type using 'T[]' is forbidden for non-simple types. Use 'Array<T>' instead."
       }
     }

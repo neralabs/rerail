@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:strict-comparisons",
   "revision": 1,
+  "mode": "steer",
   "description": "strict-comparisons with allow-object-equal-comparison (literal operands only).",
   "scope": { "include": ["**/*"], "exclude": [] },
-  "checks": [
+  "clauses": [
     {
       "id": "literal-comparison",
       "forbid": {
@@ -95,10 +96,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "STRICT_COMPARISONS",
-        "severity": "error",
         "message": "Cannot compare these operand types with this comparator."
       }
     }

@@ -5,13 +5,13 @@ import {
   deliveryRuleIds,
   deliveryText,
   pendingPath,
+  persistPending,
   prepareGuidanceOutput,
-  readPending,
-  replacePending,
   routeDeliveries,
   type HookInput,
   type HookOutput,
 } from "./hook-adapter.js";
+import { steers } from "./rule-mode.js";
 
 export type CursorHookInput = HookInput;
 export type CursorHookOutput = HookOutput;
@@ -81,7 +81,7 @@ export function cursorHookEvent(input: CursorHookInput): AdapterEvent {
     const toolUseId = requiredText(input, "tool_use_id");
     const toolName = requiredText(input, "tool_name");
     return {
-      kind: "tool-call",
+      kind: "call",
       eventId: `${descriptor.sessionId}:tool-call:${toolUseId}:${toolName}`,
       toolCallId: toolUseId,
       sessionId: descriptor.sessionId,
@@ -95,7 +95,7 @@ export function cursorHookEvent(input: CursorHookInput): AdapterEvent {
     const toolName = requiredText(input, "tool_name");
     const failed = hook === "postToolUseFailure";
     return {
-      kind: "tool-result",
+      kind: "result",
       eventId: `${descriptor.sessionId}:tool-result:${toolUseId}:${toolName}:${failed ? "failure" : "success"}`,
       toolCallId: toolUseId,
       sessionId: descriptor.sessionId,
@@ -126,15 +126,7 @@ export function cursorHookOutput(hook: string, deliveries: readonly AdapterDeliv
   if (hook === "sessionStart" || hook === "postToolUse") {
     return prepareGuidanceOutput({ additional_context: content }, ruleIds);
   }
-  if (hook === "stop") return prepareGuidanceOutput({ followup_message: content }, ruleIds);
   return {};
-}
-
-async function promoteNextTurn(path: string): Promise<void> {
-  const pending = (await readPending(path)).map(delivery => delivery.requested === "nextTurn"
-    ? { ...delivery, requested: "steer" as const, mechanism: "additional-context" as const }
-    : delivery);
-  await replacePending(path, pending);
 }
 
 export async function handleCursorEvent(
@@ -146,22 +138,19 @@ export async function handleCursorEvent(
   const event = cursorHookEvent(input);
   const descriptor = event.session ?? cursorSession(input);
   const path = pendingPath(storageRoot, "cursor", descriptor.sessionId);
-  const transcriptOwnsText = hook !== "sessionStart" && await ingestCursorTranscript(
-    input, descriptor, eventLoop, storageRoot, () => promoteNextTurn(path),
-  );
+  const transcriptOwnsText = hook !== "sessionStart" && await ingestCursorTranscript(input, descriptor, eventLoop, storageRoot);
   const deliveries = transcriptOwnsText && (hook === "afterAgentResponse" || hook === "stop")
     ? []
     : await eventLoop.ingest(event);
   if (hook === "beforeSubmitPrompt") {
-    await promoteNextTurn(path);
-    await replacePending(path, [...await readPending(path), ...deliveries.filter(delivery => delivery.requested !== "observe")]);
+    await persistPending(path, deliveries.filter(delivery => steers(delivery.requested)));
     return cursorHookOutput(hook, []);
   }
   if (hook === "sessionEnd") {
     await rm(path, { force: true });
     return {};
   }
-  const available = await routeDeliveries(path, hook === "stop" ? "Stop" : hook, deliveries, {
+  const available = await routeDeliveries(path, hook, deliveries, {
     // Cursor only exposes preToolUse.agent_message when a tool is denied.
     // Preserve steering until a post-tool result can actually carry it.
     sessionStart: true, postToolUse: true,

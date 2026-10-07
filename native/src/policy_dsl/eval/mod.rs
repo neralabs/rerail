@@ -6,45 +6,57 @@ use super::calls;
 use super::json::{invalid, json_error, required_str};
 use super::model::{
     CheckKind, CompiledCheck, CompiledPolicy, Evaluation, FactQuery, FileInput, Metrics, Snapshot,
-    Terms,
+    Terms, package_marker_directory, python_module_in,
 };
-use super::query::PolicyStatements;
 use ast_grep_language::LanguageExt;
 use napi::Result;
 pub(super) use output::{
-    coverage, evaluation_json, failure, finding_from_witness, finding_identity, finding_ids,
-    overflow_evaluation, span_json,
+    coverage, evaluation_json, failure, finding_from_witness, finding_ids, overflow_evaluation,
+    result_order,
 };
 use query::query_failure_path;
-#[cfg(test)]
-pub(super) use query::{FAIL_WITNESS, reset_shared_group_lookups, shared_group_lookups};
 pub(super) use query::{
     WitnessError, evaluate_query, file_language, grammar_matcher, witness_from_match,
     witnesses_from_match,
 };
+#[cfg(test)]
+pub(super) use query::{reset_shared_group_lookups, shared_group_lookups};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
+/// A repository snapshot's files. A Python file without a host `module` is named, as the workspace
+/// names it, by the package markers (`__init__.py`) the snapshot holds (`python_module_in`), so a
+/// stateless evaluation of a file set and a workspace holding the same files read the same modules.
 pub(super) fn parse_snapshot(source: &str) -> Result<Snapshot> {
     let value: Value = serde_json::from_str(source).map_err(json_error)?;
     let revision = value.get("revision").and_then(Value::as_u64).unwrap_or(0) as u32;
     let files = value
         .get("files")
         .and_then(Value::as_array)
-        .ok_or_else(|| invalid("snapshot.files must be an array"))?
+        .ok_or_else(|| invalid("snapshot.files must be an array"))?;
+    let packages = files
+        .iter()
+        .filter_map(|file| package_marker_directory(file.get("path")?.as_str()?))
+        .collect::<HashSet<_>>();
+    let files = files
         .iter()
         .enumerate()
         .map(|(index, file)| {
+            let path = required_str(file, "path", "snapshot.files")?;
+            let language = required_str(file, "language", "snapshot.files")?;
             // A `module` of another type is refused like a malformed one.
-            let module = file.get("module");
+            let derived =
+                (language == "python" && file.get("module").is_none() && !packages.is_empty())
+                    .then(|| python_module_in(path, |directory| packages.contains(directory)))
+                    .flatten();
             FileInput::new(
-                required_str(file, "path", "snapshot.files")?.to_owned(),
-                required_str(file, "language", "snapshot.files")?.to_owned(),
+                path.to_owned(),
+                language.to_owned(),
                 required_str(file, "source", "snapshot.files")?
                     .to_owned()
                     .into(),
-                module,
+                file.get("module").or(derived.as_ref()),
                 &format!("snapshot.files/{index}"),
             )
         })
@@ -52,19 +64,17 @@ pub(super) fn parse_snapshot(source: &str) -> Result<Snapshot> {
     Ok(Snapshot { revision, files })
 }
 
-/// Evaluates `policy`, its grammar matchers running as `statements` (`compile_document`).
+/// Evaluates `policy`, its grammar matchers matched natively (`matcher::run_check`).
 pub(super) fn evaluate_policy(
     policy: &CompiledPolicy,
-    statements: &PolicyStatements,
     snapshot: &Snapshot,
     mode: &str,
 ) -> Result<Evaluation> {
-    evaluate_checks(policy, statements, snapshot, mode, &policy.checks)
+    evaluate_checks(policy, snapshot, mode, &policy.checks)
 }
 
 pub(super) fn evaluate_checks(
     policy: &CompiledPolicy,
-    statements: &PolicyStatements,
     snapshot: &Snapshot,
     mode: &str,
     checks: &[CompiledCheck],
@@ -102,13 +112,7 @@ pub(super) fn evaluate_checks(
         },
         checks: covered,
     };
-    let _calls = stateless_calls(
-        policy,
-        statements,
-        snapshot,
-        checks,
-        &mut evaluation.metrics,
-    )?;
+    let _calls = stateless_calls(policy, snapshot, checks, &mut evaluation.metrics)?;
     for check in checks {
         match &check.kind {
             CheckKind::Forbid(query) => {
@@ -116,7 +120,6 @@ pub(super) fn evaluate_checks(
                 let mut util_limit = None;
                 let matches = evaluate_query(
                     query,
-                    statements,
                     snapshot,
                     &BTreeMap::new(),
                     &policy.scope,
@@ -172,22 +175,10 @@ pub(super) fn evaluate_checks(
                 }
             }
             CheckKind::RequireEach { subject, evidence } => {
-                let subject_rows = stateless_rows(
-                    policy,
-                    statements,
-                    check,
-                    subject,
-                    snapshot,
-                    &mut evaluation.metrics,
-                )?;
-                let evidence_rows = stateless_rows(
-                    policy,
-                    statements,
-                    check,
-                    evidence,
-                    snapshot,
-                    &mut evaluation.metrics,
-                )?;
+                let subject_rows =
+                    stateless_rows(policy, check, subject, snapshot, &mut evaluation.metrics)?;
+                let evidence_rows =
+                    stateless_rows(policy, check, evidence, snapshot, &mut evaluation.metrics)?;
                 merge(
                     &mut evaluation,
                     evidence::require_each(
@@ -199,14 +190,7 @@ pub(super) fn evaluate_checks(
                 );
             }
             CheckKind::Budget { query, .. } => {
-                let rows = stateless_rows(
-                    policy,
-                    statements,
-                    check,
-                    query,
-                    snapshot,
-                    &mut evaluation.metrics,
-                )?;
+                let rows = stateless_rows(policy, check, query, snapshot, &mut evaluation.metrics)?;
                 merge(
                     &mut evaluation,
                     evidence::budget(policy, check, query, rows),
@@ -246,7 +230,6 @@ fn merge(evaluation: &mut Evaluation, mut other: Evaluation) {
 /// relation's domain evaluated alone, so that one file's failure makes only its rows unknown.
 fn stateless_rows(
     policy: &CompiledPolicy,
-    statements: &PolicyStatements,
     check: &CompiledCheck,
     relation: &FactQuery,
     snapshot: &Snapshot,
@@ -280,7 +263,6 @@ fn stateless_rows(
         let mut file_metrics = Metrics::default();
         let witnesses = evaluate_query(
             &ast.query,
-            statements,
             &single,
             &BTreeMap::new(),
             &policy.scope,
@@ -316,7 +298,6 @@ fn stateless_rows(
 /// file, and spends none of the checks'.
 fn stateless_calls(
     policy: &CompiledPolicy,
-    statements: &PolicyStatements,
     snapshot: &Snapshot,
     checks: &[CompiledCheck],
     metrics: &mut Metrics,
@@ -405,7 +386,6 @@ fn stateless_calls(
             };
             let witnesses = evaluate_query(
                 &term.seed,
-                statements,
                 &single,
                 &BTreeMap::new(),
                 &policy.scope,

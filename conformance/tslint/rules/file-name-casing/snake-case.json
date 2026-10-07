@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:file-name-casing",
   "revision": 1,
+  "mode": "steer",
   "description": "File base name (without extension) must be snake-case (a casing option is required; this doc ports snake-case). Findings anchor at file start: the path regex match begins at offset 0.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "snake-case",
       "forbid": {
@@ -18,10 +19,9 @@
           "pattern": "\\A(?:.*/)?(?:[^/]*[A-Z-][^/]*\\.[^./]*|[^./]*[A-Z-][^./]*)$"
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.start",
         "code": "FILE_NAME_CASING",
-        "severity": "error",
         "message": "File name must be snake_case"
       }
     }

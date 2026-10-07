@@ -127,6 +127,12 @@ impl PhpstanIndex {
         *previous = Some(line);
     }
 
+    /// Whether the file holds no comment PHPStan would apply.
+    #[cfg(test)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.lines.is_empty()
+    }
+
     /// One comment token starting on `line`, after a token starting on `previous`.
     fn comment<'s>(
         &mut self,

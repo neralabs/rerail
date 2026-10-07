@@ -57,7 +57,7 @@ conformance/tslint/
   consolidated.ts                   effective verdicts, primitive histogram, type-layer needs
   port-size.ts                      port size metrics: bytes, docs, checks, relation/not/any/all nodes, rule depth
   summary.ts                        one-row-per-rule summary JSON and the `--compare` delta
-  fix-check.ts                      applies a port's emitted `finding.fix` edits and compares with TSLint's `.fix` files
+  fix-check.ts                      applies a port's emitted `violation.fix` edits and compares with TSLint's `.fix` files
   fixtures.ts lint-format.ts runner.ts corpus.ts report.ts cli.ts   the harness
 ```
 
@@ -236,7 +236,7 @@ rule keeps a port default or sidecar in `rules/`.
 - Language labels: `.tsx` → `tsx`; `.js`, `.jsx`, `.mjs` and `.cjs` → `javascript`; everything else → `typescript`.
   Policies remain `typescript`, so they compile across TypeScript, TSX, and JavaScript dialects; JavaScript fixtures
   use the JavaScript grammar and TSLint's `jsRules` options.
-- **Fixes are not scored.** When a port document declares `finding.fix` and a fixture has a TSLint `<file>.fix`,
+- **Fixes are not scored.** When a port document declares `violation.fix` and a fixture has a TSLint `<file>.fix`,
   `--rule` applies every emitted fix the way TSLint's `Replacement.applyAll` does (by end, then start, descending)
   and prints `FIX matches` or the first differing line; the rule header shows `fixes: M/N .fix files reproduced`.
 - Eval time per rule is the median over 5 runs of the summed apply time across its fixtures.

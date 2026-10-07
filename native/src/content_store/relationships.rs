@@ -10,6 +10,7 @@ use super::{
     WorkspaceId,
 };
 use rusqlite::Transaction;
+use rusqlite::types::{ToSqlOutput, ValueRef};
 use std::collections::BTreeSet;
 
 pub(super) struct PreparedSqlStatement {
@@ -17,22 +18,37 @@ pub(super) struct PreparedSqlStatement {
     values: Vec<rusqlite::types::Value>,
 }
 
-pub(super) struct PreparedRelationshipPass {
-    pub(super) statements: Vec<PreparedSqlStatement>,
+pub(super) struct PreparedRelationshipPass<'a> {
+    statements: Vec<PreparedSqlStatement>,
+    /// The distinct contexts of `results`, as the JSON array of their hash parameters.
+    contexts: Option<String>,
+    /// Each local result as its source, the index of its context in `contexts`, its check, its
+    /// raw length, and its frame.
+    results: Vec<(SourceId, usize, i64, i64, &'a [u8])>,
+    results_per_statement: usize,
 }
 
-pub(super) fn prepare_relationship_pass(
+impl PreparedRelationshipPass<'_> {
+    /// The data statements `execute_relationship_pass` runs.
+    pub(super) fn statement_count(&self) -> usize {
+        self.statements.len()
+            + usize::from(self.contexts.is_some())
+            + self.results.len().div_ceil(self.results_per_statement)
+    }
+}
+
+pub(super) fn prepare_relationship_pass<'a>(
     workspace_id: WorkspaceId,
     rows: &[(
         i64,
         i64,
         SourceId,
         Option<TapeId>,
-        OverlayFilePublication<'_>,
+        OverlayFilePublication<'a>,
     )],
     interned: &PublicationInternCache,
     variable_limit: usize,
-) -> StoreResult<PreparedRelationshipPass> {
+) -> StoreResult<PreparedRelationshipPass<'a>> {
     let mut statements = Vec::new();
     let mut overlay_sql = String::from(
         "INSERT INTO workspace_overlay(workspace_id,path_id,state_id,source_id,tape_id) VALUES ",
@@ -86,11 +102,17 @@ pub(super) fn prepare_relationship_pass(
 
     // A result's context is interned by the object pass, which a publication of stored objects
     // skips; a context new to the store (a `calls` stamp, a changed module) is interned here.
+    // The contexts' ids are then read once, so each result row names its context by id instead
+    // of joining its hash.
     let contexts = local_results
         .iter()
         .map(|(_, context, ..)| *context)
-        .collect::<BTreeSet<_>>();
-    if !contexts.is_empty() {
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let contexts_json = if contexts.is_empty() {
+        None
+    } else {
         let contexts = serde_json::to_string(
             &contexts
                 .iter()
@@ -108,51 +130,38 @@ pub(super) fn prepare_relationship_pass(
                   WHERE h.algorithm_id=i.algorithm AND h.lane0=i.lane0 AND h.lane1=i.lane1 \
                   AND h.lane2=i.lane2 AND h.lane3=i.lane3)"
                 .to_owned(),
-            values: vec![rusqlite::types::Value::Text(contexts)],
+            values: vec![rusqlite::types::Value::Text(contexts.clone())],
         });
-    }
+        Some(contexts)
+    };
+    let results = local_results
+        .into_iter()
+        .map(|(source_id, context, check_id, raw_length, frame)| {
+            let context = contexts
+                .binary_search(&context)
+                .expect("every result context is collected");
+            (source_id, context, check_id, raw_length, frame)
+        })
+        .collect::<Vec<_>>();
 
-    let context_results_per_statement = variable_limit
-        .checked_sub(1)
-        .map(|limit| limit / 9)
+    let results_per_statement = Some(variable_limit / 6)
         .filter(|&rows| rows > 0)
         .ok_or_else(|| {
             StoreError::Invalid("SQLite variable limit cannot hold a context result".to_owned())
         })?;
-    for chunk in local_results.chunks(context_results_per_statement) {
-        let mut sql = String::from(
-            "WITH input(source_id,context_algorithm,context_lane0,context_lane1,context_lane2,\
-             context_lane3,check_id,raw_length,frame) AS (VALUES ",
-        );
-        let mut values = Vec::with_capacity(chunk.len() * 9 + 1);
-        for (index, (source_id, context, check_id, raw_length, frame)) in chunk.iter().enumerate() {
-            if index != 0 {
-                sql.push(',');
-            }
-            sql.push_str("(?,?,?,?,?,?,?,?,?)");
-            values.push(source_id.0.into());
-            values.extend(hash_params(*context).map(rusqlite::types::Value::Integer));
-            values.push((*check_id).into());
-            values.push((*raw_length).into());
-            values.push(frame.to_vec().into());
-        }
-        sql.push_str(
-            ") INSERT OR IGNORE INTO context_check_results(source_id,context_hash_id,check_id,codec_id,\
-             raw_length,frame) SELECT i.source_id,h.hash_id,i.check_id,?,i.raw_length,i.frame \
-             FROM input i JOIN hashes h ON h.algorithm_id=i.context_algorithm \
-             AND h.lane0=i.context_lane0 AND h.lane1=i.context_lane1 AND h.lane2=i.context_lane2 \
-             AND h.lane3=i.context_lane3",
-        );
-        values.push(CODEC_ZSTD.into());
-        statements.push(PreparedSqlStatement { sql, values });
-    }
-    if statements.len() > 10 {
+    let pass = PreparedRelationshipPass {
+        statements,
+        contexts: contexts_json,
+        results,
+        results_per_statement,
+    };
+    if pass.statement_count() > 10 {
         return Err(StoreError::Invalid(format!(
             "relationship publication prepared {} statements; maximum is 10",
-            statements.len()
+            pass.statement_count()
         )));
     }
-    Ok(PreparedRelationshipPass { statements })
+    Ok(pass)
 }
 
 pub(super) fn relationship_references_current(
@@ -201,12 +210,60 @@ pub(super) fn relationship_references_current(
 
 pub(super) fn execute_relationship_pass(
     transaction: &Transaction<'_>,
-    pass: &PreparedRelationshipPass,
+    pass: &PreparedRelationshipPass<'_>,
 ) -> StoreResult<()> {
     for statement in &pass.statements {
         transaction
             .prepare_cached(&statement.sql)?
             .execute(rusqlite::params_from_iter(statement.values.iter()))?;
+    }
+    let Some(contexts) = &pass.contexts else {
+        return Ok(());
+    };
+    let mut context_ids = vec![None; pass.results.iter().map(|row| row.1 + 1).max().unwrap_or(0)];
+    {
+        let mut statement = transaction.prepare_cached(
+            "SELECT CAST(i.key AS INTEGER),h.hash_id FROM json_each(?1) i \
+             JOIN hashes h INDEXED BY hashes_by_prefix \
+             ON h.algorithm_id=CAST(json_extract(i.value,'$[0]') AS INTEGER) \
+             AND h.lane0=CAST(json_extract(i.value,'$[1]') AS INTEGER) \
+             AND h.lane1=CAST(json_extract(i.value,'$[2]') AS INTEGER) \
+             AND h.lane2=CAST(json_extract(i.value,'$[3]') AS INTEGER) \
+             AND h.lane3=CAST(json_extract(i.value,'$[4]') AS INTEGER)",
+        )?;
+        let mut rows = statement.query([contexts])?;
+        while let Some(row) = rows.next()? {
+            let index = usize::try_from(row.get::<_, i64>(0)?)
+                .map_err(|_| StoreError::Corrupt("context index is negative".to_owned()))?;
+            if let Some(id) = context_ids.get_mut(index) {
+                *id = Some(row.get::<_, i64>(1)?);
+            }
+        }
+    }
+    for chunk in pass.results.chunks(pass.results_per_statement) {
+        let mut sql = String::with_capacity(120 + chunk.len() * 14);
+        sql.push_str(
+            "INSERT OR IGNORE INTO context_check_results(source_id,context_hash_id,check_id,\
+             codec_id,raw_length,frame) VALUES ",
+        );
+        let mut values = Vec::with_capacity(chunk.len() * 6);
+        for (index, (source_id, context, check_id, raw_length, frame)) in chunk.iter().enumerate() {
+            if index != 0 {
+                sql.push(',');
+            }
+            sql.push_str("(?,?,?,?,?,?)");
+            let context_id = context_ids[*context].ok_or_else(|| {
+                StoreError::Corrupt("a local result context was not interned".to_owned())
+            })?;
+            values.extend(
+                [source_id.0, context_id, *check_id, CODEC_ZSTD, *raw_length]
+                    .map(|value| ToSqlOutput::Borrowed(ValueRef::Integer(value))),
+            );
+            values.push(ToSqlOutput::Borrowed(ValueRef::Blob(frame)));
+        }
+        transaction
+            .prepare_cached(&sql)?
+            .execute(rusqlite::params_from_iter(values.iter()))?;
     }
     Ok(())
 }

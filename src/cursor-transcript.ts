@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { AdapterEvent, AdapterSession, RerailEventLoop } from "./adapter-contract.js";
 import { createHash } from "node:crypto";
 import { pendingPath, type HookInput, persistPending } from "./hook-adapter.js";
+import { steers } from "./rule-mode.js";
 
 const CursorTranscriptStateSchema = z
   .object({
@@ -159,7 +160,6 @@ async function ingestCompleteLines(
   descriptor: AdapterSession,
   runtime: RerailEventLoop,
   pending: string,
-  onPrompt: () => Promise<void>,
 ): Promise<void> {
   let lineStart = 0;
   while (lineStart < complete.length) {
@@ -184,13 +184,10 @@ async function ingestCompleteLines(
       state.latestAssistantText,
     );
     if (event === undefined) continue;
-    if (event.kind === "user-prompt") {
-      state.latestAssistantText = "";
-      await onPrompt();
-    }
+    if (event.kind === "user-prompt") state.latestAssistantText = "";
     await persistPending(
       pending,
-      (await runtime.ingest(event)).filter((delivery) => delivery.requested !== "observe"),
+      (await runtime.ingest(event)).filter((delivery) => steers(delivery.requested)),
     );
     if (event.kind === "assistant-message") state.latestAssistantText = event.text;
   }
@@ -205,7 +202,6 @@ export async function ingestCursorTranscript(
   descriptor: AdapterSession,
   runtime: RerailEventLoop,
   storageRoot: string,
-  onPrompt: () => Promise<void>,
 ): Promise<boolean> {
   const statePath = transcriptStatePath(storageRoot, descriptor.sessionId);
   const state = await readState(statePath);
@@ -250,7 +246,6 @@ export async function ingestCursorTranscript(
     descriptor,
     runtime,
     pendingPath(storageRoot, "cursor", descriptor.sessionId),
-    onPrompt,
   );
 
   state.offset += complete.length;

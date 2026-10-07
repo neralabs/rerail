@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:forin",
   "revision": 1,
+  "mode": "steer",
   "description": "Requires a for...in body block to be filtered with an if statement.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "forin-unfiltered",
       "forbid": {
@@ -92,10 +93,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "FORIN",
-        "severity": "error",
         "message": "for (... in ...) statements must be filtered with an if statement"
       }
     }

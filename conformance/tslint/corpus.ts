@@ -33,7 +33,7 @@ export interface CorpusTiming {
   /** Failures other than `source-partial`. */
   failures: number;
   failedPaths: string[];
-  /** Files with syntax errors that AST checks ran around (`source-partial`). */
+  /** Files with syntax errors that AST clauses ran around (`source-partial`). */
   partialPaths: string[];
 }
 
@@ -53,7 +53,7 @@ async function collect(directory: string, root: string, files: CorpusFile[]): Pr
 const median = (values: number[]): number => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)] ?? 0;
 
 interface WorkspaceEvaluation {
-  evaluation: { findings: unknown[]; failures: Array<{ code: string; path?: string }> };
+  evaluation: { violations: unknown[]; failures: Array<{ code: string; path?: string }> };
 }
 
 /**
@@ -141,7 +141,7 @@ export async function timeCorpus(directoryArgument: string, runs: number): Promi
     coldMedianMs: median(coldRunsMs),
     coldRunsMs,
     edits,
-    findings: last?.evaluation.findings.length ?? 0,
+    findings: last?.evaluation.violations.length ?? 0,
     failures: failures.length,
     failedPaths: paths(failures),
     partialPaths: paths(all.filter(failure => INFORMATIONAL_FAILURE_CODES.has(failure.code))),

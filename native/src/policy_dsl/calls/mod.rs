@@ -12,17 +12,20 @@ pub(crate) mod summary;
 #[cfg(test)]
 mod php_tests;
 #[cfg(test)]
+mod python_tests;
+#[cfg(test)]
 mod tests;
 
 use crate::content_store::HashKey;
 use crate::policy_dsl::json::{invalid, object};
 use crate::policy_dsl::language::is_stub_file;
 use crate::policy_dsl::language::{Family, GrammarDialect};
+use crate::policy_dsl::lines::Span;
 use crate::policy_dsl::module_path::ModulePath;
 use crate::policy_dsl::scope::php_names::PhpNames;
 use crate::policy_dsl::scope::{Reading, ScopeTable};
 use ast_grep_core::{Doc, Node};
-use closure::{DefRef, Graph, Hop, Region};
+use closure::{DefRef, Graph, GraphUpdate, Hop, Region};
 use names::Name;
 use napi::Result;
 use serde_json::{Map, Value};
@@ -517,17 +520,19 @@ impl CallsView {
     }
 
     /// Replaces, adds (`Some`) or removes (`None`) summaries and takes `seeds`, keeping every
-    /// answer an edit cannot change. An answer is taken again when its question changed, when
-    /// it holds a definition of a changed file (a removed edge's caller, a moved definition), or
-    /// when a changed file's edge calls into it. Returns the linked files whose stamp may have
-    /// changed: the changed files, and those calling a definition whose answer changed.
+    /// answer an edit cannot change. An answer is taken again when its question changed, or when
+    /// the graph's shape changed and it holds a definition of a changed file (a removed edge's
+    /// caller, a moved definition) or a changed file's edge calls into it. Returns the linked
+    /// files whose stamp may have changed: the changed files, and those calling a definition
+    /// whose answer changed.
     pub(crate) fn update(
         &mut self,
         changes: Vec<(Arc<str>, Option<Arc<Summary>>)>,
         seeds: &HashMap<Arc<str>, FileSeeds>,
     ) -> BTreeSet<Arc<str>> {
-        let changed = self.graph.update(changes);
-        let slots = changed.iter().copied().collect::<HashSet<_>>();
+        let update = self.graph.update(changes);
+        // Sorted and distinct.
+        let (changed, reshaped) = (&update.slots, update.reshaped);
         let terms = self
             .keys
             .iter()
@@ -537,13 +542,16 @@ impl CallsView {
         let questions = questions(&self.graph, &terms, seeds);
         let graph = &self.graph;
         let reaches_into = |answer: &Answer| {
-            answer.defs().any(|def| slots.contains(&def.file()))
-                || changed.iter().any(|slot| {
-                    graph
-                        .file_edges(*slot)
-                        .iter()
-                        .any(|(_, to)| answer.holds(to))
-                })
+            reshaped
+                && (answer
+                    .defs()
+                    .any(|def| changed.binary_search(&def.file()).is_ok())
+                    || changed.iter().any(|slot| {
+                        graph
+                            .file_edges(*slot)
+                            .iter()
+                            .any(|(_, to)| answer.holds(to))
+                    }))
         };
         let mut moved = HashSet::new();
         let mut shared = HashMap::<Question, Arc<Answer>>::new();
@@ -571,12 +579,10 @@ impl CallsView {
             let Some(old) = slot.take() else {
                 continue;
             };
-            let open = if changed.is_empty() {
-                old
+            let open = if reshaped {
+                Arc::new(open_after(&self.graph, through, old, &update, &mut moved))
             } else {
-                let open = Arc::new(open_region(&self.graph, through));
-                moved.extend(old.symmetric_difference(&open).copied());
-                open
+                old
             };
             let _ = slot.set(open);
         }
@@ -658,10 +664,12 @@ impl CallsView {
         chain.join(" -> ")
     }
 
-    /// Those of `terms` false at every call of `summary`'s file: it is fully known, no call names
-    /// something unknown, and no callee reaches or may reach their seeds.
+    /// Those of `terms` true at no call of `summary`'s file: it is fully known and no callee
+    /// reaches their seeds. A callee that may reach them leaves the term unknown there, which a
+    /// rule reading `calls` only positively (the only one this answers for: `CallsState::quiet`)
+    /// matches nowhere either.
     pub(crate) fn silent(&self, summary: &Summary, terms: &[TermId]) -> Vec<TermId> {
-        if summary.open || summary.open_sites {
+        if summary.open {
             return Vec::new();
         }
         let mut silent = terms.to_vec();
@@ -670,7 +678,7 @@ impl CallsView {
                 break;
             }
             let (defs, open) = self.graph.link_of(summary.interned(*target));
-            silent.retain(|term| self.verdict_of(&defs, open, *term) == Verdict::default());
+            silent.retain(|term| !self.verdict_of(&defs, open, *term).reach);
         }
         silent
     }
@@ -759,6 +767,71 @@ fn answer_of(graph: &Graph, question: &Question) -> Answer {
 
 fn open_region(graph: &Graph, through: Through) -> HashSet<DefRef> {
     graph.upward(graph.open_defs(), |flags| through.allows(flags))
+}
+
+/// `through`'s open region after `update`, from the one before it: the definitions that reach a
+/// changed one through the region are taken out, then those of them and of the changed that
+/// are open, or call into what remains, are put back with what calls them. Definitions whose
+/// membership changed are `moved`.
+fn open_after(
+    graph: &Graph,
+    through: Through,
+    mut region: Arc<HashSet<DefRef>>,
+    update: &GraphUpdate,
+    moved: &mut HashSet<DefRef>,
+) -> HashSet<DefRef> {
+    let allows = |def: DefRef| through.allows(graph.flags(def));
+    let mut region = std::mem::take(Arc::make_mut(&mut region));
+    for def in &update.dropped {
+        if region.remove(def) {
+            moved.insert(*def);
+        }
+    }
+    let mut taken = HashSet::new();
+    let mut stack = update
+        .touched
+        .iter()
+        .filter(|def| region.contains(*def))
+        .copied()
+        .collect::<Vec<_>>();
+    while let Some(def) = stack.pop() {
+        if !region.remove(&def) {
+            continue;
+        }
+        taken.insert(def);
+        stack.extend(
+            graph
+                .callers_of(def)
+                .iter()
+                .filter(|caller| region.contains(*caller)),
+        );
+    }
+    let mut stack = taken
+        .iter()
+        .chain(&update.touched)
+        .copied()
+        .filter(|def| {
+            graph.holds(*def)
+                && allows(*def)
+                && (graph.is_open(*def) || graph.callees_of(*def).any(|to| region.contains(&to)))
+        })
+        .collect::<Vec<_>>();
+    while let Some(def) = stack.pop() {
+        if !region.insert(def) {
+            continue;
+        }
+        if !taken.contains(&def) {
+            moved.insert(def);
+        }
+        stack.extend(
+            graph
+                .callers_of(def)
+                .iter()
+                .filter(|caller| allows(**caller) && !region.contains(*caller)),
+        );
+    }
+    moved.extend(taken.into_iter().filter(|def| !region.contains(def)));
+    region
 }
 
 /// The graph and summary `calls` terms read while one file is matched, and the callee of each
@@ -918,25 +991,22 @@ pub(crate) fn summarize<D: Doc>(
 /// stand for, read through the file's summary where they are nodes the definitions hold. `None`
 /// without it.
 pub(crate) fn seed_starts<'s>(
-    spans: impl IntoIterator<Item = &'s Value>,
+    spans: impl IntoIterator<Item = &'s Span>,
     scope: SeedScope,
     summary: Option<&Summary>,
 ) -> Option<Vec<u32>> {
-    let at = |span: &Value, key: &str| span.get(key).and_then(Value::as_u64).map(|at| at as u32);
     if scope == SeedScope::Definitions {
         return Some(
             spans
                 .into_iter()
-                .filter_map(|span| at(span, "startByte"))
+                .map(|span| span.start_byte as u32)
                 .collect(),
         );
     }
     let summary = summary?;
     let mut starts = Vec::new();
     for span in spans {
-        let (Some(start), Some(end)) = (at(span, "startByte"), at(span, "endByte")) else {
-            continue;
-        };
+        let (start, end) = (span.start_byte as u32, span.end_byte as u32);
         let around = summary
             .functions_around(start)
             .filter(|def| end <= def.end && (def.start, def.end) != (start, end));

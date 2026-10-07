@@ -42,7 +42,7 @@ describe("rule documents with repeated keys are rejected on write", () => {
   let stores: RerailApiStores;
   const policy = MOCK_POLICY_RULES[0]!;
   /** The mock policy's upsert body with its check's `id` given twice; JSON.parse would keep the second. */
-  const repeatedBody = JSON.stringify({ kind: "policy", rule: policy })
+  const repeatedBody = JSON.stringify({ kind: "file", rule: policy })
     .replace('"id":"console-call"', '"id":"first","id":"console-call"');
 
   beforeEach(async () => {
@@ -66,14 +66,14 @@ describe("rule documents with repeated keys are rejected on write", () => {
     expect(rejected.status).toBe(400);
     expect(await rejected.json()).toEqual({
       error: "duplicate-key",
-      message: "request body: duplicate key `id` at /rule/checks/0",
+      message: "request body: duplicate key `id` at /rule/clauses/0",
     });
     expect(catalog.get(policy.id)).toBeUndefined();
 
     const accepted = await app.request(`/api/rules/${policy.id}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "policy", rule: policy }),
+      body: JSON.stringify({ kind: "file", rule: policy }),
     });
     expect(accepted.status).toBe(200);
   });
@@ -81,7 +81,7 @@ describe("rule documents with repeated keys are rejected on write", () => {
   it("rejects a deeply nested discarded duplicate key instead of applying last-key-wins", async () => {
     const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
     const nested = `${"[".repeat(10_000)}0${"]".repeat(10_000)}`;
-    const body = JSON.stringify({ kind: "policy", rule: policy }).replace('"kind":"policy"', `"kind":${nested},"kind":"policy"`);
+    const body = JSON.stringify({ kind: "file", rule: policy }).replace('"kind":"file"', `"kind":${nested},"kind":"file"`);
 
     const rejected = await app.request(`/api/rules/${policy.id}`, {
       method: "PUT",
@@ -109,7 +109,7 @@ describe("rule documents with repeated keys are rejected on write", () => {
     expect(await response.json()).toEqual({
       jsonrpc: "2.0",
       id: 7,
-      error: { code: -32602, message: "request body: duplicate key `id` at /params/arguments/rule/checks/0" },
+      error: { code: -32602, message: "request body: duplicate key `id` at /params/arguments/rule/clauses/0" },
     });
     expect(catalog.get(policy.id)).toBeUndefined();
   });
@@ -121,7 +121,7 @@ describe("rule documents with repeated keys are rejected on write", () => {
     catalog.remove([policy.id]);
     const text = readFileSync(dumpPath, "utf8").replace('"id": "console-call"', '"id": "first", "id": "console-call"');
     writeFileSync(dumpPath, text);
-    expect(() => importScopedRules(catalog, dumpPath)).toThrow(`${dumpPath}: duplicate key \`id\` at /rules/0/rule/checks/0`);
+    expect(() => importScopedRules(catalog, dumpPath)).toThrow(`${dumpPath}: duplicate key \`id\` at /rules/0/rule/clauses/0`);
     expect(catalog.get(policy.id)).toBeUndefined();
   });
 

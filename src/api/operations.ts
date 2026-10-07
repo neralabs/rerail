@@ -6,6 +6,8 @@ import type { ExecutablePolicyFinding, PolicyFindingFix, PolicySourceSpan } from
 import type { PolicyExecutionFailure } from "../policy-execution.js";
 import type { PolicyExecutionRunReader, PolicyRunQuery, RepositoryDiagnosticEntryQuery, RepositoryDiagnosticQuery } from "../policy-execution-store.js";
 import { withinCheckout } from "../checkout-control.js";
+import type { RerailDatabase } from "../database.js";
+import { listRepositories, repositorySetUp, setCheckoutState, startRepository, type RepositoryStartState } from "../repository-start.js";
 import {
   policyRuns,
   presentationPreferences,
@@ -13,7 +15,6 @@ import {
   RULE_APPLICABILITIES,
   RULE_KINDS,
   RULE_ORIGINS,
-  RULE_SYNC_STATES,
   events,
   workLinks,
 } from "../schema.js";
@@ -27,9 +28,12 @@ import {
 import type { SqliteScanControlStore } from "../scan-control.js";
 import { PolicyCompileError, PolicyKernelUnavailableError } from "../policy-kernel-check.js";
 import { policyRuleSchema } from "../policy-schema.js";
+import { RULE_MODES } from "../rule-mode.js";
 import { kernelRegexIssues } from "../rule-regexes.js";
-import { cosineRuleSchema, DELIVERY_MODES, SAMPLE_BOUNDARIES } from "../rule-schema.js";
+import { cosineRuleSchema, SAMPLE_BOUNDARIES } from "../rule-schema.js";
 import { QuarantinedGlobalRuleError, type ScopedRuleCatalog, type ScopedRuleQuery } from "../scoped-rule-catalog.js";
+import { cachedRecommendRulePacks, loadRulePacks, rulePackIdOf } from "../rule-packs.js";
+import { rulePackListSchema, rulePackRecommendationsSchema } from "./rule-pack-contracts.js";
 import { TRANSCRIPT_EVENT_PAGE_LIMIT, type SqliteTranscriptReader, type SqliteTranscriptStore } from "../transcript-store.js";
 import type { SqlitePresentationPreferenceStore } from "../presentation-preference-store.js";
 import { presentationDaemonSchema, presentationResponseSchema, sessionResponseSchema, sessionSummarySchema } from "./session-contracts.js";
@@ -53,6 +57,10 @@ export interface RerailApiStores {
   readonly executions: PolicyExecutionRunReader;
   /** Daemon-owned presentation settings in the project database. */
   preferences(): SqlitePresentationPreferenceStore;
+  /** Writable handle for state with no store of its own: whether Rerail is started per repository. */
+  database(): RerailDatabase;
+  /** Whether Rerail is on in the checkout a workspace is in, over one held connection with cached identities. */
+  repositoryState(workspace: string): RepositoryStartState;
   health(): z.infer<typeof presentationDaemonSchema>;
 }
 
@@ -114,10 +122,10 @@ export const ruleFilterSchema = z
     kind: z.enum(RULE_KINDS).optional(),
     enabled: booleanParameter.optional(),
     applicability: z.enum(RULE_APPLICABILITIES).optional(),
-    q: z.string().optional().describe("Case-insensitive substring over id, reference/description, and action content or check bodies."),
-    source: z.string().min(1).optional().describe("Cosine sample source (user-input, assistant-text, tool:<name>)."),
+    q: z.string().optional().describe("Case-insensitive substring over id, reference/description, and action content or clause bodies."),
+    source: z.string().min(1).optional().describe("Conversation sample source (user-input, assistant-text, tool:<name>)."),
     boundary: z.enum(SAMPLE_BOUNDARIES).optional(),
-    delivery: z.enum(DELIVERY_MODES).optional(),
+    mode: z.enum(RULE_MODES).optional().describe("Rule mode (log, steer, block); matches file and conversation rules."),
   })
   .strict();
 
@@ -129,7 +137,7 @@ function ruleQuery(filter: z.infer<typeof ruleFilterSchema>): ScopedRuleQuery {
     ...(filter.q === undefined ? {} : { text: filter.q }),
     ...(filter.source === undefined ? {} : { source: filter.source }),
     ...(filter.boundary === undefined ? {} : { boundary: filter.boundary }),
-    ...(filter.delivery === undefined ? {} : { delivery: filter.delivery }),
+    ...(filter.mode === undefined ? {} : { mode: filter.mode }),
   };
 }
 
@@ -155,13 +163,17 @@ const storedRuleBase = {
   updatedAt: z.number().int(),
   sourceDigest: z.string().nullable(),
   payloadHash: z.string(),
-  syncState: z.enum(RULE_SYNC_STATES),
-  upstreamRuleId: z.string().nullable(),
 };
 
 export const storedRuleSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("policy"), rule: policyRuleSchema, ...storedRuleBase }).strict(),
-  z.object({ kind: z.literal("cosine"), rule: cosineRuleSchema, ...storedRuleBase }).strict(),
+  z.object({ kind: z.literal("file"), rule: policyRuleSchema, ...storedRuleBase }).strict(),
+  z.object({ kind: z.literal("conversation"), rule: cosineRuleSchema, ...storedRuleBase }).strict(),
+]);
+
+const packIdField = { packId: z.string().nullable().describe("The rule pack this rule comes from; null for rules in no pack.") };
+const listedRuleSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("file"), rule: policyRuleSchema, ...storedRuleBase, ...packIdField }).strict(),
+  z.object({ kind: z.literal("conversation"), rule: cosineRuleSchema, ...storedRuleBase, ...packIdField }).strict(),
 ]);
 
 export const ruleUpsertSchema = z
@@ -170,19 +182,19 @@ export const ruleUpsertSchema = z
     rule: z.union([policyRuleSchema, cosineRuleSchema]),
     enabled: z.boolean().optional(),
     applicability: z.enum(RULE_APPLICABILITIES).optional(),
-    /** Cosine rules only; policy rules carry `rule.revision`. */
+    /** Conversation rules only; file rules carry `rule.revision`. */
     revision: z.number().int().positive().optional(),
   })
   .strict()
   .superRefine((value, context) => {
-    const looksPolicy = "checks" in value.rule;
-    if ((value.kind === "policy") !== looksPolicy) {
+    const looksPolicy = "clauses" in value.rule;
+    if ((value.kind === "file") !== looksPolicy) {
       context.addIssue({ code: "custom", path: ["rule"], message: `rule body does not match kind ${value.kind}` });
     }
-    if (value.kind === "policy" && value.revision !== undefined) {
-      context.addIssue({ code: "custom", path: ["revision"], message: "policy rules take their revision from rule.revision" });
+    if (value.kind === "file" && value.revision !== undefined) {
+      context.addIssue({ code: "custom", path: ["revision"], message: "file rules take their revision from rule.revision" });
     }
-    if (value.kind === "cosine" && !("checks" in value.rule)) {
+    if (value.kind === "conversation" && !("clauses" in value.rule)) {
       for (const issue of kernelRegexIssues(value.rule)) {
         context.addIssue({ code: "custom", path: ["rule", ...issue.path], message: issue.message });
       }
@@ -214,10 +226,10 @@ const policyFindingFixSchema: z.ZodType<PolicyFindingFix> = z.object({
 
 const executablePolicyFindingSchema: z.ZodType<ExecutablePolicyFinding> = z.object({
   id: z.string(),
-  policyId: z.string(),
-  checkId: z.string(),
+  ruleId: z.string(),
+  clauseId: z.string(),
   code: z.string(),
-  severity: z.enum(["advisory", "warning", "error"]),
+  mode: z.enum(RULE_MODES),
   message: z.string(),
   path: z.string().optional(),
   span: policySourceSpanSchema.optional(),
@@ -227,8 +239,8 @@ const executablePolicyFindingSchema: z.ZodType<ExecutablePolicyFinding> = z.obje
 }).strict();
 
 const policyExecutionFailureSchema: z.ZodType<PolicyExecutionFailure> = z.object({
-  policyId: z.string().optional(),
-  checkId: z.string(),
+  ruleId: z.string().exactOptional(),
+  clauseId: z.string(),
   code: z.enum(["budget-exceeded", "missing-capability", "source-incomplete", "source-partial", "adapter-error"]),
   message: z.string(),
   path: z.string().optional(),
@@ -237,21 +249,21 @@ const policyExecutionFailureSchema: z.ZodType<PolicyExecutionFailure> = z.object
 
 export const policyRunRecordSchema = createSelectSchema(policyRuns).extend({
   paths: z.array(z.string()),
-  findings: z.array(executablePolicyFindingSchema),
+  violations: z.array(executablePolicyFindingSchema),
   failures: z.array(policyExecutionFailureSchema),
   catalogRevision: z.string().nullable(),
   ruleRevisions: z.array(z.object({ ruleId: z.string(), revision: z.number().int() }).strict()),
 });
 export const policyControlsResponseSchema = policyControlsSchema.extend({
-  repositoryDiagnosticRun: policyRunRecordSchema.extend({}).nullable(),
+  repositoryAuditRecord: policyRunRecordSchema.extend({}).nullable(),
 });
 
 export const policyRunQuerySchema = z.object({
-  runId: z.string().min(1).optional(),
+  auditId: z.string().min(1).optional(),
   sessionId: z.string().min(1).optional(),
   status: z.enum(["running", "completed", "failed", "interrupted", "superseded"]).optional(),
   scope: z.enum(["repository", "touched-files", "ai-output"]).optional(),
-  mode: z.enum(["resteer", "log"]).optional(),
+  mode: z.enum(["steer", "log"]).optional().describe("Audit mode (steer, log), not the mode of the rules it ran."),
   limit: countParameter.min(1).max(200).optional().describe("Maximum records to return; defaults to 50 and is capped at 200."),
   offset: countParameter.optional().describe("Number of matching records to skip; defaults to 0."),
 }).strict();
@@ -263,9 +275,9 @@ const repositoryDiagnosticQuerySchema = z.object({
 }).strict();
 const repositoryDiagnosticSummarySchema = z.object({
   workspaceRoot: z.string(),
-  diagnostic: repositoryDiagnosticSchema.nullable(),
-  run: z.object({
-    runId: z.string(),
+  repositoryAudit: repositoryDiagnosticSchema.nullable(),
+  audit: z.object({
+    auditId: z.string(),
     scope: z.enum(["repository", "touched-files", "ai-output"]),
     status: z.enum(["running", "completed", "failed", "interrupted", "superseded"]),
     startedAt: z.number(),
@@ -273,13 +285,13 @@ const repositoryDiagnosticSummarySchema = z.object({
     revision: z.number().int().nonnegative(),
     catalogRevision: z.string().nullable(),
     ruleRevisionCount: z.number().int().nonnegative(),
-    findingCount: z.number().int().nonnegative(),
+    violationCount: z.number().int().nonnegative(),
     failureCount: z.number().int().nonnegative(),
   }).strict().nullable(),
 }).strict();
 const repositoryDiagnosticEntryQuerySchema = z.object({
-  kind: z.enum(["finding", "failure"]).optional(),
-  severity: z.enum(["advisory", "warning", "error"]).optional(),
+  kind: z.enum(["violation", "failure"]).optional(),
+  mode: z.enum(RULE_MODES).optional().describe("Mode of the rule that produced a violation; failures never match."),
   code: z.string().optional(),
   path: z.string().optional(),
   q: z.string().optional(),
@@ -287,13 +299,13 @@ const repositoryDiagnosticEntryQuerySchema = z.object({
   offset: countParameter.optional(),
 }).strict();
 const repositoryDiagnosticEntrySchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("finding"), finding: executablePolicyFindingSchema }).strict(),
+  z.object({ kind: z.literal("violation"), violation: executablePolicyFindingSchema }).strict(),
   z.object({ kind: z.literal("failure"), failure: policyExecutionFailureSchema }).strict(),
 ]);
 
 function policyRunQuery(input: z.infer<typeof policyRunQuerySchema>): PolicyRunQuery {
   return {
-    ...(input.runId === undefined ? {} : { runId: input.runId }),
+    ...(input.auditId === undefined ? {} : { auditId: input.auditId }),
     ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
     ...(input.status === undefined ? {} : { status: input.status }),
     ...(input.scope === undefined ? {} : { scope: input.scope }),
@@ -311,12 +323,12 @@ function repositoryDiagnosticQuery(input: z.infer<typeof repositoryDiagnosticQue
   };
 }
 function repositoryDiagnosticEntryQuery(
-  input: z.infer<typeof repositoryDiagnosticEntryQuerySchema> & { runId: string },
+  input: z.infer<typeof repositoryDiagnosticEntryQuerySchema> & { auditId: string },
 ): RepositoryDiagnosticEntryQuery {
   return {
-    runId: input.runId,
+    auditId: input.auditId,
     ...(input.kind === undefined ? {} : { kind: input.kind }),
-    ...(input.severity === undefined ? {} : { severity: input.severity }),
+    ...(input.mode === undefined ? {} : { mode: input.mode }),
     ...(input.code === undefined ? {} : { code: input.code }),
     ...(input.path === undefined ? {} : { path: input.path }),
     ...(input.q === undefined ? {} : { q: input.q }),
@@ -326,10 +338,10 @@ function repositoryDiagnosticEntryQuery(
 }
 function policyControlsResponse(stores: RerailApiStores, sessionId: string): z.infer<typeof policyControlsResponseSchema> {
   const controls = stores.scanControls().getSettings(sessionId);
-  const runId = controls.repositoryDiagnostic?.runId;
+  const auditId = controls.repositoryAudit?.auditId;
   return {
     ...controls,
-    repositoryDiagnosticRun: runId === null || runId === undefined ? null : stores.executions.get(runId) ?? null,
+    repositoryAuditRecord: auditId === null || auditId === undefined ? null : stores.executions.get(auditId) ?? null,
   };
 }
 
@@ -343,7 +355,7 @@ function requireSession(stores: RerailApiStores, sessionId: string): void {
 function sessionResponse(stores: RerailApiStores, sessionId: string): z.infer<typeof sessionResponseSchema> | null {
   const session = stores.reader.session(sessionId);
   return session === undefined ? null
-    : { session, hud: stores.reader.hud(sessionId), evaluation: stores.executions.latestSummary(sessionId) ?? null };
+    : { session, hud: stores.reader.hud(sessionId), audit: stores.executions.latestSummary(sessionId) ?? null };
 }
 const sessionId = z.object({ sessionId: z.string().min(1) });
 const projectRepository = z.object({
@@ -357,35 +369,53 @@ const ruleContextSchema = z.object({
   projectName: z.string().min(1),
 });
 
+const repositoryStartSchema = z.object({
+  repositoryId: z.string().min(1),
+  name: z.string(),
+  root: z.string().describe("The checkout Rerail last ran in; empty when only the start state is known."),
+  state: z.enum(["started", "stopped", "never"]).describe(
+    "The main checkout's on/off, which every worktree without its own setting follows. stopped also when the repository was set up only in a worktree; never only when no checkout of it was ever started.",
+  ),
+  startedAt: z.number().int().nullable(),
+  stoppedAt: z.number().int().nullable(),
+}).strict();
+const repositoryParameter = z.object({ repositoryId: z.string().min(1) });
+
+function knownRepository(stores: RerailApiStores, repositoryId: string): z.infer<typeof repositoryStartSchema> {
+  const repository = listRepositories(stores.database()).find(candidate => candidate.repositoryId === repositoryId);
+  if (repository === undefined) throw new ApiError(404, "repository-not-found", `repository ${repositoryId} is not known to Rerail`);
+  return repository;
+}
+
 const sinceParameter = countParameter.describe("Epoch milliseconds; only activity at or after this instant is counted. 0 means since install.");
 
 /**
- * What the catalog knows about one rule's effect over a time range. Cosine rules never write a
- * policy run, so they carry no evidence either way: `measured: false` says so rather than
+ * What the catalog knows about one rule's effect over a time range. Conversation rules never write an
+ * audit, so they carry no evidence either way: `measured: false` says so rather than
  * reporting a zero that reads as "never triggered".
  */
 const ruleActivitySchema = z.object({
   measured: z.boolean(),
-  distinctViolations: z.number().int().nonnegative().describe("Distinct (rule, check, path, span, code) violations; one unfixed problem seen by six runs counts once."),
+  distinctViolations: z.number().int().nonnegative().describe("Distinct (rule, clause, path, span, code) violations; one unfixed problem seen by six audits counts once."),
   sessions: z.number().int().nonnegative(),
   lastSeenAt: z.number().int().nullable(),
-  evaluations: z.number().int().nonnegative().describe("Distinct runs in range that compiled this rule, so a zero violation count over a positive number of runs is evidence rather than silence."),
+  audits: z.number().int().nonnegative().describe("Distinct audits in range that compiled this rule, so a zero violation count over a positive number of audits is evidence rather than silence."),
   rerails: z.number().int().nonnegative(),
 }).strict();
 
 const findingRecordSchema = z.object({
   id: z.string(),
   ruleId: z.string(),
-  checkId: z.string(),
+  clauseId: z.string(),
   code: z.string(),
-  severity: z.enum(["advisory", "warning", "error"]),
+  mode: z.enum(RULE_MODES),
   message: z.string(),
   path: z.string().nullable(),
   span: policySourceSpanSchema.nullable(),
   fix: policyFindingFixSchema.nullable(),
   sessionId: z.string(),
-  runId: z.string(),
-  at: z.number().int().describe("Start time of the run that reported the finding."),
+  auditId: z.string(),
+  at: z.number().int().describe("Start time of the audit that reported the violation."),
 }).strict();
 
 const repositoryPathSchema = z.string().refine(value => value === "" || isAbsolute(value), "Repository must be an absolute path or empty for the database default.");
@@ -425,7 +455,7 @@ export const operations: readonly Operation[] = [
     id: "presentation_get",
     method: "GET",
     path: "/api/presentation",
-    summary: "Resolve repository+harness, repository, harness, database, then compact presentation; optionally read exact-session status without evaluation.",
+    summary: "Resolve repository+harness, repository, harness, database, then compact presentation; optionally read exact-session status without running an audit.",
     query: z.object({
       repository: z.string().min(1).refine(isAbsolute, "Repository must be an absolute path."),
       host: z.enum(PRESENTATION_HOSTS).exclude([""]),
@@ -445,9 +475,11 @@ export const operations: readonly Operation[] = [
         } catch { session = null; }
       }
       const presence = stores.preferences().effective(repository, input.host);
-      if (input.sessionId === undefined) return { presence };
+      const repositoryState = stores.repositoryState(repository);
+      if (input.sessionId === undefined) return { presence, repositoryState };
+      const daemon = presentationDaemonSchema.parse(stores.health());
       if (presence === "silent" && !input.onDemand) session = null;
-      return { presence, context: { daemon: presentationDaemonSchema.parse(stores.health()), session } };
+      return { presence, repositoryState, context: { daemon, session } };
     },
   }),
   defineOperation({
@@ -481,20 +513,59 @@ export const operations: readonly Operation[] = [
     handler: (stores, input) => ({ removed: stores.rules().removeRepository(input.projectId, input.repositoryId) }),
   }),
   defineOperation({
+    id: "repositories_list",
+    method: "GET",
+    path: "/api/repositories",
+    summary: "List the repositories Rerail knows, each Started, Stopped, or never set up.",
+    output: z.object({ repositories: z.array(repositoryStartSchema) }),
+    handler: stores => ({ repositories: listRepositories(stores.database()) }),
+  }),
+  defineOperation({
+    id: "repository_start",
+    method: "POST",
+    path: "/api/repositories/{repositoryId}/start",
+    summary: "Start Rerail in a repository's main checkout and the worktrees that follow it. A repository never set up is started with /rerail-start in a session there.",
+    params: repositoryParameter,
+    output: z.object({ repository: repositoryStartSchema }),
+    handler: (stores, input) => {
+      const database = stores.database();
+      if (!repositorySetUp(database, input.repositoryId)) {
+        throw new ApiError(409, "repository-not-set-up", `Rerail has not been set up in ${input.repositoryId}; run /rerail-start in a session there`);
+      }
+      startRepository(database, input.repositoryId);
+      return { repository: knownRepository(stores, input.repositoryId) };
+    },
+  }),
+  defineOperation({
+    id: "repository_stop",
+    method: "POST",
+    path: "/api/repositories/{repositoryId}/stop",
+    summary: "Stop Rerail in a repository's main checkout and the worktrees that follow it. Worktrees turned on or off themselves keep their state; rules and history are kept.",
+    params: repositoryParameter,
+    output: z.object({ repository: repositoryStartSchema }),
+    handler: (stores, input) => {
+      const repository = knownRepository(stores, input.repositoryId);
+      if (repository.state === "never") return { repository };
+      setCheckoutState(stores.database(), { repositoryId: input.repositoryId, root: repository.root, main: true }, "stopped");
+      return { repository: knownRepository(stores, input.repositoryId) };
+    },
+  }),
+  defineOperation({
     id: "rules_list",
     method: "GET",
     path: "/api/rules",
-    summary: "List or search effective rules by kind, enabled state, applicability, text, or cosine sample fields.",
+    summary: "List or search effective rules by kind, mode, enabled state, applicability, text, or conversation sample fields.",
     query: ruleFilterSchema,
     output: z.object({
-      rules: z.array(storedRuleSchema),
+      rules: z.array(listedRuleSchema),
       quarantined: z.array(quarantinedRuleSchema)
         .describe("Stored rows of the requested kind that fail validation and are skipped by every read and evaluation."),
     }),
     handler: (stores, input) => {
       const catalog = stores.rules();
+      const packs = loadRulePacks();
       return {
-        rules: catalog.list(ruleQuery(input)),
+        rules: catalog.list(ruleQuery(input)).map(stored => ({ ...stored, packId: rulePackIdOf(stored.rule.id, packs) })),
         quarantined: catalog.quarantined().filter(entry => input.kind === undefined || entry.kind === input.kind),
       };
     },
@@ -505,7 +576,7 @@ export const operations: readonly Operation[] = [
     id: "rules_activity",
     method: "GET",
     path: "/api/rules/activity",
-    summary: "Report what each rule actually caught since a given time: distinct violations, sessions, last sighting, how many runs evaluated it, and how many steering deliveries it drove. Use it to find rules worth disabling or rules that never fire.",
+    summary: "Report what each rule actually caught since a given time: distinct violations, sessions, last sighting, how many audits evaluated it, and how many steering deliveries it drove. Use it to find rules worth disabling or rules that never fire.",
     query: z.object({ since: sinceParameter }).strict(),
     output: z.object({ since: z.number().int().nonnegative(), rules: z.record(z.string(), ruleActivitySchema) }),
     handler: (stores, input) => {
@@ -514,14 +585,14 @@ export const operations: readonly Operation[] = [
       const rules: Record<string, z.infer<typeof ruleActivitySchema>> = {};
       for (const stored of stores.rules().list({})) {
         // Every catalog rule is reported, so a caller never has to infer absence from a missing key.
-        const totals = stored.kind === "cosine" ? undefined : activity.get(stored.rule.id);
+        const totals = stored.kind === "conversation" ? undefined : activity.get(stored.rule.id);
         rules[stored.rule.id] = {
-          measured: stored.kind !== "cosine",
+          measured: stored.kind !== "conversation",
           distinctViolations: totals?.distinctViolations ?? 0,
           sessions: totals?.sessions ?? 0,
           lastSeenAt: totals?.lastSeenAt ?? null,
-          evaluations: totals?.evaluations ?? 0,
-          rerails: stored.kind === "cosine" ? 0 : rerails.get(stored.rule.id) ?? 0,
+          audits: totals?.audits ?? 0,
+          rerails: stored.kind === "conversation" ? 0 : rerails.get(stored.rule.id) ?? 0,
         };
       }
       return { since: input.since, rules };
@@ -544,7 +615,7 @@ export const operations: readonly Operation[] = [
     id: "rules_upsert",
     method: "PUT",
     path: "/api/rules/{id}",
-    summary: "Create or replace a rule. The body is validated against its kind's schema, and a policy is compiled in the kernel, before it is stored.",
+    summary: "Create or replace a rule. The body is validated against its kind's schema, and a file rule is compiled in the kernel, before it is stored.",
     params: ruleId,
     body: ruleUpsertSchema,
     output: z.object({ rule: storedRuleSchema }),
@@ -559,7 +630,7 @@ export const operations: readonly Operation[] = [
       };
       const store = stores.rules();
       try {
-        return { rule: input.kind === "policy" ? store.upsertPolicy(input.rule, options) : store.upsertCosine(input.rule, options) };
+        return { rule: input.kind === "file" ? store.upsertPolicy(input.rule, options) : store.upsertCosine(input.rule, options) };
       } catch (error) {
         if (error instanceof PolicyCompileError) throw new ApiError(400, "invalid-rule", error.message);
         if (error instanceof PolicyKernelUnavailableError) throw new ApiError(503, "kernel-unavailable", error.message);
@@ -615,10 +686,30 @@ export const operations: readonly Operation[] = [
     },
   }),
   defineOperation({
-    id: "policy_settings_get",
+    id: "rule_packs_list",
     method: "GET",
-    path: "/api/sessions/{sessionId}/policy-settings",
-    summary: "Fetch ongoing policy defaults and the first repository diagnostic for one session's canonical workspace.",
+    path: "/api/rule-packs",
+    summary: "List every rule pack that comes with Rerail: what it covers and its rules, each with a title, a group and the mode it starts in. Read-only; packs are not attached to repositories yet (NER-1745).",
+    output: rulePackListSchema,
+    handler: () => ({ packs: loadRulePacks().map(({ match: _match, rules, ...pack }) => ({ ...pack, rules: [...rules] })) }),
+  }),
+  defineOperation({
+    id: "rule_packs_recommend",
+    method: "GET",
+    path: "/api/rule-packs/recommendations",
+    summary: "Recommend rule packs for this repository by matching its files and package.json dependencies against each pack. Local; changes nothing. The daemon rescans a repository at most once a minute.",
+    output: rulePackRecommendationsSchema,
+    handler: stores => {
+      const { repositoryId, workspaceRoot } = stores.rules().context();
+      const recommendations = cachedRecommendRulePacks(workspaceRoot).map(({ pack, ruleCount, reason }) => ({ packId: pack.id, ruleCount, reason }));
+      return { repositoryId, recommendations };
+    },
+  }),
+  defineOperation({
+    id: "audit_settings_get",
+    method: "GET",
+    path: "/api/sessions/{sessionId}/audit-settings",
+    summary: "Fetch ongoing audit defaults and the first repository audit for one session's canonical workspace.",
     params: sessionId,
     output: policyControlsResponseSchema,
     handler: (stores, input) => {
@@ -627,10 +718,10 @@ export const operations: readonly Operation[] = [
     },
   }),
   defineOperation({
-    id: "policy_settings_update",
+    id: "audit_settings_update",
     method: "PATCH",
-    path: "/api/sessions/{sessionId}/policy-settings",
-    summary: "Update ongoing policy scan defaults for one session's canonical workspace.",
+    path: "/api/sessions/{sessionId}/audit-settings",
+    summary: "Update ongoing audit defaults for one session's canonical workspace.",
     params: sessionId,
     body: policySettingsPatchSchema,
     output: policyControlsResponseSchema,
@@ -642,10 +733,10 @@ export const operations: readonly Operation[] = [
     },
   }),
   defineOperation({
-    id: "scans_create",
+    id: "audit_requests_create",
     method: "POST",
-    path: "/api/sessions/{sessionId}/scans",
-    summary: "Queue an explicit policy scan for one session. Touched-file scans require paths.",
+    path: "/api/sessions/{sessionId}/audit-requests",
+    summary: "Queue an explicit audit for one session. Touched-file audits require paths.",
     params: sessionId,
     body: scanInputSchema,
     output: scanRequestSchema,
@@ -656,22 +747,22 @@ export const operations: readonly Operation[] = [
     },
   }),
   defineOperation({
-    id: "scans_list",
+    id: "audit_requests_list",
     method: "GET",
-    path: "/api/sessions/{sessionId}/scans",
-    summary: "List explicit policy scans and their correlated execution run ids for one session.",
+    path: "/api/sessions/{sessionId}/audit-requests",
+    summary: "List explicit audit requests and the ids of the audits each one produced for one session.",
     params: sessionId,
-    output: z.object({ scans: z.array(scanRequestSchema) }),
+    output: z.object({ auditRequests: z.array(scanRequestSchema) }),
     handler: (stores, input) => {
       requireSession(stores, input.sessionId);
-      return { scans: stores.scanControls().listScans(input.sessionId) };
+      return { auditRequests: stores.scanControls().listScans(input.sessionId) };
     },
   }),
   defineOperation({
-    id: "repository_diagnostics_list",
+    id: "repository_audits_list",
     method: "GET",
-    path: "/api/repository-diagnostics",
-    summary: "List one full diagnostic baseline per historically scanned repository.",
+    path: "/api/repository-audits",
+    summary: "List one full repository audit baseline per historically scanned repository.",
     query: repositoryDiagnosticQuerySchema,
     output: z.object({
       repositories: z.array(repositoryDiagnosticSummarySchema),
@@ -680,11 +771,11 @@ export const operations: readonly Operation[] = [
     handler: (stores, input) => stores.executions.listRepositoryDiagnostics(repositoryDiagnosticQuery(input)),
   }),
   defineOperation({
-    id: "repository_diagnostic_entries_list",
+    id: "repository_audit_entries_list",
     method: "GET",
-    path: "/api/repository-diagnostics/{runId}/entries",
-    summary: "Query paginated findings and failures from one repository diagnostic baseline.",
-    params: z.object({ runId: z.string().min(1) }),
+    path: "/api/repository-audits/{auditId}/entries",
+    summary: "Query paginated violations and failures from one repository audit baseline.",
+    params: z.object({ auditId: z.string().min(1) }),
     query: repositoryDiagnosticEntryQuerySchema,
     output: z.object({
       entries: z.array(repositoryDiagnosticEntrySchema),
@@ -692,36 +783,36 @@ export const operations: readonly Operation[] = [
     }),
     handler: (stores, input) => {
       const page = stores.executions.listRepositoryDiagnosticEntries(repositoryDiagnosticEntryQuery(input));
-      if (page === undefined) throw new ApiError(404, "repository-diagnostic-not-found", `repository diagnostic ${input.runId} does not exist`);
+      if (page === undefined) throw new ApiError(404, "repository-audit-not-found", `repository audit ${input.auditId} does not exist`);
       return {
-        entries: page.entries.map(entry => entry.kind === "finding"
-          ? { kind: "finding" as const, finding: executablePolicyFindingSchema.parse(entry.payload) }
+        entries: page.entries.map(entry => entry.kind === "violation"
+          ? { kind: "violation" as const, violation: executablePolicyFindingSchema.parse(entry.payload) }
           : { kind: "failure" as const, failure: policyExecutionFailureSchema.parse(entry.payload) }),
         total: page.total,
       };
     },
   }),
   defineOperation({
-    id: "policy_runs_list",
+    id: "audits_list",
     method: "GET",
-    path: "/api/policy-runs",
-    summary: "List durable policy execution history, filtered independently by session, status, scope, or mode.",
+    path: "/api/audits",
+    summary: "List durable audit history, filtered independently by session, status, scope, or mode.",
     query: policyRunQuerySchema,
-    output: z.object({ runs: z.array(policyRunRecordSchema), total: z.number().int().nonnegative() }),
+    output: z.object({ audits: z.array(policyRunRecordSchema), total: z.number().int().nonnegative() }),
     handler: (stores, input) => stores.executions.list(policyRunQuery(input)),
   }),
   defineOperation({
-    id: "findings_list",
+    id: "violations_list",
     method: "GET",
-    path: "/api/findings",
-    summary: "List individual policy findings newest first, optionally for one rule, with the session and run that reported each. Use it to read what a rule actually flagged rather than how often.",
+    path: "/api/violations",
+    summary: "List individual violations newest first, optionally for one rule, with the session and audit that reported each. Use it to read what a rule actually flagged rather than how often.",
     query: z.object({
       since: sinceParameter,
-      limit: countParameter.min(1).max(200).optional().describe("Maximum findings to return; defaults to 50 and is capped at 200."),
-      offset: countParameter.optional().describe("Number of matching findings to skip; defaults to 0."),
+      limit: countParameter.min(1).max(200).optional().describe("Maximum violations to return; defaults to 50 and is capped at 200."),
+      offset: countParameter.optional().describe("Number of matching violations to skip; defaults to 0."),
       ruleId: z.string().min(1).optional().describe("Restrict to one catalog rule id."),
     }).strict(),
-    output: z.object({ total: z.number().int().nonnegative(), findings: z.array(findingRecordSchema) }),
+    output: z.object({ total: z.number().int().nonnegative(), violations: z.array(findingRecordSchema) }),
     handler: (stores, input) => {
       const page = stores.executions.listFindingHistory({
         since: input.since,
@@ -731,20 +822,10 @@ export const operations: readonly Operation[] = [
       });
       return {
         total: page.total,
-        findings: page.findings.map(({ finding, sessionId, runId, at }) => ({
-          id: finding.id,
-          ruleId: finding.policyId,
-          checkId: finding.checkId,
-          code: finding.code,
-          severity: finding.severity,
-          message: finding.message,
-          path: finding.path ?? null,
-          span: finding.span ?? null,
-          fix: finding.fix ?? null,
-          sessionId,
-          runId,
-          at,
-        })),
+        violations: page.violations.map(({ violation, sessionId, auditId, at }) => {
+          const { id, ruleId, clauseId, code, mode, message, path, span, fix } = violation;
+          return { id, ruleId, clauseId, code, mode, message, path: path ?? null, span: span ?? null, fix: fix ?? null, sessionId, auditId, at };
+        }),
       };
     },
   }),
@@ -763,7 +844,7 @@ export const operations: readonly Operation[] = [
     id: "sessions_get",
     method: "GET",
     path: "/api/sessions/{sessionId}",
-    summary: "Fetch one session with rule coverage, steering handoffs and compact evaluation status.",
+    summary: "Fetch one session with rule coverage, steering handoffs and compact audit status.",
     params: sessionId,
     output: sessionResponseSchema,
     handler: (stores, input) => {

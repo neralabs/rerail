@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:newline-per-chained-call",
   "revision": 1,
+  "mode": "steer",
   "description": "Each chained method call after a call must start on a new line (member/subscript chain unrolled 5 levels).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "same-line-chain",
       "forbid": {
@@ -173,10 +174,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NEWLINE_PER_CHAINED_CALL",
-        "severity": "error",
         "message": "When chaining calls, put method calls on new lines."
       }
     }

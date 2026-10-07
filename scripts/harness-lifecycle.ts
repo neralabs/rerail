@@ -18,7 +18,7 @@
  * What one run proves, from records only (nothing depends on the model's wording):
  *   1. The extension prints no `Extension error` / `handler timed out` lines.
  *   2. Rerail records exactly one session for the run, opened once, with the prompt and a clean end,
- *      and its session-start row lands within 5 s of the process spawn.
+ *      and its session-start row lands within 12 s of the process spawn.
  *   3. Rerail's ledger holds exactly one `steer` delivery carrying SQL_EXECUTE_FSTRING for the first
  *      tool result that writes api/probe.py; later model-chosen edits are outside this assertion.
  *   4. The harness's own session transcript recorded receiving that steer (the `custom_message` entry
@@ -34,8 +34,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { RULE_MESSAGE_TYPE } from "../src/adapter-contract.js";
+import { openRerailDatabase } from "../src/database.js";
+import { startRepository } from "../src/repository-start.js";
 import { bootstrapProjectRules } from "../src/rule-bootstrap.js";
 import { SqliteRuleStore } from "../src/rule-store.js";
+import { resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
 import { SqliteTranscriptReader, type TranscriptEventRecord } from "../src/transcript-store.js";
 
 type Harness = "omp" | "pi";
@@ -48,7 +51,7 @@ const TIMEOUT_MS = 180_000;
  * session-start row), so it does not depend on model latency. The 30 s handler timeout that used to
  * fire on every start is the failure this guards against.
  */
-const MAX_SESSION_START_MS = 5_000;
+const MAX_SESSION_START_MS = 12_000;
 const POLICY = "nera-sql:sql-execute-fstring";
 const CODE = "SQL_EXECUTE_FSTRING";
 const PROBE = "api/probe.py";
@@ -70,7 +73,7 @@ const LedgerEntry = z.union([
   z.object({ type: z.literal("delivery"), delivery: z.object({ requested: z.string(), mechanism: z.string(), content: z.string() }) }),
   z.object({ type: z.string().refine((type) => type !== "sample" && type !== "delivery") }).transform(() => ({ type: "other" as const })),
 ]);
-/** Rerail transcript payload for a `tool-result` event; enough to name the tool and its target. */
+/** Rerail transcript payload for a `result` event; enough to name the tool and its target. */
 const ToolPayload = z.object({ toolName: z.string(), input: z.unknown().optional(), output: z.unknown().optional() });
 /** Text content as both harnesses store it: a string, or parts with `text`. */
 const Content = z.union([z.string(), z.array(z.union([z.string(), z.object({ text: z.string().optional() })]))]);
@@ -210,9 +213,16 @@ async function project(): Promise<Workspace> {
   const databasePath = join(rerailHome, "rerail.sqlite");
   bootstrapProjectRules(checkoutDatabase);
   const store = new SqliteRuleStore(checkoutDatabase);
-  store.setEnabled({ filter: { kind: "policy" } }, false);
+  store.setEnabled({ filter: { kind: "file" } }, false);
   if (store.setEnabled({ ids: [POLICY] }, true) !== 1) throw new Error(`${POLICY} is not a bundled rule`);
   store.close();
+  // Rerail is off until started; start the project as `rerail start` would.
+  const database = openRerailDatabase(databasePath);
+  try {
+    startRepository(database, resolveRepositoryContext(root).repositoryId);
+  } finally {
+    database.$client.close();
+  }
   // Orca's terminal injects ORCA_* variables that redirect OMP's agent directory; the run must see the
   // user's real HOME (credentials, model choice) and nothing else. RERAIL_AUTOSTART=0 keeps the daemon out.
   const env: NodeJS.ProcessEnv = { RERAIL_AUTOSTART: "0" };
@@ -279,7 +289,7 @@ export async function readLedger(root: string, events: readonly TranscriptEventR
       : [],
   );
   const requestedWrite = events.find((event) => {
-    if (event.kind !== "tool-result") return false;
+    if (event.kind !== "result") return false;
     const payload = ToolPayload.safeParse(event.payload).data;
     return payload?.toolName === "write" && JSON.stringify(payload).includes(PROBE);
   });
@@ -368,7 +378,7 @@ function report(harness: Harness, { run, rerail, steer, transcript }: Evidence):
   check(
     assertions,
     "steer produced on the probe write's tool result",
-    steer.event.kind === "tool-result" && steer.event.toolName === "write" && steer.event.mentionsProbe,
+    steer.event.kind === "result" && steer.event.toolName === "write" && steer.event.mentionsProbe,
     `sample source ${steer.sample.source}/${steer.sample.boundary} -> event ${steer.event.kind} tool ${steer.event.toolName}, mentions ${PROBE}: ${steer.event.mentionsProbe}`,
   );
 

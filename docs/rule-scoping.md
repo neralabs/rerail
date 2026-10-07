@@ -1,6 +1,6 @@
 # Rule Scoping
 
-Rerail keeps rule definitions and execution history in one user-level SQLite database, `$RERAIL_HOME/rerail.sqlite` (`~/.rerail/rerail.sqlite` when `RERAIL_HOME` is unset). Rules are resolved for a repository through its project; sessions, events, work links, and policy runs are attributed to the repository identity of the checkout that recorded them.
+Rerail keeps rule definitions and execution history in one user-level SQLite database, `$RERAIL_HOME/rerail.sqlite` (`~/.rerail/rerail.sqlite` when `RERAIL_HOME` is unset). Rules are resolved for a repository through its project; sessions, events, work links, and audits are attributed to the repository identity of the checkout that recorded them.
 
 ## Identities
 
@@ -28,15 +28,15 @@ The effective rule set contains one definition per logical rule ID:
 3. Deleting the project definition reveals the global definition again.
 4. Deleting the global definition removes it for every project that does not override it.
 
-A logical ID cannot change rule kind while any global or project definition with that ID exists. Remove the existing definition before changing between `policy` and `cosine`.
+A logical ID cannot change rule kind while any global or project definition with that ID exists. Remove the existing definition before changing between `file` and `conversation`.
 
 ## Propagation and concurrency
 
 Every daemon, extension, and hook opens the shared catalog and resolves its effective rules from its repository identity. SQLite transactions serialize edits. Live policy and cosine catalogs use change tokens combining SQLite `data_version` with connection-local revisions, so commits through the same process or another connection become effective on the next refresh or event without restarting. Restarting reconstructs the same effective set from the catalog.
 
-A write records applicability, owner, revision, creation/update timestamps, a deterministic payload hash, catalog origin, sync state, and optional upstream rule ID. These fields make local provenance explicit and reserve the synchronization boundary for NER-1453 and NER-1457; this change does not add a cloud transport or change Nera's future source-of-truth role.
+A write records applicability, owner, revision, creation/update timestamps, a deterministic payload hash, and catalog origin (`user` or `rerail`). These fields make local provenance explicit; this change does not add a cloud transport or change Nera's future source-of-truth role.
 
-Each policy run snapshots the effective rule ID, revision, payload hash, applicability, project identity when relevant, catalog origin, sync state, and upstream ID from the compiled workspace that performed the evaluation. Later edits or deletions do not rewrite historical runs.
+Each audit snapshots the effective rule ID, revision, payload hash, applicability, project identity when relevant, and catalog origin from the compiled workspace that performed the evaluation. Later edits or deletions do not rewrite historical audits.
 
 ## Migration
 
@@ -44,9 +44,9 @@ On first use for a repository and legacy source, Rerail copies checkout-database
 
 Deleting a migrated project rule records a catalog tombstone. A previously unseen linked worktree can therefore import unique legacy rules without resurrecting a rule the project already deleted.
 
-Migration does not move sessions, events, work links, or policy runs. A pre-catalog checkout database remains intact as an archival copy of its history, but runtime resolution and all new writes use the Rerail database.
+Migration does not move sessions, events, work links, or audits. A pre-catalog checkout database remains intact as an archival copy of its history, but runtime resolution and all new writes use the Rerail database.
 
-`rerail rules export` writes a version 2 dump containing both global definitions and current-project definitions, including shadowed global rows. `rerail rules import` preserves applicability and provenance, attaching project definitions to the destination repository's current project. `rerail reset` deletes only the current repository's execution history and leaves the catalog untouched.
+`rerail rules export` writes a version 4 dump containing both global definitions and current-project definitions, including shadowed global rows; `rerail rules import` rejects dumps from before the current rule contract (versions 1 to 3). `rerail rules import` preserves applicability and provenance, attaching project definitions to the destination repository's current project. `rerail reset` deletes only the current repository's execution history and leaves the catalog untouched.
 
 ## Management surfaces
 

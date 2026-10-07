@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:variable-name",
   "revision": 1,
+  "mode": "steer",
   "description": "Checks variable/parameter/property names for lowerCamelCase or UPPER_CASE; alias exemption via same-metavar patterns. Options: ['ban-keywords'].",
   "scope": {"include": ["**/*"], "exclude": []},
-  "checks": [
+  "clauses": [
     {
       "id": "keyword",
       "forbid": {
@@ -49,10 +50,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "VARIABLE_NAME",
-        "severity": "error",
         "message": "variable name clashes with keyword/type"
       }
     }

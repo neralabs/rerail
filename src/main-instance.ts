@@ -29,9 +29,9 @@ export class MainInstanceConflictError extends Error {
   constructor(readonly directory: string, readonly holder: MainInstanceHolder | undefined) {
     super(
       holder === undefined
-        ? `Another main Rerail instance holds ${join(directory, MAIN_INSTANCE_LOCK_FILE)}; stop it (rerail stop) before starting this one.`
+        ? `Another main Rerail instance holds ${join(directory, MAIN_INSTANCE_LOCK_FILE)}; stop it (rerail daemon stop) before starting this one.`
         : `Another main Rerail instance is running: pid ${holder.pid}, version ${holder.version}, from ${holder.packageRoot}, ` +
-          `since ${holder.startedAt}. Stop it (rerail stop) before starting this one.`,
+          `since ${holder.startedAt}. Stop it (rerail daemon stop) before starting this one.`,
     );
     this.name = "MainInstanceConflictError";
   }

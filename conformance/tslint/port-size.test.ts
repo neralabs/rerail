@@ -4,7 +4,8 @@ import { documentShape, portSize } from "./port-size.js";
 const doc = (rules: unknown[]): unknown => ({
   format: "rerail.policy/v1",
   id: "tslint:example",
-  checks: rules.map((rule, index) => ({ id: `c${index}`, forbid: { ast: { language: "typescript", rule } } })),
+  mode: "steer",
+  clauses: rules.map((rule, index) => ({ id: `c${index}`, forbid: { ast: { language: "typescript", rule } } })),
 });
 
 describe("documentShape", () => {
@@ -45,12 +46,12 @@ describe("documentShape", () => {
   });
 
   it("finds rules nested under select_when", () => {
-    const shape = documentShape({ checks: [{ id: "c", forbid: { select_when: { select: { ast: { rule: { not: { kind: "z" } } } } } } }] });
+    const shape = documentShape({ clauses: [{ id: "c", forbid: { select_when: { select: { ast: { rule: { not: { kind: "z" } } } } } } }] });
     expect(shape).toMatchObject({ checks: 1, not: 1, maxDepth: 2 });
   });
   it("counts utility and constraint rules like the query's rule", () => {
     const shape = documentShape({
-      checks: [{
+      clauses: [{
         id: "c",
         forbid: { ast: { language: "typescript", rule: { matches: "u" }, utils: { u: { inside: { matches: "u" } } }, constraints: { A: { not: { has: { kind: "z" } } } } } },
       }],

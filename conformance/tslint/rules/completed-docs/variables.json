@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:completed-docs",
   "revision": 1,
+  "mode": "steer",
   "description": "variables.",
   "scope": { "include": ["**/*"], "exclude": [] },
-  "checks": [
+  "clauses": [
     {
       "id": "variables-internal",
       "forbid": {
@@ -53,10 +54,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for variables."
       }
     },
@@ -116,10 +116,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "COMPLETED_DOCS",
-        "severity": "error",
         "message": "Documentation must exist for exported variables."
       }
     }

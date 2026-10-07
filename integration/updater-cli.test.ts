@@ -54,6 +54,42 @@ async function run(command: readonly string[], environment: NodeJS.ProcessEnv, c
   return { exitCode, stdout, stderr };
 }
 
+/**
+ * A release from before per-repository start, as rollback finds it right after updating to this one: no
+ * `rerail state`, a `start` that is the daemon's and rejects `--repo`, and an event stream that records
+ * every repository. Each CLI invocation appends its command to `RERAIL_LEGACY_CALLS`.
+ */
+async function createLegacyPackage(root: string, version: string): Promise<string> {
+  const packageRoot = join(root, `legacy-${version}`);
+  const dist = join(packageRoot, "dist");
+  await mkdir(dist, { recursive: true });
+  await writeFile(join(packageRoot, "package.json"), `${JSON.stringify({ name: "@neralabs/rerail", version, type: "module" })}\n`);
+  await Promise.all([
+    writeFile(join(dist, "index.js"), "export function nativeHealth() { return { ok: true }; }\n"),
+    writeFile(join(dist, "cli.js"), [
+      'import { appendFileSync } from "node:fs";',
+      "const [command, ...args] = process.argv.slice(2);",
+      'appendFileSync(process.env.RERAIL_LEGACY_CALLS, `${command}\\n`);',
+      'if (command === "start" && args.includes("--repo")) {',
+      '  process.stderr.write("Unknown start option: --repo\\n");',
+      "  process.exit(1);",
+      "}",
+      'process.stderr.write(`Unknown command: ${command}\\n`);',
+      "process.exit(1);",
+      "",
+    ].join("\n")),
+    writeFile(join(dist, "event-stream.js"), [
+      'import { mkdirSync, readFileSync } from "node:fs";',
+      'import { join } from "node:path";',
+      'const request = JSON.parse(readFileSync(0, "utf8").trimEnd().split("\\n").at(-1));',
+      'mkdirSync(join(process.env.RERAIL_STORAGE_ROOT, "session"), { recursive: true });',
+      'process.stdout.write(JSON.stringify({ eventId: request.event.eventId, deliveries: [] }) + "\\n");',
+      "",
+    ].join("\n")),
+  ]);
+  return packageRoot;
+}
+
 async function createPackageFixture(source: string, root: string, version: string, valid: boolean): Promise<string> {
   const packageRoot = join(root, version);
   await mkdir(packageRoot, { recursive: true });
@@ -70,9 +106,12 @@ async function createPackageFixture(source: string, root: string, version: strin
   await Promise.all([
     writeFile(join(dist, "index.js"), "export function nativeHealth() { return { ok: true }; }\n"),
     writeFile(join(dist, "event-stream.js"), [
-      'import { readFileSync } from "node:fs";',
+      'import { mkdirSync, readFileSync } from "node:fs";',
+      'import { join } from "node:path";',
       'const lines = readFileSync(0, "utf8").trimEnd().split("\\n");',
       "const request = JSON.parse(lines.at(-1));",
+      "// The health check requires the session to have opened under the storage root.",
+      'mkdirSync(join(process.env.RERAIL_STORAGE_ROOT, "session"), { recursive: true });',
       'process.stdout.write(JSON.stringify({ eventId: request.event.eventId, deliveries: [] }) + "\\n");',
       "",
     ].join("\n")),
@@ -207,7 +246,31 @@ describe("Rerail managed launcher", () => {
     const rollback = await run(["node", "dist/cli.js", "update", "rollback"], environment);
     expect(rollback).toMatchObject({ exitCode: 0, stderr: "" });
     expect(rollback.stdout).toContain(`Activated Rerail ${manifest.version}`);
-  });
+  }, 30_000); // Rollback health-checks this checkout: a real start, then a real session.
+
+  test("rolls back to a release from before per-repository start", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-legacy-rollback-"));
+    temporaryDirectories.push(root);
+    const manifest = await packageManifest();
+    const legacyVersion = "0.0.1";
+    const legacy = await createLegacyPackage(root, legacyVersion);
+    const home = join(root, "home");
+    await mkdir(home, { recursive: true });
+    await writeFile(join(home, "update-state.json"), `${JSON.stringify({
+      schemaVersion: 1,
+      channel: "latest",
+      current: { version: manifest.version, packageRoot: resolve(".") },
+      previous: { version: legacyVersion, packageRoot: legacy },
+    })}\n`);
+    const calls = join(root, "legacy-calls");
+    const environment = { ...process.env, RERAIL_AUTO_UPDATE: "0", RERAIL_HOME: home, RERAIL_LEGACY_CALLS: calls };
+
+    const rollback = await run(["node", "dist/cli.js", "update", "rollback"], environment);
+    expect(rollback).toMatchObject({ exitCode: 0, stderr: "" });
+    expect(rollback.stdout).toContain(`Activated Rerail ${legacyVersion}`);
+    // The probe found no repository start, so the daemon's `start` was never asked to take a repository.
+    expect((await readFile(calls, "utf8")).trim().split("\n")).toEqual(["state"]);
+  }, 30_000);
 
   test("reports that --skip-start wins during a setup dry run", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-setup-dry-run-"));

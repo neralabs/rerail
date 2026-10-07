@@ -5,6 +5,7 @@ use super::{
     Access, Binding, BuildError, Builder, Form, Grammar, Import, ImportKind, NodeRef, Origin,
     Reading, Reference, ScopeKind, Site, VALUE,
 };
+use crate::policy_dsl::identifier::python_identifier as identifier;
 use crate::policy_dsl::language::GrammarDialect;
 use ast_grep_core::{Doc, Node};
 use std::sync::OnceLock;
@@ -34,6 +35,7 @@ enum Tag {
     ListSplatPattern,
     DictionarySplatPattern,
     TypeParameter,
+    TypeDefault,
     Type,
     ConstrainedType,
     SplatType,
@@ -101,6 +103,7 @@ fn tag(name: &str) -> Tag {
         "list_splat_pattern" | "list_splat" => Tag::ListSplatPattern,
         "dictionary_splat_pattern" => Tag::DictionarySplatPattern,
         "type_parameter" => Tag::TypeParameter,
+        "type_default" => Tag::TypeDefault,
         "type" => Tag::Type,
         "constrained_type" => Tag::ConstrainedType,
         "splat_type" => Tag::SplatType,
@@ -335,7 +338,7 @@ impl Visitor<'_, '_> {
                 // after the module.
                 if let (Some(annotation), Some(value)) =
                     (field(node, fields.ty), field(node, fields.right))
-                    && annotation.text().ends_with("TypeAlias")
+                    && identifier(&annotation).ends_with("TypeAlias")
                 {
                     self.builder.type_roots.push(TypeRoot {
                         node: NodeRef::of(&value),
@@ -417,7 +420,7 @@ impl Visitor<'_, '_> {
                         deferred: self.builder.deferring,
                         ..self.binding(node.range().end, None, site, NodeRef::of(&name))
                     };
-                    self.bind_name(scope, &name.text(), binding);
+                    self.bind_name(scope, &identifier(&name), binding);
                 }
             }
             Tag::Comprehension => self.comprehension(node)?,
@@ -462,7 +465,7 @@ impl Visitor<'_, '_> {
                             outer: true,
                             ..Binding::new(node.range().start, VALUE, site(Form::Global, node))
                         };
-                        self.builder.bind(current, &child.text(), binding);
+                        self.builder.bind(current, &identifier(&child), binding);
                     }
                 }
             }
@@ -473,7 +476,7 @@ impl Visitor<'_, '_> {
                         continue;
                     }
                     let scope = &mut self.builder.table.scopes[self.builder.current as usize];
-                    scope.nonlocals.insert(child.text().as_ref().into());
+                    scope.nonlocals.insert(identifier(&child).as_ref().into());
                     self.builder.access_reference(
                         child.range(),
                         VALUE,
@@ -573,7 +576,7 @@ impl Visitor<'_, '_> {
                             })
                             .is_some_and(|function| {
                                 self.tag(&function) == Tag::Identifier
-                                    && function.text() == "locals"
+                                    && identifier(&function) == "locals"
                             })
                         {
                             let current = self.builder.current;
@@ -653,7 +656,7 @@ impl Visitor<'_, '_> {
         import: Option<Import>,
         site: Site,
     ) {
-        let text = name.text();
+        let text = identifier(name);
         let binding = self.binding(offset, import, site, NodeRef::of(name));
         self.bind_name(scope, &text, binding);
     }
@@ -692,7 +695,7 @@ impl Visitor<'_, '_> {
     /// (Ruff then keeps it as a delayed annotation, outside the scope).
     fn annotate<D: Doc>(&mut self, statement: &Node<'_, D>, name: &Node<'_, D>) {
         let scope = self.builder.current;
-        let text = name.text();
+        let text = identifier(name);
         let offset = statement.range().end;
         let declared = self.builder.scope(scope);
         if declared.nonlocals.contains(text.as_ref())
@@ -723,8 +726,9 @@ impl Visitor<'_, '_> {
             && node
                 .parent()
                 .is_none_or(|parent| parent.kind() != "assignment")
-            && field(node, fields().left)
-                .is_some_and(|left| self.tag(&left) == Tag::Identifier && left.text() == "__all__")
+            && field(node, fields().left).is_some_and(|left| {
+                self.tag(&left) == Tag::Identifier && identifier(&left) == "__all__"
+            })
         {
             self.builder.table.dunder_all.push(NodeRef::of(node));
         }
@@ -747,7 +751,7 @@ impl Visitor<'_, '_> {
                         ..Binding::new(target.range().end, VALUE, site(Form::Deletion, statement))
                     };
                     let current = self.builder.current;
-                    self.builder.bind(current, &target.text(), binding);
+                    self.builder.bind(current, &identifier(target), binding);
                 }
                 Ok(())
             }
@@ -1024,14 +1028,14 @@ impl Visitor<'_, '_> {
         let mut tail = Vec::new();
         let mut head = unparenthesized(node, WRAPPERS);
         while self.tag(&head) == Tag::Attribute {
-            tail.push(head.field("attribute")?.text().into_owned());
+            tail.push(identifier(&head.field("attribute")?).into_owned());
             head = unparenthesized(&head.field("object")?, WRAPPERS);
         }
         if self.tag(&head) != Tag::Identifier {
             return None;
         }
         tail.reverse();
-        let name = head.text();
+        let name = identifier(&head);
         let range = head.range();
         let reference = Reference {
             start: range.start,
@@ -1316,7 +1320,7 @@ impl Visitor<'_, '_> {
         if self.tag(head) != Tag::Identifier {
             return false;
         }
-        let text = head.text();
+        let text = identifier(head);
         [self.builder.current, 0].iter().any(|scope| {
             self.builder
                 .scope(*scope)
@@ -1342,6 +1346,7 @@ impl Visitor<'_, '_> {
     }
 
     /// Opens the annotation scope of PEP 695 type parameters and binds them; false without any.
+    /// A bound and a PEP 696 default (`T: B = D`, `type_default`) are read lazily in that scope.
     fn type_parameters<D: Doc>(
         &mut self,
         owner: &Node<'_, D>,
@@ -1350,25 +1355,33 @@ impl Visitor<'_, '_> {
         let Some(list) = list else { return Ok(false) };
         self.builder.push(ScopeKind::TypeParams, owner.range());
         let offset = owner.range().start;
+        let fields = fields();
         for item in named(&list) {
-            let inner = if self.tag(&item) == Tag::Type {
-                named(&item).next()
+            let (parameter, default) = if self.tag(&item) == Tag::TypeDefault {
+                (field(&item, fields.name), field(&item, fields.value))
             } else {
-                Some(item.clone())
+                (Some(item.clone()), None)
             };
-            let Some(inner) = inner else { continue };
+            let inner = parameter.and_then(|parameter| {
+                if self.tag(&parameter) == Tag::Type {
+                    named(&parameter).next()
+                } else {
+                    Some(parameter)
+                }
+            });
             let site = site(Form::TypeParameter, &item);
-            match self.tag(&inner) {
-                Tag::Identifier => self.bind_here(&inner, offset, None, site),
-                Tag::SplatType => {
+            match inner.as_ref().map(|inner| (inner, self.tag(inner))) {
+                None => {}
+                Some((inner, Tag::Identifier)) => self.bind_here(inner, offset, None, site),
+                Some((inner, Tag::SplatType)) => {
                     if let Some(name) =
-                        named(&inner).find(|child| self.tag(child) == Tag::Identifier)
+                        named(inner).find(|child| self.tag(child) == Tag::Identifier)
                     {
                         self.bind_here(&name, offset, None, site);
                     }
                 }
-                Tag::ConstrainedType => {
-                    let mut parts = named(&inner);
+                Some((inner, Tag::ConstrainedType)) => {
+                    let mut parts = named(inner);
                     if let Some(name) = parts.next() {
                         let name = if self.tag(&name) == Tag::Type {
                             named(&name).next()
@@ -1384,7 +1397,11 @@ impl Visitor<'_, '_> {
                         self.lazily(|visitor| visitor.visit(&bound))?;
                     }
                 }
-                _ => self.lazily(|visitor| visitor.visit(&inner))?,
+                Some((inner, _)) => self.lazily(|visitor| visitor.visit(inner))?,
+            }
+            if let Some(default) = default {
+                self.definition(&default);
+                self.lazily(|visitor| visitor.visit(&default))?;
             }
         }
         Ok(true)
@@ -1478,7 +1495,7 @@ impl Visitor<'_, '_> {
                     names.extend(
                         named(&child)
                             .filter(|name| self.tag(name) == Tag::Identifier)
-                            .map(|name| name.text().into_owned()),
+                            .map(|name| identifier(&name).into_owned()),
                     );
                     self.builder.leave();
                 }
@@ -1637,7 +1654,7 @@ impl Visitor<'_, '_> {
 
     fn dotted<D: Doc>(&self, node: &Node<'_, D>) -> String {
         named(node)
-            .map(|part| part.text().into_owned())
+            .map(|part| identifier(&part).into_owned())
             .collect::<Vec<_>>()
             .join(".")
     }
@@ -1670,12 +1687,12 @@ impl Visitor<'_, '_> {
                 _ => None,
             };
             if let Some(head) = module.as_ref().and_then(|module| named(module).next()) {
-                self.seen(node, &head.text());
+                self.seen(node, &identifier(&head));
             }
             match self.tag(&item) {
                 Tag::DottedName => {
                     if let Some(head) = named(&item).next() {
-                        let text = head.text();
+                        let text = identifier(&head);
                         let import = Import::Qualified(text.as_ref().into());
                         let site = site(Form::Import, &item);
                         let dotted = self.dotted(&item);
@@ -1698,7 +1715,7 @@ impl Visitor<'_, '_> {
                     {
                         let dotted = self.dotted(&name);
                         let binding = Binding {
-                            explicit_export: dotted == alias.text(),
+                            explicit_export: dotted == identifier(&alias),
                             import_kind: Some(ImportKind::Module),
                             ..self.binding(
                                 offset,
@@ -1707,7 +1724,7 @@ impl Visitor<'_, '_> {
                                 NodeRef::of(&alias),
                             )
                         };
-                        self.bind_name(self.builder.current, &alias.text(), binding);
+                        self.bind_name(self.builder.current, &identifier(&alias), binding);
                     }
                 }
                 _ => {}
@@ -1790,7 +1807,7 @@ impl Visitor<'_, '_> {
                     {
                         let dotted = self.dotted(&name);
                         let binding = Binding {
-                            explicit_export: dotted == alias.text(),
+                            explicit_export: dotted == identifier(&alias),
                             import_kind: Some(member),
                             ..self.binding(
                                 offset,
@@ -1799,7 +1816,7 @@ impl Visitor<'_, '_> {
                                 NodeRef::of(&alias),
                             )
                         };
-                        self.bind_name(self.builder.current, &alias.text(), binding);
+                        self.bind_name(self.builder.current, &identifier(&alias), binding);
                     }
                 }
                 // Ruff: star imports bind nothing, but a later unresolved name may come from one.
@@ -1887,7 +1904,7 @@ impl Visitor<'_, '_> {
 
     /// A capture binds at its pattern: the case, `as`, splat or keyword pattern around the name.
     fn capture<D: Doc>(&mut self, name: &Node<'_, D>, offset: usize) {
-        if name.text() != "_" {
+        if identifier(name) != "_" {
             let pattern = name.parent().unwrap_or_else(|| name.clone());
             self.bind_here(name, offset, None, site(Form::Match, &pattern));
         }
@@ -2061,7 +2078,8 @@ fn typing_callable(name: &[String], settings: Option<&PythonTyping>) -> Option<C
 fn keyword_argument<'r, D: Doc>(item: &Node<'r, D>) -> Option<(Option<String>, Node<'r, D>)> {
     match item.kind().as_ref() {
         "keyword_argument" => Some((
-            item.field("name").map(|name| name.text().into_owned()),
+            item.field("name")
+                .map(|name| identifier(&name).into_owned()),
             item.field("value")?,
         )),
         "dictionary_splat" => Some((None, named(item).find(|inner| inner.kind() != "comment")?)),

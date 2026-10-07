@@ -1,6 +1,6 @@
 //! The workspace's cross-file scheduling seam.
 //!
-//! Adapters retain their relation representation: evidence owns partitions and SQL-style global
+//! Adapters retain their relation representation: evidence owns partitions and relational global
 //! evaluation, while `calls` owns summaries and graph closure. This module owns the protocol that
 //! keeps their producer and consumer phases ordered.
 
@@ -109,8 +109,9 @@ impl CrossFileScheduler {
         closed: &AtomicBool,
         metrics: &mut Metrics,
         keep_table: bool,
+        restored: Option<tape::TapeDoc>,
     ) -> Result<()> {
-        calls_state::summarize_file(file, grammars, closed, metrics, keep_table)
+        calls_state::summarize_file(file, grammars, closed, metrics, keep_table, restored)
     }
 
     pub(super) fn install(
@@ -183,6 +184,12 @@ impl CrossFileScheduler {
 
     pub(super) fn summarizes(batch: &ProducerBatch) -> bool {
         batch.calls_active
+    }
+
+    /// What a file keeps of its scope tables once its job is done: for its consumers' pass, the
+    /// table `calls` terms read; nothing otherwise.
+    pub(super) fn retain_scopes(file: &mut FileState, consumes: bool) {
+        calls_state::retain_scopes(file, consumes);
     }
 
     pub(super) fn release_producer_scopes(state: &mut WorkspaceState, batch: &ProducerBatch) {
@@ -340,8 +347,7 @@ impl CrossFileScheduler {
             .iter()
             .cloned()
             .collect::<HashSet<_>>();
-        for (path, mut file, work) in phase_b {
-            file.scopes = None;
+        for (path, file, work) in phase_b {
             match work {
                 Ok(work) => refresh.metrics.merge(work),
                 Err(error) if refresh.evaluation_error.is_none() => {
@@ -375,8 +381,8 @@ impl CrossFileScheduler {
         state.crossfile.calls.forget(path);
     }
 
-    /// Derived closures may be released; producer indexes remain sufficient to rebuild them.
-    pub(super) fn evict(state: &mut WorkspaceState) {
-        state.crossfile.calls.evict();
+    #[cfg(test)]
+    pub(super) fn calls_state(state: &WorkspaceState) -> &calls_state::CallsState {
+        &state.crossfile.calls
     }
 }

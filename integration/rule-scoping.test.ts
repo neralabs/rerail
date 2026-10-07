@@ -83,7 +83,7 @@ describe("rule scope integration", () => {
     unrelatedHistory.close();
 
     worktree.upsertCosine(
-      { ...MOCK_COSINE_RULES[0]!, id: "shared", action: { delivery: "steer", content: "Updated once" } },
+      { ...MOCK_COSINE_RULES[0]!, id: "shared", action: { content: "Updated once" } },
       { applicability: "project", now: 3_000 },
     );
     second.close();

@@ -14,6 +14,7 @@ import {
 } from "../src/scoped-rule-catalog.js";
 import { exportRules, exportScopedRules, importScopedRules } from "../src/rule-bootstrap.js";
 import { parseCosineRuleDocument } from "../src/rule-schema.js";
+import { loadLegacyCosineRuleSources } from "../src/rule-sources.js";
 import { SqliteRuleStore } from "../src/rule-store.js";
 import { SqliteTranscriptReader, SqliteTranscriptStore } from "../src/transcript-store.js";
 import { MOCK_COSINE_RULES, MOCK_POLICY_RULES } from "../src/seed.js";
@@ -86,7 +87,7 @@ describe("ScopedRuleCatalog", () => {
     expect(project.get("shared")).toMatchObject({ applicability: "global", origin: { kind: "global" }, enabled: true });
 
     project.upsertCosine(
-      { ...MOCK_COSINE_RULES[0]!, id: "shared", action: { delivery: "steer", content: "Project override" } },
+      { ...MOCK_COSINE_RULES[0]!, id: "shared", action: { content: "Project override" } },
       { applicability: "project", now: 1_200 },
     );
     expect(project.get("shared")).toMatchObject({
@@ -122,7 +123,7 @@ describe("ScopedRuleCatalog", () => {
     expect(unrelated.cosineRules()).toEqual([]);
 
     first.upsertCosine(
-      { ...MOCK_COSINE_RULES[0]!, id: "project-rule", action: { delivery: "steer", content: "Updated once" } },
+      { ...MOCK_COSINE_RULES[0]!, id: "project-rule", action: { content: "Updated once" } },
       { applicability: "project", now: 1_300 },
     );
     expect(second.get("project-rule")).toMatchObject({ revision: 2, rule: { action: { content: "Updated once" } } });
@@ -150,7 +151,7 @@ describe("ScopedRuleCatalog", () => {
     expect(catalog.migrateLegacyRules(legacyPath, 4_000)).toBe(0);
     expect(catalog.get("legacy")).toMatchObject({
       applicability: "project",
-      catalogOrigin: "migrated",
+      catalogOrigin: "user",
       createdAt: 1_000,
       updatedAt: 2_000,
       revision: 2,
@@ -216,7 +217,7 @@ describe("ScopedRuleCatalog", () => {
     destination.close();
   });
 
-  it("validates scoped imports before atomically changing the catalog and accepts v1 dumps", async () => {
+  it("validates scoped imports before atomically changing the catalog and rejects checkout dumps and dumps that predate the current rule contract", async () => {
     const sourcePath = await catalogPath();
     const output = join(temporaryDirectories.at(-1)!, "rules.json");
     const source = ScopedRuleCatalog.open(sourcePath, { repositoryId: "source", workspaceRoot: "/source" });
@@ -239,8 +240,13 @@ describe("ScopedRuleCatalog", () => {
     legacy.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "legacy-v1" }, { now: 1_000 });
     exportRules(legacy, legacyDump);
     legacy.close();
-    expect(importScopedRules(destination, legacyDump)).toBe(1);
-    expect(destination.get("legacy-v1")).toMatchObject({ applicability: "project", catalogOrigin: "migrated" });
+    expect(() => importScopedRules(destination, legacyDump)).toThrow(/is a checkout rules dump; only v4 catalog dumps can be imported/u);
+    for (const version of [1, 2, 3]) {
+      writeFileSync(output, JSON.stringify({ ...dump, version, rules: dump.rules.slice(0, 1) }));
+      expect(() => importScopedRules(destination, output))
+        .toThrow(new RegExp(`is a v${version} rules dump, which predates the current rule contract; only v4 dumps can be imported`, "u"));
+    }
+    expect(destination.list()).toEqual([]);
     destination.close();
   });
 
@@ -270,7 +276,7 @@ describe("ScopedRuleCatalog", () => {
     global.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "broken-inherited" }, { applicability: "global", now: 1_000 });
     const raw = new Database(path);
     raw.prepare("UPDATE catalog_rules SET document_json = ? WHERE rule_id = ?").run(
-      JSON.stringify({ kind: "cosine", rule: { id: "broken-inherited", unknown: true } }),
+      JSON.stringify({ kind: "conversation", rule: { id: "broken-inherited", unknown: true } }),
       "broken-inherited",
     );
     raw.close();
@@ -298,7 +304,7 @@ describe("ScopedRuleCatalog", () => {
     await expectCatalogReservation(
       () => {},
       catalog => {
-        catalog.restore([{ document: { kind: "cosine", rule: { ...MOCK_COSINE_RULES[0]!, id: "restored" } } }]);
+        catalog.restore([{ document: { kind: "conversation", rule: { ...MOCK_COSINE_RULES[0]!, id: "restored" } } }]);
       },
       catalog => { expect(catalog.get("restored")).toMatchObject({ rule: { id: "restored" } }); },
     );
@@ -321,16 +327,16 @@ describe("ScopedRuleCatalog", () => {
     const reader = ScopedRuleCatalog.open(path, { repositoryId: "repo", workspaceRoot: "/repo" });
     const writer = ScopedRuleCatalog.open(path, { repositoryId: "repo", workspaceRoot: "/repo" });
     const initialVersion = reader.dataVersion();
-    writer.upsertDocument({ kind: "policy", rule: MOCK_POLICY_RULES[0]! }, { now: 1_000 });
+    writer.upsertDocument({ kind: "file", rule: MOCK_POLICY_RULES[0]! }, { now: 1_000 });
     writer.upsertDocument(
       {
-        kind: "cosine",
+        kind: "conversation",
         rule: {
           ...MOCK_COSINE_RULES[0]!,
           id: "cosine-filter",
           reference: "Generated API client",
           sample: { source: "assistant-text", boundary: "sentence" },
-          action: { delivery: "steer", content: "Use the generated client." },
+          action: { content: "Use the generated client." },
         },
       },
       { enabled: false, now: 2_000 },
@@ -341,13 +347,15 @@ describe("ScopedRuleCatalog", () => {
     expect(reader.cosineIds()).toEqual(new Set(["cosine-filter"]));
     expect(reader.cosineRules()).toEqual([]);
     expect(reader.list({
-      kind: "cosine",
+      kind: "conversation",
       enabled: false,
       text: "generated",
       source: "assistant-text",
       boundary: "sentence",
-      delivery: "steer",
+      mode: "steer",
     })).toEqual([expect.objectContaining({ rule: expect.objectContaining({ id: "cosine-filter" }) })]);
+    expect(reader.list({ mode: "steer" }).map(stored => stored.rule.id)).toEqual(["cosine-filter", MOCK_POLICY_RULES[0]!.id]);
+    expect(reader.list({ mode: "log" })).toEqual([]);
     reader.close();
     writer.close();
   });
@@ -355,9 +363,9 @@ describe("ScopedRuleCatalog", () => {
   it("keeps local seed edits while refreshing unchanged bundled definitions", async () => {
     const path = await catalogPath();
     const catalog = ScopedRuleCatalog.open(path, { repositoryId: "repo", workspaceRoot: "/repo" });
-    const bundled = { kind: "cosine" as const, rule: { ...MOCK_COSINE_RULES[0]!, id: "bundled" } };
+    const bundled = { kind: "conversation" as const, rule: { ...MOCK_COSINE_RULES[0]!, id: "bundled" } };
     const refreshed = {
-      kind: "cosine" as const,
+      kind: "conversation" as const,
       rule: { ...bundled.rule, reference: "Updated bundled reference" },
     };
 
@@ -374,15 +382,63 @@ describe("ScopedRuleCatalog", () => {
     const path = await catalogPath();
     const catalog = ScopedRuleCatalog.open(path, { repositoryId: "repo", workspaceRoot: "/repo" });
     const rule = { ...MOCK_COSINE_RULES[0]!, id: "opt-in" };
-    const optIn = { kind: "cosine" as const, rule, enabledByDefault: false };
+    const optIn = { kind: "conversation" as const, rule, enabledByDefault: false };
 
     expect(catalog.seed([optIn], 1_000)).toEqual({ inserted: 1, refreshed: 0, kept: 0 });
-    expect(catalog.get("opt-in")).toMatchObject({ enabled: false, sourceDigest: ruleDocumentDigest({ kind: "cosine", rule }) });
+    expect(catalog.get("opt-in")).toMatchObject({ enabled: false, sourceDigest: ruleDocumentDigest({ kind: "conversation", rule }) });
     expect(catalog.get("opt-in")).not.toHaveProperty("enabledByDefault");
     expect(catalog.cosineRules()).toEqual([]);
     catalog.setEnabled({ ids: ["opt-in"] }, true, 1_500);
     expect(catalog.seed([{ ...optIn, rule: { ...rule, reference: "Updated" } }], 2_000)).toEqual({ inserted: 0, refreshed: 1, kept: 0 });
     expect(catalog.get("opt-in")).toMatchObject({ enabled: true, rule: { reference: "Updated" } });
+    catalog.close();
+  });
+
+  it("never reads a legacy source again once it was imported, so a retired format cannot break startup", async () => {
+    const path = await catalogPath();
+    const root = temporaryDirectories.at(-1)!;
+    const catalog = ScopedRuleCatalog.open(path, { repositoryId: "repo", workspaceRoot: root });
+    const rulesFile = join(root, "conversation-rules.json");
+    const document = (rule: unknown) => JSON.stringify({ version: 1, rules: [rule] });
+    const { mode: _mode, ...legacyRule } = { ...MOCK_COSINE_RULES[0]!, id: "file-rule", action: { delivery: "steer", content: "Old shape" } };
+    writeFileSync(rulesFile, document({ ...MOCK_COSINE_RULES[0]!, id: "file-rule" }));
+    const [source] = loadLegacyCosineRuleSources({}, root, "conversation-rules.json");
+    expect(catalog.migrateCosineRules(source!.path, source!.rules, 1_000)).toBe(1);
+
+    writeFileSync(rulesFile, document(legacyRule));
+    const [imported] = loadLegacyCosineRuleSources({}, root, "conversation-rules.json");
+    expect(catalog.migrateCosineRules(imported!.path, imported!.rules, 2_000)).toBe(0);
+    expect(catalog.get("file-rule")?.rule.mode).toBe("steer");
+
+    const otherFile = join(root, "other-rules.json");
+    writeFileSync(otherFile, document(legacyRule));
+    const [fresh] = loadLegacyCosineRuleSources({ ruleFiles: [otherFile] }, root, "conversation-rules.json");
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      // A file in the retired shape that was never imported is skipped, not fatal, and stays unrecorded.
+      expect(catalog.migrateCosineRules(fresh!.path, fresh!.rules, 3_000)).toBe(0);
+      expect(stderr.mock.calls.map(([line]) => String(line))).toContainEqual(
+        expect.stringMatching(/^rerail: skipped rule file \S+other-rules\.json: it was written before rule modes; /u),
+      );
+    } finally {
+      stderr.mockRestore();
+    }
+    // Any other invalid file still fails, as it always did.
+    writeFileSync(otherFile, JSON.stringify({ version: 1, rules: "not-an-array" }));
+    const [malformed] = loadLegacyCosineRuleSources({ ruleFiles: [otherFile] }, root, "conversation-rules.json");
+    expect(() => catalog.migrateCosineRules(malformed!.path, malformed!.rules, 3_200)).toThrow("rule document.rules must be an array");
+    writeFileSync(otherFile, document({ ...MOCK_COSINE_RULES[0]!, id: "fixed-rule" }));
+    const [fixed] = loadLegacyCosineRuleSources({ ruleFiles: [otherFile] }, root, "conversation-rules.json");
+    expect(catalog.migrateCosineRules(fixed!.path, fixed!.rules, 3_500)).toBe(1);
+
+    const legacyPath = join(root, "legacy.sqlite");
+    const legacy = new SqliteRuleStore(legacyPath);
+    legacy.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "legacy-db" }, { now: 1_000 });
+    legacy.close();
+    expect(catalog.migrateLegacyRules(legacyPath, 4_000)).toBe(1);
+    await rm(legacyPath);
+    writeFileSync(legacyPath, "not a database");
+    expect(catalog.migrateLegacyRules(legacyPath, 5_000)).toBe(0);
     catalog.close();
   });
 
@@ -404,7 +460,7 @@ describe("ScopedRuleCatalog", () => {
     try {
       const catalog = openScopedRuleCatalog(root);
       expect(catalog.path).toBe(join(home, "rerail.sqlite"));
-      expect(catalog.get("legacy-open")).toMatchObject({ applicability: "project", catalogOrigin: "migrated" });
+      expect(catalog.get("legacy-open")).toMatchObject({ applicability: "project", catalogOrigin: "user" });
       expect(catalog.migrateCheckoutRules()).toBe(0);
       expect(catalog.migrateCosineRules(join(root, "host-rules.json"), [
         { ...MOCK_COSINE_RULES[0]!, id: "host-rule" },
@@ -430,7 +486,7 @@ describe("ScopedRuleCatalog", () => {
     legacy.close();
 
     const catalog = ScopedRuleCatalog.open(join(root, "home", "rerail.sqlite"), { repositoryId: "repo", workspaceRoot: root });
-    expect(catalog.get("legacy-explicit")).toMatchObject({ applicability: "project", catalogOrigin: "migrated" });
+    expect(catalog.get("legacy-explicit")).toMatchObject({ applicability: "project", catalogOrigin: "user" });
     catalog.close();
   });
 
@@ -441,7 +497,7 @@ describe("ScopedRuleCatalog", () => {
     catalog.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "broken" }, { now: 1_000 });
     const database = new Database(path);
     database.prepare("UPDATE catalog_rules SET document_json = ? WHERE rule_id = ?")
-      .run(JSON.stringify({ kind: "cosine", rule: { id: "broken", unknown: true } }), "broken");
+      .run(JSON.stringify({ kind: "conversation", rule: { id: "broken", unknown: true } }), "broken");
     database.close();
 
     expect(catalog.list().map(({ rule }) => rule.id)).toEqual(["healthy"]);
@@ -460,7 +516,7 @@ describe("rules.sqlite adoption", () => {
     const catalogs = repositories.map(repository => ScopedRuleCatalog.open(path, repository));
     const rule = MOCK_COSINE_RULES[0]!;
     catalogs[0]!.restore(Array.from({ length: ruleCount }, (_value, index) => ({
-      document: { kind: "cosine" as const, rule: { ...rule, id: `rule-${index}` } },
+      document: { kind: "conversation" as const, rule: { ...rule, id: `rule-${index}` } },
       options: { applicability: index % 2 === 0 ? "global" as const : "project" as const, now: 1_000 + index },
     })));
     catalogs[1]!.upsertCosine({ ...rule, id: "project-b-only" }, { now: 5_000 });

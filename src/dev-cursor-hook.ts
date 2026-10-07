@@ -1,4 +1,3 @@
-import { isRerailDisabled } from "./checkout-control.js";
 import {
   cursorSession,
   cursorWorkspace,
@@ -11,7 +10,6 @@ import { emitHookOutput } from "./hook-adapter.js";
 
 export async function runCursorHook(input: CursorHookInput): Promise<CursorHookOutput> {
   const workspace = cursorWorkspace(input);
-  if (isRerailDisabled(workspace)) return {};
   return runDevHostHook("cursor", workspace, cursorSession(input).sessionId, (runtime, storageRoot) =>
     handleCursorEvent(input, runtime, storageRoot));
 }

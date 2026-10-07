@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:class-name",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `class-name` rule with its default options (https://palantir.github.io/tslint/rules/class-name/). Enforces PascalCased class and interface names.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "class-name",
       "forbid": {
@@ -61,10 +62,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "CLASS_NAME",
-        "severity": "error",
         "message": "Class name must be in pascal case"
       }
     }

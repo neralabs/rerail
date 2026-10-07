@@ -1,0 +1,55 @@
+{
+  "tool": "phpcs",
+  "version": "4.0.4",
+  "source": {
+    "kind": "fixtures",
+    "origin": "rerail (authored sample, not copied upstream)",
+    "rules": [
+      "Generic.PHP.ForbiddenFunctions.Found",
+      "Generic.PHP.ForbiddenFunctions.FoundWithAlternative"
+    ],
+    "files": [
+      "broken.php",
+      "clean.php",
+      "forbidden.php"
+    ]
+  },
+  "findings": [
+    {
+      "rule": "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+      "path": "broken.php",
+      "line": 3,
+      "column": 6
+    },
+    {
+      "rule": "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+      "path": "forbidden.php",
+      "line": 4,
+      "column": 6
+    },
+    {
+      "rule": "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+      "path": "forbidden.php",
+      "line": 7,
+      "column": 6
+    },
+    {
+      "rule": "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+      "path": "forbidden.php",
+      "line": 7,
+      "column": 28
+    },
+    {
+      "rule": "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+      "path": "forbidden.php",
+      "line": 8,
+      "column": 1
+    },
+    {
+      "rule": "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+      "path": "forbidden.php",
+      "line": 9,
+      "column": 49
+    }
+  ]
+}

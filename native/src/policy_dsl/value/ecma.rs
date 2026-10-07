@@ -198,7 +198,7 @@ fn follow<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     if followed.destructured {
         return Value::Unknown;
     }
-    let Some(target) = followed.value.find(node.root().root()) else {
+    let Some(target) = followed.value.find_near(node.root().root(), node) else {
         return Value::Unknown;
     };
     match decode(&target, context) {

@@ -744,7 +744,7 @@ fn local_results_publish_across_sqlite_variable_limit_chunks() {
         .connection
         .lock()
         .unwrap()
-        .set_limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER, 100)
+        .set_limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER, 40)
         .unwrap();
     let snapshot = store
         .put_snapshot(
@@ -766,7 +766,7 @@ fn local_results_publish_across_sqlite_variable_limit_chunks() {
                     policy: HashKey::sha256(format!("policy-{index}").as_bytes()),
                     check: format!("check-{index}"),
                 },
-                context: HashKey::sha256(b"bulk-context"),
+                context: HashKey::sha256(format!("bulk-context-{}", index % 2).as_bytes()),
                 raw_length: bytes.len(),
                 frame: zstd::stream::encode_all(Cursor::new(bytes), 3).unwrap(),
             }
@@ -784,12 +784,31 @@ fn local_results_publish_across_sqlite_variable_limit_chunks() {
         candidates_current: false,
     };
     let stored = store.publish_overlay_file(workspace, publication).unwrap();
-    let restored = store
-        .local_check_results(stored.source, HashKey::sha256(b"bulk-context"), catalog)
-        .unwrap();
-    assert_eq!(restored.len(), results.len());
-    assert!(restored.iter().any(|result| result.bytes == b"result-0"));
-    assert!(restored.iter().any(|result| result.bytes == b"result-11"));
+    // Six results a statement at 40 variables: two statements, each naming both contexts.
+    for context in 0..2 {
+        let mut restored = store
+            .local_check_results(
+                stored.source,
+                HashKey::sha256(format!("bulk-context-{context}").as_bytes()),
+                catalog,
+            )
+            .unwrap()
+            .into_iter()
+            .map(|result| (result.candidate.check, result.bytes))
+            .collect::<Vec<_>>();
+        restored.sort();
+        let mut expected = (0..12)
+            .filter(|index| index % 2 == context)
+            .map(|index| {
+                (
+                    format!("check-{index}"),
+                    format!("result-{index}").into_bytes(),
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort();
+        assert_eq!(restored, expected, "context {context}");
+    }
 }
 
 #[test]

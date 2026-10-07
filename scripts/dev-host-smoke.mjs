@@ -37,15 +37,15 @@ const invoke = async (name, input) => {
 await handlers.get("session_start")({}, context);
 try {
   const rule = {
-    id: `native-${host}-rule`, reference: "Build an isolated development container.",
+    id: `native-${host}-rule`, mode: "steer", reference: "Build an isolated development container.",
     match: { operator: "gte", threshold: 0.99 },
     sample: { source: "user-input", boundary: "message" },
-    action: { delivery: "nextTurn", content: `Only native ${host}` }, repeat: { mode: "once" },
+    action: { content: `Only native ${host}` }, repeat: { mode: "once" },
   };
-  await invoke("cosine_rules", { action: "add", rule });
-  const listed = await invoke("cosine_rules", { action: "list" });
+  await invoke("conversation_rules", { action: "add", rule });
+  const listed = await invoke("conversation_rules", { action: "list" });
   assert.ok(listed.rules.some(entry => entry.rule.id === rule.id));
-  const tested = await invoke("cosine_rules", { action: "test", sample: { source: "user-input", boundary: "message", text: rule.reference } });
+  const tested = await invoke("conversation_rules", { action: "test", sample: { source: "user-input", boundary: "message", text: rule.reference } });
   assert.ok(tested.matches.some(match => match.ruleId === rule.id));
   // Reload replaces the native semantic session, so create cache-backed IDs only after it completes.
   await commands.get("cosine-rules").handler("reload", context);
@@ -69,8 +69,8 @@ try {
   await handlers.get(host === "omp" ? "before_agent_start" : "input")(prompt, context);
   assert.ok(deliveries.some(message => JSON.stringify(message).includes(`Only native ${host}`)));
   assert.ok(entries.some(entry => entry.customType === "omp-cosine-rules.mutation"));
-  await invoke("cosine_rules", { action: "remove", ids: [rule.id] });
-  const removed = await invoke("cosine_rules", { action: "list" });
+  await invoke("conversation_rules", { action: "remove", ids: [rule.id] });
+  const removed = await invoke("conversation_rules", { action: "list" });
   assert.ok(!removed.rules.some(entry => entry.rule.id === rule.id));
   console.log(`PASS ${host}: installed bridge, events, cosine add/list/test/remove, select/project/relate/mark; host native addon unavailable`);
 } finally {

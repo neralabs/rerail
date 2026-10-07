@@ -54,7 +54,8 @@
     "skills",
     "CHANGELOG.md",
     "THIRD_PARTY_NOTICES",
-    "policies/executable-policy-dsl/rules"
+    "policies/executable-policy-dsl/rules",
+    "policies/rule-packs"
   ],
   "scripts": {
     "build": "npm run build:clean && npm run build:native && npm run build:ts && npm run build:omp && npm run build:events && npm run build:cursor && npm run build:claude && npm run build:codex && npm run build:ui",
@@ -91,6 +92,8 @@
     "benchmark": "node --import tsx benchmark/kernel.ts",
     "benchmark:rerailer": "node --import tsx benchmark/rerailer.ts",
     "benchmark:workspace-size": "node --expose-gc --import tsx benchmark/workspace-size.ts",
+    "conformance:languages": "node --import tsx conformance/languages/cli.ts",
+    "conformance:languages:check": "node --import tsx conformance/languages/cli.ts --check",
     "generate:schema": "node --import tsx scripts/generate-schema-sql.ts",
     "generate:terminal-brand": "node scripts/generate-terminal-brand.mjs",
     "generate:ui-tokens": "node scripts/generate-ui-tokens.mjs",

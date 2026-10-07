@@ -1,4 +1,4 @@
-import { isRerailDisabled } from "./checkout-control.js";
+import { hookRerailStarted } from "./repository-start.js";
 import {
   cursorSession,
   cursorWorkspace,
@@ -16,7 +16,7 @@ export async function runCursorHook(
   options: HookOptions = {},
 ): Promise<CursorHookOutput> {
   const workspace = cursorWorkspace(input);
-  if (isRerailDisabled(workspace)) return {};
+  if (!await hookRerailStarted("cursor", workspace, options.databasePath)) return {};
   return runHostHook("cursor", workspace, cursorSession(input).sessionId, options, (runtime, storageRoot) =>
     handleCursorEvent(input, runtime, storageRoot));
 }

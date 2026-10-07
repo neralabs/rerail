@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-tautology-expression",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-tautology-expression` rule with its default options (https://palantir.github.io/tslint/rules/no-tautology-expression/). Flags relational/equality/logical comparisons whose two sides are the same literal, identifier or property access (or two boolean / two null literals).",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "tautology",
       "forbid": {
@@ -106,10 +107,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_TAUTOLOGY_EXPRESSION",
-        "severity": "error",
         "message": "Both sides of this equality comparison are the same, so the expression is either a tautology or a contradiction."
       }
     }

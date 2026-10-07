@@ -1,0 +1,131 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "python-conformance:bandit-b113-request-without-timeout",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Bandit 1.8.6's B113 request_without_timeout: a `requests` call without `timeout`, or a `requests`/`httpx` call whose `timeout` keyword is `None` (Bandit reads `timeout` as a keyword only). Port of the kernel test b113_requests_without_a_timeout_or_with_none (rerail/native/src/policy_dsl/value/rules.rs). Bandit's `# nosec` is not modelled; its recordings run with --ignore-nosec.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "request-without-timeout",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "any": [
+              {
+                "has": {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "requests.get",
+                      "requests.options",
+                      "requests.head",
+                      "requests.post",
+                      "requests.put",
+                      "requests.patch",
+                      "requests.delete"
+                    ]
+                  }
+                },
+                "arguments": {
+                  "signature": [
+                    "*",
+                    "timeout"
+                  ],
+                  "absent": [
+                    "timeout"
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "any": [
+                    {
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "attribute"
+                        }
+                      ],
+                      "resolves": {
+                        "import": [
+                          "requests.get",
+                          "requests.options",
+                          "requests.head",
+                          "requests.post",
+                          "requests.put",
+                          "requests.patch",
+                          "requests.delete"
+                        ]
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "attribute"
+                        }
+                      ],
+                      "resolves": {
+                        "import": [
+                          "httpx.get",
+                          "httpx.options",
+                          "httpx.head",
+                          "httpx.post",
+                          "httpx.put",
+                          "httpx.patch",
+                          "httpx.delete",
+                          "httpx.request",
+                          "httpx.stream",
+                          "httpx.Client",
+                          "httpx.AsyncClient"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "arguments": {
+                  "signature": [
+                    "*",
+                    "timeout"
+                  ],
+                  "bind": {
+                    "T": "timeout"
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "T": {
+              "kind": "none"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B113",
+        "message": "Bandit B113 (request-without-timeout)"
+      }
+    }
+  ]
+}

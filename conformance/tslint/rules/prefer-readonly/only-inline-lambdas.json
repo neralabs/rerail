@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:prefer-readonly",
   "revision": 1,
+  "mode": "steer",
   "description": "Private non-readonly fields and parameter properties never reassigned in their class: no `this.x`/alias`.x` write (=, op=, ++/--, delete) outside direct constructor code for instance members, no `ClassName.x` write for statics; writes inside nested classes belong to those classes. `this` aliases are `const a = this` in the class. only-inline-lambdas: fields initialised with an arrow function only.",
   "scope": {"include": ["**/*"], "exclude": []},
-  "checks": [
+  "clauses": [
     {
       "id": "private-member",
       "forbid": {
@@ -175,10 +176,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "PREFER_READONLY",
-        "severity": "error",
         "message": "Private member is never reassigned; mark it as 'readonly'."
       }
     }

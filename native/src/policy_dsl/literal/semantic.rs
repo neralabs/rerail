@@ -7,6 +7,8 @@
 
 use super::PNode;
 use super::annotation::kind_name;
+use crate::policy_dsl::identifier::nfkc;
+use std::borrow::Cow;
 use std::collections::HashSet;
 
 /// A scope around a node, as Ruff's `ScopeKind` tells them apart for these checks.
@@ -159,10 +161,10 @@ fn elements(node: &PNode) -> Vec<&PNode> {
 
 /// The names a comprehension target stores (Ruff's `StoredNameFinder`): through tuples, lists
 /// and stars, not into attributes or subscripts.
-fn stored_names<'t>(target: &PNode, text: &'t str, names: &mut HashSet<&'t str>) {
+fn stored_names<'t>(target: &PNode, text: &'t str, names: &mut HashSet<Cow<'t, str>>) {
     match kind(target) {
         "identifier" => {
-            names.insert(&text[target.start..target.end]);
+            names.insert(nfkc(&text[target.start..target.end]));
         }
         "pattern_list"
         | "tuple_pattern"
@@ -202,8 +204,9 @@ impl<'c> Checker<'c> {
         });
     }
 
-    fn name(&self, node: &PNode) -> &'c str {
-        &self.text[node.start..node.end]
+    /// An identifier's name, NFKC-normalized as Ruff's parser reads it.
+    fn name(&self, node: &PNode) -> Cow<'c, str> {
+        nfkc(&self.text[node.start..node.end])
     }
 
     fn innermost(&self) -> impl Iterator<Item = &Scope> {
@@ -446,7 +449,7 @@ impl<'c> Checker<'c> {
             return;
         }
         let name = self.name(node);
-        if let Some(statement) = (self.host.globals)(name)
+        if let Some(statement) = (self.host.globals)(&name)
             && (self.source_start)(node.start) < statement
         {
             let message = format!("name `{name}` is used prior to global declaration");
@@ -590,7 +593,12 @@ impl<'c> Checker<'c> {
     }
 
     /// Ruff's `ReboundComprehensionVisitor`: a walrus storing a comprehension's target.
-    fn rebound(&mut self, node: &PNode, targets: &HashSet<&str>, direct: &HashSet<&str>) {
+    fn rebound(
+        &mut self,
+        node: &PNode,
+        targets: &HashSet<Cow<'_, str>>,
+        direct: &HashSet<Cow<'_, str>>,
+    ) {
         match kind(node) {
             "lambda" => {
                 if let Some(parameters) = field(node, "parameters") {
@@ -614,7 +622,7 @@ impl<'c> Checker<'c> {
                     && kind(name) == "identifier"
                 {
                     let text = self.name(name);
-                    if targets.contains(text) || direct.contains(text) {
+                    if targets.contains(text.as_ref()) || direct.contains(text.as_ref()) {
                         self.error(
                             name.start,
                             name.end,
@@ -798,6 +806,26 @@ mod tests {
                 vec![Scope::Module, Scope::Function { is_async: false }]
             ),
             ["g:name `g` is used prior to global declaration"]
+        );
+        // Names are read under NFKC, as Ruff's parser reads them; errors stay at their text.
+        assert_eq!(
+            errors(
+                "f(a=1, 𝐚=2) or (lambda a, 𝐚: 1) or [x for 𝐜 in d if (c := 1)] or (__𝐝𝐞𝐛𝐮𝐠__ := 1)",
+                module()
+            ),
+            [
+                "𝐚=2:Duplicate keyword argument `a`",
+                "𝐚:Duplicate parameter \"a\"",
+                "c:assignment expression cannot rebind comprehension variable",
+                "__𝐝𝐞𝐛𝐮𝐠__:cannot assign to `__debug__`",
+            ]
+        );
+        assert_eq!(
+            errors(
+                "𝐠",
+                vec![Scope::Module, Scope::Function { is_async: false }]
+            ),
+            ["𝐠:name `g` is used prior to global declaration"]
         );
     }
 }

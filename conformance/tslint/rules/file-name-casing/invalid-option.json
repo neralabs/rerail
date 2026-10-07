@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:file-name-casing",
   "revision": 1,
+  "mode": "steer",
   "description": "Invalid option: TSLint warns and checks nothing; this override never matches (path regex requiring an empty path).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "inert",
       "forbid": {
@@ -18,10 +19,9 @@
           "pattern": "\\A\\z"
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.start",
         "code": "FILE_NAME_CASING",
-        "severity": "error",
         "message": "unreachable"
       }
     }

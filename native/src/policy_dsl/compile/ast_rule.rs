@@ -10,7 +10,8 @@ use crate::policy_dsl::json::{
 };
 use crate::policy_dsl::language::{GrammarDialect, PatternSource, rule_pattern};
 use crate::policy_dsl::matcher::{
-    AstMatcher, CallArgs, CompareText, Count, FieldRelation, Reading, StopBy, UtilCall, UtilRef,
+    AstMatcher, CallArgs, CompareText, Count, FieldRelation, Reading, Related, StopBy, UtilCall,
+    UtilRef,
 };
 use crate::policy_dsl::model::Limits;
 use ast_grep_core::Language;
@@ -79,7 +80,7 @@ pub(super) fn is_rule_key(key: &str) -> bool {
     AST_RULE_KEYS.contains(&key)
 }
 
-type RelationConstructor = fn(Box<AstMatcher>, StopBy) -> AstMatcher;
+type RelationConstructor = fn(Box<Related>, StopBy) -> AstMatcher;
 
 pub(super) const AST_RELATIONS: [(&str, RelationConstructor); 4] = [
     ("inside", AstMatcher::Inside),
@@ -592,7 +593,7 @@ pub(crate) fn compile_ast_rule(
             terms.push(
                 match compile_relation(relation, language, &relation_path, gaps, utils)? {
                     (AstMatcher::Never, _, _) => AstMatcher::Never,
-                    (inner, stop, None) => constructor(Box::new(inner), stop),
+                    (inner, stop, None) => constructor(Related::new(inner), stop),
                     // ast-grep-config's `field_name_to_id`: a name the grammar lacks is refused.
                     (inner, stop, Some(name)) => match language.field_to_id(name) {
                         Some(field) => AstMatcher::Field(Box::new(FieldRelation {
@@ -600,6 +601,7 @@ pub(crate) fn compile_ast_rule(
                             field,
                             rule: inner,
                             stop,
+                            filter: std::sync::OnceLock::new(),
                         })),
                         None => grammar_gap(
                             gaps,
@@ -704,7 +706,7 @@ pub(crate) fn compile_ast_rule(
             .find_map(|(name, constructor)| (*name == key).then_some(*constructor))
             .expect("count_bounds returns a relation key");
         terms.push(AstMatcher::Count(Box::new(Count {
-            relation: constructor(Box::new(inner), stop),
+            relation: constructor(Related::new(inner), stop),
             min,
             max,
         })));
@@ -871,14 +873,14 @@ mod tests {
         ));
         assert_eq!(
             reason,
-            "/checks/0/forbid/ast/rule/has/stopBy must be \"neighbor\", \"end\" or a rule object"
+            "/clauses/0/forbid/ast/rule/has/stopBy must be \"neighbor\", \"end\" or a rule object"
         );
         let reason = rejection(compile_typescript_rule(
             json!({ "kind": "identifier", "has": { "kind": "identifier", "stopBy": "far" } }),
         ));
         assert_eq!(
             reason,
-            "/checks/0/forbid/ast/rule/has/stopBy has unsupported value `far`; expected \"neighbor\", \"end\" or a rule object"
+            "/clauses/0/forbid/ast/rule/has/stopBy has unsupported value `far`; expected \"neighbor\", \"end\" or a rule object"
         );
         // A stop rule is an ast rule: its shape is validated like any sub-rule.
         let reason = rejection(compile_typescript_rule(json!({
@@ -887,14 +889,14 @@ mod tests {
         })));
         assert_eq!(
             reason,
-            "unknown field `field` at /checks/0/forbid/ast/rule/inside/stopBy"
+            "unknown field `field` at /clauses/0/forbid/ast/rule/inside/stopBy"
         );
         let reason = rejection(compile_typescript_rule(json!({
             "kind": "identifier",
             "inside": { "kind": "call_expression", "stopBy": { "kind": "no_such_kind" } },
         })));
         assert!(
-            reason.starts_with("/checks/0/forbid/ast/rule/inside/stopBy/kind: "),
+            reason.starts_with("/clauses/0/forbid/ast/rule/inside/stopBy/kind: "),
             "{reason}"
         );
     }
@@ -921,7 +923,7 @@ mod tests {
             let reason = rejection(compile_typescript_rule(rule.clone()));
             assert_eq!(
                 reason,
-                format!("/checks/0/forbid/ast/{path} must be a non-empty string"),
+                format!("/clauses/0/forbid/ast/{path} must be a non-empty string"),
                 "{rule}"
             );
         }
@@ -937,7 +939,7 @@ mod tests {
             check_document(json!({
                 "id": "c",
                 "forbid": { "ast": { "language": "typescript", "rule": rule } },
-                "finding": finding(),
+                "violation": finding(),
             }))
         };
         assert!(
@@ -953,15 +955,15 @@ mod tests {
         for (rule, expected) in [
             (
                 json!({ "pattern": "f($A, 10)" }),
-                "/checks/0/forbid/ast/rule/pattern is 9 bytes; capabilities.limits.maxAstPatternBytes allows at most 8",
+                "/clauses/0/forbid/ast/rule/pattern is 9 bytes; capabilities.limits.maxAstPatternBytes allows at most 8",
             ),
             (
                 json!({ "pattern": { "context": "class A { x = 1 }", "selector": "public_field_definition" } }),
-                "/checks/0/forbid/ast/rule/pattern/context is 17 bytes; capabilities.limits.maxAstPatternBytes allows at most 8",
+                "/clauses/0/forbid/ast/rule/pattern/context is 17 bytes; capabilities.limits.maxAstPatternBytes allows at most 8",
             ),
             (
                 json!({ "kind": "identifier", "not": { "regex": "^abcd" } }),
-                "/checks/0/forbid/ast/rule/not/regex is 5 bytes; capabilities.limits.maxRegexPatternBytes allows at most 4",
+                "/clauses/0/forbid/ast/rule/not/regex is 5 bytes; capabilities.limits.maxRegexPatternBytes allows at most 4",
             ),
         ] {
             assert_eq!(
@@ -972,11 +974,11 @@ mod tests {
         let regex = check_document(json!({
             "id": "c",
             "forbid": { "regex": { "source": "file.path", "pattern": "é{2}" } },
-            "finding": finding(),
+            "violation": finding(),
         }));
         assert_eq!(
             rejection(compile_document_with(regex, &capabilities)),
-            "/checks/0/forbid/regex/pattern is 5 bytes; capabilities.limits.maxRegexPatternBytes allows at most 4"
+            "/clauses/0/forbid/regex/pattern is 5 bytes; capabilities.limits.maxRegexPatternBytes allows at most 4"
         );
         let missing = capabilities_with(|capabilities| {
             capabilities["limits"]
@@ -1032,14 +1034,14 @@ mod tests {
             assert_eq!(
                 reason,
                 format!(
-                    "/checks/0/forbid/ast/rule/kind: `{kind}` is an abstract kind (a grammar supertype) that no node carries; list its concrete kinds under `any` (typescript, tsx, javascript grammars)"
+                    "/clauses/0/forbid/ast/rule/kind: `{kind}` is an abstract kind (a grammar supertype) that no node carries; list its concrete kinds under `any` (typescript, tsx, javascript grammars)"
                 ),
             );
         }
         let python = check_document(json!({
             "id": "c",
             "forbid": { "ast": { "language": "python", "rule": { "kind": "identifier", "has": { "kind": "expression" } } } },
-            "finding": finding(),
+            "violation": finding(),
         }));
         let reason = rejection(compile_document_with(
             python,
@@ -1047,7 +1049,7 @@ mod tests {
         ));
         assert!(
             reason.starts_with(
-                "/checks/0/forbid/ast/rule/has/kind: `expression` is an abstract kind"
+                "/clauses/0/forbid/ast/rule/has/kind: `expression` is an abstract kind"
             ),
             "{reason}"
         );
@@ -1068,7 +1070,7 @@ mod tests {
                 check_document(json!({
                     "id": "c",
                     "forbid": { "ast": { "language": "python", "rule": { "pattern": pattern } } },
-                    "finding": finding(),
+                    "violation": finding(),
                 })),
                 &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
             )
@@ -1082,7 +1084,7 @@ mod tests {
             assert_eq!(
                 rejection(python(pattern)),
                 format!(
-                    "/checks/0/forbid/ast/rule/pattern: `{name}` is not a metavariable (names use A-Z, 0-9 and _) and Python source has no `$`, so the pattern never matches (python grammar)"
+                    "/clauses/0/forbid/ast/rule/pattern: `{name}` is not a metavariable (names use A-Z, 0-9 and _) and Python source has no `$`, so the pattern never matches (python grammar)"
                 ),
                 "{pattern}"
             );
@@ -1111,14 +1113,14 @@ mod tests {
         ));
         assert_eq!(
             reason,
-            "unknown field `kinds` at /checks/0/forbid/ast/rule/has"
+            "unknown field `kinds` at /clauses/0/forbid/ast/rule/has"
         );
         let reason = rejection(compile_typescript_rule(
             json!({ "kind": "identifier", "regex": "(" }),
         ));
         assert_eq!(
             reason,
-            "/checks/0/forbid/ast/rule/regex: Parsing text matcher fails."
+            "/clauses/0/forbid/ast/rule/regex: Parsing text matcher fails."
         );
         // Grammar-dependent failures keep naming the grammar.
         let reason = rejection(compile_typescript_rule(json!({ "pattern": ")(" })));

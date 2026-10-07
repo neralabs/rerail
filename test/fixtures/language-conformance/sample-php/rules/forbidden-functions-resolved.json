@@ -1,0 +1,40 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sample-php:forbidden-functions-resolved",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Sample port of PHP_CodeSniffer's Generic.PHP.ForbiddenFunctions through name resolution: a call PHP resolves to sizeof or delete. Unsound under syntax errors (an error region could hide a declaration), so it skips such files.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "forbidden-function-call",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "kind": "function_call_expression",
+            "has": {
+              "field": "function",
+              "resolves": {
+                "import": [
+                  "sizeof",
+                  "delete"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+        "message": "The use of this function is forbidden"
+      }
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sample-php:forbidden-functions",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Sample port of PHP_CodeSniffer's Generic.PHP.ForbiddenFunctions with its default list (sizeof, delete).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "forbidden-function-call",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "kind": "function_call_expression",
+            "has": {
+              "field": "function",
+              "regex": "(?i)^\\\\?(sizeof|delete)$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+        "message": "The use of this function is forbidden"
+      }
+    }
+  ]
+}

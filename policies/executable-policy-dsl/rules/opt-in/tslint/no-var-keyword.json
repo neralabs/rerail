@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-var-keyword",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-var-keyword` rule with its default options (https://palantir.github.io/tslint/rules/no-var-keyword/). Disallows usage of the var keyword; `declare var` and `declare global { var }` are allowed.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "var-keyword",
       "forbid": {
@@ -67,10 +68,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_VAR_KEYWORD",
-        "severity": "error",
         "message": "Forbidden 'var' keyword, use 'let' or 'const' instead",
         "fix": "let"
       }

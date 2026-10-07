@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { z } from "zod";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../src/event-protocol.js";
+import { startTestRepository } from "../test/support/started-repository.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -12,12 +13,18 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).flatMap(path => [
     rm(path, { recursive: true, force: true }),
     rm(`${path}.home`, { recursive: true, force: true }),
+    rm(`${path}.workspace`, { recursive: true, force: true }),
   ]));
 });
 
+/** The stream runs in a started repository's workspace, beside the storage root it writes. */
 async function runFrames(storageRoot: string, frames: readonly string[]): Promise<readonly Record<string, unknown>[]> {
-  const { promise, resolve, reject } = Promise.withResolvers<readonly Record<string, unknown>[]>();
-  const child = spawn(process.execPath, ["dist/event-stream.js"], {
+  const { promise, resolve: settle, reject } = Promise.withResolvers<readonly Record<string, unknown>[]>();
+  const workspace = `${storageRoot}.workspace`;
+  await mkdir(workspace, { recursive: true });
+  startTestRepository(workspace, join(`${storageRoot}.home`, "rerail.sqlite"));
+  const child = spawn(process.execPath, [resolve("dist/event-stream.js")], {
+    cwd: workspace,
     env: { ...process.env, RERAIL_STORAGE_ROOT: storageRoot, RERAIL_HOME: `${storageRoot}.home` },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -37,7 +44,7 @@ async function runFrames(storageRoot: string, frames: readonly string[]): Promis
       .split("\n")
       .filter(Boolean)
       .map((line) => JSON.parse(line) as Record<string, unknown>);
-    resolve(results);
+    settle(results);
   });
   child.stdin.end(`${[RERAIL_EVENT_PROTOCOL_PREFACE, ...frames].join("\n")}\n`);
   return await promise;
@@ -65,7 +72,7 @@ describe("Rerail persistent event stream", () => {
     ]);
     expect(firstRun[0]).toEqual({ eventId: "start", deliveries: [] });
     expect(firstRun[1]).toEqual(expect.objectContaining({ eventId: "prompt" }));
-    z.array(z.object({ requested: z.literal("observe"), mechanism: z.literal("observe") }).passthrough())
+    z.array(z.object({ requested: z.literal("log"), mechanism: z.literal("observe") }).passthrough())
       .parse(firstRun[1]?.deliveries);
 
     const replay = await runFrames(storageRoot, [
@@ -79,7 +86,7 @@ describe("Rerail persistent event stream", () => {
         frame({ kind: "session-end", eventId: "end", sessionId: session.sessionId, session }),
     ]);
     expect(replay.map(response => response.eventId)).toEqual(["prompt", "end"]);
-    z.array(z.object({ requested: z.literal("observe"), mechanism: z.literal("observe") }).passthrough())
+    z.array(z.object({ requested: z.literal("log"), mechanism: z.literal("observe") }).passthrough())
       .parse(replay[0]?.deliveries);
     expect(replay[1]?.deliveries).toEqual([]);
 

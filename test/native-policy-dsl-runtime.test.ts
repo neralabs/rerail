@@ -8,6 +8,7 @@ import {
   type NativePolicyDslWorkspace,
   type PolicyDslEvaluationMode as EvaluationMode,
 } from "../src/native.js";
+import { RULE_MODES } from "../src/rule-mode.js";
 
 const sourceSpanSchema = z.strictObject({
   startByte: z.number().int().nonnegative(),
@@ -20,10 +21,10 @@ const sourceSpanSchema = z.strictObject({
 
 const policyFindingSchema = z.strictObject({
   id: z.string().min(1),
-  policyId: z.string().min(1),
-  checkId: z.string().min(1),
+  ruleId: z.string().min(1),
+  clauseId: z.string().min(1),
   code: z.string().min(1),
-  severity: z.enum(["advisory", "warning", "error"]),
+  mode: z.enum(RULE_MODES),
   message: z.string(),
   path: z.string().optional(),
   span: sourceSpanSchema.optional(),
@@ -33,15 +34,15 @@ const policyFindingSchema = z.strictObject({
 });
 
 const policyFailureSchema = z.strictObject({
-  checkId: z.string().min(1),
+  clauseId: z.string().min(1),
   code: z.enum(["budget-exceeded", "missing-capability", "source-incomplete", "source-partial", "adapter-error"]),
   message: z.string(),
   path: z.string().optional(),
 });
 
 const coverageSchema = z.strictObject({
-  checkId: z.string().min(1),
-  policyId: z.string().optional(),
+  clauseId: z.string().min(1),
+  ruleId: z.string().optional(),
   status: z.enum(["complete", "partial", "failed"]),
   reasons: z.array(z.strictObject({
     code: policyFailureSchema.shape.code,
@@ -52,7 +53,7 @@ const coverageSchema = z.strictObject({
 
 const evaluationResultSchema = z.strictObject({
   status: z.enum(["completed", "failed"]),
-  findings: z.array(policyFindingSchema),
+  violations: z.array(policyFindingSchema),
   failures: z.array(policyFailureSchema),
   coverage: z.array(coverageSchema),
   metrics: z.strictObject({
@@ -64,8 +65,8 @@ const evaluationResultSchema = z.strictObject({
 
 const incrementalResultSchema = evaluationResultSchema.extend({
   revision: z.number().int().nonnegative(),
-  addedFindingIds: z.array(z.string()),
-  retractedFindingIds: z.array(z.string()),
+  addedViolationIds: z.array(z.string()),
+  retractedViolationIds: z.array(z.string()),
 });
 
 type EvaluationResult = z.infer<typeof evaluationResultSchema>;
@@ -106,9 +107,10 @@ function nativeRuntime(): NativePolicyDslRuntimeConstructor {
 }
 function policy(checks: unknown[], overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
-    checks,
+    clauses: checks,
     format: "rerail.policy/v1",
     id: "runtime-contract",
+    mode: "block",
     revision: 1,
     scope: {
       exclude: [],
@@ -123,7 +125,6 @@ function finding(code: string): Record<string, unknown> {
     anchor: "witness.span",
     code,
     message: `${code} finding`,
-    severity: "error",
   };
 }
 
@@ -162,7 +163,7 @@ function astForbid(
   language: "python" | "typescript" | "ruby" = "python",
 ): Record<string, unknown> {
   return {
-    finding: finding("AST_MATCH"),
+    violation: finding("AST_MATCH"),
     forbid: {
       ast: {
         language,
@@ -186,24 +187,24 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL runtime contr
 format: rerail.policy/v1
 id: runtime-contract
 revision: 1
+mode: block
 scope:
   include: ['**/*']
   exclude: []
-checks:
+clauses:
   - id: raw-execute
     forbid:
       regex:
         source: file.content
         pattern: 'execute_async\\(\\)'
-    finding:
+    violation:
       code: RAW_EXECUTE
-      severity: error
       anchor: witness.span
       message: Raw execute
 `;
       const json = policy([
         {
-          finding: { anchor: "witness.span", code: "RAW_EXECUTE", message: "Raw execute", severity: "error" },
+          violation: { anchor: "witness.span", code: "RAW_EXECUTE", message: "Raw execute" },
           forbid: { regex: { pattern: "execute_async\\(\\)", source: "file.content" } },
           id: "raw-execute",
         },
@@ -217,31 +218,43 @@ checks:
     });
 
     it.each([
-      ["unknown field", { command: ["python", "lint.py"] }, /unknown.*command.*checks\/0/i],
+      ["unknown field", { command: ["python", "lint.py"] }, /unknown.*command.*clauses\/0/i],
       [
         "multiple constraint forms",
         { forbid: { regex: { pattern: "x", source: "file.content" } }, budget: {} },
         /exactly one/i,
       ],
     ])("rejects %s", (_label, invalidCheck, expected) => {
-      expect(() => compileJson([{ ...invalidCheck, finding: finding("INVALID"), id: "invalid" }])).toThrow(expected);
+      expect(() => compileJson([{ ...invalidCheck, violation: finding("INVALID"), id: "invalid" }])).toThrow(expected);
     });
 
-    it("rejects finding severities outside the public policy document type", () => {
-      expect(() =>
-        compileJson([
-          {
-            finding: { ...finding("INVALID"), severity: "fatal" },
-            forbid: { regex: { pattern: "x", source: "file.content" } },
-            id: "invalid-severity",
-          },
-        ]),
-      ).toThrow(/severity must equal advisory, warning, or error/i);
+    const forbidX = { forbid: { regex: { pattern: "x", source: "file.content" } } };
+
+    it.each([
+      ["a missing mode", { mode: undefined }],
+      ["a non-string mode", { mode: 2 }],
+      ["a retired severity as the mode", { mode: "error" }],
+    ])("rejects %s", (_label, overrides) => {
+      const source = policy([{ ...forbidX, violation: finding("INVALID"), id: "invalid-mode" }], overrides);
+      expect(() => nativeRuntime().compile(source, "json", capabilities())).toThrow("/mode must equal log, steer, or block");
+    });
+
+    it("rejects a finding severity as an unknown field", () => {
+      expect(() => compileJson([{ ...forbidX, violation: { ...finding("INVALID"), severity: "error" }, id: "invalid-severity" }]))
+        .toThrow("unknown field `severity` at /clauses/0/violation");
+    });
+
+    it("stamps every finding with the rule's mode", () => {
+      for (const mode of RULE_MODES) {
+        const compiled = nativeRuntime().compile(policy([{ ...forbidX, violation: finding("X"), id: "x" }], { mode }), "json", capabilities());
+        const result = evaluate(compiled, snapshot([{ language: "python", path: "app.py", source: "x = 1\n" }]));
+        expect(result.violations.map(entry => entry.mode)).toEqual([mode]);
+      }
     });
 
     it("reports malformed ast-grep patterns at the policy path", () => {
       expect(() => compileJson([astForbid({ pattern: "call(" })])).toThrow(
-        /checks\/0\/forbid\/ast\/rule\/pattern.*parse/i,
+        /clauses\/0\/forbid\/ast\/rule\/pattern.*parse/i,
       );
     });
 
@@ -261,9 +274,9 @@ checks:
       const argumentStart = source.indexOf("value", callStart);
 
       expect(result).toMatchObject({ status: "completed", failures: [] });
-      expect(result.findings).toHaveLength(1);
-      expect(result.findings[0]).toMatchObject({
-        checkId: "ast-match",
+      expect(result.violations).toHaveLength(1);
+      expect(result.violations[0]).toMatchObject({
+        clauseId: "ast-match",
         code: "AST_MATCH",
         path: "a.py",
         span: {
@@ -273,7 +286,7 @@ checks:
           startLine: 1,
         },
       });
-      expect(result.findings[0]?.captures.ARG).toEqual([
+      expect(result.violations[0]?.captures.ARG).toEqual([
         expect.objectContaining({ endByte: argumentStart + "value".length, startByte: argumentStart }),
       ]);
     });
@@ -285,9 +298,9 @@ checks:
         snapshot([{ language: "python", path: "equal.py", source: "same + same\nleft + right\n" }]),
       );
 
-      expect(result.findings).toHaveLength(1);
-      expect(result.findings[0]?.span?.startLine).toBe(0);
-      expect(result.findings[0]?.captures.A).toHaveLength(1);
+      expect(result.violations).toHaveLength(1);
+      expect(result.violations[0]?.span?.startLine).toBe(0);
+      expect(result.violations[0]?.captures.A).toHaveLength(1);
     });
 
     it("returns ordered variadic metavariable captures", () => {
@@ -297,7 +310,7 @@ checks:
         snapshot([{ language: "python", path: "args.py", source: "target(first, second, third)\n" }]),
       );
 
-      expect(result.findings[0]?.captures.ARGS).toEqual([
+      expect(result.violations[0]?.captures.ARGS).toEqual([
         expect.objectContaining({ startByte: 7 }),
         expect.objectContaining({ startByte: 14 }),
         expect.objectContaining({ startByte: 22 }),
@@ -315,9 +328,9 @@ checks:
         snapshot([{ language: "python", path: "context.py", source: "class Real:\n  def run(self):\n    pass\n" }]),
       );
 
-      expect(result.findings).toHaveLength(1);
-      expect(result.findings[0]?.span?.startLine).toBe(1);
-      expect(result.findings[0]?.captures.METHOD).toHaveLength(1);
+      expect(result.violations).toHaveLength(1);
+      expect(result.violations[0]?.span?.startLine).toBe(1);
+      expect(result.violations[0]?.captures.METHOD).toHaveLength(1);
     });
 
     it("composes atomic, relational, and boolean rules without config callbacks", () => {
@@ -342,8 +355,8 @@ checks:
         ]),
       );
 
-      expect(result.findings).toHaveLength(1);
-      expect(result.findings[0]?.span?.startLine).toBe(1);
+      expect(result.violations).toHaveLength(1);
+      expect(result.violations[0]?.span?.startLine).toBe(1);
     });
 
     it("supports required descendants through has", () => {
@@ -361,8 +374,8 @@ checks:
         ]),
       );
 
-      expect(result.findings).toHaveLength(1);
-      expect(result.findings[0]?.span?.startLine).toBe(0);
+      expect(result.violations).toHaveLength(1);
+      expect(result.violations[0]?.span?.startLine).toBe(0);
     });
 
     it("supports atomic kind and node-text regex matchers inside any", () => {
@@ -382,8 +395,8 @@ checks:
         ]),
       );
 
-      expect(result.findings).toHaveLength(2);
-      expect(result.findings.map((item) => item.span?.startLine)).toEqual([0, 2]);
+      expect(result.violations).toHaveLength(2);
+      expect(result.violations.map((item) => item.span?.startLine)).toEqual([0, 2]);
     });
 
     it("supports preceding and following node relations between siblings", () => {
@@ -407,9 +420,9 @@ checks:
       ]);
       const input = snapshot([{ language: "python", path: "relations.py", source }]);
 
-      expect(evaluate(preceding, input).findings).toHaveLength(1);
-      expect(evaluate(following, input).findings).toHaveLength(1);
-      expect(evaluate(calls, input).findings).toEqual([]);
+      expect(evaluate(preceding, input).violations).toHaveLength(1);
+      expect(evaluate(following, input).violations).toHaveLength(1);
+      expect(evaluate(calls, input).violations).toEqual([]);
     });
 
     it("honors neighbor versus end traversal bounds", () => {
@@ -427,8 +440,8 @@ checks:
       ]);
       const input = snapshot([{ language: "python", path: "bounds.py", source }]);
 
-      expect(evaluate(neighbor, input).findings).toEqual([]);
-      expect(evaluate(end, input).findings).toHaveLength(1);
+      expect(evaluate(neighbor, input).violations).toEqual([]);
+      expect(evaluate(end, input).violations).toHaveLength(1);
     });
 
     it("runs the same witness contract for TypeScript", () => {
@@ -439,9 +452,9 @@ checks:
         snapshot([{ language: "typescript", path: "a.ts", source: "const value = 1;\nconsole.log(value);\n" }]),
       );
 
-      expect(result.findings).toHaveLength(1);
-      expect(result.findings[0]).toMatchObject({ path: "a.ts", span: { startLine: 1 } });
-      expect(result.findings[0]?.captures.ARG).toHaveLength(1);
+      expect(result.violations).toHaveLength(1);
+      expect(result.violations[0]).toMatchObject({ path: "a.ts", span: { startLine: 1 } });
+      expect(result.violations[0]?.captures.ARG).toHaveLength(1);
     });
 
     it("does not classify incomplete syntax as a clean pass", () => {
@@ -449,8 +462,8 @@ checks:
       const result = evaluate(compiled, snapshot([{ language: "python", path: "broken.py", source: "print(" }]));
 
       // The only call overlaps the error region: no witness, and the file is marked partial.
-      expect(result).toMatchObject({ findings: [], status: "failed" });
-      expect(result.failures).toEqual([expect.objectContaining({ checkId: "ast-match", code: "source-partial", path: "broken.py" })]);
+      expect(result).toMatchObject({ violations: [], status: "failed" });
+      expect(result.failures).toEqual([expect.objectContaining({ clauseId: "ast-match", code: "source-partial", path: "broken.py" })]);
     });
   });
 
@@ -474,8 +487,8 @@ checks:
       );
 
       expect(result).toMatchObject({ failures: [], status: "completed" });
-      expect(result.findings.map(item => item.path)).toEqual(["plain.ts", "view.tsx"]);
-      expect(result.findings.find(item => item.path === "view.tsx")).toMatchObject({ span: { startLine: 1 } });
+      expect(result.violations.map(item => item.path)).toEqual(["plain.ts", "view.tsx"]);
+      expect(result.violations.find(item => item.path === "view.tsx")).toMatchObject({ span: { startLine: 1 } });
     });
 
     it("matches JSX rules in tsx files and leaves plain typescript files inert", () => {
@@ -489,7 +502,7 @@ checks:
       );
 
       expect(result).toMatchObject({ failures: [], status: "completed" });
-      expect(result.findings.map(item => item.path)).toEqual(["view.tsx"]);
+      expect(result.violations.map(item => item.path)).toEqual(["view.tsx"]);
     });
 
     it("matches angle-bracket assertions in typescript files and leaves tsx files inert", () => {
@@ -503,7 +516,7 @@ checks:
       );
 
       expect(result).toMatchObject({ failures: [], status: "completed" });
-      expect(result.findings.map(item => item.path)).toEqual(["plain.ts"]);
+      expect(result.violations.map(item => item.path)).toEqual(["plain.ts"]);
     });
 
     it("names every grammar's reason when no typescript dialect accepts a rule", () => {
@@ -522,31 +535,31 @@ checks:
       ]);
 
       expect(evaluate(outsideJsx, files)).toMatchObject({ failures: [], status: "completed" });
-      expect(evaluate(outsideJsx, files).findings.map(item => item.path)).toEqual(["plain.ts"]);
-      expect(evaluate(eitherBranch, files).findings.map(item => item.path)).toEqual(["plain.ts", "view.tsx", "view.tsx"]);
+      expect(evaluate(outsideJsx, files).violations.map(item => item.path)).toEqual(["plain.ts"]);
+      expect(evaluate(eitherBranch, files).violations.map(item => item.path)).toEqual(["plain.ts", "view.tsx", "view.tsx"]);
     });
   });
 
   describe("no silent ignores", () => {
     const regexForbid = { regex: { pattern: "x", source: "file.content" } };
     it.each([
-      ["a malformed stopBy rule", astForbid({ inside: { kind: "call", stopBy: { kind: "module", field: "body" } }, kind: "identifier" }), /unknown field `field` at \/checks\/0\/forbid\/ast\/rule\/inside\/stopBy/],
+      ["a malformed stopBy rule", astForbid({ inside: { kind: "call", stopBy: { kind: "module", field: "body" } }, kind: "identifier" }), /unknown field `field` at \/clauses\/0\/forbid\/ast\/rule\/inside\/stopBy/],
       ["numeric stopBy", astForbid({ has: { kind: "identifier", stopBy: 1 }, kind: "call" }), /rule\/has\/stopBy must be "neighbor", "end" or a rule object/],
       ["array kind alone", astForbid({ kind: ["call"] }), /rule\/kind must be a non-empty string$/],
       ["array kind beside a pattern", astForbid({ kind: ["call"], pattern: "print($A)" }), /rule\/kind must be a non-empty string$/],
       ["non-string nested regex", astForbid({ has: { regex: 1 }, kind: "call" }), /rule\/has\/regex must be a non-empty string$/],
-      ["the removed ast capture field", { ...astForbid({ pattern: "print($A)" }), forbid: { ast: { capture: "A", language: "python", rule: { pattern: "print($A)" } } } }, /unknown field `capture` at \/checks\/0\/forbid\/ast/],
-      ["the removed regex captures field", { finding: finding("X"), forbid: { regex: { ...regexForbid.regex, captures: ["x"] } }, id: "x" }, /unknown field `captures` at \/checks\/0\/forbid\/regex/],
-      ["an unknown anchor", { finding: { ...finding("X"), anchor: "subject.id" }, forbid: regexForbid, id: "x" }, /finding\/anchor: unknown anchor `subject\.id`/],
-      ["a capture anchor the query cannot bind", { ...astForbid({ pattern: "print($A)", not: { pattern: "print($B)" } }), finding: { ...finding("X"), anchor: "capture.B" } }, /`capture\.B` names no capture; the query can bind: A/],
-      ["a message capture the query cannot bind", { ...astForbid({ pattern: "print($A)" }), finding: { ...finding("X"), message: "print of $ARG" } }, /finding\/message: `\$ARG` names no capture/],
-      ["finding variables", { finding: { ...finding("X"), variables: { name: "x" } }, forbid: regexForbid, id: "x" }, /finding\/variables: finding variables are not supported yet/],
+      ["the removed ast capture field", { ...astForbid({ pattern: "print($A)" }), forbid: { ast: { capture: "A", language: "python", rule: { pattern: "print($A)" } } } }, /unknown field `capture` at \/clauses\/0\/forbid\/ast/],
+      ["the removed regex captures field", { violation: finding("X"), forbid: { regex: { ...regexForbid.regex, captures: ["x"] } }, id: "x" }, /unknown field `captures` at \/clauses\/0\/forbid\/regex/],
+      ["an unknown anchor", { violation: { ...finding("X"), anchor: "subject.id" }, forbid: regexForbid, id: "x" }, /violation\/anchor: unknown anchor `subject\.id`/],
+      ["a capture anchor the query cannot bind", { ...astForbid({ pattern: "print($A)", not: { pattern: "print($B)" } }), violation: { ...finding("X"), anchor: "capture.B" } }, /`capture\.B` names no capture; the query can bind: A/],
+      ["a message capture the query cannot bind", { ...astForbid({ pattern: "print($A)" }), violation: { ...finding("X"), message: "print of $ARG" } }, /violation\/message: `\$ARG` names no capture/],
+      ["finding variables", { violation: { ...finding("X"), variables: { name: "x" } }, forbid: regexForbid, id: "x" }, /violation\/variables: violation variables are not supported yet/],
     ])("rejects %s", (_name, check, error) => {
       expect(() => compileJson([check])).toThrow(error);
     });
 
     it("accepts empty finding variables", () => {
-      expect(() => compileJson([{ finding: { ...finding("X"), variables: {} }, forbid: regexForbid, id: "x" }])).not.toThrow();
+      expect(() => compileJson([{ violation: { ...finding("X"), variables: {} }, forbid: regexForbid, id: "x" }])).not.toThrow();
     });
 
 
@@ -554,7 +567,7 @@ checks:
       const tight = capabilities({ limits: { ...defaultLimits, maxAstPatternBytes: 8, maxRegexPatternBytes: 4 } });
       expect(() => compileJson([astForbid({ pattern: "f($A, 1)" })], tight)).not.toThrow();
       expect(() => compileJson([astForbid({ pattern: "f($A, 10)" })], tight)).toThrow(
-        "/checks/0/forbid/ast/rule/pattern is 9 bytes; capabilities.limits.maxAstPatternBytes allows at most 8",
+        "/clauses/0/forbid/ast/rule/pattern is 9 bytes; capabilities.limits.maxAstPatternBytes allows at most 8",
       );
       expect(() => compileJson([astForbid({ pattern: { context: "class A:\n  x = 1", selector: "assignment" } })], tight)).toThrow(
         /rule\/pattern\/context is 16 bytes; capabilities.limits.maxAstPatternBytes/,
@@ -562,14 +575,14 @@ checks:
       expect(() => compileJson([astForbid({ kind: "call", regex: "^abcd" })], tight)).toThrow(
         /rule\/regex is 5 bytes; capabilities.limits.maxRegexPatternBytes allows at most 4/,
       );
-      expect(() => compileJson([{ finding: finding("X"), forbid: { regex: { pattern: "abcde", source: "file.path" } }, id: "x" }], tight)).toThrow(
+      expect(() => compileJson([{ violation: finding("X"), forbid: { regex: { pattern: "abcde", source: "file.path" } }, id: "x" }], tight)).toThrow(
         /forbid\/regex\/pattern is 5 bytes; capabilities.limits.maxRegexPatternBytes/,
       );
     });
 
     it("reports shape errors once and without a grammar suffix", () => {
       expect(() => compileJson([astForbid({ has: { kinds: "identifier" }, kind: "call_expression" }, "typescript")])).toThrow(
-        /^unknown field `kinds` at \/checks\/0\/forbid\/ast\/rule\/has$/,
+        /^unknown field `kinds` at \/clauses\/0\/forbid\/ast\/rule\/has$/,
       );
     });
   });
@@ -578,7 +591,7 @@ checks:
     it("emits every regex witness with byte-accurate locations", () => {
       const compiled = compileJson([
         {
-          finding: finding("RAW_EXECUTE"),
+          violation: finding("RAW_EXECUTE"),
           forbid: { regex: { pattern: "execute_async\\(\\)", source: "file.content" } },
           id: "raw-execute",
         },
@@ -587,12 +600,12 @@ checks:
       const result = evaluate(compiled, snapshot([{ language: "python", path: "calls.py", source }]));
 
       expect(result.status).toBe("completed");
-      expect(result.findings.map((item) => item.span?.startByte)).toEqual([0, source.lastIndexOf("execute_async()")]);
+      expect(result.violations.map((item) => item.span?.startByte)).toEqual([0, source.lastIndexOf("execute_async()")]);
     });
     it("matches file paths without inspecting file contents", () => {
       const compiled = compileJson([
         {
-          finding: finding("REQUIRED_FILE"),
+          violation: finding("REQUIRED_FILE"),
           forbid: { regex: { pattern: "required\\.json$", source: "file.path" } },
           id: "required-file",
         },
@@ -605,8 +618,8 @@ checks:
         ]),
       );
 
-      expect(result.findings).toHaveLength(1);
-      expect(result.findings[0]).toMatchObject({
+      expect(result.violations).toHaveLength(1);
+      expect(result.violations[0]).toMatchObject({
         code: "REQUIRED_FILE",
         path: ".required.json",
         span: { startLine: 0 },
@@ -615,7 +628,7 @@ checks:
     it("selects repository witnesses only when another query has evidence", () => {
       const compiled = compileJson([
         {
-          finding: finding("CROSS_FILE"),
+          violation: finding("CROSS_FILE"),
           forbid: {
             select_when: {
               exists: { regex: { pattern: "danger\\(", source: "file.content" } },
@@ -636,15 +649,15 @@ checks:
         snapshot([baseline, { language: "python", path: "live.py", source: "safe()\n" }]),
       );
 
-      expect(violating.findings).toHaveLength(1);
-      expect(violating.findings[0]).toMatchObject({ path: ".baseline.json", span: { startLine: 0 } });
-      expect(compliant).toMatchObject({ findings: [], status: "completed" });
+      expect(violating.violations).toHaveLength(1);
+      expect(violating.violations[0]).toMatchObject({ path: ".baseline.json", span: { startLine: 0 } });
+      expect(compliant).toMatchObject({ violations: [], status: "completed" });
     });
     it("applies portable include and exclude scopes before matching", () => {
       const source = policy(
         [
           {
-            finding: finding("RAW_EXECUTE"),
+            violation: finding("RAW_EXECUTE"),
             forbid: { regex: { pattern: "execute_async\\(\\)", source: "file.content" } },
             id: "raw-execute",
           },
@@ -661,7 +674,7 @@ checks:
         ]),
       );
 
-      expect(result.findings.map((item) => item.path)).toEqual(["src/live/service.py"]);
+      expect(result.violations.map((item) => item.path)).toEqual(["src/live/service.py"]);
     });
 
     // contract: `limits.maxSourceBytes` bounds what a policy reads. A policy scoped to `src/**` must not be
@@ -670,7 +683,7 @@ checks:
       const source = policy(
         [
           {
-            finding: finding("RAW_EXECUTE"),
+            violation: finding("RAW_EXECUTE"),
             forbid: { regex: { pattern: "execute_async\\(\\)", source: "file.content" } },
             id: "raw-execute",
           },
@@ -690,15 +703,15 @@ checks:
       );
 
       expect(result.failures).toEqual([]);
-      expect(result.findings.map((item) => item.path)).toEqual(["src/live/service.py"]);
+      expect(result.violations.map((item) => item.path)).toEqual(["src/live/service.py"]);
 
       // The budget still binds inside the scope.
       const inScope = evaluate(
         compiled,
         snapshot([{ language: "python", path: "src/live/big.py", source: `execute_async()\n# ${"x".repeat(10_000)}\n` }]),
       );
-      expect(inScope).toMatchObject({ findings: [], status: "failed" });
-      expect(inScope.failures).toEqual([expect.objectContaining({ checkId: "runtime", code: "budget-exceeded" })]);
+      expect(inScope).toMatchObject({ violations: [], status: "failed" });
+      expect(inScope.failures).toEqual([expect.objectContaining({ clauseId: "runtime", code: "budget-exceeded" })]);
     });
 
 
@@ -737,8 +750,8 @@ checks:
       const result = evaluate(compilePolicyFile(policyName), snapshot([{ language: "python", path, source }]));
 
       expect(result).toMatchObject({ status: "completed", failures: [] });
-      expect(result.findings).toHaveLength(1);
-      expect(result.findings[0]).toMatchObject({ code, path });
+      expect(result.violations).toHaveLength(1);
+      expect(result.violations[0]).toMatchObject({ code, path });
     });
 
     it("limits eager resolve findings to explicit plan scope bodies", () => {
@@ -765,10 +778,10 @@ checks:
         ]),
       );
 
-      expect(unrelated).toMatchObject({ status: "completed", findings: [], failures: [] });
+      expect(unrelated).toMatchObject({ status: "completed", violations: [], failures: [] });
       expect(inPlanScope).toMatchObject({ status: "completed", failures: [] });
-      expect(inPlanScope.findings).toHaveLength(1);
-      expect(inPlanScope.findings[0]).toMatchObject({
+      expect(inPlanScope.violations).toHaveLength(1);
+      expect(inPlanScope.violations[0]).toMatchObject({
         code: "plan_scope_side_effects",
         path: "impl/common/plan.py",
       });
@@ -829,9 +842,9 @@ checks:
       );
 
       expect(result).toMatchObject({ status: "completed", failures: [] });
-      expect(result.findings).toHaveLength(1);
-      expect(result.findings[0]).toMatchObject({ code, path: "api/module.py" });
-      expect(allowed).toMatchObject({ status: "completed", findings: [], failures: [] });
+      expect(result.violations).toHaveLength(1);
+      expect(result.violations[0]).toMatchObject({ code, path: "api/module.py" });
+      expect(allowed).toMatchObject({ status: "completed", violations: [], failures: [] });
     });
 
     it("returns a concrete failure instead of partial findings when a hard limit is exceeded", () => {
@@ -842,15 +855,15 @@ checks:
         snapshot([{ language: "python", path: "many.py", source: "print(one)\nprint(two)\n" }]),
       );
 
-      expect(result).toMatchObject({ findings: [], status: "failed" });
-      expect(result.failures).toEqual([expect.objectContaining({ checkId: "ast-match", code: "budget-exceeded" })]);
+      expect(result).toMatchObject({ violations: [], status: "failed" });
+      expect(result.failures).toEqual([expect.objectContaining({ clauseId: "ast-match", code: "budget-exceeded" })]);
     });
 
 
     it("keeps LLM evaluation standalone and reports unavailable models as a concrete failure", () => {
       const compiled = compileJson([
         {
-          finding: finding("INTENT"),
+          violation: finding("INTENT"),
           id: "intent",
           llm: {
             input: { source: "changed-symbol" },
@@ -871,7 +884,7 @@ checks:
       );
 
       expect(result.status).toBe("failed");
-      expect(result.failures).toEqual([expect.objectContaining({ checkId: "intent", code: "missing-capability" })]);
+      expect(result.failures).toEqual([expect.objectContaining({ clauseId: "intent", code: "missing-capability" })]);
     });
   });
 
@@ -884,8 +897,8 @@ checks:
       const reverse = evaluate(compiled, snapshot([b, a]));
 
       expect(reverse).toEqual(forward);
-      expect(forward.findings.map((item) => item.path)).toEqual(["a.py", "b.py"]);
-      expect(new Set(forward.findings.map((item) => item.id)).size).toBe(2);
+      expect(forward.violations.map((item) => item.path)).toEqual(["a.py", "b.py"]);
+      expect(new Set(forward.violations.map((item) => item.id)).size).toBe(2);
     });
 
     it("short-circuits decision mode without changing execution status", () => {
@@ -933,11 +946,11 @@ checks:
       );
 
       expect(initial).toMatchObject({ revision: 0, status: "completed" });
-      expect(repaired).toMatchObject({ addedFindingIds: [], revision: 1, status: "completed" });
-      expect(repaired.retractedFindingIds).toEqual([initial.findings[0]?.id]);
-      expect(regressed).toMatchObject({ retractedFindingIds: [], revision: 2, status: "completed" });
-      expect(regressed.addedFindingIds).toEqual([regressed.findings[0]?.id]);
-      expect(regressed.findings[0]?.id).toBe(initial.findings[0]?.id);
+      expect(repaired).toMatchObject({ addedViolationIds: [], revision: 1, status: "completed" });
+      expect(repaired.retractedViolationIds).toEqual([initial.violations[0]?.id]);
+      expect(regressed).toMatchObject({ retractedViolationIds: [], revision: 2, status: "completed" });
+      expect(regressed.addedViolationIds).toEqual([regressed.violations[0]?.id]);
+      expect(regressed.violations[0]?.id).toBe(initial.violations[0]?.id);
     });
 
     it("rejects out-of-order edits without mutating the session", () => {
@@ -986,7 +999,7 @@ const workspaceResultSchema = z.strictObject({
   revision: z.number(),
   replacedPaths: z.array(z.string()).nullable(),
   evaluation: evaluationResultSchema.extend({
-    failures: z.array(policyFailureSchema.extend({ policyId: z.string() })),
+    failures: z.array(policyFailureSchema.extend({ ruleId: z.string() })),
   }),
 });
 
@@ -999,12 +1012,12 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
     const compiled = compileJson([{
       id: "needle",
       forbid: { regex: { pattern: "needle", source: "file.content" } },
-      finding: finding("NEEDLE"),
+      violation: finding("NEEDLE"),
     }]);
     const failurePolicy = nativeRuntime().compile(policy([{
       id: "limited",
       forbid: { regex: { pattern: "needle", source: "file.content" } },
-      finding: finding("LIMITED"),
+      violation: finding("LIMITED"),
     }], { id: "runtime-failure" }), "json", capabilities({
       limits: { ...defaultLimits, maxWitnesses: 0 },
     }));
@@ -1030,7 +1043,7 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
       const result = workspaceResultSchema.parse(JSON.parse(resend!));
       expect(result).toEqual(workspaceResultSchema.parse(JSON.parse(await asynchronous.applyAsync(request(2)))));
       expect(result.revision).toBe(2);
-      expect(result.evaluation.findings).toHaveLength(1);
+      expect(result.evaluation.violations).toHaveLength(1);
       expect(result.evaluation.failures).toEqual(seeded.evaluation.failures);
       expect(result.evaluation.metrics).toMatchObject({ files: 0, witnesses: 0 });
       expect(() => inline.tryApply(request(2))).toThrow();
@@ -1050,7 +1063,7 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
     const compiled = nativeRuntime().compile(policy([{
       id: "needle",
       forbid: { regex: { pattern: "needle", source: "file.content" } },
-      finding: finding("NEEDLE"),
+      violation: finding("NEEDLE"),
     }], { scope: { exclude: [], include: ["src/**"] } }), "json", capabilities());
     const inline = workspace();
     const asynchronous = workspace();
@@ -1072,8 +1085,8 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
       const result = workspaceResultSchema.parse(JSON.parse(ignored!));
       expect(result).toEqual(workspaceResultSchema.parse(JSON.parse(await asynchronous.applyAsync(request(2, rejected)))));
       expect(result.revision).toBe(2);
-      expect(result.evaluation.findings).toEqual(
-        workspaceResultSchema.parse(JSON.parse(initial!)).evaluation.findings,
+      expect(result.evaluation.violations).toEqual(
+        workspaceResultSchema.parse(JSON.parse(initial!)).evaluation.violations,
       );
       expect(result.evaluation.metrics).toMatchObject({ files: 0, witnesses: 0 });
 
@@ -1095,9 +1108,9 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         rule: { all: [{ pattern: "console.log($ARG)" }, { regex: "^console\\.log\\(" }] },
       } };
       const compiled = compileJson([
-        { finding: finding("LOG"), forbid: logged, id: "log" },
+        { violation: finding("LOG"), forbid: logged, id: "log" },
         {
-          finding: finding("WARN_WHEN_LOG"),
+          violation: finding("WARN_WHEN_LOG"),
           forbid: { select_when: {
             exists: logged,
             select: { ast: {
@@ -1131,15 +1144,15 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
           const full = evaluate(compiled, snapshot(files));
           const actual = await applyWorkspace(nativeWorkspace, revision + 1, files);
           expect(full).toMatchObject({ status: "completed", failures: [] });
-          expect({ status: actual.status, findings: actual.findings, failures: actual.failures }).toEqual({
-            status: full.status, findings: full.findings, failures: [],
+          expect({ status: actual.status, violations: actual.violations, failures: actual.failures }).toEqual({
+            status: full.status, violations: full.violations, failures: [],
           });
           for (const input of files) {
             const argument = revision === 0
               ? input.path === "a.ts" ? "initialA" : "initialB"
               : input.path === "a.ts" ? "editedA" : "editedB";
-            expect(actual.findings.filter(item => item.path === input.path).map(item => ({
-              check: item.checkId,
+            expect(actual.violations.filter(item => item.path === input.path).map(item => ({
+              check: item.clauseId,
               text: item.span && input.source.slice(item.span.startByte, item.span.endByte),
               arguments: item.captures.ARG?.map(span => input.source.slice(span.startByte, span.endByte)),
             }))).toEqual(revision === 2 ? [] : [
@@ -1169,11 +1182,11 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
       const full = evaluate(compiled, snapshot([...files]));
       const actual = await applyWorkspace(nativeWorkspace, 1, [...files]);
       expect(full).toMatchObject({ failures: [], status: "completed" });
-      expect(full.findings.map(item => `${item.checkId}:${item.path}`).sort()).toEqual([
+      expect(full.violations.map(item => `${item.clauseId}:${item.path}`).sort()).toEqual([
         "either-branch:plain.ts", "either-branch:view.tsx", "either-branch:view.tsx", "outside-jsx:plain.ts", "outside-jsx:view.tsx",
       ]);
-      expect({ status: actual.status, findings: actual.findings, failures: actual.failures }).toEqual({
-        status: full.status, findings: full.findings, failures: [],
+      expect({ status: actual.status, violations: actual.violations, failures: actual.failures }).toEqual({
+        status: full.status, violations: full.violations, failures: [],
       });
     } finally {
       nativeWorkspace.close();
@@ -1185,7 +1198,7 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
     nativeWorkspace.addPolicy(
       compileJson([
         {
-          finding: finding("RAW_EXECUTE"),
+          violation: finding("RAW_EXECUTE"),
           forbid: { regex: { pattern: "execute_async\\(\\)", source: "file.content" } },
           id: "raw-execute",
         },
@@ -1204,7 +1217,7 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         }),
       ),
     );
-    expect(initial.evaluation.findings).toHaveLength(2);
+    expect(initial.evaluation.violations).toHaveLength(2);
 
     const edited = JSON.parse(
       await nativeWorkspace.applyAsync(
@@ -1215,7 +1228,7 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         }),
       ),
     );
-    expect(edited.evaluation.findings).toEqual([]);
+    expect(edited.evaluation.violations).toEqual([]);
     nativeWorkspace.close();
   });
 
@@ -1226,7 +1239,7 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         policy(
           [
             {
-              finding: finding("SCOPED"),
+              violation: finding("SCOPED"),
               forbid: { regex: { pattern: "forbidden", source: "file.content" } },
               id: "scoped",
             },
@@ -1251,7 +1264,7 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
       ),
     );
     expect(result.evaluation.status).toBe("completed");
-    expect(result.evaluation.findings).toHaveLength(1);
+    expect(result.evaluation.violations).toHaveLength(1);
     nativeWorkspace.close();
   });
   it("evaluates contextual AST and retained cross-file queries after the baseline completes", async () => {
@@ -1262,7 +1275,7 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
           pattern: { context: "class C:\n  def $METHOD(self):\n    pass", selector: "function_definition" },
         }),
         {
-          finding: finding("CROSS_FILE"),
+          violation: finding("CROSS_FILE"),
           forbid: {
             select_when: {
               exists: { regex: { pattern: "danger\\(", source: "file.content" } },
@@ -1287,7 +1300,7 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         }),
       ),
     );
-    expect(result.evaluation.findings.map((item: { code: string }) => item.code)).toEqual([
+    expect(result.evaluation.violations.map((item: { code: string }) => item.code)).toEqual([
       "CROSS_FILE",
       "AST_MATCH",
     ]);
@@ -1317,22 +1330,22 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         // A damaged file is evaluated around its error regions and marked partial on both paths.
         if (full.status === "failed") {
           expect(actual.status).toBe("failed");
-          expect(actual.findings).toEqual(full.findings);
-          const identities = (failures: Array<{ checkId: string; code: string; path?: string | undefined }>) =>
-            failures.map(({ checkId, code, path }) => ({ checkId, code, path }))
-              .sort((left, right) => left.checkId.localeCompare(right.checkId));
+          expect(actual.violations).toEqual(full.violations);
+          const identities = (failures: Array<{ clauseId: string; code: string; path?: string | undefined }>) =>
+            failures.map(({ clauseId, code, path }) => ({ clauseId, code, path }))
+              .sort((left, right) => left.clauseId.localeCompare(right.clauseId));
           expect(identities(actual.failures)).toEqual(identities(full.failures));
           expect(identities(actual.failures)).toEqual([
-            { checkId: "context", code: "source-partial", path: "edit.py" },
-            { checkId: "local", code: "source-partial", path: "edit.py" },
+            { clauseId: "context", code: "source-partial", path: "edit.py" },
+            { clauseId: "local", code: "source-partial", path: "edit.py" },
           ]);
-          expect(actual.findings.filter(item => item.path === "edit.py").map(item => item.checkId).sort())
+          expect(actual.violations.filter(item => item.path === "edit.py").map(item => item.clauseId).sort())
             .toEqual(["context", "local"]);
         } else {
           expect(actual.failures).toEqual([]);
-          expect(actual.findings).toEqual(full.findings);
+          expect(actual.violations).toEqual(full.violations);
           if (index === 1) {
-            const shifted = actual.findings.find(item => item.checkId === "local" && item.path === "edit.py");
+            const shifted = actual.violations.find(item => item.clauseId === "local" && item.path === "edit.py");
             expect(shifted?.span).toEqual({
               startByte: 28, endByte: 39, startLine: 3, startColumn: 4, endLine: 3, endColumn: 15,
             });
@@ -1354,10 +1367,10 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
       const files = Array.from({ length: 20 }, (_, index) => ({ language: "python", path: `file-${index}.py`, source: "print('violation')\n" }));
       const initial = await applyWorkspace(nativeWorkspace, 1, files);
       expect(initial.failures).toEqual([]);
-      expect(initial.findings.map(item => item.path).sort()).toEqual(files.map(file => file.path).sort());
+      expect(initial.violations.map(item => item.path).sort()).toEqual(files.map(file => file.path).sort());
       const changed = await applyWorkspace(nativeWorkspace, 2, [{ ...files[0]!, source: "log('fixed')\n" }]);
       expect(changed.metrics.files).toBe(1);
-      expect(changed.findings.map(item => item.path).sort()).toEqual(files.slice(1).map(file => file.path).sort());
+      expect(changed.violations.map(item => item.path).sort()).toEqual(files.slice(1).map(file => file.path).sort());
     } finally { nativeWorkspace.close(); }
   });
 
@@ -1374,10 +1387,10 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
       const full = evaluate(compiled, snapshot([file]));
       const result = await applyWorkspace(nativeWorkspace, 1, [file]);
       expect(full).toMatchObject({ status: "completed", failures: [] });
-      expect({ status: result.status, findings: result.findings, failures: result.failures }).toEqual({
-        status: full.status, findings: full.findings, failures: [],
+      expect({ status: result.status, violations: result.violations, failures: result.failures }).toEqual({
+        status: full.status, violations: full.violations, failures: [],
       });
-      expect(result.findings.filter(item => item.checkId === "print")).toEqual([
+      expect(result.violations.filter(item => item.clauseId === "print")).toEqual([
         expect.objectContaining({
           span: expect.objectContaining({ startByte: 0, endByte: 14 }),
           captures: expect.objectContaining({
@@ -1385,13 +1398,13 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
           }),
         }),
       ]);
-      expect(result.findings.filter(item => item.checkId === "identifier").map(item =>
+      expect(result.violations.filter(item => item.clauseId === "identifier").map(item =>
         item.span && file.source.slice(item.span.startByte, item.span.endByte))).toEqual([
         "print", "outside", "log", "inside",
       ]);
       // The negated structural arm cannot be subtracted exactly by the index.
       // Its unrestricted domain must retain both the module and leaf witnesses.
-      expect(result.findings.filter(item => item.checkId === "unrestricted")).toEqual(expect.arrayContaining([
+      expect(result.violations.filter(item => item.clauseId === "unrestricted")).toEqual(expect.arrayContaining([
         expect.objectContaining({ span: expect.objectContaining({ startByte: 0, endByte: file.source.length }) }),
         expect.objectContaining({ span: expect.objectContaining({ startByte: 6, endByte: 13 }) }),
         expect.objectContaining({
@@ -1440,19 +1453,19 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         const full = evaluate(compiled, snapshot([file]));
         const actual = await applyWorkspace(nativeWorkspace, 1, [file]);
         expect(full).toMatchObject({ status: "completed", failures: [] });
-        expect({ status: actual.status, findings: actual.findings, failures: actual.failures }).toEqual({
-          status: full.status, findings: full.findings, failures: [],
+        expect({ status: actual.status, violations: actual.violations, failures: actual.failures }).toEqual({
+          status: full.status, violations: full.violations, failures: [],
         });
         // Siblings only: a statement's neighbor is the adjacent statement itself, never a call
         // nested in it. A call is the only child of its statement and, inside an argument list,
         // its neighbors are the `(`, `,` and `)` tokens, so the call rules never match.
-        for (const [checkId, expected] of [
+        for (const [clauseId, expected] of [
           ["statement-precedes", [{ line: 1, text: "prepare()" }]],
           ["statement-follows", [{ line: 2, text: "execute()" }]],
           ["call-precedes", []],
           ["call-follows", []],
         ] as const) {
-          expect(actual.findings.filter(item => item.checkId === checkId).map(item => ({
+          expect(actual.violations.filter(item => item.clauseId === clauseId).map(item => ({
             line: item.span?.startLine,
             text: item.span && file.source.slice(item.span.startByte, item.span.endByte),
           }))).toEqual(expected);
@@ -1482,15 +1495,15 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
       nativeWorkspace.addPolicy(compiled);
       const actual = await applyWorkspace(nativeWorkspace, 1, [file]);
       expect(full).toMatchObject({ status: "completed", failures: [] });
-      expect({ status: actual.status, findings: actual.findings, failures: actual.failures }).toEqual({
-        status: full.status, findings: full.findings, failures: [],
+      expect({ status: actual.status, violations: actual.violations, failures: actual.failures }).toEqual({
+        status: full.status, violations: full.violations, failures: [],
       });
-      for (const [checkId, expected] of [
+      for (const [clauseId, expected] of [
         ["print", ["print(value)"]],
         ["log", ["log(other)"]],
         ["identifier", ["print", "value", "log", "other"]],
       ] as const) {
-        expect(actual.findings.filter(item => item.checkId === checkId).map(item =>
+        expect(actual.violations.filter(item => item.clauseId === clauseId).map(item =>
           item.span && file.source.slice(item.span.startByte, item.span.endByte))).toEqual(expected);
       }
     } finally {
@@ -1516,11 +1529,11 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
       const full = evaluate(compiled, snapshot([file]));
       const actual = await applyWorkspace(nativeWorkspace, 1, [file]);
       expect(full).toMatchObject({ status: "completed", failures: [] });
-      expect({ status: actual.status, findings: actual.findings, failures: actual.failures }).toEqual({
-        status: full.status, findings: full.findings, failures: [],
+      expect({ status: actual.status, violations: actual.violations, failures: actual.failures }).toEqual({
+        status: full.status, violations: full.violations, failures: [],
       });
-      for (const checkId of ["regex-first", "pattern-first"]) {
-        expect(actual.findings.filter(item => item.checkId === checkId).map(item => ({
+      for (const clauseId of ["regex-first", "pattern-first"]) {
+        expect(actual.violations.filter(item => item.clauseId === clauseId).map(item => ({
           line: item.span?.startLine,
           text: item.span && file.source.slice(item.span.startByte, item.span.endByte),
           arguments: item.captures.ARG?.map(span => file.source.slice(span.startByte, span.endByte)),
@@ -1731,10 +1744,10 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
       const full = evaluate(compiled, snapshot([file]));
       const actual = await applyWorkspace(nativeWorkspace, 1, [file]);
       expect(full).toMatchObject({ status: "completed", failures: [] });
-      expect({ status: actual.status, findings: actual.findings, failures: actual.failures }).toEqual({
+      expect({ status: actual.status, violations: actual.violations, failures: actual.failures }).toEqual({
         status: full.status,
-        findings: full.findings,
-        failures: full.failures.map(failure => ({ policyId: "runtime-contract", ...failure })),
+        violations: full.violations,
+        failures: full.failures.map(failure => ({ ruleId: "runtime-contract", ...failure })),
       });
     } finally {
       nativeWorkspace.close();
@@ -1772,8 +1785,8 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         const full = evaluate(compiled, snapshot([file]));
         const actual = await applyWorkspace(nativeWorkspace, 1, [file]);
         expect(full).toMatchObject({ status: "completed", failures: [] });
-        expect({ status: actual.status, findings: actual.findings, failures: actual.failures }).toEqual({
-          status: full.status, findings: full.findings, failures: [],
+        expect({ status: actual.status, violations: actual.violations, failures: actual.failures }).toEqual({
+          status: full.status, violations: full.violations, failures: [],
         });
       } finally {
         nativeWorkspace.close();
@@ -1783,8 +1796,8 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
 
   it("rebinds the same path and source across Python and TypeScript, deletion, and recreation", async () => {
     const compiled = compileJson([
-      { ...astForbid({ pattern: "print($ARG)" }), id: "python", finding: finding("PYTHON_PRINT") },
-      { ...astForbid({ pattern: "print($ARG)" }, "typescript"), id: "typescript", finding: finding("TYPESCRIPT_PRINT") },
+      { ...astForbid({ pattern: "print($ARG)" }), id: "python", violation: finding("PYTHON_PRINT") },
+      { ...astForbid({ pattern: "print($ARG)" }, "typescript"), id: "typescript", violation: finding("TYPESCRIPT_PRINT") },
     ]);
     const nativeWorkspace = workspace();
     const source = "print(value)\n";
@@ -1805,15 +1818,15 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         const actual = await applyWorkspace(nativeWorkspace, index + 1, change.files, change.removed);
         const full = evaluate(compiled, snapshot([stable, ...(change.active === undefined ? [] : [change.active])]));
         expect(full).toMatchObject({ status: "completed", failures: [] });
-        expect({ status: actual.status, findings: actual.findings, failures: actual.failures }).toEqual({
+        expect({ status: actual.status, violations: actual.violations, failures: actual.failures }).toEqual({
           status: full.status,
-          findings: full.findings,
+          violations: full.violations,
           failures: [],
         });
-        expect(actual.findings.filter(item => item.path === "active").map(item => item.code)).toEqual(
+        expect(actual.violations.filter(item => item.path === "active").map(item => item.code)).toEqual(
           change.code === undefined ? [] : [change.code],
         );
-        expect(actual.findings.filter(item => item.path === stable.path).map(item => item.code)).toEqual(["PYTHON_PRINT"]);
+        expect(actual.violations.filter(item => item.path === stable.path).map(item => item.code)).toEqual(["PYTHON_PRINT"]);
       }
     } finally {
       nativeWorkspace.close();
@@ -1861,10 +1874,10 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         );
         const full = evaluate(compiled, snapshot([unchanged, ...edited]));
         expect(full).toMatchObject({ status: "completed", failures: [] });
-        expect({ status: actual.status, findings: actual.findings, failures: actual.failures }).toEqual({
+        expect({ status: actual.status, violations: actual.violations, failures: actual.failures }).toEqual({
           status: full.status,
-          findings: full.findings,
-          failures: full.failures.map(failure => ({ policyId: "runtime-contract", ...failure })),
+          violations: full.violations,
+          failures: full.failures.map(failure => ({ ruleId: "runtime-contract", ...failure })),
         });
       }
     } finally {
@@ -1883,9 +1896,9 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
       nativeWorkspace.addPolicy(compiled);
       try {
         const result = await applyWorkspace(nativeWorkspace, 1, [{ language: "python", path: "limited.py", source }]);
-        expect(result).toMatchObject({ status: "failed", findings: [] });
-        expect(result.failures.map(({ policyId, checkId, code, path }) => ({ policyId, checkId, code, path }))).toEqual([
-          { policyId: "runtime-contract", checkId: "ast-match", code: "budget-exceeded", path: "limited.py" },
+        expect(result).toMatchObject({ status: "failed", violations: [] });
+        expect(result.failures.map(({ ruleId, clauseId, code, path }) => ({ ruleId, clauseId, code, path }))).toEqual([
+          { ruleId: "runtime-contract", clauseId: "ast-match", code: "budget-exceeded", path: "limited.py" },
         ]);
       } finally {
         nativeWorkspace.close();
@@ -1905,17 +1918,17 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         const file = { language: "python" as const, path: "limited.py", source };
         const actual = await applyWorkspace(nativeWorkspace, index + 1, [file]);
         const full = evaluate(compiled, snapshot([file]));
-        expect({ status: actual.status, findings: actual.findings }).toEqual({
+        expect({ status: actual.status, violations: actual.violations }).toEqual({
           status: full.status,
-          findings: full.findings,
+          violations: full.violations,
         });
         if (index === 1) {
-          expect(actual).toMatchObject({ status: "failed", findings: [] });
-          expect(actual.failures.map(({ policyId, checkId, code, path }) => ({ policyId, checkId, code, path }))).toEqual([
-            { policyId: "runtime-contract", checkId: "ast-match", code: "budget-exceeded", path: "limited.py" },
+          expect(actual).toMatchObject({ status: "failed", violations: [] });
+          expect(actual.failures.map(({ ruleId, clauseId, code, path }) => ({ ruleId, clauseId, code, path }))).toEqual([
+            { ruleId: "runtime-contract", clauseId: "ast-match", code: "budget-exceeded", path: "limited.py" },
           ]);
         } else {
-          expect(full).toMatchObject({ status: "completed", findings: [], failures: [] });
+          expect(full).toMatchObject({ status: "completed", violations: [], failures: [] });
           expect(actual.failures).toEqual([]);
         }
       }
@@ -1927,7 +1940,7 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
   it("retains AST selections only while complete evidence remains, including deletion and recovery", async () => {
     const nativeWorkspace = workspace();
     const compiled = compileJson([{
-      id: "cross-file", finding: finding("CROSS_FILE"),
+      id: "cross-file", violation: finding("CROSS_FILE"),
       forbid: { select_when: {
         select: { ast: { language: "python", rule: { pattern: "report($ARG)" } } },
         exists: { ast: { language: "python", rule: { pattern: "print('marker')" } } },
@@ -1955,18 +1968,18 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         if (index === 4) {
           // Absent evidence in a damaged file is not a clean pass: the global check reports it partial.
           const full = evaluate(compiled, snapshot([...files.values()]));
-          expect(actual).toMatchObject({ status: "failed", findings: [] });
-          expect(full).toMatchObject({ status: "failed", findings: [] });
-          const identities = (failures: Array<{ checkId: string; code: string; path?: string | undefined }>) =>
-            failures.map(({ checkId, code, path }) => ({ checkId, code, path }));
-          expect(identities(actual.failures)).toEqual([{ checkId: "cross-file", code: "source-partial", path: "evidence.py" }]);
+          expect(actual).toMatchObject({ status: "failed", violations: [] });
+          expect(full).toMatchObject({ status: "failed", violations: [] });
+          const identities = (failures: Array<{ clauseId: string; code: string; path?: string | undefined }>) =>
+            failures.map(({ clauseId, code, path }) => ({ clauseId, code, path }));
+          expect(identities(actual.failures)).toEqual([{ clauseId: "cross-file", code: "source-partial", path: "evidence.py" }]);
           expect(identities(full.failures)).toEqual(identities(actual.failures));
         } else {
           const full = evaluate(compiled, snapshot([...files.values()]));
           expect(full).toMatchObject({ status: "completed", failures: [] });
           expect(actual).toMatchObject({ status: "completed", failures: [] });
-          expect(actual.findings).toEqual(full.findings);
-          expect(actual.findings.map(item => [item.path, item.span?.startLine])).toEqual(
+          expect(actual.violations).toEqual(full.violations);
+          expect(actual.violations.map(item => [item.path, item.span?.startLine])).toEqual(
             change.matched ? [["selected.py", 0], ["selected.py", 1]] : [],
           );
         }
@@ -1979,7 +1992,7 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
   it("evaluates cross-file source conditions from cached units beyond the repository input cap", async () => {
     const nativeWorkspace = workspace();
     const compiled = nativeRuntime().compile(policy([{
-      id: "cross-file", finding: finding("CROSS_FILE"),
+      id: "cross-file", violation: finding("CROSS_FILE"),
       forbid: { select_when: {
         select: { regex: { pattern: "baseline\\.json$", source: "file.path" } },
         exists: { ast: { language: "python", rule: { pattern: "print($ARG)" } } },
@@ -1990,12 +2003,12 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
       const files = Array.from({ length: 20 }, (_, index) => ({ language: "python", path: `file-${index}.py`, source: "safe()\n" }));
       files.push({ language: "python", path: "baseline.json", source: "{}" });
       const initial = await applyWorkspace(nativeWorkspace, 1, files);
-      expect(initial).toMatchObject({ findings: [], failures: [], status: "completed" });
+      expect(initial).toMatchObject({ violations: [], failures: [], status: "completed" });
       const changed = await applyWorkspace(nativeWorkspace, 2, [{ ...files[0]!, source: "print('violation')\n" }]);
       expect(changed.failures).toEqual([]);
-      expect(changed.findings).toEqual([expect.objectContaining({ code: "CROSS_FILE", path: "baseline.json" })]);
+      expect(changed.violations).toEqual([expect.objectContaining({ code: "CROSS_FILE", path: "baseline.json" })]);
       const cleared = await applyWorkspace(nativeWorkspace, 3, [files[0]!]);
-      expect(cleared).toMatchObject({ findings: [], failures: [], status: "completed" });
+      expect(cleared).toMatchObject({ violations: [], failures: [], status: "completed" });
     } finally { nativeWorkspace.close(); }
   });
   it("checks the source budget before parsing and recovers cached AST witnesses", async () => {
@@ -2012,9 +2025,9 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         path: "edit.py",
         source: "def broken(:\n    print('x')\n",
       }]);
-      expect(malformed).toMatchObject({ findings: [], status: "failed" });
+      expect(malformed).toMatchObject({ violations: [], status: "failed" });
       expect(malformed.failures).toEqual([
-        expect.objectContaining({ checkId: "ast-match", code: "budget-exceeded", path: "edit.py" }),
+        expect.objectContaining({ clauseId: "ast-match", code: "budget-exceeded", path: "edit.py" }),
       ]);
 
       const violating = await applyWorkspace(nativeWorkspace, 2, [{
@@ -2024,16 +2037,16 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
       }]);
       expect(violating.status).toBe("completed");
       expect(violating.failures).toEqual([]);
-      expect(violating.findings).toEqual([expect.objectContaining({ code: "AST_MATCH", path: "edit.py" })]);
+      expect(violating.violations).toEqual([expect.objectContaining({ code: "AST_MATCH", path: "edit.py" })]);
 
       const oversized = await applyWorkspace(nativeWorkspace, 3, [{
         language: "python",
         path: "edit.py",
         source: "safe()\n" + "x".repeat(100),
       }]);
-      expect(oversized).toMatchObject({ findings: [], status: "failed" });
+      expect(oversized).toMatchObject({ violations: [], status: "failed" });
       expect(oversized.failures).toEqual([
-        expect.objectContaining({ checkId: "ast-match", code: "budget-exceeded", path: "edit.py" }),
+        expect.objectContaining({ clauseId: "ast-match", code: "budget-exceeded", path: "edit.py" }),
       ]);
 
       const recovered = await applyWorkspace(nativeWorkspace, 4, [{
@@ -2041,13 +2054,13 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         path: "edit.py",
         source: "safe()\n",
       }]);
-      expect(recovered).toMatchObject({ findings: [], failures: [], status: "completed" });
+      expect(recovered).toMatchObject({ violations: [], failures: [], status: "completed" });
     } finally {
       nativeWorkspace.close();
     }
   });
   describe("finding anchors, message interpolation, and suggested fixes", () => {
-    const reported = (id: string, forbid: unknown, spec: Record<string, unknown>) => ({ finding: { ...finding(id.toUpperCase()), ...spec }, forbid, id });
+    const reported = (id: string, forbid: unknown, spec: Record<string, unknown>) => ({ violation: { ...finding(id.toUpperCase()), ...spec }, forbid, id });
     const ast = (rule: Record<string, unknown>) => ({ ast: { language: "typescript", rule } });
     const checks = [
       reported("log", ast({ pattern: "console.log($$$ARGS)" }), { anchor: "capture.ARGS", message: "log of $$$ARGS", fix: "logger.info($$$ARGS)" }),
@@ -2069,7 +2082,7 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         { language: "tsx", path: "v.tsx", source: tsx },
       ]));
       expect(result.failures).toEqual([]);
-      const byCheck = new Map(result.findings.map(item => [item.checkId, item]));
+      const byCheck = new Map(result.violations.map(item => [item.clauseId, item]));
       const at = (id: string) => {
         const span = byCheck.get(id)!.span!;
         return [span.startLine, span.startColumn, span.endLine, span.endColumn];
@@ -2093,8 +2106,8 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         for (const [index, source] of sources.entries()) {
           const incremental = await applyWorkspace(nativeWorkspace, index + 1, [{ language: "typescript", path: "a.ts", source }]);
           const fresh = evaluate(compiled, snapshot([{ language: "typescript", path: "a.ts", source }]));
-          expect(incremental.findings).toEqual(fresh.findings);
-          expect(incremental.findings.filter(item => item.fix !== undefined)).toHaveLength(2);
+          expect(incremental.violations).toEqual(fresh.violations);
+          expect(incremental.violations.filter(item => item.fix !== undefined)).toHaveLength(2);
         }
       } finally {
         nativeWorkspace.close();
@@ -2104,14 +2117,15 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
 
   describe("error-tolerant evaluation around syntax errors", () => {
     const tsCheck = (id: string, rule: Record<string, unknown>) => ({ ...astForbid(rule, "typescript"), id });
-    const identities = (failures: Array<{ checkId: string; code: string; path?: string | undefined }>) =>
-      failures.map(({ checkId, code, path }) => ({ checkId, code, path }))
-        .sort((left, right) => left.checkId.localeCompare(right.checkId));
-    const typeofImport = 'const m = importOriginal<typeof import("./api")>();\ndebugger;\n';
+    const identities = (failures: Array<{ clauseId: string; code: string; path?: string | undefined }>) =>
+      failures.map(({ clauseId, code, path }) => ({ clauseId, code, path }))
+        .sort((left, right) => left.clauseId.localeCompare(right.clauseId));
+    // A missing comma, which TypeScript rejects too, so the error region stays whatever the grammar fixes.
+    const missingComma = 'const m = importOriginal(1 load("./api"));\ndebugger;\n';
     const jsxAmpersand = "export const View = () => <p>Domain & capability map</p>;\ndebugger;\n";
 
     it.each([
-      ["typescript", "api.test.ts", typeofImport],
+      ["typescript", "api.test.ts", missingComma],
       ["tsx", "map.tsx", jsxAmpersand],
     ] as const)("reports sound %s witnesses outside the error region and marks the file partial", async (language, path, source) => {
       const nativeWorkspace = workspace();
@@ -2125,15 +2139,15 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         const actual = await applyWorkspace(nativeWorkspace, 1, [{ language, path, source }]);
         const full = evaluate(compiled, snapshot([{ language, path, source }]));
         expect(actual.status).toBe("failed");
-        expect(actual.findings).toEqual(full.findings);
-        expect(actual.findings.map(item => [item.checkId, item.span?.startLine])).toEqual([["debugger", 1]]);
+        expect(actual.violations).toEqual(full.violations);
+        expect(actual.violations.map(item => [item.clauseId, item.span?.startLine])).toEqual([["debugger", 1]]);
         expect(identities(actual.failures)).toEqual([
-          { checkId: "debugger", code: "source-partial", path },
-          { checkId: "no-class", code: "source-partial", path },
-          { checkId: "unguarded", code: "source-incomplete", path },
+          { clauseId: "debugger", code: "source-partial", path },
+          { clauseId: "no-class", code: "source-partial", path },
+          { clauseId: "unguarded", code: "source-incomplete", path },
         ]);
         expect(identities(full.failures)).toEqual(identities(actual.failures));
-        expect(actual.failures.find(item => item.checkId === "debugger")?.message).toMatch(/first at line 1, column \d+/);
+        expect(actual.failures.find(item => item.clauseId === "debugger")?.message).toMatch(/first at line 1, column \d+/);
       } finally {
         nativeWorkspace.close();
       }
@@ -2153,14 +2167,14 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
       nativeWorkspace.addPolicy(compiled);
       try {
         const files = [
-          { language: "typescript" as const, path: "api.test.ts", source: `${typeofImport}console.log(m);\nfunction run() {\n  report(1);\n  debugger;\n}\n` },
+          { language: "typescript" as const, path: "api.test.ts", source: `${missingComma}console.log(m);\nfunction run() {\n  report(1);\n  debugger;\n}\n` },
           { language: "tsx" as const, path: "map.tsx", source: `${jsxAmpersand}export const Title = () => <h1 title="map">{report(2)}</h1>;\n` },
         ];
         const actual = await applyWorkspace(nativeWorkspace, 1, files);
         const full = evaluate(compiled, snapshot(files as never));
-        expect(actual.findings).toEqual(full.findings);
+        expect(actual.violations).toEqual(full.violations);
         expect(identities(actual.failures)).toEqual(identities(full.failures));
-        expect(new Set(actual.findings.map(item => item.checkId)))
+        expect(new Set(actual.violations.map(item => item.clauseId)))
           .toEqual(new Set(["pattern", "kind-has", "inside", "any", "not-pattern", "jsx"]));
         expect(new Set(actual.failures.map(item => item.code))).toEqual(new Set(["source-partial"]));
       } finally {
@@ -2179,25 +2193,25 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         const clean = { language: "typescript", path: "clean.ts", source: "debugger;\n" };
         const broken = { language: "typescript", path: "broken.ts", source: "debugger;\nfunction f( {\n  debugger;\n" };
         const actual = await applyWorkspace(nativeWorkspace, 1, [clean, broken]);
-        expect(actual.findings.map(item => [item.checkId, item.path, item.span?.startLine])).toEqual([
+        expect(actual.violations.map(item => [item.clauseId, item.path, item.span?.startLine])).toEqual([
           ["debugger", "broken.ts", 0],
           ["debugger", "clean.ts", 0],
           ["no-class", "clean.ts", 0],
         ]);
         expect(identities(actual.failures)).toEqual([
-          { checkId: "debugger", code: "source-partial", path: "broken.ts" },
-          { checkId: "no-class", code: "source-partial", path: "broken.ts" },
+          { clauseId: "debugger", code: "source-partial", path: "broken.ts" },
+          { clauseId: "no-class", code: "source-partial", path: "broken.ts" },
         ]);
         expect(actual.failures[0]?.message).toMatch(/first at line 2, column \d+/);
-        expect(actual.findings).toEqual(evaluate(compiled, snapshot([clean, broken] as never)).findings);
+        expect(actual.violations).toEqual(evaluate(compiled, snapshot([clean, broken] as never)).violations);
 
         const repaired = await applyWorkspace(nativeWorkspace, 2, [{ ...broken, source: "debugger;\nfunction f() {\n  debugger;\n}\n" }]);
         expect(repaired).toMatchObject({ status: "completed", failures: [] });
-        expect(repaired.findings.filter(item => item.path === "broken.ts").map(item => item.checkId).sort())
+        expect(repaired.violations.filter(item => item.path === "broken.ts").map(item => item.clauseId).sort())
           .toEqual(["debugger", "debugger", "no-class"]);
 
         const damaged = await applyWorkspace(nativeWorkspace, 3, [{ ...broken, source: "debugger;\nfunction f() {\n  debugger;\n}\nconst x = (;\n" }]);
-        expect(damaged.findings.filter(item => item.path === "broken.ts").map(item => [item.checkId, item.span?.startLine]))
+        expect(damaged.violations.filter(item => item.path === "broken.ts").map(item => [item.clauseId, item.span?.startLine]))
           .toEqual([["debugger", 0], ["debugger", 2]]);
         expect(identities(damaged.failures).map(item => item.code)).toEqual(["source-partial", "source-partial"]);
       } finally {
@@ -2207,7 +2221,7 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
     it("continues capture enumeration after an eslint-suppressed binding", async () => {
       const nativeWorkspace = workspace();
       const compiled = compileJson([{
-        finding: {
+        violation: {
           ...finding("NO_CONSOLE"),
           anchor: "capture.X",
           each: "X",
@@ -2229,7 +2243,7 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
           source: "first; // eslint-disable-line no-console\nsecond;\n",
         };
         const actual = await applyWorkspace(nativeWorkspace, 1, [file]);
-        expect(actual.findings.map(item => file.source.slice(item.span!.startByte, item.span!.endByte))).toEqual(["second;"]);
+        expect(actual.violations.map(item => file.source.slice(item.span!.startByte, item.span!.endByte))).toEqual(["second;"]);
         expect(actual).toMatchObject({ status: "completed", failures: [] });
       } finally {
         nativeWorkspace.close();
@@ -2240,7 +2254,7 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
 
   describe("utils, matches, and constraints", () => {
     const tsCheck = (id: string, ast: Record<string, unknown>) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "typescript", ...ast } },
       id,
     });
@@ -2263,10 +2277,10 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
       rule: { any: [{ matches: "jsx" }, { pattern: "g($A)" }] },
       utils: { jsx: { kind: "jsx_self_closing_element" } },
     });
-    const texts = (findings: Array<{ checkId: string; path?: string | undefined; span?: { startByte: number; endByte: number } | undefined }>, files: Array<{ path: string; source: string }>) =>
+    const texts = (findings: Array<{ clauseId: string; path?: string | undefined; span?: { startByte: number; endByte: number } | undefined }>, files: Array<{ path: string; source: string }>) =>
       findings.map(item => {
         const source = files.find(file => file.path === item.path)!.source;
-        return `${item.checkId}:${item.path}:${item.span === undefined ? "" : source.slice(item.span.startByte, item.span.endByte)}`;
+        return `${item.clauseId}:${item.path}:${item.span === undefined ? "" : source.slice(item.span.startByte, item.span.endByte)}`;
       }).sort();
 
     it("matches the stateless evaluation on the indexed workspace path across edits", async () => {
@@ -2302,9 +2316,9 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
           const full = evaluate(compiled, snapshot(files as never));
           const actual = await applyWorkspace(nativeWorkspace, index + 1, files);
           expect(full).toMatchObject({ status: "completed", failures: [] });
-          expect({ status: actual.status, findings: actual.findings, failures: actual.failures })
-            .toEqual({ status: full.status, findings: full.findings, failures: [] });
-          expect(texts(actual.findings, files)).toEqual(expected[index]);
+          expect({ status: actual.status, violations: actual.violations, failures: actual.failures })
+            .toEqual({ status: full.status, violations: full.violations, failures: [] });
+          expect(texts(actual.violations, files)).toEqual(expected[index]);
         }
       } finally {
         nativeWorkspace.close();
@@ -2330,18 +2344,18 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
       );
       const files = [{ language: "typescript", path: "deep.ts", source: `x = ${"[".repeat(2_000)}${"]".repeat(2_000)};\n{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{ y; }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\n` }];
       const expectedFailures = [
-        { checkId: "nested", code: "budget-exceeded", message: expect.stringContaining("depth limit"), path: "deep.ts" },
-        { checkId: "slow", code: "budget-exceeded", message: expect.stringContaining("work budget"), path: "deep.ts" },
+        { clauseId: "nested", code: "budget-exceeded", message: expect.stringContaining("depth limit"), path: "deep.ts" },
+        { clauseId: "slow", code: "budget-exceeded", message: expect.stringContaining("work budget"), path: "deep.ts" },
       ];
       const full = evaluate(compiled, snapshot(files as never));
       expect(full.failures).toEqual(expectedFailures);
-      expect(full.findings.map(item => item.checkId)).toEqual(["plain", "plain"]);
+      expect(full.violations.map(item => item.clauseId)).toEqual(["plain", "plain"]);
       const nativeWorkspace = workspace();
       try {
         nativeWorkspace.addPolicy(compiled);
         const actual = await applyWorkspace(nativeWorkspace, 1, files);
-        expect(actual.failures).toEqual(expectedFailures.map(item => ({ ...item, policyId: "runtime-contract" })));
-        expect(actual.findings).toEqual(full.findings);
+        expect(actual.failures).toEqual(expectedFailures.map(item => ({ ...item, ruleId: "runtime-contract" })));
+        expect(actual.violations).toEqual(full.violations);
       } finally {
         nativeWorkspace.close();
       }
@@ -2356,20 +2370,20 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
       const files = [{
         language: "typescript",
         path: "broken.ts",
-        source: "async function f() { return (await x); }\nif (a) { useRef(); }\nconst m = importOriginal<typeof import(\"./api\")>();\n",
+        source: "async function f() { return (await x); }\nif (a) { useRef(); }\nconst m = importOriginal(1 load(\"./api\"));\n",
       }];
       const full = evaluate(compiled, snapshot(files as never));
       const nativeWorkspace = workspace();
       try {
         nativeWorkspace.addPolicy(compiled);
         const actual = await applyWorkspace(nativeWorkspace, 1, files);
-        expect(actual.findings).toEqual(full.findings);
-        expect(texts(actual.findings, files)).toEqual([
+        expect(actual.violations).toEqual(full.violations);
+        expect(texts(actual.violations, files)).toEqual([
           "conditional-hook:broken.ts:useRef()",
           "tail-await:broken.ts:return (await x);",
         ]);
-        const codes = (failures: Array<{ checkId: string; code: string }>) =>
-          failures.map(({ checkId, code }) => `${checkId}:${code}`).sort();
+        const codes = (failures: Array<{ clauseId: string; code: string }>) =>
+          failures.map(({ clauseId, code }) => `${clauseId}:${code}`).sort();
         expect(codes(actual.failures)).toEqual([
           "conditional-hook:source-partial",
           "tail-await:source-partial",
@@ -2385,7 +2399,7 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
   describe("capture comparison", () => {
     it("filters matches by comparing two captures on the indexed workspace path across edits", async () => {
       const unsortedKey = {
-        finding: { ...finding("UNSORTED"), anchor: "capture.KEY", message: "$KEY should come before $PREV" },
+        violation: { ...finding("UNSORTED"), anchor: "capture.KEY", message: "$KEY should come before $PREV" },
         forbid: {
           ast: {
             language: "typescript",
@@ -2410,8 +2424,8 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
           const full = evaluate(compiled, snapshot(files as never));
           const actual = await applyWorkspace(nativeWorkspace, index + 1, files);
           expect(full).toMatchObject({ status: "completed", failures: [] });
-          expect(actual.findings).toEqual(full.findings);
-          expect(actual.findings.map(item => item.message)).toEqual(expected[index]);
+          expect(actual.violations).toEqual(full.violations);
+          expect(actual.violations.map(item => item.message)).toEqual(expected[index]);
         }
       } finally {
         nativeWorkspace.close();
@@ -2442,8 +2456,8 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
           const full = evaluate(compiled, snapshot(files as never));
           const actual = await applyWorkspace(nativeWorkspace, index + 1, files);
           expect(full).toMatchObject({ status: "completed", failures: [] });
-          expect(actual.findings).toEqual(full.findings);
-          const texts = actual.findings.map(item => `${item.checkId}:${source.slice(item.span!.startByte, item.span!.endByte).slice(0, 10)}`).sort();
+          expect(actual.violations).toEqual(full.violations);
+          const texts = actual.violations.map(item => `${item.clauseId}:${source.slice(item.span!.startByte, item.span!.endByte).slice(0, 10)}`).sort();
           expect(texts).toEqual(expected[index]);
         }
       } finally {
@@ -2458,8 +2472,8 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
     const invalidThis = tsCheck("invalid-this", { kind: "this", not: { inside: { kind: "class_body", stopBy: rebinding } } });
     const ownReturn = tsCheck("own-return", { kind: "function_declaration", has: { kind: "return_statement", stopBy: { kind: "arrow_function" } } });
     const beforeBarrier = tsCheck("before-barrier", { kind: "expression_statement", precedes: { pattern: "done();", stopBy: { pattern: "barrier();" } } });
-    const texts = (findings: Array<{ checkId: string; span?: { startByte: number; endByte: number } | undefined }>, source: string) =>
-      findings.map(item => `${item.checkId}:${item.span === undefined ? "" : source.slice(item.span.startByte, item.span.endByte).split("\n")[0]}`).sort();
+    const texts = (findings: Array<{ clauseId: string; span?: { startByte: number; endByte: number } | undefined }>, source: string) =>
+      findings.map(item => `${item.clauseId}:${item.span === undefined ? "" : source.slice(item.span.startByte, item.span.endByte).split("\n")[0]}`).sort();
 
     it("matches the stateless evaluation on the indexed workspace path across edits", async () => {
       const compiled = compileJson([invalidThis, ownReturn, beforeBarrier]);
@@ -2479,8 +2493,8 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
           const full = evaluate(compiled, snapshot(files as never));
           const actual = await applyWorkspace(nativeWorkspace, index + 1, files);
           expect(full).toMatchObject({ status: "completed", failures: [] });
-          expect(actual.findings).toEqual(full.findings);
-          expect(texts(actual.findings, source)).toEqual(expected[index]);
+          expect(actual.violations).toEqual(full.violations);
+          expect(texts(actual.violations, source)).toEqual(expected[index]);
         }
       } finally {
         nativeWorkspace.close();
@@ -2496,9 +2510,9 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
       try {
         nativeWorkspace.addPolicy(compiled);
         const actual = await applyWorkspace(nativeWorkspace, 1, files);
-        expect(actual.findings).toEqual(full.findings);
-        expect(texts(actual.findings, files[0]!.source)).toEqual(["own-return:function h() { return 1; }"]);
-        const codes = (failures: Array<{ checkId: string; code: string }>) => failures.map(({ checkId, code }) => `${checkId}:${code}`).sort();
+        expect(actual.violations).toEqual(full.violations);
+        expect(texts(actual.violations, files[0]!.source)).toEqual(["own-return:function h() { return 1; }"]);
+        const codes = (failures: Array<{ clauseId: string; code: string }>) => failures.map(({ clauseId, code }) => `${clauseId}:${code}`).sort();
         expect(codes(actual.failures)).toEqual(["in-class:source-incomplete", "own-return:source-partial"]);
         expect(codes(full.failures)).toEqual(codes(actual.failures));
       } finally {
@@ -2522,7 +2536,7 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
       const malformed = await applyWorkspace(nativeWorkspace, 1, [{
         language: "python", path: "edit.py", source: "def broken(:\n",
       }]);
-      expect(new Map(malformed.failures.map(item => [item.policyId, item.code]))).toEqual(new Map([
+      expect(new Map(malformed.failures.map(item => [item.ruleId, item.code]))).toEqual(new Map([
         ["disabled-input", "budget-exceeded"],
         ["eligible-input", "source-partial"],
       ]));
@@ -2531,10 +2545,10 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
         language: "python", path: "edit.py", source: "print('x')\n",
       }]);
       expect(valid.failures).toEqual([
-        expect.objectContaining({ policyId: "disabled-input", code: "budget-exceeded", path: "edit.py" }),
+        expect.objectContaining({ ruleId: "disabled-input", code: "budget-exceeded", path: "edit.py" }),
       ]);
-      expect(valid.findings).toEqual([
-        expect.objectContaining({ policyId: "eligible-input", code: "AST_MATCH", path: "edit.py" }),
+      expect(valid.violations).toEqual([
+        expect.objectContaining({ ruleId: "eligible-input", code: "AST_MATCH", path: "edit.py" }),
       ]);
     } finally {
       nativeWorkspace.close();
@@ -2545,10 +2559,10 @@ describe.skipIf(policyDslRuntime === undefined)("native policy DSL workspace", (
 describe.skipIf(policyDslRuntime === undefined)("trust sweep (M6)", () => {
   it("rejects a document that repeats a key instead of keeping the last one", () => {
     const rule = `{"kind": "identifier", "not": {"regex": "^a$"}, "not": {"regex": "^b$"}}`;
-    const source = `{"format": "rerail.policy/v1", "id": "dup", "revision": 1, "checks": [{"id": "c",
-      "forbid": {"ast": {"language": "python", "rule": ${rule}}}, "finding": ${JSON.stringify(finding("X"))}}]}`;
-    expect(() => nativeRuntime().compile(source, "json", capabilities())).toThrow(/^duplicate key `not` at \/checks\/0\/forbid\/ast\/rule at line 2/);
-    expect(() => nativeRuntime().compile("format: rerail.policy/v1\nid: a\nid: b\nrevision: 1\nchecks: []\n", "yaml", capabilities())).toThrow(
+    const source = `{"format": "rerail.policy/v1", "id": "dup", "revision": 1, "mode": "steer", "clauses": [{"id": "c",
+      "forbid": {"ast": {"language": "python", "rule": ${rule}}}, "violation": ${JSON.stringify(finding("X"))}}]}`;
+    expect(() => nativeRuntime().compile(source, "json", capabilities())).toThrow(/^duplicate key `not` at \/clauses\/0\/forbid\/ast\/rule at line 2/);
+    expect(() => nativeRuntime().compile("format: rerail.policy/v1\nid: a\nid: b\nrevision: 1\nclauses: []\n", "yaml", capabilities())).toThrow(
       /^invalid YAML: duplicate key `id` at \//,
     );
   });
@@ -2561,8 +2575,8 @@ describe.skipIf(policyDslRuntime === undefined)("trust sweep (M6)", () => {
     try {
       nativeWorkspace.addPolicy(compiled);
       const actual = await applyWorkspace(nativeWorkspace, 1, files);
-      expect(actual.findings).toEqual(evaluate(compiled, snapshot(files as never)).findings);
-      expect(actual.findings.map(item => files[0]!.source.slice(item.span!.startByte, item.span!.endByte))).toEqual(["=="]);
+      expect(actual.violations).toEqual(evaluate(compiled, snapshot(files as never)).violations);
+      expect(actual.violations.map(item => files[0]!.source.slice(item.span!.startByte, item.span!.endByte))).toEqual(["=="]);
     } finally {
       nativeWorkspace.close();
     }
@@ -2570,7 +2584,7 @@ describe.skipIf(policyDslRuntime === undefined)("trust sweep (M6)", () => {
 
   it.each(["expression", "statement", "declaration", "primary_expression", "pattern"])("rejects the abstract kind %s, which no node carries", kind => {
     expect(() => compileJson([astForbid({ kind }, "typescript")])).toThrow(
-      `/checks/0/forbid/ast/rule/kind: \`${kind}\` is an abstract kind (a grammar supertype) that no node carries; list its concrete kinds under \`any\` (typescript, tsx, javascript grammars)`,
+      `/clauses/0/forbid/ast/rule/kind: \`${kind}\` is an abstract kind (a grammar supertype) that no node carries; list its concrete kinds under \`any\` (typescript, tsx, javascript grammars)`,
     );
     if (["expression", "primary_expression", "pattern"].includes(kind)) {
       expect(() => compileJson([astForbid({ kind: "call", has: { kind } })])).toThrow(/rule\/has\/kind: `\w+` is an abstract kind/);
@@ -2579,7 +2593,7 @@ describe.skipIf(policyDslRuntime === undefined)("trust sweep (M6)", () => {
 
   it("rejects a Python pattern whose $-name is not a metavariable, and keeps TypeScript's literal $-identifiers", async () => {
     expect(() => compileJson([astForbid({ pattern: "time.$At" })])).toThrow(
-      "/checks/0/forbid/ast/rule/pattern: `$At` is not a metavariable (names use A-Z, 0-9 and _) and Python source has no `$`, so the pattern never matches (python grammar)",
+      "/clauses/0/forbid/ast/rule/pattern: `$At` is not a metavariable (names use A-Z, 0-9 and _) and Python source has no `$`, so the pattern never matches (python grammar)",
     );
     const compiled = compileJson([astForbid({ pattern: "time.$At" }, "typescript")]);
     const files = [{ language: "typescript", path: "a.ts", source: "time.At;\ntime.$At;\n" }];
@@ -2587,8 +2601,8 @@ describe.skipIf(policyDslRuntime === undefined)("trust sweep (M6)", () => {
     try {
       nativeWorkspace.addPolicy(compiled);
       const actual = await applyWorkspace(nativeWorkspace, 1, files);
-      expect(actual.findings).toEqual(evaluate(compiled, snapshot(files as never)).findings);
-      expect(actual.findings.map(item => item.span?.startLine)).toEqual([1]);
+      expect(actual.violations).toEqual(evaluate(compiled, snapshot(files as never)).violations);
+      expect(actual.violations.map(item => item.span?.startLine)).toEqual([1]);
     } finally {
       nativeWorkspace.close();
     }
@@ -2606,8 +2620,8 @@ describe.skipIf(policyDslRuntime === undefined)("trust sweep (M6)", () => {
     try {
       nativeWorkspace.addPolicy(compiled);
       const actual = await applyWorkspace(nativeWorkspace, 1, files);
-      expect(actual.findings).toEqual(evaluate(compiled, snapshot(files as never)).findings);
-      const texts = actual.findings.map(item => `${item.checkId}:${source.slice(item.span!.startByte, item.span!.endByte)}`).sort();
+      expect(actual.violations).toEqual(evaluate(compiled, snapshot(files as never)).violations);
+      const texts = actual.violations.map(item => `${item.clauseId}:${source.slice(item.span!.startByte, item.span!.endByte)}`).sort();
       expect(texts).toEqual(["last-of-each:a: 3", "last-of-each:b: 2", "last-of-each:c: 4", "repeated:a: 3"]);
     } finally {
       nativeWorkspace.close();
@@ -2631,9 +2645,9 @@ describe.skipIf(policyDslRuntime === undefined)("trust sweep (M6)", () => {
       nativeWorkspace.addPolicy(compiled);
       const actual = await applyWorkspace(nativeWorkspace, 1, files);
       const full = evaluate(compiled, snapshot(files as never));
-      expect(actual.findings).toEqual(full.findings);
-      expect(actual.findings.map(item => item.checkId)).not.toContain("differs");
-      const codes = (failures: Array<{ checkId: string; code: string }>) => failures.map(({ checkId, code }) => `${checkId}:${code}`).sort();
+      expect(actual.violations).toEqual(full.violations);
+      expect(actual.violations.map(item => item.clauseId)).not.toContain("differs");
+      const codes = (failures: Array<{ clauseId: string; code: string }>) => failures.map(({ clauseId, code }) => `${clauseId}:${code}`).sort();
       expect(codes(actual.failures)).toEqual(["differs:source-incomplete", "inside:source-partial"]);
       expect(codes(full.failures)).toEqual(codes(actual.failures));
     } finally {
@@ -2642,33 +2656,33 @@ describe.skipIf(policyDslRuntime === undefined)("trust sweep (M6)", () => {
   });
 
   it("renders escaped and digit-led dollar names in messages literally, on the indexed workspace path", async () => {
-    const check = { ...astForbid({ pattern: "print($ARG)" }), finding: { ...finding("PRINT"), message: "print($ARG): set \\$HOME, costs $100" } };
+    const check = { ...astForbid({ pattern: "print($ARG)" }), violation: { ...finding("PRINT"), message: "print($ARG): set \\$HOME, costs $100" } };
     const compiled = compileJson([check]);
     const files = [{ language: "python", path: "a.py", source: "print(x)\n" }];
     const nativeWorkspace = workspace();
     try {
       nativeWorkspace.addPolicy(compiled);
       const actual = await applyWorkspace(nativeWorkspace, 1, files);
-      expect(actual.findings).toEqual(evaluate(compiled, snapshot(files as never)).findings);
-      expect(actual.findings.map(item => item.message)).toEqual(["print(x): set $HOME, costs $100"]);
+      expect(actual.violations).toEqual(evaluate(compiled, snapshot(files as never)).violations);
+      expect(actual.violations.map(item => item.message)).toEqual(["print(x): set $HOME, costs $100"]);
     } finally {
       nativeWorkspace.close();
     }
-    expect(() => compileJson([{ ...check, finding: { ...finding("PRINT"), message: "set $HOME" } }])).toThrow(
-      "/checks/0/finding/message: `$HOME` names no capture; the query can bind: ARG; write `\\$HOME` for literal text",
+    expect(() => compileJson([{ ...check, violation: { ...finding("PRINT"), message: "set $HOME" } }])).toThrow(
+      "/clauses/0/violation/message: `$HOME` names no capture; the query can bind: ARG; write `\\$HOME` for literal text",
     );
   });
 
   it("carries a literal fix on regex witnesses without named groups, on the indexed workspace path", async () => {
-    const check = (id: string, pattern: string) => ({ id, finding: { ...finding("DEBUGGER"), fix: "" }, forbid: { regex: { pattern, source: "file.content" } } });
+    const check = (id: string, pattern: string) => ({ id, violation: { ...finding("DEBUGGER"), fix: "" }, forbid: { regex: { pattern, source: "file.content" } } });
     const compiled = compileJson([check("plain", "debugger;"), check("grouped", "(?<D>debugger;)")]);
     const files = [{ language: "typescript", path: "a.ts", source: "debugger;\n" }];
     const nativeWorkspace = workspace();
     try {
       nativeWorkspace.addPolicy(compiled);
       const actual = await applyWorkspace(nativeWorkspace, 1, files);
-      expect(actual.findings).toEqual(evaluate(compiled, snapshot(files as never)).findings);
-      expect(actual.findings.map(item => [item.checkId, item.fix?.text, item.fix?.span.endByte])).toEqual([["grouped", "", 9], ["plain", "", 9]]);
+      expect(actual.violations).toEqual(evaluate(compiled, snapshot(files as never)).violations);
+      expect(actual.violations.map(item => [item.clauseId, item.fix?.text, item.fix?.span.endByte])).toEqual([["grouped", "", 9], ["plain", "", 9]]);
     } finally {
       nativeWorkspace.close();
     }
@@ -2677,12 +2691,12 @@ describe.skipIf(policyDslRuntime === undefined)("trust sweep (M6)", () => {
   it("reports source-partial for a global check only where an AST leaf read the broken file, like the stateless path", async () => {
     const regexGate = {
       id: "cross-file",
-      finding: finding("CROSS_FILE"),
+      violation: finding("CROSS_FILE"),
       forbid: { select_when: { exists: { regex: { pattern: "danger\\(", source: "file.content" } }, select: { regex: { pattern: "print", source: "file.content" } } } },
     };
     const astGate = {
       id: "ast-gate",
-      finding: finding("AST_GATE"),
+      violation: finding("AST_GATE"),
       forbid: { select_when: { exists: { regex: { pattern: "danger\\(", source: "file.content" } }, select: { ast: { language: "python", rule: { pattern: "print($A)" } } } } },
     };
     const compiled = compileJson([astForbid({ pattern: "print($ARG)" }), regexGate, astGate]);
@@ -2695,11 +2709,11 @@ describe.skipIf(policyDslRuntime === undefined)("trust sweep (M6)", () => {
       nativeWorkspace.addPolicy(compiled);
       const actual = await applyWorkspace(nativeWorkspace, 1, files);
       const full = evaluate(compiled, snapshot(files as never));
-      const codes = (failures: Array<{ checkId: string; code: string; path?: string | undefined }>) =>
-        failures.map(({ checkId, code, path }) => `${checkId}:${code}:${path ?? ""}`).sort();
+      const codes = (failures: Array<{ clauseId: string; code: string; path?: string | undefined }>) =>
+        failures.map(({ clauseId, code, path }) => `${clauseId}:${code}:${path ?? ""}`).sort();
       expect(codes(actual.failures)).toEqual(codes(full.failures));
       expect(codes(actual.failures)).not.toContain("cross-file:source-partial:broken.py");
-      expect(actual.findings.map(item => item.checkId).sort()).toEqual(full.findings.map(item => item.checkId).sort());
+      expect(actual.violations.map(item => item.clauseId).sort()).toEqual(full.violations.map(item => item.clauseId).sort());
     } finally {
       nativeWorkspace.close();
     }
@@ -2714,7 +2728,7 @@ describe.skipIf(policyDslRuntime === undefined)("trust sweep (M6)", () => {
       nativeWorkspace.addPolicy(compiled);
       const actual = await applyWorkspace(nativeWorkspace, 1, files);
       expect(actual.failures.map(item => item.code)).toEqual(["source-partial"]);
-      expect(actual.findings).toEqual(evaluate(compiled, snapshot(files as never)).findings);
+      expect(actual.violations).toEqual(evaluate(compiled, snapshot(files as never)).violations);
     } finally {
       nativeWorkspace.close();
     }
@@ -2732,12 +2746,12 @@ describe.skipIf(policyDslRuntime === undefined)("per-node values (M9a)", () => {
       nativeWorkspace.close();
     }
   }
-  const texts = (findings: Array<{ checkId: string; span?: { startByte: number; endByte: number; startLine: number } | undefined }>, source: string) =>
-    findings.map(item => `${item.checkId}:${item.span!.startLine + 1}:${source.slice(item.span!.startByte, item.span!.endByte)}`).sort();
+  const texts = (findings: Array<{ clauseId: string; span?: { startByte: number; endByte: number; startLine: number } | undefined }>, source: string) =>
+    findings.map(item => `${item.clauseId}:${item.span!.startLine + 1}:${source.slice(item.span!.startByte, item.span!.endByte)}`).sort();
 
   it("reads decoded and folded values, on the indexed workspace path", async () => {
     const source = "s.bind(('0.0.0.0', 80))\ns.bind(('0.0.' '0.0', 80))\nos.chmod(p, 0o644 | 0o020)\nos.chmod(p, mode)\nx = 24 * 3600 + 1\nprint(list())\ndef f(list):\n    return list()\n";
-    const check = (id: string, rule: unknown, constraints?: unknown) => ({ finding: finding("AST_MATCH"), forbid: { ast: { language: "python", rule, constraints } }, id });
+    const check = (id: string, rule: unknown, constraints?: unknown) => ({ violation: finding("AST_MATCH"), forbid: { ast: { language: "python", rule, constraints } }, id });
     const { actual, full } = await workspaceAndFull(
       [
         check("b104", { pattern: "$S.bind(($H, $P))" }, { H: { value: { eq: "0.0.0.0" } } }),
@@ -2749,9 +2763,9 @@ describe.skipIf(policyDslRuntime === undefined)("per-node values (M9a)", () => {
       ],
       [{ language: "python" as const, path: "a.py", source }],
     );
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual([
+    expect(texts(actual.violations, source)).toEqual([
       "b103:3:os.chmod(p, 0o644 | 0o020)",
       "b104:1:s.bind(('0.0.0.0', 80))",
       "b104:2:s.bind(('0.0.' '0.0', 80))",
@@ -2763,7 +2777,7 @@ describe.skipIf(policyDslRuntime === undefined)("per-node values (M9a)", () => {
 
   it("compares values, property names and tokens, on the indexed workspace path", async () => {
     const source = "const o = { a: 1, 'a': 2, 0x1: 3, [b]: 4, 1: 5 };\nf(1 + 2, 1+2);\nf(10, 9);\nf('10', '9');\nf(x, 1);\n";
-    const check = (id: string, rule: unknown) => ({ finding: finding("AST_MATCH"), forbid: { ast: { language: "typescript", rule } }, id });
+    const check = (id: string, rule: unknown) => ({ violation: finding("AST_MATCH"), forbid: { ast: { language: "typescript", rule } }, id });
     const { actual, full } = await workspaceAndFull(
       [
         check("dupe", { kind: "pair", pattern: "$P", follows: { stopBy: "end", kind: "pair", pattern: "$Q", compare: { left: "Q", op: "eq", right: "P", text: "key" } } }),
@@ -2773,10 +2787,10 @@ describe.skipIf(policyDslRuntime === undefined)("per-node values (M9a)", () => {
       ],
       [{ language: "typescript" as const, path: "a.ts", source }],
     );
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
     // `'a'` repeats `a`. `[b]` has no static name, so it equals no key and the search back from `1` goes on to `0x1`.
-    expect(texts(actual.findings, source)).toEqual([
+    expect(texts(actual.violations, source)).toEqual([
       "dupe:1:'a': 2",
       "dupe:1:1: 5",
       "greater:3:f(10, 9)",
@@ -2789,7 +2803,7 @@ describe.skipIf(policyDslRuntime === undefined)("per-node values (M9a)", () => {
   it("compares Python structurally under Ruff's three equalities, on the indexed workspace path", async () => {
     const source = "f(1, 0x1)\nf(1, 1.0)\nf('a' 'b', 'ab' '')\nf(-1, -(1))\nf('\\N{NOT A NAME}', 'a')\n";
     const check = (id: string, text: string, op = "eq") => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "python", rule: { pattern: "f($A, $B)", compare: { left: "A", op, right: "B", text } } } },
       id,
     });
@@ -2797,10 +2811,10 @@ describe.skipIf(policyDslRuntime === undefined)("per-node values (M9a)", () => {
       [check("plain", "structure"), check("hash", "structure-hash"), check("parts", "structure-parts"), check("differ", "structure", "ne")],
       [{ language: "python" as const, path: "a.py", source }],
     );
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
     // An unknown `\N{...}` name leaves the fifth call neither equal nor unequal.
-    expect(texts(actual.findings, source)).toEqual([
+    expect(texts(actual.violations, source)).toEqual([
       "differ:2:f(1, 1.0)",
       "hash:1:f(1, 0x1)",
       "hash:2:f(1, 1.0)",
@@ -2816,12 +2830,12 @@ describe.skipIf(policyDslRuntime === undefined)("per-node values (M9a)", () => {
 
   it("keeps a value rule sound in a file with syntax errors, on the indexed workspace path", async () => {
     const source = "undefined;\n0;\nfunction (;\n";
-    const check = { finding: finding("AST_MATCH"), forbid: { ast: { language: "typescript", rule: { kind: "expression_statement", has: { value: { truthy: false } } } } }, id: "falsy" };
+    const check = { violation: finding("AST_MATCH"), forbid: { ast: { language: "typescript", rule: { kind: "expression_statement", has: { value: { truthy: false } } } } }, id: "falsy" };
     const { actual, full } = await workspaceAndFull([check], [{ language: "typescript" as const, path: "a.ts", source }]);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures.map(item => item.code)).toEqual(["source-partial"]);
     // `undefined` needs the file's bindings, which an error region may hide; `0` does not.
-    expect(texts(actual.findings, source)).toEqual(["falsy:2:0;"]);
+    expect(texts(actual.violations, source)).toEqual(["falsy:2:0;"]);
   });
 });
 
@@ -2836,12 +2850,12 @@ describe.skipIf(policyDslRuntime === undefined)("binding values (M9b)", () => {
       nativeWorkspace.close();
     }
   }
-  const texts = (findings: Array<{ checkId: string; span?: { startByte: number; endByte: number; startLine: number } | undefined }>, source: string) =>
-    findings.map(item => `${item.checkId}:${item.span!.startLine + 1}:${source.slice(item.span!.startByte, item.span!.endByte)}`).sort();
+  const texts = (findings: Array<{ clauseId: string; span?: { startByte: number; endByte: number; startLine: number } | undefined }>, source: string) =>
+    findings.map(item => `${item.clauseId}:${item.span!.startLine + 1}:${source.slice(item.span!.startByte, item.span!.endByte)}`).sort();
 
   it("matches a binding's value, annotation and site, and follows values, on the indexed workspace path", async () => {
     const source = "ages = {'Tom': 23}\nages.get('Cat', None)\nages = ['Tom']\nages.get('Cat', None)\ndef f(d: dict, **kw):\n    d.get(1, None)\n    kw.get(1, None)\nmode = 0o777\nos.chmod(p, mode)\n";
-    const check = (id: string, rule: unknown, constraints?: unknown) => ({ finding: finding("AST_MATCH"), forbid: { ast: { language: "python", rule, constraints } }, id });
+    const check = (id: string, rule: unknown, constraints?: unknown) => ({ violation: finding("AST_MATCH"), forbid: { ast: { language: "python", rule, constraints } }, id });
     const dict = {
       any: [
         { resolves: { binding: { value: { kind: "dictionary" } } } },
@@ -2853,15 +2867,15 @@ describe.skipIf(policyDslRuntime === undefined)("binding values (M9b)", () => {
       [check("sim910", { pattern: "$D.get($K, None)" }, { D: dict }), check("b103", { pattern: "os.chmod($P, $M)" }, { M: { value: { bitsAny: 2, follow: true } } })],
       [{ language: "python" as const, path: "a.py", source }],
     );
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["b103:9:os.chmod(p, mode)", "sim910:2:ages.get('Cat', None)", "sim910:6:d.get(1, None)", "sim910:7:kw.get(1, None)"]);
+    expect(texts(actual.violations, source)).toEqual(["b103:9:os.chmod(p, mode)", "sim910:2:ages.get('Cat', None)", "sim910:6:d.get(1, None)", "sim910:7:kw.get(1, None)"]);
   });
 
   it("follows aliases through a recursive utility, on the indexed workspace path", async () => {
     const source = "var foo = JSON; function f(foo) { foo(); }\nvar a = JSON, b = a; b();\nlet c = JSON; c = Math; c();\n";
     const check = {
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: {
         ast: {
           language: "typescript",
@@ -2873,14 +2887,14 @@ describe.skipIf(policyDslRuntime === undefined)("binding values (M9b)", () => {
       id: "no-obj-calls",
     };
     const { actual, full } = await workspaceAndFull([check], [{ language: "typescript" as const, path: "a.ts", source }]);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["no-obj-calls:2:b()"]);
+    expect(texts(actual.violations, source)).toEqual(["no-obj-calls:2:b()"]);
   });
 
   it("binds call arguments to signature slots, on the indexed workspace path", async () => {
     const source = "requests.get(url)\nrequests.get(url, timeout=5)\nrequests.get(url, **kw)\nqs.extra(None, 'raw')\nqs.extra(where=['a'])\nqs.extra(*args)\n";
-    const check = (id: string, rule: unknown, constraints?: unknown) => ({ finding: finding("AST_MATCH"), forbid: { ast: { language: "python", rule, constraints } }, id });
+    const check = (id: string, rule: unknown, constraints?: unknown) => ({ violation: finding("AST_MATCH"), forbid: { ast: { language: "python", rule, constraints } }, id });
     const { actual, full } = await workspaceAndFull(
       [
         check("b113", { pattern: "requests.get($$$)", arguments: { signature: ["url", "params", "*", "timeout"], absent: ["timeout"] } }),
@@ -2888,41 +2902,41 @@ describe.skipIf(policyDslRuntime === undefined)("binding values (M9b)", () => {
       ],
       [{ language: "python" as const, path: "a.py", source }],
     );
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["b113:1:requests.get(url)", "b610:4:qs.extra(None, 'raw')"]);
+    expect(texts(actual.violations, source)).toEqual(["b113:1:requests.get(url)", "b610:4:qs.extra(None, 'raw')"]);
   });
 
   it("compares captures by node identity, on the indexed workspace path", async () => {
     const source = "for x in y:\n    i += 1\nfor x in y:\n    i += 1\n";
     const check = (id: string, text: string) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "python", rule: { kind: "for_statement", pattern: "$A", follows: { stopBy: "end", kind: "for_statement", pattern: "$B", compare: { left: "A", op: "ne", right: "B", text } } } } },
       id,
     });
     const { actual, full } = await workspaceAndFull([check("node", "node"), check("source", "source")], [{ language: "python" as const, path: "a.py", source }]);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["node:3:for x in y:\n    i += 1"]);
+    expect(texts(actual.violations, source)).toEqual(["node:3:for x in y:\n    i += 1"]);
   });
 
   it("finds call arguments syntactically, on the indexed workspace path", async () => {
     const source = "zip(a, b)\nzip(a, b, strict=True)\nzip(a, b, **kw)\nzip(a, b, **{'strict': True})\n";
     const check = (id: string, mode: string) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "python", rule: { pattern: "zip($$$)", arguments: { signature: ["*", "strict"], absent: ["strict"], mode } } } },
       id,
     });
     const { actual, full } = await workspaceAndFull([check("language", "language"), check("syntactic", "syntactic")], [{ language: "python" as const, path: "a.py", source }]);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["language:1:zip(a, b)", "syntactic:1:zip(a, b)", "syntactic:3:zip(a, b, **kw)", "syntactic:4:zip(a, b, **{'strict': True})"]);
+    expect(texts(actual.violations, source)).toEqual(["language:1:zip(a, b)", "syntactic:1:zip(a, b)", "syntactic:3:zip(a, b, **kw)", "syntactic:4:zip(a, b, **{'strict': True})"]);
   });
 
   it("reads a binding through lookup_symbol and only_binding, on the indexed workspace path", async () => {
     const source = "import os\nMODE = os.P_WAIT\ndef f():\n    global MODE\n    g(MODE)\ndef h():\n    g(MODE)\nb = 1\nb = os.sep\ng(b)\n";
     const check = (id: string, binding: unknown) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "python", rule: { pattern: "g($X)" }, constraints: { X: { kind: "identifier", resolves: { binding } } } } },
       id,
     });
@@ -2931,17 +2945,17 @@ describe.skipIf(policyDslRuntime === undefined)("binding values (M9b)", () => {
       [check("resolve", value), check("lookup", { ...value, stopAtGlobal: true }), check("only", { ...value, only: true })],
       [{ language: "python" as const, path: "a.py", source }],
     );
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["lookup:10:g(b)", "lookup:7:g(MODE)", "only:5:g(MODE)", "only:7:g(MODE)", "resolve:10:g(b)", "resolve:5:g(MODE)", "resolve:7:g(MODE)"]);
+    expect(texts(actual.violations, source)).toEqual(["lookup:10:g(b)", "lookup:7:g(MODE)", "only:5:g(MODE)", "only:7:g(MODE)", "resolve:10:g(b)", "resolve:5:g(MODE)", "resolve:7:g(MODE)"]);
   });
 
   it("does not evaluate binding rules in a file with syntax errors, on the indexed workspace path", async () => {
     const source = "const a = 'x';\nsetTimeout(a);\nfunction (;\n";
-    const check = { finding: finding("AST_MATCH"), forbid: { ast: { language: "typescript", rule: { pattern: "setTimeout($S)" }, constraints: { S: { value: { type: "string", follow: true } } } } }, id: "implied-eval" };
+    const check = { violation: finding("AST_MATCH"), forbid: { ast: { language: "typescript", rule: { pattern: "setTimeout($S)" }, constraints: { S: { value: { type: "string", follow: true } } } } }, id: "implied-eval" };
     const { actual, full } = await workspaceAndFull([check], [{ language: "typescript" as const, path: "a.ts", source }]);
-    expect(actual.findings).toEqual(full.findings);
-    expect(actual.findings).toEqual([]);
+    expect(actual.violations).toEqual(full.violations);
+    expect(actual.violations).toEqual([]);
     expect(actual.failures.map(item => item.code)).toEqual(["source-incomplete"]);
   });
 });
@@ -2957,22 +2971,22 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
       nativeWorkspace.close();
     }
   }
-  const texts = (findings: Array<{ checkId: string; span?: { startByte: number; endByte: number; startLine: number } | undefined }>, source: string) =>
-    findings.map(item => `${item.checkId}:${item.span!.startLine + 1}:${source.slice(item.span!.startByte, item.span!.endByte)}`).sort();
+  const texts = (findings: Array<{ clauseId: string; span?: { startByte: number; endByte: number; startLine: number } | undefined }>, source: string) =>
+    findings.map(item => `${item.clauseId}:${item.span!.startLine + 1}:${source.slice(item.span!.startByte, item.span!.endByte)}`).sort();
 
   it("reports Python builtins no binding shadows, in Ruff's order, on the indexed workspace path", async () => {
     const source = "print(len)\nlen = 1\ndef f(print):\n    return print(len)\ndef g():\n    return input()\ninput = None\n";
     const builtin = { ...astForbid({ kind: "identifier", resolves: { global: ["print", "len", "input"] } }), id: "builtin" };
     const shadowed = {
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "python", rule: { pattern: "$F($$$)" }, constraints: { F: { kind: "identifier", not: { resolves: { global: ["print", "input"] } } } } } },
       id: "shadowed",
     };
     const files = [{ language: "python" as const, path: "a.py", source }];
     const { actual, full } = await workspaceAndFull([builtin, shadowed], files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["builtin:1:len", "builtin:1:print", "shadowed:4:print(len)", "shadowed:6:input()"]);
+    expect(texts(actual.violations, source)).toEqual(["builtin:1:len", "builtin:1:print", "shadowed:4:print(len)", "shadowed:6:input()"]);
   });
 
   it("separates TypeScript values from types and honors /* global */ comments only when asked", async () => {
@@ -2981,22 +2995,22 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
     const directives = { ...astForbid({ resolves: { global: ["alert"], directives: "eslint" } }, "typescript"), id: "eslint" };
     const files = [{ language: "typescript" as const, path: "a.ts", source }];
     const { actual, full } = await workspaceAndFull([values, directives], files);
-    expect(actual.findings).toEqual(full.findings);
-    expect(texts(actual.findings, source)).toEqual(["eslint:4:alert", "eslint:4:jQuery", "plain:3:window", "plain:4:alert", "plain:4:jQuery"]);
+    expect(actual.violations).toEqual(full.violations);
+    expect(texts(actual.violations, source)).toEqual(["eslint:4:alert", "eslint:4:jQuery", "plain:3:window", "plain:4:alert", "plain:4:jQuery"]);
   });
 
   it("resolves Python callees through the file's imports, on the indexed workspace path", async () => {
     const source = "import subprocess as sp\nfrom os import path\nsp.run(a)\npath.join(b)\nrun(c)\ndef f():\n    from subprocess import run\n    return run(d)\n";
     const rule = { pattern: "$F($$$)" };
     const check = {
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "python", rule, constraints: { F: { resolves: { import: ["subprocess.run", "os.path.join"] } } } } },
       id: "import",
     };
     const files = [{ language: "python" as const, path: "a.py", source }];
     const { actual, full } = await workspaceAndFull([check], files);
-    expect(actual.findings).toEqual(full.findings);
-    expect(texts(actual.findings, source)).toEqual(["import:3:sp.run(a)", "import:4:path.join(b)", "import:8:run(d)"]);
+    expect(actual.violations).toEqual(full.violations);
+    expect(texts(actual.violations, source)).toEqual(["import:3:sp.run(a)", "import:4:path.join(b)", "import:8:run(d)"]);
   });
 
   it("matches unresolved, star-imported, any-global and qualified names (M10a), on the indexed workspace path", async () => {
@@ -3009,9 +3023,9 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
     ];
     const files = [{ language: "python" as const, path: "a.py", source }];
     const { actual, full } = await workspaceAndFull(checks, files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["global:4:print", "import:4:os.sep", "star:6:starred", "undefined:4:missing", "undefined:4:x"]);
+    expect(texts(actual.violations, source)).toEqual(["global:4:print", "import:4:os.sep", "star:6:starred", "undefined:4:missing", "undefined:4:x"]);
   });
 
   it("reports unused Python bindings through binds (M10a), on the indexed workspace path", async () => {
@@ -3020,9 +3034,9 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
     const locals = { ...astForbid({ kind: "identifier", binds: { form: "assignment", scope: "function", latest: true, used: false } }), id: "local" };
     const files = [{ language: "python" as const, path: "a.py", source }];
     const { actual, full } = await workspaceAndFull([imports, locals], files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["import:1:os", "local:5:a", "local:9:c"]);
+    expect(texts(actual.violations, source)).toEqual(["import:1:os", "local:5:a", "local:9:c"]);
   });
 
   it("filters the binding a reference reads (M10a), on the indexed workspace path", async () => {
@@ -3031,9 +3045,9 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
     const outer = { ...astForbid({ kind: "identifier", resolves: { binding: { outer: true, latest: true } } }), id: "outer" };
     const files = [{ language: "python" as const, path: "a.py", source }];
     const { actual, full } = await workspaceAndFull([imports, outer], files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["import:6:os", "outer:6:count"]);
+    expect(texts(actual.violations, source)).toEqual(["import:6:os", "outer:6:count"]);
   });
 
   it("reports Python redefinitions through binds.redefines (M10a), on the indexed workspace path", async () => {
@@ -3042,9 +3056,9 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
     const loop = { ...astForbid({ kind: "identifier", binds: { form: "for", redefines: { form: "import" } } }), id: "f402" };
     const files = [{ language: "python" as const, path: "a.py", source }];
     const { actual, full } = await workspaceAndFull([redefined, loop], files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["f402:7:os", "f811:2:os"]);
+    expect(texts(actual.violations, source)).toEqual(["f402:7:os", "f811:2:os"]);
   });
 
   it("counts a name's bindings within a captured loop through binds.bindings, on the indexed workspace path", async () => {
@@ -3055,15 +3069,15 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
     };
     const files = [{ language: "python" as const, path: "a.py", source }];
     const { actual, full } = await workspaceAndFull([once], files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["once:10:j"]);
+    expect(texts(actual.violations, source)).toEqual(["once:10:j"]);
   });
 
   it("reports TypeScript redeclarations and unused variables where ESLint does (M10b), on the indexed workspace path", async () => {
     const source = "var a = 1; var a = 2;\nvar Object = 0;\nlet b;\nb = 1;\n";
     const check = (id: string, rule: unknown) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "typescript", languageOptions: { sourceType: "script" }, rule } },
       id,
     });
@@ -3071,23 +3085,23 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
     const unused = check("unused", { kind: "identifier", resolves: { write: "last", binding: { used: false } } });
     const files = [{ language: "typescript" as const, path: "a.ts", source }];
     const { actual, full } = await workspaceAndFull([redeclare, unused], files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["redeclare:1:a", "redeclare:2:Object", "unused:1:a", "unused:2:Object", "unused:4:b"]);
+    expect(texts(actual.violations, source)).toEqual(["redeclare:1:a", "redeclare:2:Object", "unused:1:a", "unused:2:Object", "unused:4:b"]);
   });
 
   it("reports unused TypeScript variables through binds (M10b), on the indexed workspace path", async () => {
     const source = "import React from 'react';\nimport { a, b } from 'm';\nlet c = 0;\nc++;\nfunction f(d, e) { return e; }\nexport const g = <div>{a}</div>;\n";
     const check = (id: string, languageOptions: unknown) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "typescript", languageOptions, rule: { kind: "identifier", binds: { used: false, exported: false } } } },
       id,
     });
     const files = [{ language: "tsx" as const, path: "a.tsx", source }];
     const { actual, full } = await workspaceAndFull([check("pragma", {}), check("none", { jsxPragma: null })], files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["none:1:React", "none:2:b", "none:3:c", "none:5:d", "none:5:f", "pragma:2:b", "pragma:3:c", "pragma:5:d", "pragma:5:f"]);
+    expect(texts(actual.violations, source)).toEqual(["none:1:React", "none:2:b", "none:3:c", "none:5:d", "none:5:f", "pragma:2:b", "pragma:3:c", "pragma:5:d", "pragma:5:f"]);
   });
 
   it("parses format strings and reads a format call's arguments (M11a), on the indexed workspace path", async () => {
@@ -3100,32 +3114,32 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
     ];
     const files = [{ language: "python" as const, path: "a.py", source }];
     const { actual, full } = await workspaceAndFull(checks, files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["bad:1:'%(a)s %z'", "keyword:3:'{a}'.format(a=1, b=2)", "mixed:2:'{0}{}'", "pair:4:'%(a)s' % {'a': 1, 'b': 2}"]);
-    expect(actual.findings.find(finding => finding.checkId === "bad")?.variables).toBeDefined();
+    expect(texts(actual.violations, source)).toEqual(["bad:1:'%(a)s %z'", "keyword:3:'{a}'.format(a=1, b=2)", "mixed:2:'{0}{}'", "pair:4:'%(a)s' % {'a': 1, 'b': 2}"]);
+    expect(actual.violations.find(finding => finding.clauseId === "bad")?.variables).toBeDefined();
   });
 
   it("reads names in string type definitions (M11a), on the indexed workspace path", async () => {
     const source = "import os\nimport json\nfrom typing import Literal, cast\ndef f(value: \"os.PathLike\") -> \"Missing\":\n    local: int\n    return cast(\"Literal['json']\", value)\nx: \"List[\"\n";
     const strings = [{ kind: "string" }, { kind: "concatenated_string" }];
     const checks = [
-      { ...astForbid({ any: strings, parse: { grammar: "annotation", has: { kind: "identifier", resolves: { unresolved: true }, stopBy: "end", capture: "N" } } }), id: "undefined", finding: { anchor: "capture.N", code: "undefined", message: "undefined $N", severity: "error" } },
+      { ...astForbid({ any: strings, parse: { grammar: "annotation", has: { kind: "identifier", resolves: { unresolved: true }, stopBy: "end", capture: "N" } } }), id: "undefined", violation: { anchor: "capture.N", code: "undefined", message: "undefined $N" } },
       { ...astForbid({ any: strings, parse: { grammar: "annotation", kind: "ERROR" } }), id: "syntax" },
       { ...astForbid({ any: [{ kind: "dotted_name" }, { kind: "identifier" }], binds: { form: "import", latest: true, used: false } }), id: "import" },
       { ...astForbid({ kind: "identifier", binds: { form: "annotation", scope: "function", used: false } }), id: "annotation" },
     ];
     const files = [{ language: "python" as const, path: "a.py", source }];
     const { actual, full } = await workspaceAndFull(checks, files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["annotation:5:local", "import:2:json", "syntax:7:\"List[\"", "undefined:4:Missing"]);
+    expect(texts(actual.violations, source)).toEqual(["annotation:5:local", "import:2:json", "syntax:7:\"List[\"", "undefined:4:Missing"]);
   });
 
   it("refuses files with syntax errors rather than reading a hidden binding as absent", async () => {
     const files = [{ language: "python" as const, path: "a.py", source: "print(1)\ndef (:\n" }];
     const { actual, full } = await workspaceAndFull([astForbid({ kind: "identifier", resolves: { global: ["print"] } })], files);
-    expect(actual.findings).toEqual([]);
+    expect(actual.violations).toEqual([]);
     expect(actual.failures.map(item => item.code)).toEqual(["source-incomplete"]);
     expect(full.failures.map(item => item.code)).toEqual(["source-incomplete"]);
   });
@@ -3133,7 +3147,7 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
   it("limits global names to a query's language options (M8), on the indexed workspace path", async () => {
     const source = "Reflect();\nnew String(1);\nthis.eval(2);\n";
     const check = (id: string, languageOptions: unknown) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "typescript", languageOptions, rule: { any: [{ kind: "identifier" }, { kind: "this" }], resolves: { global: ["Reflect", "String"], this: "global" } } } },
       id,
     });
@@ -3142,111 +3156,111 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
       [check("es5", { ecmaVersion: 5, sourceType: "script" }), check("off", { globals: { String: "off" } }), check("latest", {})],
       files,
     );
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["es5:2:String", "es5:3:this", "latest:1:Reflect", "latest:2:String", "off:1:Reflect"]);
+    expect(texts(actual.violations, source)).toEqual(["es5:2:String", "es5:3:this", "latest:1:Reflect", "latest:2:String", "off:1:Reflect"]);
   });
 
   it("reads a Python query's version for builtins and annotations (M8), on the indexed workspace path", async () => {
     const source = "def f(x: Sequence) -> None:\n    return aiter(x)\nfrom typing import Sequence\n";
     const check = (id: string, pythonVersion: string) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "python", languageOptions: { pythonVersion }, rule: { kind: "identifier", resolves: { global: ["aiter"], import: ["typing.Sequence"] } } } },
       id,
     });
     const files = [{ language: "python" as const, path: "a.py", source }];
     const { actual, full } = await workspaceAndFull([check("py39", "3.9"), check("py313", "3.13"), check("py314", "3.14")], files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["py313:2:aiter", "py314:1:Sequence", "py314:2:aiter"]);
+    expect(texts(actual.violations, source)).toEqual(["py313:2:aiter", "py314:1:Sequence", "py314:2:aiter"]);
   });
 
   it("matches import sites by the names they import, with prefixes (M8), on the indexed workspace path", async () => {
     const source = "import pickle\nfrom xml.etree import ElementTree\nfrom . import pickle as p\nimport pickles\n";
     const check = {
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "python", rule: { kind: "dotted_name", resolves: { imported: ["pickle", "xml.etree"], prefix: true } } } },
       id: "imported",
     };
     const { actual, full } = await workspaceAndFull([check], [{ language: "python" as const, path: "a.py", source }]);
-    expect(actual.findings).toEqual(full.findings);
-    expect(texts(actual.findings, source)).toEqual(["imported:1:pickle", "imported:2:ElementTree", "imported:2:xml.etree"]);
+    expect(actual.violations).toEqual(full.violations);
+    expect(texts(actual.violations, source)).toEqual(["imported:1:pickle", "imported:2:ElementTree", "imported:2:xml.etree"]);
   });
 
   it("asks only whether a global name is shadowed with declared: false, on the indexed workspace path", async () => {
     const source = "window.alert(1);\nalert(2);\nfunction f(alert) { alert(3); }\n";
     const check = (id: string, declared: boolean) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "typescript", languageOptions: { ecmaVersion: 5, sourceType: "script", globals: { alert: "off" } }, rule: { kind: "identifier", resolves: { global: ["window", "alert"], declared } } } },
       id,
     });
     const files = [{ language: "typescript" as const, path: "a.js", source }];
     const { actual, full } = await workspaceAndFull([check("declared", true), check("shadow", false)], files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["shadow:1:window", "shadow:2:alert"]);
+    expect(texts(actual.violations, source)).toEqual(["shadow:1:window", "shadow:2:alert"]);
   });
 
   it("counts a script's top-level declarations as the global with scriptDeclarations, on the indexed workspace path", async () => {
     const source = "var Array;\nArray.prototype.a = 1;\nfunction f(Array) { Array; }\n";
     const check = (id: string, sourceType: string, scriptDeclarations?: true) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "typescript", languageOptions: { sourceType }, rule: { kind: "identifier", resolves: { global: ["Array"], ...(scriptDeclarations ? { scriptDeclarations } : {}) } } } },
       id,
     });
     const files = [{ language: "typescript" as const, path: "a.js", source }];
     const { actual, full } = await workspaceAndFull([check("off", "script"), check("script", "script", true), check("module", "module", true)], files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["script:2:Array"]);
+    expect(texts(actual.violations, source)).toEqual(["script:2:Array"]);
   });
 
   it("reads blocks as scopes only from ES2015, one table per reading, on the indexed workspace path", async () => {
     const source = "{ function alert() {} }\nalert();\n";
     const check = (id: string, ecmaVersion: number) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "typescript", languageOptions: { ecmaVersion, sourceType: "script" }, rule: { kind: "identifier", resolves: { global: ["alert"], declared: false } } } },
       id,
     });
     const files = [{ language: "typescript" as const, path: "a.js", source }];
     const { actual, full } = await workspaceAndFull([check("es5", 5), check("es2015", 2015)], files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["es2015:2:alert"]);
+    expect(texts(actual.violations, source)).toEqual(["es2015:2:alert"]);
   });
 
   it("matches a this in eslint-scope's global scope with this: globalScope, on the indexed workspace path", async () => {
     const source = "this.alert(1);\n{ this.alert(2); }\nfunction f() { this.alert(3); }\n";
     const check = (id: string, ecmaVersion: number) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "typescript", languageOptions: { ecmaVersion, sourceType: "script" }, rule: { kind: "this", resolves: { this: "globalScope" } } } },
       id,
     });
     const files = [{ language: "typescript" as const, path: "a.js", source }];
     const { actual, full } = await workspaceAndFull([check("es5", 5), check("es2015", 2015)], files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["es2015:1:this", "es5:1:this", "es5:2:this"]);
+    expect(texts(actual.violations, source)).toEqual(["es2015:1:this", "es5:1:this", "es5:2:this"]);
   });
 
   it("reads a CommonJS file's top-level this as the global object, as ESLint's no-eval does, on the indexed workspace path", async () => {
     const source = "this.eval(1);\nfunction f() { this.eval(2); }\n";
     const check = (id: string, sourceType: string) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "typescript", languageOptions: { sourceType }, rule: { kind: "this", resolves: { this: "global" } } } },
       id,
     });
     const files = [{ language: "typescript" as const, path: "a.js", source }];
     const { actual, full } = await workspaceAndFull([check("commonjs", "commonjs"), check("module", "module")], files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["commonjs:1:this"]);
+    expect(texts(actual.violations, source)).toEqual(["commonjs:1:this"]);
   });
 
   it("binds a non-strict ordinary function's this to the global object with sloppyFunctions, on the indexed workspace path", async () => {
     const source = "function f() { this.eval(1); }\nfunction g() { 'use strict'; this.eval(2); }\n";
     const check = (id: string, languageOptions: unknown) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "typescript", languageOptions, rule: { kind: "this", resolves: { this: "global", sloppyFunctions: true } } } },
       id,
     });
@@ -3260,61 +3274,61 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
       ],
       files,
     );
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["es3:1:this", "es3:2:this", "es5:1:this"]);
+    expect(texts(actual.violations, source)).toEqual(["es3:1:this", "es3:2:this", "es5:1:this"]);
   });
 
   it("names relative imports by their module text with relative: text, on the indexed workspace path", async () => {
     const source = "from .pdb import set_trace\nfrom . import pdb\nfrom pdb import foo\n";
     const check = (id: string, relative?: "text") => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "python", rule: { kind: "dotted_name", resolves: { imported: ["pdb", "pdb.set_trace"], ...(relative ? { relative } : {}) } } } },
       id,
     });
     const files = [{ language: "python" as const, path: "a.py", source }];
     const { actual, full } = await workspaceAndFull([check("never"), check("text", "text")], files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["never:3:pdb", "text:1:pdb", "text:1:set_trace", "text:2:pdb", "text:3:pdb"]);
+    expect(texts(actual.violations, source)).toEqual(["never:3:pdb", "text:1:pdb", "text:1:set_trace", "text:2:pdb", "text:3:pdb"]);
   });
 
   it("keeps an imported-only query partial in a file with syntax errors, on the indexed workspace path", async () => {
     const source = "from .__future__ import nope\ndef (:\n";
     const check = (id: string, resolves: unknown) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "python", rule: { kind: "dotted_name", resolves } } },
       id,
     });
     const checks = [check("imported", { imported: ["__future__"], relative: "text" }), check("global", { global: ["nope"] })];
     const files = [{ language: "python" as const, path: "broken.py", source }];
     const { actual, full } = await workspaceAndFull(checks, files);
-    expect(actual.findings).toEqual(full.findings);
-    expect(texts(actual.findings, source)).toEqual(["imported:1:__future__"]);
+    expect(actual.violations).toEqual(full.violations);
+    expect(texts(actual.violations, source)).toEqual(["imported:1:__future__"]);
     for (const failures of [actual.failures, full.failures]) {
-      expect(failures.map(item => `${item.checkId}:${item.code}`).sort()).toEqual(["global:source-incomplete", "imported:source-partial"]);
+      expect(failures.map(item => `${item.clauseId}:${item.code}`).sort()).toEqual(["global:source-incomplete", "imported:source-partial"]);
     }
   });
 
   it("applies a version-gated query only to its versions, soundly, on the indexed workspace path", async () => {
     const source = "zip(a, b)\n";
     const check = (id: string, pythonVersion: string) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "python", languageOptions: { pythonVersion }, when: { pythonVersion: { min: "3.10" } }, rule: { kind: "identifier", regex: "^zip$" } } },
       id,
     });
     const files = [{ language: "python" as const, path: "a.py", source }];
     const { actual, full } = await workspaceAndFull([check("py39", "3.9"), check("py310", "3.10")], files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
     expect(full.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["py310:1:zip"]);
+    expect(texts(actual.violations, source)).toEqual(["py310:1:zip"]);
   });
 
   it("applies a source-gated query only to its sourceType and ecmaFeatures, soundly, on the indexed workspace path", async () => {
     const source = "'use strict';\n";
     const check = (id: string, languageOptions: unknown) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "typescript", languageOptions, when: { sourceType: ["script", "commonjs"], ecmaFeatures: { impliedStrict: false } }, rule: { kind: "expression_statement" } } },
       id,
     });
@@ -3326,16 +3340,16 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
     ];
     const files = [{ language: "typescript" as const, path: "a.ts", source }];
     const { actual, full } = await workspaceAndFull(checks, files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
     expect(full.failures).toEqual([]);
-    expect(actual.findings.map(item => item.checkId).sort()).toEqual(["commonjs", "script"]);
+    expect(actual.violations.map(item => item.clauseId).sort()).toEqual(["commonjs", "script"]);
   });
 
   it("keeps a gated query's captures, constraints and templates whether its gate holds, on the indexed workspace path", async () => {
     const source = "function foo() {}\n";
     const check = (id: string, languageOptions: unknown, when: unknown) => ({
-      finding: { anchor: "capture.NAME", code: "AST_MATCH", fix: "$NAME", message: "fn $NAME", severity: "error" },
+      violation: { anchor: "capture.NAME", code: "AST_MATCH", fix: "$NAME", message: "fn $NAME" },
       forbid: { ast: {
         constraints: { NAME: { regex: "^f" } },
         language: "typescript",
@@ -3355,16 +3369,16 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
     ];
     const files = [{ language: "typescript" as const, path: "a.js", source }];
     const { actual, full } = await workspaceAndFull(checks, files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
     expect(full.failures).toEqual([]);
-    expect(actual.findings.map(item => `${item.checkId}:${item.message}`).sort()).toEqual(["es3:fn foo", "implied:fn foo", "script:fn foo"]);
+    expect(actual.violations.map(item => `${item.clauseId}:${item.message}`).sort()).toEqual(["es3:fn foo", "implied:fn foo", "script:fn foo"]);
   });
 
   it("applies a query only to files whose module path meets its file condition, on the indexed workspace path", async () => {
     const source = "x = 1\n";
     const check = (id: string, file: unknown) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "python", file, rule: { kind: "identifier" } } },
       id,
     });
@@ -3380,16 +3394,16 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
       { language: "python" as const, path: "pkg/__init__.py", source, module: "pkg.__init__" },
     ];
     const { actual, full } = await workspaceAndFull(checks, files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(actual.findings.map(item => `${item.checkId}:${item.path}`).sort()).toEqual(["init:pkg/__init__.py", "loose:loose/a.py", "not-sub:pkg/__init__.py", "sub:pkg/sub/b.py"]);
+    expect(actual.violations.map(item => `${item.clauseId}:${item.path}`).sort()).toEqual(["init:pkg/__init__.py", "loose:loose/a.py", "not-sub:pkg/__init__.py", "sub:pkg/sub/b.py"]);
     // A new module path for unchanged source is re-evaluated.
     const nativeWorkspace = workspace();
     try {
       nativeWorkspace.addPolicy(compileJson(checks));
       await applyWorkspace(nativeWorkspace, 1, files);
       const moved = await applyWorkspace(nativeWorkspace, 2, [{ ...files[1]!, module: "pkg.other.b" }]);
-      expect(moved.findings.map(item => `${item.checkId}:${item.path}`).sort()).toEqual(["init:pkg/__init__.py", "loose:loose/a.py", "not-sub:pkg/__init__.py"]);
+      expect(moved.violations.map(item => `${item.clauseId}:${item.path}`).sort()).toEqual(["init:pkg/__init__.py", "loose:loose/a.py", "not-sub:pkg/__init__.py"]);
     } finally {
       nativeWorkspace.close();
     }
@@ -3397,27 +3411,27 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
 
   it("binds private names per class body as ESLint's no-unused-private-class-members reads them, on the indexed workspace path", async () => {
     const source = "class A {\n  #read = 1;\n  #written = 0;\n  get #pair() { return 1; }\n  set #pair(v) {}\n  m(o) { this.#read; this.#written = 1; this.#written += 1; #pair in o; }\n}\n";
-    const check = (id: string, binds: unknown) => ({ finding: finding("AST_MATCH"), forbid: { ast: { language: "typescript", rule: { kind: "private_property_identifier", binds } } }, id });
+    const check = (id: string, binds: unknown) => ({ violation: finding("AST_MATCH"), forbid: { ast: { language: "typescript", rule: { kind: "private_property_identifier", binds } } }, id });
     const checks = [check("unused", { used: false }), check("accessor", { form: "accessor", redefines: {} }), check("unreferenced", { referenced: false })];
     const { actual, full } = await workspaceAndFull(checks, [{ language: "typescript", path: "a.ts", source }]);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual(["accessor:5:#pair", "unused:3:#written"]);
+    expect(texts(actual.violations, source)).toEqual(["accessor:5:#pair", "unused:3:#written"]);
   });
 
   it("declares typescript-eslint's lib globals in their namespaces, on the indexed workspace path", async () => {
     const source = "type NodeListOf = 1;\nlet a: NodeList = NodeList;\nNodeListOf;\nlet b: Missing;\n";
     const names = [{ kind: "identifier" }, { kind: "type_identifier" }];
-    const check = (id: string, rule: unknown, languageOptions: unknown) => ({ finding: finding("AST_MATCH"), forbid: { ast: { language: "typescript", languageOptions, rule } }, id });
+    const check = (id: string, rule: unknown, languageOptions: unknown) => ({ violation: finding("AST_MATCH"), forbid: { ast: { language: "typescript", languageOptions, rule } }, id });
     const checks = [
       check("undef", { any: names, resolves: { unresolved: true } }, { lib: ["dom"] }),
       check("undef-nolib", { any: names, resolves: { unresolved: true } }, {}),
       check("builtin", { any: names, binds: { builtin: true } }, { sourceType: "script", lib: ["dom"] }),
     ];
     const { actual, full } = await workspaceAndFull(checks, [{ language: "typescript", path: "a.ts", source }]);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(texts(actual.findings, source)).toEqual([
+    expect(texts(actual.violations, source)).toEqual([
       "builtin:1:NodeListOf",
       "undef-nolib:2:NodeList",
       "undef-nolib:2:NodeList",
@@ -3430,7 +3444,7 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
 
   it("applies a query only to files whose path meets its file condition, in every language, on the indexed workspace path", async () => {
     const check = (id: string, language: "typescript" | "python", file: unknown) => ({
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language, file, rule: { kind: language === "python" ? "module" : "program" } } },
       id,
     });
@@ -3448,9 +3462,9 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
       { language: "python" as const, path: "pkg/a.py", source: "x = 1\n", module: "pkg.a" },
     ];
     const { actual, full } = await workspaceAndFull(checks, files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(actual.findings.map(item => `${item.checkId}:${item.path}`).sort()).toEqual([
+    expect(actual.violations.map(item => `${item.clauseId}:${item.path}`).sort()).toEqual([
       "code:src/View.tsx",
       "code:src/a.ts",
       "declaration:src/types.d.ts",
@@ -3462,21 +3476,21 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
     const source = "class C: ...\ndef f(x=C()): ...\nfrom . import x\nx.y\n";
     const checks = [
       {
-        finding: finding("AST_MATCH"),
+        violation: finding("AST_MATCH"),
         forbid: { ast: { language: "python", rule: { any: [{ kind: "identifier" }, { kind: "attribute" }], resolves: { import: ["json.__init__.C", "json.x.y", "good.x.y", "good.my.mod.C"] } } } },
         id: "qualified",
       },
-      { finding: finding("AST_MATCH"), forbid: { ast: { language: "python", file: { package: { regex: "\\." } }, rule: { kind: "module" } } }, id: "package" },
-      { finding: finding("AST_MATCH"), forbid: { ast: { language: "python", file: { moduleName: { regex: "\\." }, inPackage: true }, rule: { kind: "module" } } }, id: "name" },
+      { violation: finding("AST_MATCH"), forbid: { ast: { language: "python", file: { package: { regex: "\\." } }, rule: { kind: "module" } } }, id: "package" },
+      { violation: finding("AST_MATCH"), forbid: { ast: { language: "python", file: { moduleName: { regex: "\\." }, inPackage: true }, rule: { kind: "module" } } }, id: "name" },
     ];
     const files = [
       { language: "python" as const, path: "json.d/__init__.py", source, module: ["json.d", "__init__"] },
       { language: "python" as const, path: "good/my.mod.py", source, module: ["good", "my.mod"] },
     ];
     const { actual, full } = await workspaceAndFull(checks, files);
-    expect(actual.findings).toEqual(full.findings);
+    expect(actual.violations).toEqual(full.violations);
     expect(actual.failures).toEqual([]);
-    expect(actual.findings.map(item => `${item.checkId}:${item.path}:${source.slice(item.span?.startByte, item.span?.endByte).split("\n")[0]}`).sort()).toEqual([
+    expect(actual.violations.map(item => `${item.clauseId}:${item.path}:${source.slice(item.span?.startByte, item.span?.endByte).split("\n")[0]}`).sort()).toEqual([
       "name:good/my.mod.py:class C: ...",
       "package:json.d/__init__.py:class C: ...",
       "qualified:good/my.mod.py:x.y",
@@ -3488,25 +3502,25 @@ describe.skipIf(policyDslRuntime === undefined)("file-local name resolution (M7)
   it("qualifies Python definitions by the file's module path (M8), on the indexed workspace path", async () => {
     const source = "def suppress(): pass\nwith suppress(): pass\nfrom . import sibling\nsibling.run()\n";
     const check = {
-      finding: finding("AST_MATCH"),
+      violation: finding("AST_MATCH"),
       forbid: { ast: { language: "python", rule: { any: [{ kind: "identifier" }, { kind: "attribute" }], resolves: { import: ["contextlib.suppress", "pkg.contextlib.suppress", "pkg.sibling.run"] } } } },
       id: "module",
     };
     const stem = [{ language: "python" as const, path: "fn/contextlib.py", source }];
     const stemmed = await workspaceAndFull([check], stem);
-    expect(stemmed.actual.findings).toEqual(stemmed.full.findings);
-    expect(texts(stemmed.actual.findings, source)).toEqual(["module:2:suppress"]);
+    expect(stemmed.actual.violations).toEqual(stemmed.full.violations);
+    expect(texts(stemmed.actual.violations, source)).toEqual(["module:2:suppress"]);
     const packaged = [{ language: "python" as const, path: "src/pkg/contextlib.py", source, module: "pkg.contextlib" }];
     const moduled = await workspaceAndFull([check], packaged);
-    expect(moduled.actual.findings).toEqual(moduled.full.findings);
-    expect(texts(moduled.actual.findings, source)).toEqual(["module:2:suppress", "module:4:sibling.run"]);
+    expect(moduled.actual.violations).toEqual(moduled.full.violations);
+    expect(texts(moduled.actual.violations, source)).toEqual(["module:2:suppress", "module:4:sibling.run"]);
     // A new module path for unchanged source is re-evaluated.
     const nativeWorkspace = workspace();
     try {
       nativeWorkspace.addPolicy(compileJson([check]));
       await applyWorkspace(nativeWorkspace, 1, packaged);
       const moved = await applyWorkspace(nativeWorkspace, 2, [{ ...packaged[0]!, module: "other.contextlib" }]);
-      expect(texts(moved.findings, source)).toEqual([]);
+      expect(texts(moved.violations, source)).toEqual([]);
     } finally {
       nativeWorkspace.close();
     }
@@ -3517,25 +3531,25 @@ describe.skipIf(policyDslRuntime === undefined)("finding multiplicity (M12b)", (
   it("reports one finding per distinct binding with each, with the same ids on the indexed workspace path", async () => {
     const rule = { kind: "comparison_operator", has: { any: [{ kind: "true" }, { kind: "false" }], pattern: "$OP" } };
     const once = astForbid(rule);
-    const each = { ...astForbid(rule), id: "each", finding: { ...finding("AST_MATCH"), each: "OP", anchor: "capture.OP" } };
+    const each = { ...astForbid(rule), id: "each", violation: { ...finding("AST_MATCH"), each: "OP", anchor: "capture.OP" } };
     const compiled = compileJson([once, each]);
     const source = "if res == True != False:\n    pass\n";
     const files = [{ language: "python", path: "a.py", source }];
-    const stateless = evaluate(compiled, snapshot(files as never)).findings;
+    const stateless = evaluate(compiled, snapshot(files as never)).violations;
     const nativeWorkspace = workspace();
     try {
       nativeWorkspace.addPolicy(compiled);
       const actual = await applyWorkspace(nativeWorkspace, 1, files);
-      expect(actual.findings).toEqual(stateless);
+      expect(actual.violations).toEqual(stateless);
     } finally {
       nativeWorkspace.close();
     }
-    const texts = stateless.map(item => `${item.checkId}:${source.slice(item.span!.startByte, item.span!.endByte)}`).sort();
+    const texts = stateless.map(item => `${item.clauseId}:${source.slice(item.span!.startByte, item.span!.endByte)}`).sort();
     expect(texts).toEqual(["ast-match:res == True != False", "each:False", "each:True"]);
     expect(new Set(stateless.map(item => item.id)).size).toBe(3);
     // Without each, a finding's id is the one it always had.
-    const alone = evaluate(compileJson([once]), snapshot(files as never)).findings;
-    expect(alone.map(item => item.id)).toEqual(stateless.filter(item => item.checkId === "ast-match").map(item => item.id));
+    const alone = evaluate(compileJson([once]), snapshot(files as never)).violations;
+    expect(alone.map(item => item.id)).toEqual(stateless.filter(item => item.clauseId === "ast-match").map(item => item.id));
   });
 
   it("reads a transform's value and default the same on both paths", async () => {
@@ -3545,18 +3559,18 @@ describe.skipIf(policyDslRuntime === undefined)("finding multiplicity (M12b)", (
     const check = {
       ...base,
       id: "values",
-      finding: { ...finding("AST_MATCH"), message: "[$V]" },
+      violation: { ...finding("AST_MATCH"), message: "[$V]" },
       forbid: { ast: { ...base.forbid.ast, transform } },
     };
     const compiled = compileJson([check]);
     const source = "f(' \\x61 ');\nf(1e2);\nf(undefined);\nf(a.b);\ng();\n";
     const files = [{ language: "typescript", path: "a.ts", source }];
-    const stateless = evaluate(compiled, snapshot(files as never)).findings;
+    const stateless = evaluate(compiled, snapshot(files as never)).violations;
     const nativeWorkspace = workspace();
     try {
       nativeWorkspace.addPolicy(compiled);
       const actual = await applyWorkspace(nativeWorkspace, 1, files);
-      expect(actual.findings).toEqual(stateless);
+      expect(actual.violations).toEqual(stateless);
     } finally {
       nativeWorkspace.close();
     }
@@ -3565,16 +3579,16 @@ describe.skipIf(policyDslRuntime === undefined)("finding multiplicity (M12b)", (
 
   it("reports one finding per match of a same-node regex group with each, on both paths", async () => {
     const rule = { kind: "format_specifier", regex: "\\\\[nrt\\\\]|(?<BS>\\\\)(?:[^nrt\\\\]|$)" };
-    const each = { ...astForbid(rule), id: "each", finding: { ...finding("AST_MATCH"), each: "BS", anchor: "capture.BS", message: "escape $BS" } };
+    const each = { ...astForbid(rule), id: "each", violation: { ...finding("AST_MATCH"), each: "BS", anchor: "capture.BS", message: "escape $BS" } };
     const compiled = compileJson([each]);
     const source = 'f"{x:\\d\\n\\q}"\n';
     const files = [{ language: "python", path: "a.py", source }];
-    const stateless = evaluate(compiled, snapshot(files as never)).findings;
+    const stateless = evaluate(compiled, snapshot(files as never)).violations;
     const nativeWorkspace = workspace();
     try {
       nativeWorkspace.addPolicy(compiled);
       const actual = await applyWorkspace(nativeWorkspace, 1, files);
-      expect(actual.findings).toEqual(stateless);
+      expect(actual.violations).toEqual(stateless);
     } finally {
       nativeWorkspace.close();
     }

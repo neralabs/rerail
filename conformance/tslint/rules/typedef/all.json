@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:typedef",
   "revision": 1,
+  "mode": "steer",
   "description": "Requires type definitions for: call-signature, arrow-call-signature, parameter, arrow-parameter, variable-declaration, property-declaration, member-variable-declaration, object-destructuring, array-destructuring.",
   "scope": {"include": ["**/*"], "exclude": []},
-  "checks": [
+  "clauses": [
     {
       "id": "call-signature",
       "forbid": {
@@ -54,10 +55,9 @@
           "utils": {"untyped": {"not": {"has": {"stopBy": "neighbor", "kind": "type_annotation"}}}}
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TYPEDEF",
-        "severity": "error",
         "message": "expected call-signature to have a typedef"
       }
     },
@@ -101,10 +101,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.AT",
         "code": "TYPEDEF",
-        "severity": "error",
         "message": "expected arrow-call-signature to have a typedef"
       }
     },
@@ -156,10 +155,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TYPEDEF",
-        "severity": "error",
         "message": "expected parameter to have a typedef"
       }
     },
@@ -214,10 +212,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TYPEDEF",
-        "severity": "error",
         "message": "expected arrow-parameter to have a typedef"
       }
     },
@@ -291,10 +288,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TYPEDEF",
-        "severity": "error",
         "message": "expected member-variable-declaration to have a typedef"
       }
     },
@@ -321,10 +317,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TYPEDEF",
-        "severity": "error",
         "message": "expected property-declaration to have a typedef"
       }
     },
@@ -344,10 +339,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TYPEDEF",
-        "severity": "error",
         "message": "expected variable-declaration to have a typedef"
       }
     },
@@ -367,10 +361,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TYPEDEF",
-        "severity": "error",
         "message": "expected object-destructuring to have a typedef"
       }
     },
@@ -390,10 +383,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TYPEDEF",
-        "severity": "error",
         "message": "expected array-destructuring to have a typedef"
       }
     }

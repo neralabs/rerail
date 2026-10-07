@@ -6,6 +6,8 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRerailApi } from "../src/api/http.js";
 import { operations, type RerailApiStores } from "../src/api/operations.js";
+import { openRerailDatabase, type RerailDatabase } from "../src/database.js";
+import { startStateReader } from "../src/repository-start.js";
 import type { ExecutablePolicyFinding } from "../src/executable-policy.js";
 import { SqlitePolicyExecutionReader, SqlitePolicyExecutionStore } from "../src/policy-execution-store.js";
 import { SqlitePresentationPreferenceStore } from "../src/presentation-preference-store.js";
@@ -20,10 +22,10 @@ const SESSION = { host: "codex" as const, sessionId: "session-a", cwd: "/workspa
 
 const flagged: ExecutablePolicyFinding = {
   id: "finding-1",
-  policyId: MOCK_POLICY_RULES[0]!.id,
-  checkId: "console-call",
+  ruleId: MOCK_POLICY_RULES[0]!.id,
+  clauseId: "console-call",
   code: "forbidden-call",
-  severity: "error",
+  mode: "block",
   message: "console.log is not allowed",
   path: "web/src/x.ts",
   span: { startByte: 0, endByte: 9, startLine: 1, startColumn: 1, endLine: 1, endColumn: 9 },
@@ -40,6 +42,7 @@ describe("Rerail API over HTTP", () => {
   let executions: SqlitePolicyExecutionStore;
   let transcripts: SqliteTranscriptStore;
   let raw: Database.Database;
+  let database: RerailDatabase;
   let closeables: Array<{ close(): void }>;
   const originalRerailHome = process.env.RERAIL_HOME;
 
@@ -55,7 +58,8 @@ describe("Rerail API over HTTP", () => {
     const preferences = new SqlitePresentationPreferenceStore(databasePath);
     const scanControls = new SqliteScanControlStore(databasePath);
     raw = new Database(databasePath);
-    closeables = [catalog, executions, transcripts, reader, executionReader, preferences, scanControls, raw];
+    database = openRerailDatabase(databasePath);
+    closeables = [catalog, executions, transcripts, reader, executionReader, preferences, scanControls, raw, database.$client];
     stores = {
       reader,
       executions: executionReader,
@@ -63,6 +67,8 @@ describe("Rerail API over HTTP", () => {
       transcripts: () => transcripts,
       scanControls: () => scanControls,
       preferences: () => preferences,
+      database: () => database,
+      repositoryState: startStateReader(database),
       health: () => ({ pid: process.pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
     };
     app = createRerailApi(stores, operations, { version: "0.0.0-test" });
@@ -82,15 +88,15 @@ describe("Rerail API over HTTP", () => {
       sessionId: run.sessionId ?? SESSION.sessionId,
       workspaceRoot: root,
       scope: "touched-files",
-      mode: "resteer",
+      mode: "steer",
       revision: 1,
       catalogRevision: null,
       ruleRevisions: (run.evaluated ?? []).map(ruleId => ({ ruleId, revision: 1 })),
       paths: ["web/src/x.ts"],
       ruleProvenance: [],
     });
-    executions.finish(runId, { status: "completed", findings: run.findings ?? [], failures: [] });
-    raw.prepare("UPDATE policy_runs SET started_at = ? WHERE run_id = ?").run(run.at, runId);
+    executions.finish(runId, { status: "completed", violations: run.findings ?? [], failures: [] });
+    raw.prepare("UPDATE audits SET started_at = ? WHERE audit_id = ?").run(run.at, runId);
     return runId;
   }
 
@@ -120,18 +126,18 @@ describe("Rerail API over HTTP", () => {
       distinctViolations: 1,
       sessions: 1,
       lastSeenAt: 3_000,
-      evaluations: 2,
+      audits: 2,
       rerails: 0,
     });
     // Compiled into a run but never flagged: a zero backed by evidence rather than by silence.
-    expect(body.rules[otherPolicy.id]).toMatchObject({ measured: true, distinctViolations: 0, evaluations: 1, lastSeenAt: null });
-    // Cosine rules never write a policy run, so there is nothing to report either way.
+    expect(body.rules[otherPolicy.id]).toMatchObject({ measured: true, distinctViolations: 0, audits: 1, lastSeenAt: null });
+    // Conversation rules never write an audit, so there is nothing to report either way.
     expect(body.rules[cosine.id]).toEqual({
       measured: false,
       distinctViolations: 0,
       sessions: 0,
       lastSeenAt: null,
-      evaluations: 0,
+      audits: 0,
       rerails: 0,
     });
   });
@@ -151,7 +157,7 @@ describe("Rerail API over HTTP", () => {
     const body = await getJson<{ rules: Record<string, Record<string, unknown>> }>("/api/rules/activity?since=1000");
 
     // Findings alone do not make a run an evaluation of the rule; only the compiled rule set does.
-    expect(body.rules[policy.id]).toMatchObject({ distinctViolations: 2, sessions: 2, lastSeenAt: 2_500, evaluations: 0 });
+    expect(body.rules[policy.id]).toMatchObject({ distinctViolations: 2, sessions: 2, lastSeenAt: 2_500, audits: 0 });
     expect((await getJson<{ rules: Record<string, Record<string, unknown>> }>("/api/rules/activity?since=0"))
       .rules[policy.id]).toMatchObject({ distinctViolations: 3, lastSeenAt: 2_500 });
   });
@@ -172,36 +178,36 @@ describe("Rerail API over HTTP", () => {
   });
 
   it("lists findings newest first, paged, and filtered by rule", async () => {
-    const other = { ...flagged, id: "finding-other", policyId: MOCK_POLICY_RULES[1]!.id, path: "web/src/z.ts" };
+    const other = { ...flagged, id: "finding-other", ruleId: MOCK_POLICY_RULES[1]!.id, path: "web/src/z.ts" };
     seedRun({ at: 1_000, findings: [flagged] });
     // The same violation twice in one run is one row; across runs it is history.
     const newest = seedRun({ at: 4_000, findings: [flagged, { ...flagged, id: "finding-copy" }, other] });
 
-    const page = await getJson<{ total: number; findings: Array<Record<string, unknown>> }>("/api/findings?since=0&limit=2");
+    const page = await getJson<{ total: number; violations: Array<Record<string, unknown>> }>("/api/violations?since=0&limit=2");
     expect(page.total).toBe(3);
-    expect(page.findings).toHaveLength(2);
-    expect(page.findings.map(finding => finding.at)).toEqual([4_000, 4_000]);
-    expect(page.findings[0]).toMatchObject({
+    expect(page.violations).toHaveLength(2);
+    expect(page.violations.map(violation => violation.at)).toEqual([4_000, 4_000]);
+    expect(page.violations[0]).toMatchObject({
       id: flagged.id,
-      ruleId: flagged.policyId,
-      checkId: flagged.checkId,
+      ruleId: flagged.ruleId,
+      clauseId: flagged.clauseId,
       code: flagged.code,
-      severity: "error",
+      mode: "block",
       path: "web/src/x.ts",
       span: flagged.span,
       sessionId: SESSION.sessionId,
-      runId: newest,
+      auditId: newest,
       at: 4_000,
     });
-    expect((await getJson<{ findings: Array<{ at: number }> }>("/api/findings?since=0&limit=2&offset=2")).findings)
+    expect((await getJson<{ violations: Array<{ at: number }> }>("/api/violations?since=0&limit=2&offset=2")).violations)
       .toMatchObject([{ at: 1_000 }]);
     // A page past the end still reports how many findings exist.
-    expect(await getJson<{ total: number; findings: unknown[] }>("/api/findings?since=0&limit=2&offset=3"))
-      .toEqual({ total: 3, findings: [] });
+    expect(await getJson<{ total: number; violations: unknown[] }>("/api/violations?since=0&limit=2&offset=3"))
+      .toEqual({ total: 3, violations: [] });
 
-    const filtered = await getJson<{ total: number; findings: Array<{ ruleId: string }> }>(`/api/findings?since=0&ruleId=${other.policyId}`);
-    expect(filtered).toMatchObject({ total: 1, findings: [{ ruleId: other.policyId }] });
-    expect((await getJson<{ total: number }>("/api/findings?since=2000")).total).toBe(2);
+    const filtered = await getJson<{ total: number; violations: Array<{ ruleId: string }> }>(`/api/violations?since=0&ruleId=${other.ruleId}`);
+    expect(filtered).toMatchObject({ total: 1, violations: [{ ruleId: other.ruleId }] });
+    expect((await getJson<{ total: number }>("/api/violations?since=2000")).total).toBe(2);
   });
 
   it("lists only the sessions started in range", async () => {
@@ -225,12 +231,12 @@ describe("Rerail API over HTTP", () => {
     expect(repeated.headers.get("etag")).toBe(tag);
     expect(await repeated.text()).toBe("");
     // A different filter is a different response, so it must not reuse the tag.
-    expect((await app.request("/api/rules?kind=cosine", { headers: { "if-none-match": tag! } })).status).toBe(200);
+    expect((await app.request("/api/rules?kind=conversation", { headers: { "if-none-match": tag! } })).status).toBe(200);
 
     const upsert = await app.request(`/api/rules/${MOCK_POLICY_RULES[1]!.id}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "policy", rule: MOCK_POLICY_RULES[1]! }),
+      body: JSON.stringify({ kind: "file", rule: MOCK_POLICY_RULES[1]! }),
     });
     expect(upsert.status).toBe(200);
     const refreshed = await app.request("/api/rules", { headers: { "if-none-match": tag! } });
@@ -242,14 +248,15 @@ describe("Rerail API over HTTP", () => {
     const id = "no-force-push";
     const rule = (regex: string) => ({
       id,
+      mode: "steer",
       match: { all: [{ field: "tool.name", eq: "Bash" }, { field: "input.command", regex }] },
       sample: { source: "tool:Bash", boundary: "tool-call" },
-      action: { delivery: "steer", content: "Do not force-push." },
+      action: { content: "Do not force-push." },
     });
     const put = (regex: string) => app.request(`/api/rules/${id}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "cosine", rule: rule(regex) }),
+      body: JSON.stringify({ kind: "conversation", rule: rule(regex) }),
     });
 
     const rejected = await put("(?!main)");
@@ -269,7 +276,7 @@ describe("Rerail API over HTTP", () => {
     catalog.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id }, { applicability: "global" });
     const catalogDatabase = new Database(catalog.path);
     catalogDatabase.prepare("UPDATE catalog_rules SET document_json = ? WHERE rule_id = ?").run(
-      JSON.stringify({ kind: "cosine", rule: { id, unknown: true } }),
+      JSON.stringify({ kind: "conversation", rule: { id, unknown: true } }),
       id,
     );
     catalogDatabase.close();
@@ -289,7 +296,7 @@ describe("Rerail API over HTTP", () => {
 
   it("dates activity, findings, and sessions by their own result", async () => {
     catalog.upsertPolicy(MOCK_POLICY_RULES[0]!);
-    for (const path of ["/api/rules/activity?since=0", "/api/findings?since=0", "/api/sessions"]) {
+    for (const path of ["/api/rules/activity?since=0", "/api/violations?since=0", "/api/sessions"]) {
       const first = await app.request(path);
       const tag = first.headers.get("etag")!;
       expect(first.status).toBe(200);
@@ -349,10 +356,55 @@ describe("Rerail API over HTTP", () => {
     const document = await getJson<{ paths: Record<string, Record<string, { operationId: string; responses: Record<string, unknown> }>> }>("/openapi.json");
 
     expect(document.paths["/api/rules/activity"]?.get?.operationId).toBe("rules_activity");
-    expect(document.paths["/api/findings"]?.get?.operationId).toBe("findings_list");
-    for (const path of ["/api/rules", "/api/rules/{id}", "/api/rules/activity", "/api/findings", "/api/sessions"]) {
+    expect(document.paths["/api/violations"]?.get?.operationId).toBe("violations_list");
+    for (const path of ["/api/rules", "/api/rules/{id}", "/api/rules/activity", "/api/violations", "/api/sessions"]) {
       expect(document.paths[path]?.get?.responses["304"]).toBeDefined();
     }
     expect(document.paths["/api/rules"]?.patch?.responses["304"]).toBeUndefined();
+  });
+
+  it("lists repositories by start state and starts or stops only ones that were set up", async () => {
+    const post = (path: string): Promise<Response> => Promise.resolve(app.request(path, { method: "POST" }));
+    raw.prepare("INSERT INTO rule_repositories (repository_id, last_known_path, created_at, updated_at) VALUES (?, ?, 1, 1)")
+      .run("repo-a", "/code/acme-web");
+    raw.prepare("INSERT INTO rule_repositories (repository_id, last_known_path, created_at, updated_at) VALUES (?, ?, 1, 1)")
+      .run("repo-b", "/code/landing-page");
+    raw.prepare("INSERT INTO repository_starts (repository_id, state, started_at, updated_at) VALUES ('repo-a', 'started', 10, 10)").run();
+
+    expect((await getJson<{ repositories: unknown[] }>("/api/repositories")).repositories).toEqual([
+      { repositoryId: "repo-a", name: "acme-web", root: "/code/acme-web", state: "started", startedAt: 10, stoppedAt: null },
+      { repositoryId: "repo-b", name: "landing-page", root: "/code/landing-page", state: "never", startedAt: null, stoppedAt: null },
+    ]);
+
+    const stopped = await post("/api/repositories/repo-a/stop");
+    expect(stopped.status).toBe(200);
+    expect(await stopped.json()).toMatchObject({ repository: { state: "stopped", startedAt: 10 } });
+    const started = await post("/api/repositories/repo-a/start");
+    expect(await started.json()).toMatchObject({ repository: { state: "started" } });
+
+    // Set-up needs a session in the repository; the dashboard cannot do it.
+    const unset = await post("/api/repositories/repo-b/start");
+    expect(unset.status).toBe(409);
+    expect((await post("/api/repositories/repo-b/stop")).status).toBe(200);
+    expect((await getJson<{ repositories: Array<{ state: string }> }>("/api/repositories")).repositories[1]?.state).toBe("never");
+    expect((await post("/api/repositories/unknown/stop")).status).toBe(404);
+  });
+
+  it("lists a repository set up only in a worktree as stopped, and starts and stops its main checkout", async () => {
+    const post = (path: string): Promise<Response> => Promise.resolve(app.request(path, { method: "POST" }));
+    raw.prepare("INSERT INTO rule_repositories (repository_id, last_known_path, created_at, updated_at) VALUES (?, ?, 1, 1)")
+      .run("repo-c", "/code/acme-web");
+    raw.prepare("INSERT INTO checkout_starts (repository_id, checkout_path, state, started_at, updated_at) VALUES ('repo-c', '/code/acme-web-feature', 'started', 5, 5)").run();
+
+    expect((await getJson<{ repositories: unknown[] }>("/api/repositories")).repositories).toEqual([
+      { repositoryId: "repo-c", name: "acme-web", root: "/code/acme-web", state: "stopped", startedAt: null, stoppedAt: null },
+    ]);
+    const started = await post("/api/repositories/repo-c/start");
+    expect(started.status).toBe(200);
+    expect(await started.json()).toMatchObject({ repository: { state: "started" } });
+    const stopped = await post("/api/repositories/repo-c/stop");
+    expect(await stopped.json()).toMatchObject({ repository: { state: "stopped" } });
+    // The worktree's own setting is untouched by the main checkout's.
+    expect(raw.prepare("SELECT state FROM checkout_starts WHERE repository_id = 'repo-c'").pluck().get()).toBe("started");
   });
 });

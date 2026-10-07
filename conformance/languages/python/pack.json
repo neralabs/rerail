@@ -1,0 +1,355 @@
+{
+  "pack": "python",
+  "family": "python",
+  "ticket": "NER-1698",
+  "capabilities": [
+    "syntax",
+    "value",
+    "compare",
+    "arguments",
+    "scope",
+    "calls",
+    "formatArgs",
+    "annotation",
+    "suppression"
+  ],
+  "exemptCapabilities": [
+    {
+      "capability": "calls",
+      "reason": "No pinned reference linter has a rule that reads callees transitively, which is what Rerail's calls capability answers.",
+      "evidence": "Checked Ruff 0.16.9 and Bandit 1.8.6. Ruff's rules that look at a call read only the call itself or the direct callee: flake8-async's ASYNC2xx and flake8-bugbear's call rules match the callee's resolved name; RET503 (crates/ruff_linter/src/rules/flake8_return/rules/function.rs, is_noreturn_func) reads only the direct callee's own `def` in the same file for a `NoReturn` annotation; Pyflakes' rules read bindings, not callees. Bandit's call tests (B3xx, B6xx, B113, B505, B506) match the callee's qualified name through its import. None answers whether a function reaches a call of X through any chain of calls.",
+      "coveredBy": [
+        "T2: rerail-fixtures/python/calls (calls::python_tests::python_calls_agree_with_the_runtime, against CPython 3.13.14 runtime traces)",
+        "T3: benchmark_python_calls_corpus (Jedi 0.19.2 over django and nera api; .nera/reports/ner-1698-python-t3-corpus-2026-10-05.json)"
+      ]
+    }
+  ],
+  "corpora": [
+    {
+      "name": "django",
+      "repository": "https://github.com/django/django",
+      "commit": "fd91518f17c8a84fa47fe0e5534ef46afa7a0f7a",
+      "paths": [
+        "django"
+      ],
+      "exclude": []
+    },
+    {
+      "name": "nera",
+      "repository": "https://github.com/neralabs/nera-landing",
+      "commit": "137e9bf7b9da512f90af8463c93c7d9554d49535",
+      "paths": [
+        "api",
+        "cue",
+        "data_model",
+        "scripts",
+        "workflows"
+      ],
+      "exclude": []
+    }
+  ],
+  "tools": [
+    {
+      "name": "ruff",
+      "version": "0.16.9"
+    },
+    {
+      "name": "bandit",
+      "version": "1.8.6"
+    }
+  ],
+  "rules": [
+    {
+      "id": "ruff-b011-assert-false",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B011"
+      },
+      "policy": "rules/ruff-b011-assert-false.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b028-no-explicit-stacklevel",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B028"
+      },
+      "policy": "rules/ruff-b028-no-explicit-stacklevel.json",
+      "capabilities": [
+        "arguments",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b905-zip-without-explicit-strict",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B905"
+      },
+      "policy": "rules/ruff-b905-zip-without-explicit-strict.json",
+      "capabilities": [
+        "arguments",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-e711-none-comparison",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "E711"
+      },
+      "policy": "rules/ruff-e711-none-comparison.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-e722-bare-except",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "E722"
+      },
+      "policy": "rules/ruff-e722-bare-except.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f507-percent-format-positional-count-mismatch",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F507"
+      },
+      "policy": "rules/ruff-f507-percent-format-positional-count-mismatch.json",
+      "capabilities": [
+        "formatArgs",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f523-string-dot-format-extra-positional-arguments",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F523"
+      },
+      "policy": "rules/ruff-f523-string-dot-format-extra-positional-arguments.json",
+      "capabilities": [
+        "formatArgs",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f524-string-dot-format-missing-arguments",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F524"
+      },
+      "policy": "rules/ruff-f524-string-dot-format-missing-arguments.json",
+      "capabilities": [
+        "formatArgs",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f601-multi-value-repeated-key-literal",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F601"
+      },
+      "policy": "rules/ruff-f601-multi-value-repeated-key-literal.json",
+      "capabilities": [
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f632-is-literal",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F632"
+      },
+      "policy": "rules/ruff-f632-is-literal.json",
+      "capabilities": [
+        "annotation",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f722-forward-annotation-syntax-error",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F722"
+      },
+      "policy": "rules/ruff-f722-forward-annotation-syntax-error.json",
+      "capabilities": [
+        "scope",
+        "annotation",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f811-redefined-while-unused",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F811"
+      },
+      "policy": "rules/ruff-f811-redefined-while-unused.json",
+      "capabilities": [
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f821-undefined-name",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F821"
+      },
+      "policy": "rules/ruff-f821-undefined-name.json",
+      "capabilities": [
+        "scope",
+        "annotation",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f823-undefined-local",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F823"
+      },
+      "policy": "rules/ruff-f823-undefined-local.json",
+      "capabilities": [
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f841-unused-variable",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F841"
+      },
+      "policy": "rules/ruff-f841-unused-variable.json",
+      "capabilities": [
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pie796-non-unique-enums",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PIE796"
+      },
+      "policy": "rules/ruff-pie796-non-unique-enums.json",
+      "capabilities": [
+        "compare",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim222-expr-or-true",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM222"
+      },
+      "policy": "rules/ruff-sim222-expr-or-true.json",
+      "capabilities": [
+        "value",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b101-assert-used",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B101"
+      },
+      "policy": "rules/bandit-b101-assert-used.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b113-request-without-timeout",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B113"
+      },
+      "policy": "rules/bandit-b113-request-without-timeout.json",
+      "capabilities": [
+        "arguments",
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b506-yaml-load",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B506"
+      },
+      "policy": "rules/bandit-b506-yaml-load.json",
+      "capabilities": [
+        "arguments",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b505-weak-cryptographic-key",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B505"
+      },
+      "policy": "rules/bandit-b505-weak-cryptographic-key.json",
+      "capabilities": [
+        "arguments",
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b610-django-extra-used",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B610"
+      },
+      "policy": "rules/bandit-b610-django-extra-used.json",
+      "capabilities": [
+        "arguments"
+      ],
+      "match": "line+column"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tlint-no-json-directive",
+  "revision": 1,
+  "mode": "steer",
+  "description": "tlint 9.7.0 NoJsonDirective: a @json directive, read from the view, where Blade compiles it to a call (in text, attribute values and script alike).",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "rule": {
+            "kind": "function_call_expression",
+            "regex": "^@(json)\\b"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "NoJsonDirective",
+        "message": "Use blade `{{ $model }}` auto escaping for models, and double quotes via json_encode over @json blade directive."
+      }
+    }
+  ]
+}

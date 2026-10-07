@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-any",
   "revision": 1,
+  "mode": "steer",
   "description": "Disallows `any` type declarations, except `...rest: any[]` (option ignore-rest-args).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "any-type",
       "forbid": {
@@ -47,10 +48,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_ANY",
-        "severity": "error",
         "message": "Type declaration of 'any' loses type-safety. Consider replacing it with a more precise type."
       }
     }

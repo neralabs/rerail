@@ -2,6 +2,7 @@
 
 Ports of TSLint core rules to `rerail.policy/v1`, each with TSLint's default options. One document per rule,
 `<rule>.json`, rule id `tslint:<rule>`. Rerail seeds them into the rule catalog **disabled**; enable the ones you want.
+Every document has `mode: "steer"`: an enabled rule steers the agent. None uses `block` until block enforcement lands.
 
 Each rule's `scope` covers TypeScript sources (`.ts`, `.tsx`, `.mts`, `.cts`) and leaves out dependency, build-output
 and generated directories (`node_modules`, `dist`, `build`, `out`, `.next`, `coverage`, `generated`, ...).

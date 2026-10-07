@@ -3,9 +3,11 @@ use super::tape::TapeDoc;
 use ast_grep_core::MatchStrictness;
 #[cfg(test)]
 use ast_grep_core::matcher::{Pattern, PatternNode};
+#[cfg(test)]
 use regex::Regex;
 #[cfg(test)]
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(test)]
 use std::ops::Range;
 
 // Benchmark-only backends are deliberately excluded from the production addon.
@@ -18,51 +20,63 @@ use std::ops::Range;
 mod jit;
 #[cfg(all(test, feature = "bench-backends", target_os = "macos"))]
 mod metal_backend;
-pub(super) mod sql_backend;
 
+#[cfg(test)]
 const STOP: u8 = 0x00;
+#[cfg(test)]
 const KIND: u8 = 0x01;
+#[cfg(test)]
 const FIELD: u8 = 0x02;
+#[cfg(test)]
 const FLAGS: u8 = 0x03;
+#[cfg(test)]
 const TEXT: u8 = 0x04;
+#[cfg(test)]
 const SIZE: u8 = 0x05;
+#[cfg(test)]
 const CHILD: u8 = 0x10;
+#[cfg(test)]
 const NEXT: u8 = 0x11;
+#[cfg(test)]
 const PARENT: u8 = 0x12;
+#[cfg(test)]
 const DESCEND: u8 = 0x13;
+#[cfg(test)]
 const CAPTURE: u8 = 0x20;
+#[cfg(test)]
 const FORK: u8 = 0x30;
+#[cfg(test)]
 const GOTO: u8 = 0x31;
+#[cfg(test)]
 const EMIT: u8 = 0x40;
 
+#[cfg(test)]
 const NAMED: u8 = 1;
+#[cfg(test)]
 const SIZE_LONG: u8 = 0x80;
+#[cfg(test)]
 const MAX_STEPS_PER_PATH: usize = 1 << 20;
 
-/// A `TEXT` test. Production programs (`Program::node_test`) test regexes only; the literal
-/// predicates serve the root-terminal compiler and the backends measured against it, all test-only.
+/// A `TEXT` test.
+#[cfg(test)]
 #[derive(Clone)]
 pub(super) enum TextPredicate {
-    #[cfg(test)]
     Equal(u16),
-    #[cfg(test)]
     Prefix(u16),
-    Regex {
-        source: u16,
-        compiled: Regex,
-    },
+    Regex { source: u16, compiled: Regex },
 }
 
+#[cfg(test)]
 impl TextPredicate {
     fn string_index(&self) -> u16 {
         match self {
-            #[cfg(test)]
             Self::Equal(index) | Self::Prefix(index) => *index,
             Self::Regex { source, .. } => *source,
         }
     }
 }
 
+#[cfg(test)]
 #[derive(Clone)]
 pub(super) struct Program {
     words: Vec<u32>,
@@ -72,6 +86,7 @@ pub(super) struct Program {
     longs: Vec<u64>,
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Capture {
     pub(super) label: u16,
@@ -79,6 +94,7 @@ pub(super) struct Capture {
     pub(super) span: Range<usize>,
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Output {
     pub(super) start: u32,
@@ -86,6 +102,7 @@ pub(super) struct Output {
     pub(super) captures: Vec<Capture>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum Error {
     InvalidOpcode(usize),
@@ -94,16 +111,15 @@ pub(super) enum Error {
     InvalidTarget(usize),
     NonProgressingCycle(usize),
     WorkLimit,
-    #[cfg(test)]
     UnsupportedPattern,
-    #[cfg(test)]
     InvalidAnchor,
-    #[cfg(all(test, feature = "bench-backends", target_os = "macos"))]
+    #[cfg(all(feature = "bench-backends", target_os = "macos"))]
     UnsupportedBackend,
-    #[cfg(all(test, feature = "bench-backends", target_os = "macos"))]
+    #[cfg(all(feature = "bench-backends", target_os = "macos"))]
     BackendFailure,
 }
 
+#[cfg(test)]
 #[derive(Clone)]
 struct Path {
     pc: u16,
@@ -113,16 +129,18 @@ struct Path {
     steps: usize,
 }
 
+#[cfg(test)]
 fn split(word: u32) -> (u8, u8, u16) {
     (word as u8, (word >> 8) as u8, (word >> 16) as u16)
 }
 
+#[cfg(test)]
 pub(super) const fn word(opcode: u8, mode: u8, operand: u16) -> u32 {
     opcode as u32 | ((mode as u32) << 8) | ((operand as u32) << 16)
 }
 
+#[cfg(test)]
 impl Program {
-    #[cfg(test)]
     /// Compiles the exact root-terminal subset of ast-grep patterns. Structural patterns and
     /// metavariables are rejected rather than delegated to ast-grep inside the transducer.
     pub(super) fn compile_ast_grep_literal(pattern: &Pattern) -> Result<Self, Error> {
@@ -174,58 +192,6 @@ impl Program {
         };
         program.validate()?;
         Ok(program)
-    }
-
-    /// A node-local test: the node has every kind in `kinds` and its text matches every regex.
-    /// The query engine's structural kernel runs these at the nodes a rule asks about.
-    pub(super) fn node_test(kinds: &[u16], regexes: &[Regex]) -> Result<Self, Error> {
-        let mut words = kinds
-            .iter()
-            .map(|&kind| word(KIND, 0, kind))
-            .collect::<Vec<_>>();
-        let mut strings = Vec::with_capacity(regexes.len() + 1);
-        let mut predicates = Vec::with_capacity(regexes.len());
-        for regex in regexes {
-            let index = u16::try_from(strings.len()).map_err(|_| Error::InvalidOperand(0))?;
-            words.push(word(TEXT, 0, index));
-            strings.push(regex.as_str().as_bytes().to_vec());
-            predicates.push(TextPredicate::Regex {
-                source: index,
-                compiled: regex.clone(),
-            });
-        }
-        let label = u16::try_from(strings.len()).map_err(|_| Error::InvalidOperand(0))?;
-        strings.push(b"node-test".to_vec());
-        words.push(word(EMIT, 0, 0));
-        Self::new(words, strings, predicates, vec![label], Vec::new())
-    }
-
-    /// Whether the program emits from `node`. A straight-line program (tests, then `EMIT`) runs
-    /// without allocating; any other runs as `execute_roots` from that one node.
-    pub(super) fn accepts(&self, tape: &TapeDoc, node: u32) -> Result<bool, Error> {
-        for &instruction in &self.words {
-            let (opcode, mode, operand) = split(instruction);
-            let retain = match opcode {
-                KIND => tape.transducer_kind(node) == operand,
-                FIELD => tape.transducer_field(node) == operand,
-                FLAGS => {
-                    let flags = tape.transducer_flags(node);
-                    flags & mode == mode && flags & operand as u8 == 0
-                }
-                TEXT => self.text_matches(operand, tape.transducer_text_str(node)),
-                EMIT => return Ok(true),
-                STOP => return Ok(false),
-                _ => {
-                    return self
-                        .execute_roots(tape, std::iter::once(node))
-                        .map(|outputs| !outputs.is_empty());
-                }
-            };
-            if !retain {
-                return Ok(false);
-            }
-        }
-        unreachable!("a validated program ends in STOP, EMIT or GOTO")
     }
 
     fn validate(&self) -> Result<(), Error> {
@@ -344,11 +310,9 @@ impl Program {
     /// Whether `text` passes the program's text predicate `predicate`.
     fn text_matches(&self, predicate: u16, text: &str) -> bool {
         match &self.predicates[usize::from(predicate)] {
-            #[cfg(test)]
             TextPredicate::Equal(string) => {
                 text.as_bytes() == self.strings[usize::from(*string)].as_slice()
             }
-            #[cfg(test)]
             TextPredicate::Prefix(string) => text
                 .as_bytes()
                 .starts_with(&self.strings[usize::from(*string)]),
@@ -356,7 +320,6 @@ impl Program {
         }
     }
 
-    #[cfg(test)]
     pub(super) fn execute(&self, tape: &TapeDoc) -> Result<Vec<Output>, Error> {
         self.execute_roots(tape, 0..tape.transducer_len() as u32)
     }
@@ -500,8 +463,7 @@ impl Program {
 }
 
 /// Executes several programs after one tape scan. A leading kind test becomes dispatch data;
-/// every other instruction retains the ordinary transducer semantics. Only programs a test builds
-/// run as a batch: production runs node tests one node at a time (`Program::accepts`).
+/// every other instruction retains the ordinary transducer semantics.
 #[cfg(test)]
 pub(super) fn execute_batch(
     programs: &[Program],
@@ -985,137 +947,6 @@ mod tests {
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", database.display()));
         }
-    }
-
-    #[test]
-    fn sqlite_virtual_table_call_shapes_keep_terminal_execution_batched() {
-        fn count_for(
-            connection: &rusqlite::Connection,
-            registry: &Arc<sql_backend::MatchRegistry>,
-            files: &[TapeDoc],
-            programs: &[Program],
-            sql: &str,
-        ) -> (i64, usize, usize, Vec<String>) {
-            let batch = registry.register_batch(programs, files);
-            let plan = connection
-                .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-                .unwrap()
-                .query_map([batch], |row| row.get(3))
-                .unwrap()
-                .collect::<Result<Vec<String>, _>>()
-                .unwrap();
-            let count = connection
-                .query_row(sql, [batch], |row| row.get(0))
-                .unwrap();
-            let calls = registry.counters(batch).unwrap().filters;
-            let executions = registry.execution_count(batch).unwrap();
-            registry.remove_batch(batch);
-            (count, calls, executions, plan)
-        }
-
-        let files = [
-            tape("execute(); commit(); execute()\n"),
-            tape("commit(); execute()\n"),
-            tape("commit()\n"),
-        ];
-        let programs = [identifier_program("execute")];
-        let connection = rusqlite::Connection::open_in_memory().unwrap();
-        let registry = Arc::new(sql_backend::MatchRegistry::default());
-        sql_backend::register_module(&connection, Arc::clone(&registry)).unwrap();
-        connection
-            .execute_batch(
-                "CREATE TABLE files(file_index INTEGER PRIMARY KEY, aggregate INTEGER NOT NULL);\
-                 INSERT INTO files VALUES(0,2),(1,1),(2,0);",
-            )
-            .unwrap();
-
-        let plain = count_for(
-            &connection,
-            &registry,
-            &files,
-            &programs,
-            "SELECT count(*) FROM rerail_matches(?1) WHERE match_index IS NOT NULL",
-        );
-        assert_eq!((plain.0, plain.1, plain.2), (3, 1, 1));
-        assert!(
-            plain
-                .3
-                .iter()
-                .any(|detail| detail.contains("VIRTUAL TABLE"))
-        );
-
-        let inner = count_for(
-            &connection,
-            &registry,
-            &files,
-            &programs,
-            "SELECT count(*) FROM files f CROSS JOIN rerail_matches(?1) t \
-             WHERE t.file_index=f.file_index AND t.match_index IS NOT NULL",
-        );
-        assert_eq!((inner.0, inner.1, inner.2), (3, 3, 1));
-        assert!(inner.3.iter().any(|detail| detail.contains("SCAN f")));
-        assert!(
-            inner
-                .3
-                .iter()
-                .any(|detail| detail.contains("VIRTUAL TABLE"))
-        );
-
-        let correlated = count_for(
-            &connection,
-            &registry,
-            &files,
-            &programs,
-            "SELECT count(*) FROM files f WHERE EXISTS (\
-             SELECT 1 FROM rerail_matches(?1) t \
-             WHERE t.file_index=f.file_index AND t.match_index IS NOT NULL)",
-        );
-        assert_eq!((correlated.0, correlated.1, correlated.2), (2, 3, 1));
-        assert!(
-            correlated
-                .3
-                .iter()
-                .any(|detail| detail.contains("VIRTUAL TABLE"))
-        );
-        eprintln!(
-            "rerail_matches plans: plain={:?}; inner={:?}; correlated={:?}",
-            plain.3, inner.3, correlated.3
-        );
-    }
-
-    #[test]
-    fn program_index_constraint_preserves_program_output_rows() {
-        let files = [tape("execute()\n")];
-        let programs = [identifier_program("execute")];
-        let connection = rusqlite::Connection::open_in_memory().unwrap();
-        let registry = Arc::new(sql_backend::MatchRegistry::default());
-        sql_backend::register_module(&connection, Arc::clone(&registry)).unwrap();
-        let batch = registry.register_batch(&programs, &files);
-        let all = connection
-            .prepare(
-                "SELECT output_label, match_index FROM rerail_matches(?1) \
-                 ORDER BY match_index IS NULL, match_index",
-            )
-            .unwrap()
-            .query_map([batch], |row| {
-                Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, Option<i64>>(1)?))
-            })
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        let constrained = connection
-            .prepare(
-                "SELECT output_label, match_index FROM rerail_matches(?1) \
-                 WHERE program_index = 0 ORDER BY match_index IS NULL, match_index",
-            )
-            .unwrap()
-            .query_map([batch], |row| {
-                Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, Option<i64>>(1)?))
-            })
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(constrained, all);
     }
 
     #[test]

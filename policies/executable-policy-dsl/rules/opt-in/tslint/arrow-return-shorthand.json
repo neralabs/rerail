@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:arrow-return-shorthand",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `arrow-return-shorthand` rule with its default options (https://palantir.github.io/tslint/rules/arrow-return-shorthand/). Arrow bodies whose only statement (comments aside) is `return <expr>` should use the expression form (default: single-line bodies only). The fix replaces the block with the expression, parenthesising an object literal; as in TSLint, no fix when a comment sits between the tokens.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "block-body",
       "forbid": {
@@ -128,10 +129,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "ARROW_RETURN_SHORTHAND",
-        "severity": "error",
         "message": "This arrow function body can be simplified by omitting the curly braces and the keyword 'return'.",
         "fix": "$E"
       }
@@ -238,10 +238,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "ARROW_RETURN_SHORTHAND",
-        "severity": "error",
         "message": "This arrow function body can be simplified by omitting the curly braces and the keyword 'return', and wrapping the object literal in parentheses.",
         "fix": "($E)"
       }
@@ -337,10 +336,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "ARROW_RETURN_SHORTHAND",
-        "severity": "error",
         "message": "This arrow function body can be simplified by omitting the curly braces and the keyword 'return'."
       }
     }

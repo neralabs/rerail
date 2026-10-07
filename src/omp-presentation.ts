@@ -1,11 +1,12 @@
 import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent";
-import { formatTerminalStatus, readPresentation } from "./session-presentation.js";
+import { formatTerminalStatus, notOnHerePresentation, readPresentation } from "./session-presentation.js";
 
 const STATUS_KEY = "rerail";
 const REFRESH_MS = 5_000;
 
 export interface OmpPresentation {
-  start(ctx: ExtensionContext): void;
+  /** `off`: Rerail is off in this checkout, so nothing runs and no daemon is there to ask. */
+  start(ctx: ExtensionContext, options?: { off?: boolean }): void;
   stop(): void;
 }
 
@@ -50,10 +51,15 @@ export function createOmpPresentation(): OmpPresentation {
     }
   }
 
-  function start(ctx: ExtensionContext): void {
+  function start(ctx: ExtensionContext, options: { off?: boolean } = {}): void {
     stop();
     if (!ctx.hasUI) return;
     current = ctx;
+    if (options.off === true) {
+      // Nothing autostarts where Rerail is off, so asking a daemon would only report it missing.
+      ctx.ui.setWidget(STATUS_KEY, [formatTerminalStatus(notOnHerePresentation())], { placement: "belowEditor" });
+      return;
+    }
     timer = ctx.setInterval(() => {
       if (!pending) void refresh(ctx);
     }, REFRESH_MS);

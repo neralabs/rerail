@@ -1,0 +1,42 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "python-conformance:ruff-f823-undefined-local",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F823 (undefined-local) with default settings, on the engine's name resolution (M10a `resolves.beforeLocal`, Ruff's undefined_local): a function's first read of a name that resolves to an enclosing function's or the module's binding which the function's own later binding of the name shadows, where that binding is the function's first and latest of the name (not `global`, `nonlocal` or `del`). Reported on the read. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F823.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "undefined-local",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$N",
+            "resolves": {
+              "beforeLocal": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F823",
+        "message": "Local variable `$N` referenced before assignment",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F823"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

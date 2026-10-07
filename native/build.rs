@@ -9,45 +9,114 @@ use std::path::{Path, PathBuf};
 
 fn main() {
     napi_build::setup();
-    build_blade_grammar();
+    for grammar in GRAMMARS {
+        build_grammar(grammar);
+    }
     configure_oracles();
     build_identities();
 }
 
-const BLADE_SOURCE: &str = "grammars/tree-sitter-blade/src";
+/// A grammar vendored under `grammars/`. Its generated parser is not vendored (Blade's is 22 MB,
+/// TypeScript's and TSX's 8 MB each): it is generated here from `grammar.json`, at the ABI
+/// `tree-sitter` loads.
+struct VendoredGrammar {
+    name: &'static str,
+    /// The directory holding `grammar.json` and `scanner.c`.
+    source: &'static str,
+    /// The directory holding `tree_sitter/parser.h`.
+    headers: &'static str,
+    version: (u8, u8, u8),
+    /// Every file the parser is built from: a change regenerates it and changes the grammar build
+    /// identity.
+    inputs: &'static [&'static str],
+}
 
-/// tree-sitter-blade 0.12.2, commit b5291d1ba207a8ebb8383b2ecb8a8a6535210a50. Its 22 MB generated
-/// parser is not vendored: it is generated here from the grammar, at the ABI `tree-sitter` loads.
-fn build_blade_grammar() {
-    for file in [
-        "grammar.json",
-        "scanner.c",
-        "tag.h",
-        "tree_sitter/alloc.h",
-        "tree_sitter/array.h",
-        "tree_sitter/parser.h",
-    ] {
-        println!("cargo:rerun-if-changed={BLADE_SOURCE}/{file}");
+const GRAMMARS: &[VendoredGrammar] = &[
+    // tree-sitter-blade 0.12.2, commit b5291d1ba207a8ebb8383b2ecb8a8a6535210a50.
+    VendoredGrammar {
+        name: "blade",
+        source: "grammars/tree-sitter-blade/src",
+        headers: "grammars/tree-sitter-blade/src",
+        version: (0, 12, 2),
+        inputs: &[
+            "grammars/tree-sitter-blade/src/grammar.json",
+            "grammars/tree-sitter-blade/src/scanner.c",
+            "grammars/tree-sitter-blade/src/tag.h",
+            "grammars/tree-sitter-blade/src/tree_sitter/alloc.h",
+            "grammars/tree-sitter-blade/src/tree_sitter/array.h",
+            "grammars/tree-sitter-blade/src/tree_sitter/parser.h",
+        ],
+    },
+    // tree-sitter-python 0.25.0 with the patches in grammars/tree-sitter-python/PATCHES.md.
+    VendoredGrammar {
+        name: "python",
+        source: "grammars/tree-sitter-python/src",
+        headers: "grammars/tree-sitter-python/src",
+        version: (0, 25, 0),
+        inputs: &[
+            "grammars/tree-sitter-python/src/grammar.json",
+            "grammars/tree-sitter-python/src/scanner.c",
+            "grammars/tree-sitter-python/src/tree_sitter/alloc.h",
+            "grammars/tree-sitter-python/src/tree_sitter/array.h",
+            "grammars/tree-sitter-python/src/tree_sitter/parser.h",
+        ],
+    },
+    // tree-sitter-typescript 0.23.2 with the patch in grammars/tree-sitter-typescript/PATCHES.md.
+    VendoredGrammar {
+        name: "typescript",
+        source: "grammars/tree-sitter-typescript/typescript/src",
+        headers: "grammars/tree-sitter-typescript/common",
+        version: (0, 23, 2),
+        inputs: &[
+            "grammars/tree-sitter-typescript/typescript/src/grammar.json",
+            "grammars/tree-sitter-typescript/typescript/src/scanner.c",
+            "grammars/tree-sitter-typescript/common/scanner.h",
+            "grammars/tree-sitter-typescript/common/tree_sitter/alloc.h",
+            "grammars/tree-sitter-typescript/common/tree_sitter/array.h",
+            "grammars/tree-sitter-typescript/common/tree_sitter/parser.h",
+        ],
+    },
+    VendoredGrammar {
+        name: "tsx",
+        source: "grammars/tree-sitter-typescript/tsx/src",
+        headers: "grammars/tree-sitter-typescript/common",
+        version: (0, 23, 2),
+        inputs: &[
+            "grammars/tree-sitter-typescript/tsx/src/grammar.json",
+            "grammars/tree-sitter-typescript/tsx/src/scanner.c",
+            "grammars/tree-sitter-typescript/common/scanner.h",
+            "grammars/tree-sitter-typescript/common/tree_sitter/alloc.h",
+            "grammars/tree-sitter-typescript/common/tree_sitter/array.h",
+            "grammars/tree-sitter-typescript/common/tree_sitter/parser.h",
+        ],
+    },
+];
+
+fn build_grammar(grammar: &VendoredGrammar) {
+    for input in grammar.inputs {
+        println!("cargo:rerun-if-changed={input}");
     }
-    let grammar = std::fs::read_to_string(format!("{BLADE_SOURCE}/grammar.json"))
-        .expect("Blade grammar is readable");
-    let (name, parser) = tree_sitter_generate::generate_parser_for_grammar(
-        &grammar,
-        Some((0, 12, 2)),
+    let name = grammar.name;
+    let source = grammar.source;
+    let json = std::fs::read_to_string(format!("{source}/grammar.json"))
+        .unwrap_or_else(|error| panic!("{name} grammar is unreadable: {error}"));
+    let (generated, parser) = tree_sitter_generate::generate_parser_for_grammar(
+        &json,
+        Some(grammar.version),
         tree_sitter_generate::OptLevel::default(),
         &mut Vec::new(),
     )
-    .expect("Blade parser generates");
-    assert_eq!(name, "blade");
-    let parser_path =
-        PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir")).join("blade_parser.c");
-    std::fs::write(&parser_path, parser).expect("Blade parser is writable");
+    .unwrap_or_else(|error| panic!("{name} parser does not generate: {error}"));
+    assert_eq!(generated, name);
+    let parser_path = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"))
+        .join(format!("{name}_parser.c"));
+    std::fs::write(&parser_path, parser).expect("generated parser is writable");
     cc::Build::new()
-        .include(BLADE_SOURCE)
+        .include(grammar.headers)
         .file(parser_path)
-        .file(format!("{BLADE_SOURCE}/scanner.c"))
+        .file(format!("{source}/scanner.c"))
         .warnings(false)
-        .compile("tree-sitter-blade");
+        .compile(&format!("tree-sitter-{name}"));
 }
 
 fn configure_oracles() {
@@ -95,33 +164,35 @@ fn build_identities() {
         engine.update([0]);
     }
     engine.update(lock_text.as_bytes());
-    let blade_source = |file: &str| {
-        std::fs::read(manifest.join(BLADE_SOURCE).join(file)).expect("Blade source is readable")
-    };
-    let blade_grammar = blade_source("grammar.json");
-    let blade_scanner = blade_source("scanner.c");
-    let blade_tag = blade_source("tag.h");
+    // The vendored grammars are part of both identities: what a check finds depends on the trees
+    // they build, as it did on the locked grammar crates they replace.
+    let mut grammar_inputs = Vec::new();
+    for input in GRAMMARS.iter().flat_map(|grammar| grammar.inputs) {
+        if !grammar_inputs.iter().any(|(path, _)| path == input) {
+            let bytes = std::fs::read(manifest.join(input))
+                .unwrap_or_else(|error| panic!("{input} is unreadable: {error}"));
+            engine.update(input.as_bytes());
+            engine.update([0]);
+            engine.update(&bytes);
+            engine.update([0]);
+            grammar_inputs.push((*input, bytes));
+        }
+    }
+    // A Blade tape holds the PHP view of its template: how the view is built is part of the tape.
     let blade_view =
         std::fs::read(manifest.join("src/policy_dsl/blade/view.rs")).expect("view is readable");
     println!(
         "cargo:rustc-env=RERAIL_ENGINE_BUILD_ID={}",
         hex(&engine.finalize())
     );
+    let mut tape_sources: Vec<(&str, &[u8])> = grammar_inputs
+        .iter()
+        .map(|(path, bytes)| (*path, bytes.as_slice()))
+        .collect();
+    tape_sources.push(("blade-view", &blade_view));
     println!(
         "cargo:rustc-env=RERAIL_GRAMMAR_BUILD_ID={}",
-        grammar_build_id(
-            &lock_text,
-            &[
-                // The Blade parser is generated at build time: its grammar and scanner are part
-                // of the tape.
-                ("grammar.json", &blade_grammar),
-                ("scanner.c", &blade_scanner),
-                ("tag.h", &blade_tag),
-                // A Blade tape holds the PHP view of its template: how the view is built is part
-                // of the tape.
-                ("blade-view", &blade_view),
-            ],
-        )
+        grammar_build_id(&lock_text, &tape_sources)
     );
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src");

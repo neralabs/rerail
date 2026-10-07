@@ -113,14 +113,16 @@ fn summaries_name_callees_by_qualified_name() {
     assert_eq!(
         defs,
         vec![
-            // `missing()` is unbound (the star import may bind it): the caller is open.
+            // `missing()` is unbound (the star import may bind it), `self_like.method()` a
+            // parameter's: the caller is open.
             (m("handler"), ASYNC | OPEN),
             (m("handler.<locals>.inner"), 0),
             (m("Service"), CLASS),
             (m("Service.__init__"), 0),
             (m("Service.start"), 0),
             (m("Service.start.<locals>.nested_in_if"), 0),
-            (m("Service.stop"), 0),
+            // A static method has no receiver: `x.start()` is a parameter's method.
+            (m("Service.stop"), OPEN),
             (m("later"), 0),
             (m("helper"), 0),
         ]
@@ -137,14 +139,14 @@ fn summaries_name_callees_by_qualified_name() {
             (&handler, "pkg.shared.util.run"),
             // A later module-level definition is visible from a function body.
             (&handler, &m("later")),
-            // `self_like.method()` names nothing, a builtin is outside every workspace, and a
-            // lambda's body is no definition's.
+            // A builtin is outside every workspace; the lambda's `time.sleep(2)` is the
+            // handler's, which runs or passes on the lambda.
             (&handler, &inner),
             (&inner, &m("helper")),
-            // A default argument is evaluated where the definition is, not in the method.
-            (&init, &start),
+            // A default argument is evaluated where the definition is, not in the method; a
+            // method of `self` is late bound, an explicit `Service.stop` is not.
+            (&init, &format!("{start}^")),
             (&start, &stop),
-            // A static method has no receiver: `x.start()` names nothing.
         ])
     );
     let targets = summary
@@ -164,9 +166,12 @@ fn summaries_name_callees_by_qualified_name() {
         vec![
             ("pkg.sub.api._pause", "pkg.clock.pause"),
             ("pkg.sub.api.load", "pkg.sub.helpers.load"),
+            // `import os.path` binds `os`.
+            ("pkg.sub.api.os", "os"),
             ("pkg.sub.api.r", "requests"),
             // An assignment of a name aliases it.
             ("pkg.sub.api.stop_all", "pkg.shared.util.stop"),
+            ("pkg.sub.api.time", "time"),
             ("pkg.sub.api.u", "pkg.shared.util"),
         ]
     );
@@ -205,8 +210,9 @@ fn a_call_site_names_what_extraction_recorded() {
         .map(|name| summary.name(*name).to_owned())
         .collect();
     assert_eq!(named, targets);
-    // `missing()`, and the default `helper()`: a class body sees only earlier bindings.
-    assert_eq!(open, 2);
+    // `missing()`, the default `helper()` (a class body sees only earlier bindings), a
+    // parameter's method, the lambda called where it is written, and `x.start()`.
+    assert_eq!(open, 5);
 }
 
 /// The ticket's rule: an async function's un-awaited call of a sync function that reaches blocking
@@ -239,7 +245,7 @@ pub(crate) fn blocking_policy(rule: serde_json::Value) -> crate::policy_dsl::Com
     let document = check_document(serde_json::json!({
         "id": "async-blocking",
         "forbid": { "ast": { "language": "python", "rule": rule } },
-        "finding": finding(),
+        "violation": finding(),
     }));
     let capabilities: serde_json::Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
     compile_document_with(document, &capabilities)
@@ -303,7 +309,7 @@ fn a_seed_query_at_held_nodes_finds_the_definitions_rooted_rules_do() {
     let spans = |rule: serde_json::Value| {
         let result = evaluate_snapshot(&blocking_policy(rule), &file);
         assert_eq!(result["failures"], serde_json::json!([]), "{result}");
-        result["findings"]
+        result["violations"]
             .as_array()
             .expect("findings")
             .iter()
@@ -318,8 +324,12 @@ fn a_seed_query_at_held_nodes_finds_the_definitions_rooted_rules_do() {
         .iter()
         .map(|(start, end)| crate::policy_dsl::findings::Witness {
             path: "m.py".into(),
-            span: serde_json::json!({ "startByte": start, "endByte": end }),
-            captures: serde_json::json!({}),
+            span: crate::policy_dsl::findings::Span {
+                start_byte: *start as usize,
+                end_byte: *end as usize,
+                ..Default::default()
+            },
+            captures: Default::default(),
             message: None,
             fix: None,
         })
@@ -358,7 +368,7 @@ fn a_stateless_evaluation_follows_calls_across_files() {
     let compiled = blocking_policy(blocking_rule());
     let result = evaluate_snapshot(&compiled, &CHAIN);
     assert_eq!(result["failures"], serde_json::json!([]), "{result}");
-    let findings = result["findings"].as_array().expect("findings");
+    let findings = result["violations"].as_array().expect("findings");
     // `handler` only: `awaited` awaits the call, and `fine`'s callee reaches nothing blocking.
     assert_eq!(findings.len(), 1, "{result}");
     assert_eq!(findings[0]["path"], "app/api.py");
@@ -367,7 +377,7 @@ fn a_stateless_evaluation_follows_calls_across_files() {
     let mut quiet = CHAIN;
     quiet[4].2 = "import time\n\ndef pause():\n    pass\n";
     let result = evaluate_snapshot(&compiled, &quiet);
-    assert_eq!(result["findings"], serde_json::json!([]), "{result}");
+    assert_eq!(result["violations"], serde_json::json!([]), "{result}");
 }
 
 #[test]
@@ -376,7 +386,7 @@ fn an_open_chain_is_unknown_so_neither_claim_reports() {
     let mut open = CHAIN;
     open[3].2 = "from app.star import *\n\ndef fetch():\n    pause()\n";
     let reach = evaluate_snapshot(&blocking_policy(blocking_rule()), &open);
-    assert_eq!(reach["findings"], serde_json::json!([]), "{reach}");
+    assert_eq!(reach["violations"], serde_json::json!([]), "{reach}");
     // "must reach": an async function none of whose calls reaches the sink. Unknown is no finding.
     let absent = serde_json::json!({
         "kind": "function_definition",
@@ -391,13 +401,13 @@ fn an_open_chain_is_unknown_so_neither_claim_reports() {
         } }
     });
     let result = evaluate_snapshot(&blocking_policy(absent.clone()), &open);
-    assert_eq!(result["findings"], serde_json::json!([]), "{result}");
+    assert_eq!(result["violations"], serde_json::json!([]), "{result}");
     // Closed and absent: the finding holds.
     let mut closed = CHAIN;
     closed[4].2 = "def pause():\n    pass\n";
     let result = evaluate_snapshot(&blocking_policy(absent), &closed);
     assert_eq!(
-        result["findings"].as_array().map(Vec::len),
+        result["violations"].as_array().map(Vec::len),
         Some(1),
         "{result}"
     );
@@ -411,7 +421,7 @@ fn seed_witnesses_do_not_spend_the_checks_witness_budget() {
     let document = check_document(serde_json::json!({
         "id": "async-blocking",
         "forbid": { "ast": { "language": "python", "rule": blocking_rule() } },
-        "finding": finding(),
+        "violation": finding(),
     }));
     let capabilities = capabilities_with(|capabilities| {
         capabilities["limits"]["maxWitnesses"] = serde_json::json!(2);
@@ -426,7 +436,7 @@ fn seed_witnesses_do_not_spend_the_checks_witness_budget() {
     ));
     let result = evaluate_snapshot(&compiled, &files);
     assert_eq!(result["failures"], serde_json::json!([]), "{result}");
-    let findings = result["findings"].as_array().expect("findings");
+    let findings = result["violations"].as_array().expect("findings");
     assert_eq!(findings.len(), 1, "{result}");
     assert_eq!(findings[0]["path"], "app/api.py");
     assert_eq!(findings[0]["span"]["startLine"], 2);
@@ -439,17 +449,17 @@ fn calls_is_refused_where_no_closure_is_read() {
     let typescript = check_document(serde_json::json!({
         "id": "ts",
         "forbid": { "ast": { "language": "typescript", "rule": { "kind": "call_expression", "calls": { "kind": "identifier" } } } },
-        "finding": finding(),
+        "violation": finding(),
     }));
     assert_eq!(
         rejection(compile_document_with(typescript, &capabilities)),
-        "/checks/0/forbid/ast/rule/calls: `calls` is not available for typescript policies"
+        "/clauses/0/forbid/ast/rule/calls: `calls` is not available for typescript policies"
     );
     let nested = serde_json::json!({ "kind": "call", "calls": { "has": { "kind": "call", "calls": { "kind": "identifier" } } } });
     let document = check_document(serde_json::json!({
         "id": "nested",
         "forbid": { "ast": { "language": "python", "rule": nested } },
-        "finding": finding(),
+        "violation": finding(),
     }));
     assert!(
         rejection(compile_document_with(document, &capabilities)).contains("cannot contain calls")
@@ -457,7 +467,7 @@ fn calls_is_refused_where_no_closure_is_read() {
     let through = check_document(serde_json::json!({
         "id": "through",
         "forbid": { "ast": { "language": "python", "rule": { "kind": "call", "calls": { "through": "async", "kind": "identifier" } } } },
-        "finding": finding(),
+        "violation": finding(),
     }));
     assert!(rejection(compile_document_with(through, &capabilities)).contains("through"));
 }
@@ -649,9 +659,10 @@ fn unknown_callees_are_open_never_absent() {
     assert_eq!(graph.status(&closure, &Name::new("m.b")), OPEN_STATUS);
     // A member of a module that star-imports, which no star import gives.
     assert_eq!(graph.status(&closure, &Name::new("n.d")), OPEN_STATUS);
-    // `obj.method()` and a module's assigned value have no static callee: no edge, as documented.
-    assert_eq!(graph.status(&closure, &Name::new("n.e")), NONE);
-    assert_eq!(graph.status(&closure, &Name::new("n.f")), NONE);
+    // `obj.method()` (a local's method) and a module's value no name denotes have no static
+    // callee: unknown, never absent.
+    assert_eq!(graph.status(&closure, &Name::new("n.e")), OPEN_STATUS);
+    assert_eq!(graph.status(&closure, &Name::new("n.f")), OPEN_STATUS);
 }
 
 #[test]
@@ -673,6 +684,168 @@ fn constructing_a_class_calls_its_init() {
     )]);
     assert_eq!(graph.status(&closure, &Name::new("m.make")), REACH);
     assert_eq!(graph.status(&closure, &Name::new("m.Client")), REACH);
+}
+
+const CLASSES: &str = "from pkg.util import helper
+run_helper = helper
+
+class A:
+    def go(self):
+        pass
+
+class B(A):
+    @classmethod
+    def build(cls):
+        return cls()
+
+class C(B):
+    pass
+
+class D(B):
+    def go(self):
+        pass
+
+class X:
+    def m(self):
+        pass
+
+class Y(X):
+    def m(self):
+        pass
+
+class Z(X):
+    def m(self):
+        pass
+
+class W(Y, Z):
+    pass
+
+def shadowed():
+    pass
+
+def shadowed():
+    pass
+
+if flag:
+    def either():
+        pass
+else:
+    def either():
+        pass
+
+def same(f):
+    return f
+
+@same
+def plain():
+    pass
+
+def wrapping(f):
+    def wrapper():
+        return f()
+    return wrapper
+
+@wrapping
+def wrapped():
+    pass
+";
+
+/// The definitions a call of `name` links to, by label and line, and whether it is open.
+fn linked(graph: &Graph, sources: &[(&str, &str)], name: &str) -> (Vec<String>, bool) {
+    let (defs, open) = graph.link_of(&Name::new(name));
+    let labels = defs
+        .iter()
+        .map(|def| {
+            let (path, start) = graph.def_site(*def);
+            let source = sources.iter().find(|(p, _)| *p == path.as_ref()).unwrap().1;
+            let line = source[..start as usize].matches('\n').count() + 1;
+            format!("{}:{line}", graph.def_label(*def))
+        })
+        .collect();
+    (labels, open)
+}
+
+/// Python's names as CPython binds them: an alias of a function, inherited class attributes
+/// through the C3 order, late-bound methods and `cls()` with every workspace override, a
+/// function defined twice (the later one), definitions on either branch, and decorators (one
+/// that returns its argument is transparent, a wrapping one is unknown). A class whose base no
+/// name denotes may derive from any class: a late-bound method it defines is unknown.
+#[test]
+fn python_names_follow_aliases_inheritance_and_rebinding() {
+    let sources = [
+        ("pkg/util.py", "def helper():\n    pass\n"),
+        ("m.py", CLASSES),
+    ];
+    let link = |files: &[(&str, &str)]| {
+        Graph::link(
+            files
+                .iter()
+                .map(|(path, source)| {
+                    let module = path.strip_suffix(".py").unwrap().replace('/', ".");
+                    (Arc::from(*path), Arc::new(summarize(&module, source)))
+                })
+                .collect(),
+        )
+    };
+    let graph = link(&sources);
+    let named = |name: &str, labels: &[&str], open: bool| {
+        assert_eq!(
+            linked(&graph, &sources, name),
+            (labels.iter().map(|l| (*l).to_owned()).collect(), open),
+            "{name}"
+        );
+    };
+    named("m.run_helper", &["pkg.util.helper:1"], false);
+    named("m.C.build", &["m.B.build:10"], false);
+    named("m.C.go", &["m.A.go:5"], false);
+    named("m.B.go^", &["m.A.go:5", "m.D.go:17"], false);
+    named("m.B.^", &[], false);
+    named("m.W.m", &["m.Y.m:25"], false);
+    named("m.shadowed", &["m.shadowed:38"], false);
+    named("m.either", &["m.either:42", "m.either:45"], false);
+    named("m.plain", &["m.plain:52"], false);
+    named("m.wrapped", &["m.wrapped:61"], true);
+    let orphan = (
+        "o.py",
+        "from m import B\n\nBase = make()\n\nclass E(Base):\n    def go(self):\n        pass\n",
+    );
+    let sources = [sources[0], sources[1], orphan];
+    let graph = link(&sources);
+    assert_eq!(
+        linked(&graph, &sources, "m.B.go^"),
+        (vec!["m.A.go:5".to_owned(), "m.D.go:17".to_owned()], true)
+    );
+    assert!(!linked(&graph, &sources, "m.X.m^").1);
+}
+
+/// Callees are named as CPython reads identifiers (NFKC): a lookalike import, attribute,
+/// definition, receiver and method all name the ASCII ones.
+#[test]
+fn callees_are_named_under_nfkc() {
+    let summary = summarize(
+        "m",
+        "import 𝐭𝐢𝐦𝐞\n\ndef 𝐰𝐚𝐢𝐭():\n    time.𝐬𝐥𝐞𝐞𝐩(1)\n\nclass 𝒞:\n    def go(𝐬𝐞𝐥𝐟):\n        self.𝐫𝐮𝐧()\n    def run(self):\n        wait()\n",
+    );
+    let defs = summary
+        .defs
+        .iter()
+        .map(|def| summary.name(def.name).to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(defs, ["m.wait", "m.C", "m.C.go", "m.C.run"]);
+    assert_eq!(
+        edges(&summary),
+        pairs(&[
+            ("m.wait", "time.sleep"),
+            ("m.C.go", "m.C.run^"),
+            ("m.C.run", "m.wait"),
+        ])
+    );
+    let (graph, _, closure) = close(&[(
+        "m.py",
+        "m",
+        "import 𝐭𝐢𝐦𝐞\n\ndef 𝐰𝐚𝐢𝐭():\n    time.𝐬𝐥𝐞𝐞𝐩(1)\n\ndef make():\n    wait()\n",
+    )]);
+    assert_eq!(graph.status(&closure, &Name::new("m.make")), REACH);
 }
 
 #[test]
@@ -747,6 +920,18 @@ fn edit_steps() -> Vec<Vec<Step>> {
             "app.chain.user",
             Some("from app.chain.top import a\n\ndef use():\n    a()\n"),
         ),
+        (
+            "app/shapes.py",
+            "app.shapes",
+            Some(
+                "class Base:\n    def render(self):\n        self.draw()\n    def draw(self):\n        pass\n\ndef show():\n    Base.render(None)\n",
+            ),
+        ),
+        (
+            "app/reexport.py",
+            "app.reexport",
+            Some("from app.shapes import Base\n"),
+        ),
     ];
     let edits: &[Step] = &[
         // The end of a chain moves one definition down: every caller's chain changes, though
@@ -811,6 +996,51 @@ fn edit_steps() -> Vec<Vec<Step>> {
             Some("import time\n\ndef later():\n    time.sleep(1)\n"),
         ),
         ("app/klass.py", "app.klass", None),
+        // A subclass in another file, of the base as a re-export names it, overrides a
+        // late-bound method: the base's caller reaches through it.
+        (
+            "app/circle.py",
+            "app.circle",
+            Some(
+                "import time\nfrom app.reexport import Base\n\nclass Circle(Base):\n    def draw(self):\n        time.sleep(1)\n",
+            ),
+        ),
+        // Its base becomes a value no name denotes: the override may still be one.
+        (
+            "app/circle.py",
+            "app.circle",
+            Some(
+                "import time\nB = make()\n\nclass Circle(B):\n    def draw(self):\n        time.sleep(1)\n",
+            ),
+        ),
+        ("app/circle.py", "app.circle", None),
+        (
+            "app/circle.py",
+            "app.circle",
+            Some(
+                "import time\nfrom app.reexport import Base\n\nclass Circle(Base):\n    def draw(self):\n        time.sleep(1)\n",
+            ),
+        ),
+        // The re-export defines its own base: the subclass moves to it.
+        (
+            "app/reexport.py",
+            "app.reexport",
+            Some("class Base:\n    def render(self):\n        self.draw()\n"),
+        ),
+        // A base a star import may bind, from a module not yet in the workspace, then from one
+        // that re-exports a workspace class under that name.
+        (
+            "app/square.py",
+            "app.square",
+            Some(
+                "import time\nfrom app.figures import *\n\nclass Square(Figure):\n    def draw(self):\n        time.sleep(1)\n",
+            ),
+        ),
+        (
+            "app/figures.py",
+            "app.figures",
+            Some("from app.shapes import Base as Figure\n"),
+        ),
     ];
     let mut batches = vec![initial.to_vec()];
     batches.extend(edits.iter().map(|edit| vec![*edit]));
@@ -846,6 +1076,12 @@ fn an_updated_graph_answers_as_linking_afresh() {
         let closure = graph.close(&seeds_by_direct_call(&graph, &BLOCKING), sync_only, 1);
         let expected = fresh.close(&seeds_by_direct_call(&fresh, &BLOCKING), sync_only, 1);
         assert_eq!(graph.stats(), fresh.stats(), "step {step}");
+        assert_eq!(
+            graph.caller_numbers(),
+            fresh.caller_numbers(),
+            "step {step}"
+        );
+        assert_eq!(graph.hierarchy(), fresh.hierarchy(), "step {step}");
         assert_eq!(closure, expected, "step {step}");
         for summary in files.values() {
             for target in &summary.targets {
@@ -867,6 +1103,69 @@ fn an_updated_graph_answers_as_linking_afresh() {
     assert_eq!(
         graph.status(&closure, &Name::new("app.services.fetch")),
         REACH
+    );
+    // The hierarchy kept across edits has a subclass through a re-export, and a class whose base
+    // a star import may bind.
+    let (subclasses, orphans) = graph.hierarchy();
+    assert_eq!(subclasses["app.reexport.Base"], ["app.circle.Circle"]);
+    assert_eq!(orphans, ["app.square.Square"]);
+}
+
+/// An edit lays out again only the callers of the files whose callers it changes, however many
+/// definitions it renumbers: none where the graph keeps its shape.
+#[test]
+fn an_edit_relays_only_the_callers_it_changes() {
+    use super::closure::RELAID_DEFS;
+    let file = |path: &str, module: &str, source: &str| {
+        (Arc::<str>::from(path), Arc::new(summarize(module, source)))
+    };
+    let leaf = "def f0():\n    pass\n\ndef f1():\n    f0()\n\ndef f2():\n    f1()\n";
+    let mut files = (0..40)
+        .map(|i| file(&format!("lib/m{i:02}.py"), &format!("lib.m{i:02}"), leaf))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let (path, summary) = file(
+        "app/a.py",
+        "app.a",
+        "from lib.m00 import f0\n\ndef run():\n    f0()\n",
+    );
+    files.insert(path, summary);
+    let mut graph = Graph::link(files.clone().into_iter().collect());
+    let mut edit = |(path, summary): (Arc<str>, Arc<Summary>)| {
+        files.insert(Arc::clone(&path), Arc::clone(&summary));
+        let before = RELAID_DEFS.get();
+        let reshaped = graph.update([(path, Some(summary))]).reshaped;
+        let relaid = RELAID_DEFS.get() - before;
+        let fresh = Graph::link(files.clone().into_iter().collect());
+        assert_eq!(graph.caller_numbers(), fresh.caller_numbers());
+        assert_eq!(graph.stats(), fresh.stats());
+        (relaid, reshaped)
+    };
+    // Moved definitions calling what they did: the shape is unchanged.
+    assert_eq!(
+        edit(file(
+            "app/a.py",
+            "app.a",
+            "# moved\nfrom lib.m00 import f0\n\ndef run():\n    f0()\n"
+        )),
+        (0, false)
+    );
+    // A new call: only its callee's file is laid out again.
+    assert_eq!(
+        edit(file(
+            "app/a.py",
+            "app.a",
+            "from lib.m00 import f0\nfrom lib.m01 import f2\n\ndef run():\n    f0()\n    f2()\n"
+        )),
+        (3, true)
+    );
+    // A file numbered first shifts every definition's number, and lays out its callee's file.
+    assert_eq!(
+        edit(file(
+            "aaa/first.py",
+            "aaa.first",
+            "from lib.m05 import f1\n\ndef go():\n    f1()\n"
+        )),
+        (3, true)
     );
 }
 
@@ -1017,6 +1316,20 @@ fn an_updated_view_restamps_only_what_an_edit_can_change() {
                     );
                 }
             }
+        }
+        // The open regions kept across edits are those found afresh.
+        for through in Through::ALL {
+            let sites = |view: &CallsView| {
+                let mut sites = view
+                    .open(through)
+                    .iter()
+                    .map(|def| view.graph.def_site(*def))
+                    .map(|(path, start)| (path.to_string(), start))
+                    .collect::<Vec<_>>();
+                sites.sort();
+                sites
+            };
+            assert_eq!(sites(view), sites(&fresh), "step {step}: {through:?}");
         }
     }
     // Some edit left files unstamped: the restamping is selective, not vacuous.
@@ -1236,13 +1549,13 @@ fn a_reaching_call_binds_its_chain_for_the_message() {
     let document = check_document(serde_json::json!({
         "id": "async-blocking",
         "forbid": { "ast": { "language": "python", "rule": rule } },
-        "finding": { "anchor": "witness.span", "code": "X", "message": "blocks via $CHAIN", "severity": "error" },
+        "violation": { "anchor": "witness.span", "code": "X", "message": "blocks via $CHAIN" },
     }));
     let capabilities: serde_json::Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
     let compiled = compile_document_with(document, &capabilities)
         .unwrap_or_else(|error| panic!("{}", error.reason));
     let result = evaluate_snapshot(&compiled, &CHAIN);
-    let findings = result["findings"].as_array().expect("findings");
+    let findings = result["violations"].as_array().expect("findings");
     assert_eq!(findings.len(), 1, "{result}");
     assert_eq!(
         findings[0]["message"],
@@ -1259,7 +1572,7 @@ fn a_utility_may_hold_calls_but_no_seed_may_reach_one() {
             check_document(serde_json::json!({
                 "id": "utils",
                 "forbid": { "ast": { "language": "python", "rule": rule, "utils": utils } },
-                "finding": finding(),
+                "violation": finding(),
             })),
             &capabilities,
         )
@@ -1275,7 +1588,7 @@ fn a_utility_may_hold_calls_but_no_seed_may_reach_one() {
     let result = evaluate_snapshot(&compiled, &CHAIN);
     // Both calls of `fetch` in `api.py`, and `pause()` in `impl.py`.
     assert_eq!(
-        result["findings"].as_array().map(Vec::len),
+        result["violations"].as_array().map(Vec::len),
         Some(3),
         "{result}"
     );

@@ -7,7 +7,7 @@ fn compiled(rule: Value, anchor: &str) -> crate::policy_dsl::CompiledPolicyDsl {
     compile_document_with(
         check_document(
             json!({ "id": "annotation", "forbid": { "ast": { "language": "python", "rule": rule } },
-            "finding": { "anchor": anchor, "code": "X", "message": "x", "severity": "error" } }),
+            "violation": { "anchor": anchor, "code": "X", "message": "x" } }),
         ),
         &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
     )
@@ -18,7 +18,7 @@ fn compiled(rule: Value, anchor: &str) -> crate::policy_dsl::CompiledPolicyDsl {
 fn anchored(rule: Value, anchor: &str, source: &str) -> Vec<String> {
     let result = evaluate_file(&compiled(rule, anchor), "python", "a.py", source);
     assert_eq!(result["failures"], json!([]), "{result}");
-    result["findings"]
+    result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -119,7 +119,7 @@ fn annotations_read_the_file_so_are_not_evaluated_under_syntax_errors() {
         "a.py",
         "x: \"int\"\ndef g(:\n",
     );
-    assert_eq!(result["findings"], json!([]), "{result}");
+    assert_eq!(result["violations"], json!([]), "{result}");
     assert_eq!(
         result["failures"][0]["code"], "source-incomplete",
         "{result}"
@@ -131,20 +131,20 @@ fn annotation_rules_are_checked() {
     for (rule, expected) in [
         (
             json!({ "parse": { "grammar": "annotation", "has": { "kind": "identifier", "resolves": { "binding": { "form": "import" } } } } }),
-            "/checks/0/forbid/ast/rule/parse/has/resolves/binding: a parsed annotation's names are read, but their bindings' nodes are the host's",
+            "/clauses/0/forbid/ast/rule/parse/has/resolves/binding: a parsed annotation's names are read, but their bindings' nodes are the host's",
         ),
         (
             json!({ "parse": { "grammar": "annotation", "has": { "kind": "string", "parse": { "grammar": "braceFormat", "kind": "field" } } } }),
-            "/checks/0/forbid/ast/rule/parse/has/parse/grammar: a string inside an annotation parses as an annotation",
+            "/clauses/0/forbid/ast/rule/parse/has/parse/grammar: a string inside an annotation parses as an annotation",
         ),
         (
             json!({ "parse": { "grammar": "annotation", "has": { "kind": "identifier", "binds": { "used": false } } } }),
-            "/checks/0/forbid/ast/rule/parse/has/binds: `binds` is not supported inside parse (annotation trees)",
+            "/clauses/0/forbid/ast/rule/parse/has/binds: `binds` is not supported inside parse (annotation trees)",
         ),
     ] {
         let result = compile_document_with(
             check_document(
-                json!({ "id": "c", "forbid": { "ast": { "language": "python", "rule": rule.clone() } }, "finding": finding() }),
+                json!({ "id": "c", "forbid": { "ast": { "language": "python", "rule": rule.clone() } }, "violation": finding() }),
             ),
             &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
         );
@@ -184,7 +184,7 @@ fn reported(path: &str, source: &str) -> Vec<String> {
     for (code, anchor, rule) in checks {
         let result = evaluate_file(&compiled(rule, anchor), "python", path, source);
         assert_eq!(result["failures"], json!([]), "{result}");
-        for finding in result["findings"].as_array().expect("findings") {
+        for finding in result["violations"].as_array().expect("findings") {
             let start = finding["span"]["startByte"].as_u64().expect("start") as usize;
             let line = source[..start].matches('\n').count() + 1;
             let column = start - source[..start].rfind('\n').map_or(0, |at| at + 1) + 1;
@@ -213,14 +213,14 @@ fn reported_with_python_version(path: &str, source: &str, python_version: &str) 
                 "languageOptions": { "pythonVersion": python_version },
                 "rule": rule,
             } },
-            "finding": { "anchor": "capture.N", "code": "F821", "message": "x", "severity": "error" },
+            "violation": { "anchor": "capture.N", "code": "F821", "message": "x" },
         })),
         &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
     )
     .unwrap_or_else(|error| panic!("{}", error.reason));
     let result = evaluate_file(&compiled, "python", path, source);
     assert_eq!(result["failures"], json!([]), "{result}");
-    let mut found = result["findings"]
+    let mut found = result["violations"]
         .as_array()
         .expect("findings")
         .iter()

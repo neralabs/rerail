@@ -2,18 +2,19 @@
   "format": "rerail.policy/v1",
   "id": "tslint:array-type",
   "revision": 1,
+  "mode": "steer",
   "description": "Array types: this doc ports option \"array\" (TSLint has no option-less default); overrides cover generic and array-simple.",
   "scope": { "include": ["**/*"], "exclude": [] },
-  "checks": [
+  "clauses": [
     {
       "id": "generic-array",
       "forbid": { "ast": { "language": "typescript", "rule": {"pattern":{"context":"let x: Array<$_>","selector":"generic_type"}} } },
-      "finding": { "anchor": "witness.span", "code": "ARRAY_TYPE", "severity": "error", "message": "Array type using 'Array<T>' is forbidden. Use 'T[]' instead." }
+      "violation": { "anchor": "witness.span", "code": "ARRAY_TYPE", "message": "Array type using 'Array<T>' is forbidden. Use 'T[]' instead." }
     },
     {
       "id": "bare-array",
       "forbid": { "ast": { "language": "typescript", "rule": {"all":[{"kind":"type_identifier"},{"regex":"^Array$"},{"not":{"inside":{"stopBy":"neighbor","any":[{"kind":"generic_type"},{"kind":"nested_type_identifier"},{"kind":"interface_declaration"},{"kind":"class_declaration"},{"kind":"type_alias_declaration"},{"kind":"type_parameter"}]}}}]} } },
-      "finding": { "anchor": "witness.span", "code": "ARRAY_TYPE", "severity": "error", "message": "Array type using 'Array<T>' is forbidden. Use 'T[]' instead." }
+      "violation": { "anchor": "witness.span", "code": "ARRAY_TYPE", "message": "Array type using 'Array<T>' is forbidden. Use 'T[]' instead." }
     }
   ]
 }

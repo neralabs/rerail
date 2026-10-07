@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:new-parens",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `new-parens` rule with its default options (https://palantir.github.io/tslint/rules/new-parens/). Requires parentheses when invoking a constructor via the new keyword.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "new-without-args",
       "forbid": {
@@ -47,10 +48,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NEW_PARENS",
-        "severity": "error",
         "message": "Parentheses are required when invoking a constructor"
       }
     }

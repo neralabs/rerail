@@ -21,10 +21,10 @@ function findings(document: string, source: string, path = "case.ts"): string[] 
     revision: 0,
     facts: [],
     files: [{ path, language: path.endsWith(".tsx") ? "tsx" : "typescript", source }],
-  }), "diagnostic")) as { failures: unknown[]; findings: Array<{ span: { startByte: number; endByte: number } }> };
+  }), "diagnostic")) as { failures: unknown[]; violations: Array<{ span: { startByte: number; endByte: number } }> };
   expect(result.failures).toEqual([]);
   const bytes = Buffer.from(source);
-  return result.findings.map(({ span }) => bytes.subarray(span.startByte, span.endByte).toString());
+  return result.violations.map(({ span }) => bytes.subarray(span.startByte, span.endByte).toString());
 }
 
 describe("TSLint ports that recurse through utils", () => {

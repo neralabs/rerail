@@ -15,8 +15,9 @@ import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
 function policy(id: string): PolicyRule {
   return policyRuleSchema.parse({
     format: "rerail.policy/v1", id, revision: 1,
+    mode: "steer",
     scope: { include: ["api/**/*.py"], exclude: [] },
-    checks: [{ id: "needle", finding: { code: "NEEDLE", severity: "error", anchor: "witness.span", message: "No NEEDLE" }, forbid: { regex: { pattern: "NEEDLE", source: "file.content" } } }],
+    clauses: [{ id: "needle", violation: { code: "NEEDLE", anchor: "witness.span", message: "No NEEDLE" }, forbid: { regex: { pattern: "NEEDLE", source: "file.content" } } }],
   });
 }
 
@@ -59,17 +60,17 @@ function storeWithBrokenRow(): string {
   store.upsertPolicy(policy("test:broken"));
   store.close();
   const raw = new Database(databasePath);
-  raw.prepare("UPDATE rules SET checks_json = ? WHERE id = ?").run(JSON.stringify([{ id: "x" }]), "test:broken");
+  raw.prepare("UPDATE rules SET clauses_json = ? WHERE id = ?").run(JSON.stringify([{ id: "x" }]), "test:broken");
   raw.close();
   return databasePath;
 }
 
 const quarantineFailure = {
-  policyId: "test:broken",
-  checkId: "catalog",
+  ruleId: "test:broken",
+  clauseId: "catalog",
   code: "adapter-error",
   stage: "parse",
-  message: expect.stringMatching(/^policy rule test:broken \(repository\) is skipped: checks\/0/u),
+  message: expect.stringMatching(/^policy rule test:broken \(repository\) is skipped: clauses\/0/u),
 };
 
 describe("quarantined policy rows", () => {
@@ -78,7 +79,7 @@ describe("quarantined policy rows", () => {
     try {
       expect(catalog.policies().map(entry => entry.id)).toEqual(["test:kept"]);
       expect(catalog.quarantined()).toEqual([
-        { ruleId: "test:broken", kind: "policy", owner: "repository", reason: expect.stringMatching(/checks/u) },
+        { ruleId: "test:broken", kind: "file", owner: "repository", reason: expect.stringMatching(/clauses/u) },
       ]);
     } finally {
       catalog.close();
@@ -96,11 +97,11 @@ describe("quarantined policy rows", () => {
       executions: recorder,
       mode: "log",
     });
-    const reports = () => [...runs.values()].filter(run => run.result?.failures?.some(failure => failure.policyId === "test:broken"));
+    const reports = () => [...runs.values()].filter(run => run.result?.failures?.some(failure => failure.ruleId === "test:broken"));
     try {
       await enforcer.openWorkspace("session");
       expect(enforcer.snapshotStatus().failures).toEqual([quarantineFailure]);
-      expect(reports()).toEqual([expect.objectContaining({ paths: [], result: { status: "failed", findings: [], failures: [quarantineFailure] } })]);
+      expect(reports()).toEqual([expect.objectContaining({ paths: [], result: { status: "failed", violations: [], failures: [quarantineFailure] } })]);
 
       for (const revision of [1, 2]) {
         await enforcer.evaluateGeneratedEdits("session", {
@@ -132,7 +133,7 @@ describe("quarantined policy rows", () => {
       catalog.upsertPolicy(policy("test:kept"));
       catalog.upsertPolicy(policy("test:broken"));
       const raw = new Database(join(root, "catalog.sqlite"));
-      raw.prepare("UPDATE catalog_rules SET document_json = json_set(document_json, '$.rule.checks', json(?)) WHERE rule_id = ?")
+      raw.prepare("UPDATE catalog_rules SET document_json = json_set(document_json, '$.rule.clauses', json(?)) WHERE rule_id = ?")
         .run(JSON.stringify([{ id: "x" }]), "test:broken");
       raw.close();
       const app = createRerailApi({ rules: () => catalog } as unknown as RerailApiStores, operations, { version: "0.0.0-test" });
@@ -141,11 +142,11 @@ describe("quarantined policy rows", () => {
       expect(listed.rules.map(stored => stored.rule.id)).toEqual(["test:kept"]);
       expect(listed.quarantined).toEqual([{
         ruleId: "test:broken",
-        kind: "policy",
+        kind: "file",
         owner: `project:${catalog.context().projectId}`,
-        reason: expect.stringMatching(/checks/u),
+        reason: expect.stringMatching(/clauses/u),
       }]);
-      const cosineOnly = await (await app.request("/api/rules?kind=cosine")).json() as { quarantined: unknown[] };
+      const cosineOnly = await (await app.request("/api/rules?kind=conversation")).json() as { quarantined: unknown[] };
       expect(cosineOnly.quarantined).toEqual([]);
     } finally {
       catalog.close();

@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:function-constructor",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `function-constructor` rule with its default options (https://palantir.github.io/tslint/rules/function-constructor/). Prevents using the built-in Function constructor (Function(...) or new Function(...)).",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "function-constructor",
       "forbid": {
@@ -45,10 +46,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "FUNCTION_CONSTRUCTOR",
-        "severity": "error",
         "message": "Do not use the Function constructor to create functions."
       }
     }

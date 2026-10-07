@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { AdapterDelivery, AdapterEvent, AdapterSession } from "./adapter-contract.js";
@@ -97,6 +97,18 @@ export async function resolveRerailWorkspaceRoute(cwd: string): Promise<RerailWo
     const parent = dirname(directory);
     if (parent === directory) return { kind: "host" };
     directory = parent;
+  }
+}
+
+/**
+ * Whether the nearest repository-operations workspace explicitly runs its own Rerail container
+ * (`NERA_RERAIL_ENABLED=true`). Synchronous, for the start check every hook makes first.
+ */
+export function devWorkspaceEnabled(cwd: string): boolean {
+  for (let directory = resolve(cwd); ; directory = dirname(directory)) {
+    const path = resolve(directory, INSTANCE_FILE);
+    if (existsSync(path)) return parseInstanceEnvironment(readFileSync(path, "utf8"), path).get("NERA_RERAIL_ENABLED") === "true";
+    if (dirname(directory) === directory) return false;
   }
 }
 

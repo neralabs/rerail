@@ -108,7 +108,7 @@ async function toggleRule(id) {
   stored.enabled = enabled;
   invalidate();
   const body = { kind: stored.kind, rule: stored.rule, enabled, applicability: stored.applicability };
-  if (stored.kind === "cosine") body.revision = stored.revision;
+  if (stored.kind === "conversation") body.revision = stored.revision;
   try {
     const { body: result } = await send("PUT", `/api/rules/${encodeURIComponent(id)}`, body);
     if (result?.rule) data.rules.set(id, result.rule);

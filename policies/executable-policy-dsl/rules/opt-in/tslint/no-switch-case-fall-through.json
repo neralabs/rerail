@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-switch-case-fall-through",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `no-switch-case-fall-through` rule with its default options (https://palantir.github.io/tslint/rules/no-switch-case-fall-through/). Flags a case/default clause reached by fall-through from a non-empty previous clause that does not end control flow (tsutils endsControlFlow without a checker, as recursive utils) and has no trailing `falls through` comment.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "fall-through",
       "forbid": {
@@ -765,10 +766,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "capture.KW",
         "code": "NO_SWITCH_CASE_FALL_THROUGH",
-        "severity": "error",
         "message": "expected a 'break' before '$KW'"
       }
     }

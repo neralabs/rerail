@@ -390,12 +390,11 @@ fn ranges(case: &Value, source: &str) -> Result<Vec<(u64, u64)>, String> {
             json!({
                 "id": format!("port-{index}"),
                 "forbid": { "ast": ast },
-                "finding": { "anchor": "witness.span", "code": "PORT", "message": "port", "severity": "error" },
+                "violation": { "anchor": "witness.span", "code": "PORT", "message": "port" },
             })
         })
         .collect::<Vec<_>>();
-    let document =
-        json!({ "format": "rerail.policy/v1", "id": "port", "revision": 1, "checks": checks });
+    let document = json!({ "format": "rerail.policy/v1", "id": "port", "revision": 1, "mode": "steer", "clauses": checks });
     let compiled = compile_document_with(
         document,
         &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
@@ -407,7 +406,7 @@ fn ranges(case: &Value, source: &str) -> Result<Vec<(u64, u64)>, String> {
     if result["failures"] != json!([]) {
         return Err(result["failures"].to_string());
     }
-    let mut ranges = result["findings"]
+    let mut ranges = result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -520,9 +519,11 @@ fn ports_report_where_eslint_and_typescript_eslint_do() {
 }
 
 /// ESLint's no-unused-private-class-members: a private name no read in its class body uses, at
-/// its last declaration (a getter and setter pair is one member, reported at the later one).
-fn no_unused_private_class_members() -> Value {
-    let members = json!([{ "kind": "public_field_definition" }, { "kind": "method_definition" }]);
+/// its last declaration (a getter and setter pair is one member, reported at the later one). A
+/// field is `field`: tree-sitter-typescript's `public_field_definition`, tree-sitter-javascript's
+/// `field_definition`.
+fn no_unused_private_class_members(field: &str) -> Value {
+    let members = json!([{ "kind": field }, { "kind": "method_definition" }]);
     json!({
         "kind": "private_property_identifier",
         "pattern": "$N",
@@ -537,49 +538,70 @@ fn no_unused_private_class_members() -> Value {
 }
 
 /// The port reports exactly where ESLint 10.11.0 does on the rule's own tests and the extra cases
-/// (`rerail-fixtures/ecma/scope/generate_eslint_private.mjs`).
+/// (`rerail-fixtures/ecma/scope/generate_eslint_private.mjs`): every case in tree-sitter-typescript,
+/// and those ESLint parses as JavaScript in tree-sitter-javascript too (whose fields key their
+/// name `property`, not `name`).
 #[test]
 fn private_class_member_ports_report_where_eslint_does() {
     let expected: Value = serde_json::from_str(oracle!("ecma/scope/eslint-private.expected.json"))
         .expect("oracle JSON");
-    let document = check_document(json!({
-        "id": "port",
-        "forbid": { "ast": { "language": "typescript", "rule": no_unused_private_class_members() } },
-        "finding": { "anchor": "witness.span", "code": "PORT", "message": "port", "severity": "error" },
-    }));
-    let compiled = compile_document_with(
-        document,
-        &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
-    )
-    .unwrap_or_else(|error| panic!("{}", error.reason));
+
     let mut report = Vec::new();
-    for case in expected["cases"].as_array().expect("cases") {
-        let code = case["code"].as_str().expect("code");
-        let result = evaluate_file(&compiled, "typescript", "a.ts", code);
-        if result["failures"] != json!([]) {
-            report.push(format!("{}: {}", case["id"], result["failures"][0]["code"]));
-            continue;
-        }
-        let mut ours = result["findings"]
-            .as_array()
-            .expect("findings")
-            .iter()
-            .map(|finding| json!([finding["span"]["startByte"], finding["span"]["endByte"]]))
-            .collect::<Vec<_>>();
-        ours.sort_by_key(|range| (range[0].as_u64(), range[1].as_u64()));
-        ours.dedup();
-        if json!(ours) != case["reports"] {
-            report.push(format!(
-                "{}: ours {ours:?}, ESLint {}",
-                case["id"], case["reports"]
-            ));
+    for (language, field, path) in [
+        ("typescript", "public_field_definition", "a.ts"),
+        ("javascript", "field_definition", "a.js"),
+    ] {
+        let document = check_document(json!({
+            "id": "port",
+            "forbid": { "ast": { "language": language, "rule": no_unused_private_class_members(field) } },
+            "violation": { "anchor": "witness.span", "code": "PORT", "message": "port" },
+        }));
+        let compiled = compile_document_with(
+            document,
+            &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
+        )
+        .unwrap_or_else(|error| panic!("{}", error.reason));
+        for case in expected["cases"].as_array().expect("cases") {
+            if language == "javascript" && case["typescript"] == json!(true) {
+                continue;
+            }
+            let code = case["code"].as_str().expect("code");
+            let result = evaluate_file(&compiled, language, path, code);
+            if result["failures"] != json!([]) {
+                report.push(format!(
+                    "{path} {}: {}",
+                    case["id"], result["failures"][0]["code"]
+                ));
+                continue;
+            }
+            let mut ours = result["violations"]
+                .as_array()
+                .expect("findings")
+                .iter()
+                .map(|finding| json!([finding["span"]["startByte"], finding["span"]["endByte"]]))
+                .collect::<Vec<_>>();
+            ours.sort_by_key(|range| (range[0].as_u64(), range[1].as_u64()));
+            ours.dedup();
+            if json!(ours) != case["reports"] {
+                report.push(format!(
+                    "{path} {}: ours {ours:?}, ESLint {}",
+                    case["id"], case["reports"]
+                ));
+            }
         }
     }
     // tree-sitter-typescript reads `#unused\n    instanceof() {}` as a binary expression (no ASI
     // before `instanceof`), an error region, so the check is source-incomplete there.
+    // tree-sitter-javascript has an error region there too, and recovers `#unused` before a line
+    // starting `[` with a missing `;`, a syntax error as well.
     assert_eq!(
         report,
-        ["\"invalid/33\": \"source-incomplete\""],
+        [
+            "a.ts \"invalid/33\": \"source-incomplete\"",
+            "a.js \"invalid/33\": \"source-incomplete\"",
+            "a.js \"invalid/34\": \"source-incomplete\"",
+            "a.js \"invalid/35\": \"source-incomplete\"",
+        ],
         "{}",
         report.join("\n")
     );

@@ -128,8 +128,7 @@ fn ports_with_suppress_noqa_keep_what_ruff_keeps() {
     for (code, anchor, rule) in ports {
         let document = check_document(
             json!({ "id": "port", "forbid": { "ast": { "language": "python", "rule": rule } },
-            "finding": { "anchor": anchor, "code": code, "message": "port", "severity": "error",
-                "suppress": { "noqa": { "codes": [code] } } } }),
+            "violation": { "anchor": anchor, "code": code, "message": "port", "suppress": { "noqa": { "codes": [code] } } } }),
         );
         let compiled = compile_document_with(
             document,
@@ -138,7 +137,7 @@ fn ports_with_suppress_noqa_keep_what_ruff_keeps() {
         .unwrap_or_else(|error| panic!("{}", error.reason));
         for (fixture, source) in FIXTURES {
             let result = evaluate_file(&compiled, "python", fixture, source);
-            let ours = result["findings"]
+            let ours = result["violations"]
                 .as_array()
                 .expect("findings")
                 .iter()

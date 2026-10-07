@@ -492,7 +492,7 @@ mod tests {
             ast["language"] = json!("typescript");
         }
         compile_document_with(
-            check_document(json!({ "id": "c", "forbid": { "ast": ast }, "finding": finding })),
+            check_document(json!({ "id": "c", "forbid": { "ast": ast }, "violation": finding })),
             &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
         )
     }
@@ -544,14 +544,14 @@ mod tests {
     }
 
     fn output(ast: Value, message: &str, fix: Option<&str>, source: &str) -> Vec<(String, Value)> {
-        let mut finding = json!({ "anchor": "witness.span", "code": "X", "message": message, "severity": "error" });
+        let mut finding = json!({ "anchor": "witness.span", "code": "X", "message": message });
         if let Some(fix) = fix {
             finding["fix"] = json!(fix);
         }
         let compiled = compile(ast, finding).unwrap_or_else(|error| panic!("{}", error.reason));
         let result = evaluate_file(&compiled, "typescript", "a.ts", source);
         assert_eq!(result["failures"], json!([]), "{result}");
-        result["findings"]
+        result["violations"]
             .as_array()
             .expect("findings")
             .iter()
@@ -683,12 +683,12 @@ mod tests {
             if language == "typescript" {
                 ast["rule"]["kind"] = json!("call_expression");
             }
-            let finding = json!({ "anchor": "witness.span", "code": "X", "message": "[$V] [$T]", "severity": "error" });
+            let finding = json!({ "anchor": "witness.span", "code": "X", "message": "[$V] [$T]" });
             let compiled = compile(ast, finding).unwrap_or_else(|error| panic!("{}", error.reason));
             let path = if language == "python" { "a.py" } else { "a.ts" };
             let result = evaluate_file(&compiled, language, path, source);
             assert_eq!(result["failures"], json!([]), "{result}");
-            result["findings"]
+            result["violations"]
                 .as_array()
                 .expect("findings")
                 .iter()
@@ -747,10 +747,10 @@ mod tests {
         let reject = |transform: Value| {
             rejection(compile(
                 json!({ "rule": { "pattern": "f($A, $$$R)" }, "transform": transform }),
-                json!({ "anchor": "witness.span", "code": "X", "message": "m", "severity": "error" }),
+                json!({ "anchor": "witness.span", "code": "X", "message": "m" }),
             ))
         };
-        let prefix = "/checks/0/forbid/ast/transform";
+        let prefix = "/clauses/0/forbid/ast/transform";
         assert_eq!(
             reject(json!({ "B": { "substring": { "source": "$$$R", "value": true } } })),
             format!("{prefix}/B/substring/value: a value is read from a single capture (`$NAME`)")
@@ -786,10 +786,13 @@ mod tests {
             "transform": { "L": { "line": { "source": "$O" } } },
         });
         let message = "This overload and the one on line $L can be combined into one signature with an optional parameter.";
-        let compiled = compile(ast, json!({ "anchor": "witness.span", "code": "X", "message": message, "severity": "error" }))
-            .unwrap_or_else(|error| panic!("{}", error.reason));
+        let compiled = compile(
+            ast,
+            json!({ "anchor": "witness.span", "code": "X", "message": message }),
+        )
+        .unwrap_or_else(|error| panic!("{}", error.reason));
         let result = evaluate_file(&compiled, "typescript", "a.ts", source);
-        let findings = result["findings"].as_array().expect("findings");
+        let findings = result["violations"].as_array().expect("findings");
         assert_eq!(findings.len(), 1, "{result}");
         assert_eq!(
             findings[0]["message"],
@@ -850,12 +853,12 @@ mod tests {
         let python = compile(
             json!({ "language": "python", "rule": { "kind": "function_definition", "pattern": "$D" },
                 "transform": { "S": { "line": { "source": "$D" } }, "E": { "line": { "source": "$D", "edge": "end" } } } }),
-            json!({ "anchor": "witness.span", "code": "X", "message": "$S-$E", "severity": "error" }),
+            json!({ "anchor": "witness.span", "code": "X", "message": "$S-$E" }),
         )
         .unwrap_or_else(|error| panic!("{}", error.reason));
         let source = "x = '\u{2028}'\rdef f():\r\n    pass\ndef g(): pass\n";
         let result = evaluate_file(&python, "python", "a.py", source);
-        let messages = result["findings"]
+        let messages = result["violations"]
             .as_array()
             .expect("findings")
             .iter()
@@ -866,11 +869,11 @@ mod tests {
         let refused = rejection(compile(
             json!({ "rule": { "pattern": "f($A)" }, "transform": {
                 "T": { "substring": { "source": "$A" } }, "L": { "line": { "source": "$T" } } } }),
-            json!({ "anchor": "witness.span", "code": "X", "message": "m", "severity": "error" }),
+            json!({ "anchor": "witness.span", "code": "X", "message": "m" }),
         ));
         assert_eq!(
             refused,
-            "/checks/0/forbid/ast/transform/L: `$T` is a transform variable, text; line, lines and count read a capture"
+            "/clauses/0/forbid/ast/transform/L: `$T` is a transform variable, text; line, lines and count read a capture"
         );
     }
 
@@ -901,12 +904,12 @@ mod tests {
                 "rule": { "kind": "function_definition", "has": { "field": "parameters",
                     "pattern": { "context": "def f($$$P): pass", "selector": "parameters" } } },
                 "transform": { "N": { "count": { "source": "$$$P" } } } }),
-            json!({ "anchor": "witness.span", "code": "X", "message": "$N", "severity": "error" }),
+            json!({ "anchor": "witness.span", "code": "X", "message": "$N" }),
         )
         .unwrap_or_else(|error| panic!("{}", error.reason));
         let source = "def f(a,  # c\n      b):\n    x = 1\n";
         let result = evaluate_file(&python, "python", "a.py", source);
-        assert_eq!(result["findings"][0]["message"], "2", "{result}");
+        assert_eq!(result["violations"][0]["message"], "2", "{result}");
     }
 
     #[test]
@@ -920,13 +923,12 @@ mod tests {
                 "AT": { "line": { "source": "$L" } },
             },
         });
-        let mut finding = json!({ "anchor": "capture.L", "code": "X", "severity": "error",
-            "message": "$L to $C on line $AT, rest $R", "fix": { "template": "$C", "range": "capture.L" } });
+        let mut finding = json!({ "anchor": "capture.L", "code": "X", "message": "$L to $C on line $AT, rest $R", "fix": { "template": "$C", "range": "capture.L" } });
         let compiled = compile(ast.clone(), finding.clone())
             .unwrap_or_else(|error| panic!("{}", error.reason));
         let source = "// Abc\n/* Éx */\n// abc\n";
         let result = evaluate_file(&compiled, "typescript", "a.ts", source);
-        let rows = result["findings"]
+        let rows = result["violations"]
             .as_array()
             .expect("findings")
             .iter()
@@ -958,10 +960,10 @@ mod tests {
         // With `each`, each match of the regex computes the transform from its own groups.
         let each = json!({ "rule": { "kind": "string", "regex": "(?<D>[0-9])" },
             "transform": { "N": { "replace": { "source": "$D", "replace": "^(.)$", "by": "<$1>" } } } });
-        finding = json!({ "anchor": "capture.D", "code": "X", "severity": "error", "each": "D", "message": "$N" });
+        finding = json!({ "anchor": "capture.D", "code": "X", "each": "D", "message": "$N" });
         let compiled = compile(each, finding).unwrap_or_else(|error| panic!("{}", error.reason));
         let result = evaluate_file(&compiled, "typescript", "a.ts", "f('1a2');\n");
-        let mut messages = result["findings"]
+        let mut messages = result["violations"]
             .as_array()
             .expect("findings")
             .iter()
@@ -971,15 +973,14 @@ mod tests {
         assert_eq!(messages, ["<1>", "<2>"]);
         // A group is text: no value; and it is known only once the rule matched, so a comparison
         // cannot read a transform of it.
-        let plain =
-            json!({ "anchor": "witness.span", "code": "X", "message": "m", "severity": "error" });
+        let plain = json!({ "anchor": "witness.span", "code": "X", "message": "m" });
         assert_eq!(
             rejection(compile(
                 json!({ "rule": { "kind": "comment", "regex": "(?<L>a)" },
                     "transform": { "V": { "substring": { "source": "$L", "value": true } } } }),
                 plain.clone(),
             )),
-            "/checks/0/forbid/ast/transform/V/substring/value: `$L` is a regex group, text; read the value of a capture"
+            "/clauses/0/forbid/ast/transform/V/substring/value: `$L` is a regex group, text; read the value of a capture"
         );
         assert_eq!(
             rejection(compile(
@@ -988,7 +989,7 @@ mod tests {
                     "transform": { "C": { "substring": { "source": "$L" } } } }),
                 plain,
             )),
-            "/checks/0/forbid/ast/rule/compare/left: `$C` transforms `$L`, which is never bound where this comparison runs"
+            "/clauses/0/forbid/ast/rule/compare/left: `$C` transforms `$L`, which is never bound where this comparison runs"
         );
     }
 
@@ -1020,8 +1021,7 @@ mod tests {
     /// its `index` comparison of `LA` was refused as a comparison of text).
     #[test]
     fn a_transform_named_like_a_capture_is_refused_as_such() {
-        let finding =
-            json!({ "anchor": "witness.span", "code": "X", "message": "m", "severity": "error" });
+        let finding = json!({ "anchor": "witness.span", "code": "X", "message": "m" });
         let rule = json!({ "kind": "call_expression", "has": { "field": "arguments",
             "pattern": { "context": "f($LA, $LB)", "selector": "arguments" } },
             "all": [{ "compare": { "left": "LA", "op": "eq", "right": "LB", "text": "index" } }] });
@@ -1030,25 +1030,25 @@ mod tests {
                 json!({ "rule": rule, "transform": { "LA": { "line": { "source": "$LB" } } } }),
                 finding.clone()
             )),
-            "/checks/0/forbid/ast/transform/LA: `LA` names a capture of the query (`$LA` at /checks/0/forbid/ast/rule/has/pattern) and a transform variable; rename one"
+            "/clauses/0/forbid/ast/transform/LA: `LA` names a capture of the query (`$LA` at /clauses/0/forbid/ast/rule/has/pattern) and a transform variable; rename one"
         );
         // A capture a utility binds, a parse captures, or a call returns collides too.
         for (ast, at) in [
             (
                 json!({ "rule": { "matches": "arg" }, "utils": { "arg": { "pattern": "f($N)" } },
                     "transform": { "N": { "line": { "source": "$N2" } } } }),
-                "/checks/0/forbid/ast/utils/arg/pattern",
+                "/clauses/0/forbid/ast/utils/arg/pattern",
             ),
             (
                 json!({ "rule": { "kind": "comment", "parse": { "grammar": "eslintDirective", "has": { "kind": "item", "capture": "N" } } },
                     "transform": { "N": { "substring": { "source": "$X" } } } }),
-                "/checks/0/forbid/ast/rule/parse/has/capture",
+                "/clauses/0/forbid/ast/rule/parse/has/capture",
             ),
         ] {
             let message = rejection(compile(ast, finding.clone()));
             assert!(
                 message.starts_with(
-                    "/checks/0/forbid/ast/transform/N: `N` names a capture of the query (`$N` at "
+                    "/clauses/0/forbid/ast/transform/N: `N` names a capture of the query (`$N` at "
                 ) && message.contains(at),
                 "{message}"
             );
@@ -1057,15 +1057,15 @@ mod tests {
 
     #[test]
     fn transforms_are_checked_against_the_query() {
-        let finding = || json!({ "anchor": "witness.span", "code": "X", "message": "m", "severity": "error" });
+        let finding = || json!({ "anchor": "witness.span", "code": "X", "message": "m" });
         let reject = |ast: Value, finding: Value| rejection(compile(ast, finding));
         let pattern = json!({ "pattern": "f($A, $C)" });
-        let prefix = "/checks/0/forbid/ast/transform";
+        let prefix = "/clauses/0/forbid/ast/transform";
         for (transform, expected) in [
             (
                 json!({ "A": { "substring": { "source": "$C" } } }),
                 format!(
-                    "{prefix}/A: `A` names a capture of the query (`$A` at /checks/0/forbid/ast/rule/pattern) and a transform variable; rename one"
+                    "{prefix}/A: `A` names a capture of the query (`$A` at /clauses/0/forbid/ast/rule/pattern) and a transform variable; rename one"
                 ),
             ),
             (
@@ -1131,13 +1131,13 @@ mod tests {
         multi["message"] = json!("$$$B");
         assert_eq!(
             reject(json!({ "rule": pattern, "transform": transform }), multi),
-            "/checks/0/finding/message: `$$$B`: a transform variable is text; use `$B`"
+            "/clauses/0/violation/message: `$$$B`: a transform variable is text; use `$B`"
         );
         let mut anchor = finding();
         anchor["anchor"] = json!("capture.B");
         assert!(
             reject(json!({ "rule": pattern, "transform": transform }), anchor)
-                .starts_with("/checks/0/finding/anchor: `capture.B` names no capture")
+                .starts_with("/clauses/0/violation/anchor: `capture.B` names no capture")
         );
         let compare = |text: &str| json!({ "pattern": "f($A, $C)", "compare": { "left": "B", "op": "eq", "right": "C", "text": text } });
         assert_eq!(
@@ -1145,7 +1145,7 @@ mod tests {
                 json!({ "rule": compare("tokens"), "transform": transform }),
                 finding()
             ),
-            "/checks/0/forbid/ast/rule/compare/text: a transform variable is text; compare it as source or unquoted"
+            "/clauses/0/forbid/ast/rule/compare/text: a transform variable is text; compare it as source or unquoted"
         );
         compile(
             json!({ "rule": compare("unquoted"), "transform": transform }),
@@ -1158,7 +1158,7 @@ mod tests {
         }, "kind": "program" } });
         assert_eq!(
             reject(json!({ "rule": hidden, "transform": transform }), finding()),
-            "/checks/0/forbid/ast/rule/inside/stopBy/compare/left: `$B` transforms `$A`, which is never bound where this comparison runs"
+            "/clauses/0/forbid/ast/rule/inside/stopBy/compare/left: `$B` transforms `$A`, which is never bound where this comparison runs"
         );
     }
 
@@ -1186,7 +1186,7 @@ mod tests {
             check_document(json!({
                 "id": "c",
                 "forbid": { "ast": ast },
-                "finding": { "anchor": "witness.span", "code": "X", "message": source, "severity": "error" }
+                "violation": { "anchor": "witness.span", "code": "X", "message": source }
             })),
             &capabilities,
         )
@@ -1195,7 +1195,7 @@ mod tests {
         assert_eq!(
             result["failures"],
             json!([{
-                "checkId": "c",
+                "clauseId": "c",
                 "code": "budget-exceeded",
                 "message": "`matches` and `count` exceeded their work budget (maxVisitedNodes utility evaluations and counted nodes per file)",
                 "path": "a.ts"
@@ -1219,7 +1219,7 @@ mod tests {
                         "B": { "replace": { "source": "$A", "replace": ".*", "by": "ok" } }
                     }
                 }},
-                "finding": { "anchor": "witness.span", "code": "X", "message": "$B", "severity": "error" }
+                "violation": { "anchor": "witness.span", "code": "X", "message": "$B" }
             })),
             &capabilities,
         )
@@ -1231,7 +1231,7 @@ mod tests {
             "console.log(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);\n",
         );
         assert_eq!(result["failures"], json!([]), "{result}");
-        assert_eq!(result["findings"][0]["message"], "ok");
+        assert_eq!(result["violations"][0]["message"], "ok");
     }
 
     #[test]

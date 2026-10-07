@@ -118,13 +118,12 @@ fn ranges_in(
 ) -> Vec<[u64; 2]> {
     let mut ast = ast;
     ast["language"] = json!("python");
-    let mut finding =
-        json!({ "anchor": anchor, "code": "PORT", "message": "port", "severity": "error" });
+    let mut finding = json!({ "anchor": anchor, "code": "PORT", "message": "port" });
     if let Some(each) = each {
         finding["each"] = json!(each);
     }
     let document =
-        check_document(json!({ "id": "port", "forbid": { "ast": ast }, "finding": finding }));
+        check_document(json!({ "id": "port", "forbid": { "ast": ast }, "violation": finding }));
     let compiled = compile_document_with(
         document,
         &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
@@ -139,7 +138,7 @@ fn ranges_in(
         .evaluate(snapshot.to_string(), "diagnostic".to_owned())
         .expect("evaluation succeeds");
     let result: Value = serde_json::from_str(&output).expect("evaluation is JSON");
-    let mut ranges: Vec<[u64; 2]> = result["findings"]
+    let mut ranges: Vec<[u64; 2]> = result["violations"]
         .as_array()
         .expect("findings")
         .iter()
@@ -358,6 +357,7 @@ fn f821_names_in_string_type_definitions() {
         fixture!("F821_14.py"),
         fixture!("F821_15.py"),
         fixture!("F821_16.py"),
+        fixture!("F821_17.py"),
         fixture!("F821_18.py"),
         fixture!("F821_19.py"),
         fixture!("F821_20.py"),
@@ -383,14 +383,32 @@ fn f821_names_in_string_type_definitions() {
             ));
         }
     }
-    // Not a string type definition's: Ruff reads names under NFKC (F821_28), as M10a records. A
-    // walrus in an annotation (F821_19) and a `type` statement's value (F821_20) are read after the
-    // module, as M10a's fix round reads them. F821_17 is left out: tree-sitter-python 0.23 cannot
-    // parse its PEP 696 defaults.
-    let expected: &[&str] = &[
-        "F821_28.py: only the port [\"5:C\", \"6:C\", \"7:C\", \"7:𝑪\", \"7:𝓒\", \"7:𝕮\"]; only Ruff []",
-    ];
-    assert_eq!(report, expected, "\n{}", report.join("\n"));
+    // A walrus in an annotation (F821_19) and a `type` statement's value (F821_20) are read after
+    // the module, as M10a's fix round reads them. F821_17's PEP 696 defaults parse with Rerail's
+    // patched tree-sitter-python (grammars/tree-sitter-python/PATCHES.md).
+    assert_eq!(report, Vec::<String>::new(), "\n{}", report.join("\n"));
+}
+
+/// Names are NFKC-normalized as CPython and Ruff read them (`F821_28`): `𝒞`, `𝑪`, `𝓒` and `𝕮`
+/// are the `C` line 3 binds, so the one undefined name is `𝒟` (`D`), reported at its own text.
+#[test]
+fn f821_reads_names_under_nfkc() {
+    let (_, source) = fixture!("F821_28.py");
+    let ours = ranges_in(f821(), "capture.N", None, source, "fixture.py", None);
+    let labels = ours
+        .iter()
+        .map(|[start, end]| {
+            let (start, end) = (*start as usize, *end as usize);
+            let line = source[..start].matches('\n').count() + 1;
+            let column = source[..start]
+                .rsplit('\n')
+                .next()
+                .map_or(0, |l| l.chars().count())
+                + 1;
+            format!("{line}:{column} {}", &source[start..end])
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(labels, ["9:7 𝒟"]);
 }
 
 /// Ruff's `lint.typing-modules` and `lint.pyflakes.extend-generics` as `languageOptions`, on the

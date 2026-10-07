@@ -33,6 +33,27 @@ thread_local! {
         RefCell::new((String::new(), HashSet::new()));
     /// The sub-trees being matched, innermost last.
     static HOSTS: RefCell<Vec<HostMap>> = const { RefCell::new(Vec::new()) };
+    /// Bumped whenever the excluded ranges change: what a memoized verdict read of them.
+    static GENERATION: Cell<u64> = const { Cell::new(0) };
+}
+
+/// What an excluding verdict may read of the enumeration here: `(0, 0)` where nothing is excluded,
+/// else the generation of the excluded ranges and the excluded capture's name, hashed.
+pub(super) fn exclusion_key() -> (u64, u64) {
+    if !ACTIVE.get() {
+        return (0, 0);
+    }
+    EXCLUDED.with_borrow(|(name, _)| {
+        (
+            GENERATION.get(),
+            std::hash::BuildHasher::hash_one(&rustc_hash::FxBuildHasher, name.as_str()),
+        )
+    })
+}
+
+/// Whether bindings of `name` are being excluded here.
+pub(super) fn excludes(name: &str) -> bool {
+    ACTIVE.get() && EXCLUDED.with_borrow(|(excluded, _)| excluded == name)
 }
 
 #[cfg(test)]
@@ -143,6 +164,7 @@ impl Enumeration {
             known.push_str(name);
             ranges.clear();
         });
+        GENERATION.set(GENERATION.get() + 1);
         ACTIVE.set(true);
         Self
     }
@@ -153,7 +175,12 @@ impl Enumeration {
         let Some(range) = range else {
             return false;
         };
-        EXCLUDED.with_borrow_mut(|(_, ranges)| ranges.insert((range.start, range.end)))
+        let inserted =
+            EXCLUDED.with_borrow_mut(|(_, ranges)| ranges.insert((range.start, range.end)));
+        if inserted {
+            GENERATION.set(GENERATION.get() + 1);
+        }
+        inserted
     }
 }
 
@@ -161,6 +188,7 @@ impl Drop for Enumeration {
     fn drop(&mut self) {
         ACTIVE.set(false);
         EXCLUDED.with_borrow_mut(|(_, ranges)| ranges.clear());
+        GENERATION.set(GENERATION.get() + 1);
     }
 }
 
@@ -193,7 +221,7 @@ mod tests {
             finding["each"] = json!(each);
         }
         compile_document_with(
-            check_document(json!({ "id": "c", "forbid": { "ast": ast }, "finding": finding })),
+            check_document(json!({ "id": "c", "forbid": { "ast": ast }, "violation": finding })),
             capabilities,
         )
     }
@@ -213,7 +241,7 @@ mod tests {
     }
 
     fn ids(result: &Value) -> Vec<String> {
-        result["findings"]
+        result["violations"]
             .as_array()
             .expect("findings")
             .iter()
@@ -369,7 +397,7 @@ mod tests {
         let ast = |finding: Value| {
             compile_document_with(
                 check_document(json!({ "id": "c", "forbid": { "ast": {
-                    "language": "typescript", "rule": rule } }, "finding": finding })),
+                    "language": "typescript", "rule": rule } }, "violation": finding })),
                 &defaults(),
             )
             .unwrap_or_else(|error| panic!("{}", error.reason))
@@ -378,14 +406,14 @@ mod tests {
         let result = evaluate_file(
             &ast(
                 json!({ "anchor": "capture.D", "code": "X", "message": "digit $D then $N",
-                         "severity": "error", "each": "D",
+                         "each": "D",
                          "fix": { "template": "#", "range": "capture.D" } }),
             ),
             "typescript",
             "a.ts",
             source,
         );
-        let found = result["findings"].as_array().expect("findings");
+        let found = result["violations"].as_array().expect("findings");
         let mut rows = found
             .iter()
             .map(|finding| {
@@ -436,9 +464,9 @@ mod tests {
         // Every match binds its own groups; a witness where no match binds the group reports
         // nothing (no-irregular-whitespace's walk over a program that finds no run).
         let plain = json!({ "anchor": "witness.span", "code": "X", "message": "m",
-                            "severity": "error", "each": "N" });
+                            "each": "N" });
         let result = evaluate_file(&ast(plain), "typescript", "a.ts", "f('1', '2a3b');\n");
-        let mut starts = result["findings"]
+        let mut starts = result["violations"]
             .as_array()
             .expect("findings")
             .iter()
@@ -460,7 +488,7 @@ mod tests {
                 Some("G"),
                 &defaults()
             )),
-            "/checks/0/finding/each: `$G` names no capture; the query binds no captures"
+            "/clauses/0/violation/each: `$G` names no capture; the query binds no captures"
         );
     }
 
@@ -476,7 +504,7 @@ mod tests {
             "a.ts",
             "f(a, b, c);\n",
         );
-        assert_eq!(result["findings"], json!([]), "{result}");
+        assert_eq!(result["violations"], json!([]), "{result}");
         assert_eq!(result["failures"][0]["code"], "budget-exceeded", "{result}");
     }
 
@@ -486,15 +514,15 @@ mod tests {
         for (each, expected) in [
             (
                 "Z",
-                "/checks/0/finding/each: `$Z` names no capture; the query can bind: X, Y",
+                "/clauses/0/violation/each: `$Z` names no capture; the query can bind: X, Y",
             ),
             (
                 "Y",
-                "/checks/0/finding/each: `$$$Y` captures a node list; each enumerates single-node captures",
+                "/clauses/0/violation/each: `$$$Y` captures a node list; each enumerates single-node captures",
             ),
             (
                 "$X",
-                "/checks/0/finding/each: `$X` is not a metavariable name (A-Z, 0-9, _, without `$`)",
+                "/clauses/0/violation/each: `$X` is not a metavariable name (A-Z, 0-9, _, without `$`)",
             ),
         ] {
             assert_eq!(
@@ -509,11 +537,11 @@ mod tests {
         let regex = check_document(json!({
             "id": "c",
             "forbid": { "regex": { "source": "file.content", "pattern": "(?<X>a)" } },
-            "finding": { "anchor": "witness.span", "code": "X", "message": "x", "severity": "error", "each": "X" },
+            "violation": { "anchor": "witness.span", "code": "X", "message": "x", "each": "X" },
         }));
         assert_eq!(
             rejection(compile_document_with(regex, &defaults())),
-            "/checks/0/finding/each: each enumerates the captures of an ast query"
+            "/clauses/0/violation/each: each enumerates the captures of an ast query"
         );
     }
 
@@ -541,7 +569,10 @@ mod tests {
             "a.ts",
             &source,
         );
-        assert_eq!(result["findings"].as_array().map(Vec::len), Some(BINDINGS));
+        assert_eq!(
+            result["violations"].as_array().map(Vec::len),
+            Some(BINDINGS)
+        );
         // Each probe is one lookup in a hash set of the ranges reported so far. Round `k` passes
         // over the `k` bindings reported before it, probing each once, and probes the one it
         // reports: at most `k + 2` probes, for the `BINDINGS` rounds and the final one.
@@ -571,7 +602,7 @@ mod tests {
         });
         let compiled = compile(rule, Some("ITEM"), &defaults());
         let result = evaluate_file(&compiled, "typescript", "a.ts", &source);
-        assert_eq!(result["findings"].as_array().map(Vec::len), Some(ITEMS));
+        assert_eq!(result["violations"].as_array().map(Vec::len), Some(ITEMS));
         let root = GrammarDialect::TypeScript.ast_grep(&source);
         let comment = root
             .root()
@@ -627,13 +658,13 @@ mod tests {
         let compiled = compile_document_with(
             check_document(json!({ "id": "c", "forbid": { "ast": {
                 "language": "typescript", "rule": ast["rule"], "transform": ast["transform"] } },
-                "finding": finding })),
+                "violation": finding })),
             &defaults(),
         )
         .unwrap_or_else(|error| panic!("{}", error.reason));
         crate::policy_dsl::matcher::exported::reset_exported_text_bytes();
         let result = evaluate_file(&compiled, "typescript", "a.ts", &source);
-        let messages = result["findings"]
+        let messages = result["violations"]
             .as_array()
             .expect("findings")
             .iter()
@@ -676,13 +707,13 @@ mod tests {
         let compiled = compile_document_with(
             check_document(json!({ "id": "c", "forbid": { "ast": {
                 "language": "typescript", "rule": rule, "transform": transform } },
-                "finding": finding })),
+                "violation": finding })),
             &defaults(),
         )
         .unwrap_or_else(|error| panic!("{}", error.reason));
         crate::policy_dsl::matcher::exported::reset_exported_text_bytes();
         let result = evaluate_file(&compiled, "typescript", "a.ts", &source);
-        let messages = result["findings"]
+        let messages = result["violations"]
             .as_array()
             .expect("findings")
             .iter()
@@ -722,7 +753,7 @@ mod tests {
         let compiled = compile_document_with(
             check_document(json!({ "id": "c", "forbid": { "ast": {
                 "language": "typescript", "rule": rule, "transform": transform } },
-                "finding": finding })),
+                "violation": finding })),
             &defaults(),
         )
         .unwrap_or_else(|error| panic!("{}", error.reason));
@@ -736,7 +767,7 @@ mod tests {
         crate::policy_dsl::eval::reset_shared_group_lookups();
         let result = evaluate_file(&compiled, "typescript", "a.ts", &source);
         let lookups = crate::policy_dsl::eval::shared_group_lookups();
-        let messages = result["findings"]
+        let messages = result["violations"]
             .as_array()
             .expect("findings")
             .iter()
@@ -803,7 +834,11 @@ mod tests {
                 polls.set(polls.get() + 1);
                 polls.get() > enumeration_polls
             },
-            |start, end| json!([start, end]),
+            |start, end| crate::policy_dsl::findings::Span {
+                start_byte: start,
+                end_byte: end,
+                ..Default::default()
+            },
         );
         let Ok(witnesses) = witnesses else {
             panic!("a spent budget cuts the results short; it is no witness error");

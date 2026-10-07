@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:object-literal-shorthand",
   "revision": 1,
+  "mode": "steer",
   "description": "Method shorthand required, property shorthand disallowed ({property: never, method: always}).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "longhand-method",
       "forbid": {
@@ -49,10 +50,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "OBJECT_LITERAL_SHORTHAND",
-        "severity": "error",
         "message": "Expected method shorthand in object literal."
       }
     },
@@ -73,10 +73,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "OBJECT_LITERAL_SHORTHAND",
-        "severity": "error",
         "message": "Shorthand property assignments have been disallowed."
       }
     }

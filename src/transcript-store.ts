@@ -50,8 +50,8 @@ export interface SessionHud {
 export interface RuleCoverage {
   repositoryId: string;
   activeRuleCount: number | null;
-  cosineRuleSignature: string;
-  policyRuleSignature: string;
+  conversationRuleSignature: string;
+  fileRuleSignature: string;
 }
 
 export interface WorkLink {
@@ -130,13 +130,14 @@ export class SqliteTranscriptStore {
   openSession(session: AdapterSession, startedAt = Date.now()): void {
     this.#database
       .insert(sessions)
-      .values({ ...session, repositoryId: this.#repositoryId, startedAt, endedAt: null })
+      .values({ ...session, repositoryId: this.#repositoryId, startedAt, endedAt: null, startGated: true })
       .onConflictDoUpdate({
         target: sessions.sessionId,
         set: {
           host: session.host,
           cwd: session.cwd,
           endedAt: null,
+          startGated: true,
           ...(this.#repositoryId === null ? {} : { repositoryId: this.#repositoryId }),
         },
       })
@@ -200,6 +201,7 @@ export class SqliteTranscriptStore {
         repositoryId: this.#repositoryId,
         startedAt: lifecycle?.startedAt ?? Date.now(),
         endedAt: lifecycle?.endedAt ?? null,
+        startGated: true,
       }).onConflictDoNothing().run();
       this.#database.insert(events).values(row).onConflictDoNothing().run();
     }
@@ -282,13 +284,13 @@ export class SqliteTranscriptReader {
       const coverage = database.select({
         repositoryId: sql<string | null>`json_extract(${events.payloadJson}, '$.repositoryId')`,
         activeRuleCount: sql<number | null>`json_extract(${events.payloadJson}, '$.activeRuleCount')`,
-        cosineRuleSignature: sql<string | null>`json_extract(${events.payloadJson}, '$.cosineRuleSignature')`,
-        policyRuleSignature: sql<string | null>`json_extract(${events.payloadJson}, '$.policyRuleSignature')`,
+        conversationRuleSignature: sql<string | null>`json_extract(${events.payloadJson}, '$.conversationRuleSignature')`,
+        fileRuleSignature: sql<string | null>`json_extract(${events.payloadJson}, '$.fileRuleSignature')`,
       }).from(events).where(and(eq(events.sessionId, sessionId), eq(events.kind, "rule-coverage")))
         .orderBy(desc(events.sequence)).limit(1).get();
       const current = coverage?.repositoryId != null
-        && coverage.cosineRuleSignature === scopedRuleSignature(database, coverage.repositoryId, "cosine")
-        && coverage.policyRuleSignature === scopedRuleSignature(database, coverage.repositoryId, "policy");
+        && coverage.conversationRuleSignature === scopedRuleSignature(database, coverage.repositoryId, "conversation")
+        && coverage.fileRuleSignature === scopedRuleSignature(database, coverage.repositoryId, "file");
       const steeringCount = baseline?.complete === 1
         ? database.select({ total: count() }).from(events)
           .where(and(eq(events.sessionId, sessionId), eq(events.kind, "steering-delivered"))).get()!.total

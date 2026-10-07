@@ -64,7 +64,7 @@ export function renderFindings(root) {
   for (const x of shown) {
     const day = dayLabel(daysAgo(x.at));
     if (day !== lastDay) { items.push({ key: `day:${day}`, day }); lastDay = day; }
-    items.push({ key: `${x.runId}:${x.id}`, x });
+    items.push({ key: `${x.auditId}:${x.id}`, x });
   }
   syncChildren(pane._rows, items, i => i.key, createRow, updateRow);
   const remaining = total - shown.length;

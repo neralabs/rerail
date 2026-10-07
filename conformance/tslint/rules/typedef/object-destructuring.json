@@ -2,9 +2,10 @@
   "format": "rerail.policy/v1",
   "id": "tslint:typedef",
   "revision": 1,
+  "mode": "steer",
   "description": "Requires type definitions for: object-destructuring.",
   "scope": {"include": ["**/*"], "exclude": []},
-  "checks": [
+  "clauses": [
     {
       "id": "object-destructuring",
       "forbid": {
@@ -21,10 +22,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "TYPEDEF",
-        "severity": "error",
         "message": "expected object-destructuring to have a typedef"
       }
     }

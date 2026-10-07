@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:unified-signatures",
   "revision": 1,
+  "mode": "steer",
   "description": "Overloads that could be one signature: same key (name, static-ness; call/construct signatures by kind), return type, type parameters and outer-type-parameter use, and either the same arity with exactly one parameter's type differing (sigils equal, not rest; the parameters around it equal by text), or a longer list whose parameters beyond the shorter one's length plus one may be missing, with the shorter list's last type equal and not rest. Any list length.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "unifiable-overloads",
       "forbid": {
@@ -1275,10 +1276,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "UNIFIED_SIGNATURES",
-        "severity": "error",
         "message": "These overloads can be combined into one signature."
       }
     }

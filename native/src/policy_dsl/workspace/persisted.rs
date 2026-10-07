@@ -10,12 +10,13 @@ use super::evaluate::candidate_grammar;
 use super::ingest::candidate_dispatch;
 use super::storage::{StorageContext, unix_seconds};
 use super::{CheckId, FileState, LocalFailure};
+use crate::WORK_POOL;
 use crate::content_store::{
     CandidateCatalogIdentity, CandidateCheck, HashKey, LocalResultPublication,
-    OverlayFilePublication, PublicationResult, StoredFile, TapePayload,
+    OverlayFilePublication, PublicationResult, StoredFile, TapePayload, compress,
 };
 use crate::policy_dsl::eval::file_language;
-use crate::policy_dsl::findings::Witness;
+use crate::policy_dsl::findings::{Captures, Span, Witness};
 use crate::policy_dsl::json::{invalid, json_error};
 use crate::policy_dsl::language::GrammarDialect;
 use crate::policy_dsl::matcher::UtilLimit;
@@ -24,11 +25,12 @@ use crate::policy_dsl::model::{CompiledPolicy, FileInput};
 use crate::policy_dsl::profile;
 use crate::policy_dsl::{language, tape};
 use napi::Result;
-use serde_json::{Value, json};
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::io::Cursor;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock, Weak};
 
 /// Fill `file` with its stored results. `None` unless every eligible check has a decodable one:
 /// a partial result set is never presented as the file's result.
@@ -69,28 +71,48 @@ pub(super) fn restore_complete_results(
 /// The stored per-file result encoding. A stored result of any other version is a cache miss.
 const LOCAL_RESULT_VERSION: u64 = 3;
 
+/// A stored local result as `encode_local_result` writes it, borrowing its witnesses. Fields are
+/// in key order, as a JSON object of the same keys serializes.
+#[derive(Serialize)]
+struct LocalResultEncoding<'a> {
+    failure: Option<(&'a str, &'a str)>,
+    syntax: Option<&'a str>,
+    version: u64,
+    #[serde(serialize_with = "serialize_witnesses")]
+    witnesses: &'a [Witness],
+}
+
+#[derive(Serialize)]
+struct WitnessEncoding<'a> {
+    captures: &'a Captures,
+    fix: &'a Option<Value>,
+    message: &'a Option<String>,
+    span: &'a Span,
+}
+
+fn serialize_witnesses<S: serde::Serializer>(
+    witnesses: &&[Witness],
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    serializer.collect_seq(witnesses.iter().map(|witness| WitnessEncoding {
+        captures: &witness.captures,
+        fix: &witness.fix,
+        message: &witness.message,
+        span: &witness.span,
+    }))
+}
+
 pub(super) fn encode_local_result(
     witnesses: &[Witness],
     failure: Option<LocalFailure>,
     syntax: Option<&str>,
 ) -> Result<Vec<u8>> {
-    let witnesses = witnesses
-        .iter()
-        .map(|witness| {
-            json!({
-                "span": witness.span,
-                "captures": witness.captures,
-                "message": witness.message,
-                "fix": witness.fix,
-            })
-        })
-        .collect::<Vec<_>>();
-    serde_json::to_vec(&json!({
-        "version": LOCAL_RESULT_VERSION,
-        "failure": failure.map(|(code, message)| json!([code, message])),
-        "syntax": syntax,
-        "witnesses": witnesses,
-    }))
+    serde_json::to_vec(&LocalResultEncoding {
+        failure,
+        syntax,
+        version: LOCAL_RESULT_VERSION,
+        witnesses,
+    })
     .map_err(json_error)
 }
 
@@ -153,8 +175,8 @@ pub(super) fn decode_local_result(
         .map(|witness| {
             Some(Witness {
                 path: path.to_owned(),
-                span: witness.get("span")?.clone(),
-                captures: witness.get("captures")?.clone(),
+                span: Span::deserialize(witness.get("span")?).ok()?,
+                captures: Captures::from_value(witness.get("captures")?)?,
                 message: witness
                     .get("message")
                     .and_then(Value::as_str)
@@ -319,12 +341,17 @@ pub(super) fn grammar_id(language: GrammarDialect) -> i64 {
     i64::from(language::tape_tag(language).expect("supported workspace grammar"))
 }
 
-/// A check's stored identity. `select_when` leaves are synthetic copies of their check and share its
-/// id, so each is told apart by its position in the policy.
-fn candidate_check(policy: &CompiledPolicy, check_index: usize) -> CandidateCheck {
+/// A check's stored identity, given its policy's (`policy_hash`). `select_when` leaves are
+/// synthetic copies of their check and share its id, so each is told apart by its position in the
+/// policy.
+fn candidate_check(
+    policy_hash: HashKey,
+    policy: &CompiledPolicy,
+    check_index: usize,
+) -> CandidateCheck {
     let check = &policy.checks[check_index];
     CandidateCheck {
-        policy: HashKey::sha256(policy.id.as_bytes()),
+        policy: policy_hash,
         check: if check.synthetic {
             format!("{}\0leaf\0{check_index}", check.id)
         } else {
@@ -333,14 +360,23 @@ fn candidate_check(policy: &CompiledPolicy, check_index: usize) -> CandidateChec
     }
 }
 
+/// Each policy's stored identity, by policy index.
+fn policy_hashes(policies: &[Arc<CompiledPolicy>]) -> Vec<HashKey> {
+    policies
+        .iter()
+        .map(|policy| HashKey::sha256(policy.id.as_bytes()))
+        .collect()
+}
+
 fn candidate_identities(policies: &[Arc<CompiledPolicy>]) -> HashMap<CandidateCheck, CheckId> {
     policies
         .iter()
+        .zip(policy_hashes(policies))
         .enumerate()
-        .flat_map(|(policy_index, policy)| {
+        .flat_map(|(policy_index, (policy, policy_hash))| {
             (0..policy.checks.len()).map(move |check_index| {
                 (
-                    candidate_check(policy, check_index),
+                    candidate_check(policy_hash, policy, check_index),
                     (policy_index, check_index),
                 )
             })
@@ -387,14 +423,52 @@ pub(super) fn file_context(input: &FileInput) -> HashKey {
     )
 }
 
+/// Recent policy sets' catalogs, by their policies' allocations: a policy is not changed in place
+/// while a weak reference to it is held (`Arc::make_mut` moves it), so a set whose every policy is
+/// still the one recorded has the recorded catalog.
+type CatalogMemo = (
+    &'static str,
+    Vec<Weak<CompiledPolicy>>,
+    CandidateCatalogIdentity,
+);
+static CATALOGS: LazyLock<parking_lot::Mutex<Vec<CatalogMemo>>> = LazyLock::new(Default::default);
+
+/// The result catalog of `policies`: every apply reads it, so it is hashed once per policy set.
 pub(super) fn candidate_catalog(
     policies: &[Arc<CompiledPolicy>],
 ) -> Result<CandidateCatalogIdentity> {
-    let mut bytes = format!(
-        "rerail-local-result-v{LOCAL_RESULT_VERSION}\0{}\0",
-        engine_build_id()
-    )
-    .into_bytes();
+    let engine = engine_build_id();
+    let same = |(known_engine, known, _): &CatalogMemo| {
+        *known_engine == engine
+            && known.len() == policies.len()
+            && known
+                .iter()
+                .zip(policies)
+                .all(|(known, policy)| std::ptr::eq(known.as_ptr(), Arc::as_ptr(policy)))
+            && known.iter().all(|known| known.strong_count() > 0)
+    };
+    if let Some((_, _, catalog)) = CATALOGS.lock().iter().find(|memo| same(memo)) {
+        return Ok(*catalog);
+    }
+    let catalog = hash_candidate_catalog(engine, policies)?;
+    let mut catalogs = CATALOGS.lock();
+    catalogs.retain(|(_, known, _)| known.iter().all(|known| known.strong_count() > 0));
+    if catalogs.len() >= 16 {
+        catalogs.remove(0);
+    }
+    catalogs.push((
+        engine,
+        policies.iter().map(Arc::downgrade).collect(),
+        catalog,
+    ));
+    Ok(catalog)
+}
+
+fn hash_candidate_catalog(
+    engine: &str,
+    policies: &[Arc<CompiledPolicy>],
+) -> Result<CandidateCatalogIdentity> {
+    let mut bytes = format!("rerail-local-result-v{LOCAL_RESULT_VERSION}\0{engine}\0").into_bytes();
     for policy in policies {
         bytes.extend_from_slice(policy.id.as_bytes());
         bytes.push(0);
@@ -425,85 +499,95 @@ pub(super) fn persist_files(
     closed: &AtomicBool,
 ) -> Result<PublicationResult> {
     let catalog = candidate_catalog(policies)?;
-    let mut prepared = Vec::with_capacity(paths.len());
-    for path in paths {
-        let file = files
-            .get(path)
-            .ok_or_else(|| invalid(format!("missing file for persistence: {path}")))?;
-        let candidate = |&(policy_index, check_index): &CheckId| {
-            candidate_check(&policies[policy_index], check_index)
-        };
-        let candidates = file
-            .candidates
-            .regex
-            .iter()
-            .chain(&file.candidates.ast)
-            .map(candidate)
-            .collect::<Vec<_>>();
-        let tape_bytes = {
-            #[cfg(feature = "policy-profile")]
-            let _timer = profile::PhaseTimer::start(profile::Phase::TapeSerialize);
-            file.tape
-                .as_ref()
-                .map(|(_, image)| image.to_bytes())
-                .transpose()
-                .map_err(invalid)?
-        };
-        let local_result_ids = file
-            .witnesses
-            .keys()
-            .chain(file.failures.keys())
-            .chain(&file.candidates.regex)
-            .chain(&file.candidates.ast)
-            .copied()
-            .collect::<BTreeSet<_>>();
-        let context = file_context(&file.input);
-        let stamped = CrossFileScheduler::stamped_context(file, context);
-        let mut local_results = local_result_ids
-            .iter()
-            .filter(|id| !file.transient_failure && !file.restored_result_ids.contains(id))
-            .filter_map(|id| {
-                let context = if consumers.contains_key(id) {
-                    stamped?
-                } else {
-                    context
+    let policy_hashes = policy_hashes(policies);
+    let candidate = |&(policy_index, check_index): &CheckId| {
+        candidate_check(
+            policy_hashes[policy_index],
+            &policies[policy_index],
+            check_index,
+        )
+    };
+    // Each file's payloads (tape bytes, encoded and compressed local results, blob alias) are
+    // independent of every other file's, so they are built on the worker pool.
+    let prepared = WORK_POOL.install(|| {
+        paths
+            .par_iter()
+            .map(|path| {
+                let file = files
+                    .get(path)
+                    .ok_or_else(|| invalid(format!("missing file for persistence: {path}")))?;
+                let candidates = file
+                    .candidates
+                    .regex
+                    .iter()
+                    .chain(&file.candidates.ast)
+                    .map(candidate)
+                    .collect::<Vec<_>>();
+                let tape_bytes = {
+                    #[cfg(feature = "policy-profile")]
+                    let _timer = profile::PhaseTimer::start(profile::Phase::TapeSerialize);
+                    file.tape
+                        .as_ref()
+                        .map(|(_, image)| image.to_bytes())
+                        .transpose()
+                        .map_err(invalid)?
                 };
-                Some((id, context))
+                let local_result_ids = file
+                    .witnesses
+                    .keys()
+                    .chain(file.failures.keys())
+                    .chain(&file.candidates.regex)
+                    .chain(&file.candidates.ast)
+                    .copied()
+                    .collect::<BTreeSet<_>>();
+                let context = file_context(&file.input);
+                let stamped = CrossFileScheduler::stamped_context(file, context);
+                let mut local_results = local_result_ids
+                    .iter()
+                    .filter(|id| !file.transient_failure && !file.restored_result_ids.contains(id))
+                    .filter_map(|id| {
+                        let context = if consumers.contains_key(id) {
+                            stamped?
+                        } else {
+                            context
+                        };
+                        Some((id, context))
+                    })
+                    .map(|(id, context)| {
+                        let witnesses = file.witnesses.get(id).map(Vec::as_slice).unwrap_or(&[]);
+                        let bytes = encode_local_result(
+                            witnesses,
+                            file.failures.get(id).copied(),
+                            file.syntax.as_deref(),
+                        )?;
+                        let frame =
+                            compress(&bytes, 3).map_err(|error| invalid(error.to_string()))?;
+                        Ok(LocalResultPublication {
+                            candidate: candidate(id),
+                            context,
+                            raw_length: bytes.len(),
+                            frame,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                if !file.transient_failure {
+                    local_results.extend(CrossFileScheduler::summary_publication(file)?);
+                }
+                let grammar_id = file_language(&file.input).map_or(0, grammar_id);
+                let aliases = clean_blob_alias(storage, file)
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                Ok((
+                    file,
+                    candidates,
+                    tape_bytes,
+                    grammar_id,
+                    aliases,
+                    local_results,
+                ))
             })
-            .map(|(id, context)| {
-                let candidate = candidate(id);
-                let witnesses = file.witnesses.get(id).map(Vec::as_slice).unwrap_or(&[]);
-                let bytes = encode_local_result(
-                    witnesses,
-                    file.failures.get(id).copied(),
-                    file.syntax.as_deref(),
-                )?;
-                let frame = zstd::stream::encode_all(Cursor::new(&bytes), 3)
-                    .map_err(|error| invalid(error.to_string()))?;
-                Ok(LocalResultPublication {
-                    candidate,
-                    context,
-                    raw_length: bytes.len(),
-                    frame,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        if !file.transient_failure {
-            local_results.extend(CrossFileScheduler::summary_publication(file)?);
-        }
-        let grammar_id = file_language(&file.input).map_or(0, grammar_id);
-        let aliases = clean_blob_alias(storage, file)
-            .into_iter()
-            .collect::<Vec<_>>();
-        prepared.push((
-            file,
-            candidates,
-            tape_bytes,
-            grammar_id,
-            aliases,
-            local_results,
-        ));
-    }
+            .collect::<Result<Vec<_>>>()
+    })?;
     let publications = prepared
         .iter()
         .map(

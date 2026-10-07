@@ -57,19 +57,24 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
    updates never touch harness config:
    - OMP: symlink `~/.omp/agent/extensions/rerail → current`
    - Pi: `packages` entry in `~/.pi/agent/settings.json`
-   - Claude Code: `hooks` in `~/.claude/settings.json` running `current/dist/claude-hook.js` (on Windows as exec-form entries that Claude Code 2.1.139+ spawns without Git Bash: `node` from `PATH` starts `dist/hook-launcher.js`, which prefers the `node.exe` recorded at setup and falls back to the `PATH` node once that binary is gone), the general `/rerail` command, and exact `/rerail-disable` / `/rerail-enable` / `/rerail-ui` / `/rerail-session` commands under `~/.claude/commands/` (`/rerail-ui` and `/rerail-session` open the page as a tab in the Orca or Cursor window before falling back to the system browser)
+   - Claude Code: `hooks` in `~/.claude/settings.json` running `current/dist/claude-hook.js` (on Windows as exec-form entries that Claude Code 2.1.139+ spawns without Git Bash: `node` from `PATH` starts `dist/hook-launcher.js`, which prefers the `node.exe` recorded at setup and falls back to the `PATH` node once that binary is gone), the general `/rerail` command, and exact `/rerail-start` / `/rerail-stop` / `/rerail-ui` / `/rerail-session` commands under `~/.claude/commands/` (`/rerail-ui` and `/rerail-session` open the page as a tab in the Orca or Cursor window before falling back to the system browser)
    - Codex: `~/.codex/hooks.json` running `current/dist/codex-hook.js` (Codex asks you to trust it once via `/hooks`; it cannot expose an exact third-party slash-command name, so use the terminal CLI)
-   - Cursor: `~/.cursor/hooks.json` running `current/dist/cursor-hook.js`, plus exact `/rerail-disable` / `/rerail-enable` / `/rerail-ui` commands under `~/.cursor/commands/` (`/rerail-ui` opens the rules page as a tab in the Cursor window before falling back to the system browser)
+   - Cursor: `~/.cursor/hooks.json` running `current/dist/cursor-hook.js`, plus exact `/rerail-start` / `/rerail-stop` / `/rerail-ui` commands under `~/.cursor/commands/` (`/rerail-ui` opens the rules page as a tab in the Cursor window before falling back to the system browser)
 
    Existing entries from other tools are preserved byte-for-byte; a backup
    `<file>.<timestamp>.bak` is written only when a file changes. Re-running is
    a no-op. `--harness <list>` limits it; `--project <dir>` also seeds empty
-   `<dir>/.<harness>/cosine-rules.json` files.
+   `<dir>/.<harness>/conversation-rules.json` files.
 
-3. **Start** — the daemon comes up (`rerail start`) unless `--skip-start`.
+3. **Start** — the daemon comes up (`rerail daemon start`) unless `--skip-start`.
    Adapters also autostart it on the first session, so this is a convenience.
 4. **Report** — prints what changed and reminds you to add `~/.rerail/bin` to
    `PATH` (the Windows launcher is `rerail.cmd`) and restart the harnesses.
+   An older install's generated `bin/rerail` launcher is deleted; there is no
+   `rerail` alias.
+
+Rerail stays off in every repository until you start it there (see "Starting
+and stopping Rerail" below).
 
 `--dry-run` prints all of the above without writing anything. Without
 `--harness`, registration touches every harness it detects, so make the first
@@ -162,9 +167,11 @@ is on `PATH`. Container development uses `just rerail-command <args>` instead;
 it does not replace the managed launcher.
 
 ```sh
-rerail disable           # stop Rerail in this checkout without stopping the shared daemon
-rerail enable            # resume Rerail in this checkout
-rerail status            # checkout disablement, otherwise daemon/database/kernel
+rerail start             # start Rerail in this repository (first time: also sets it up)
+rerail stop              # stop Rerail in this repository; the daemon keeps serving others
+rerail daemon start      # start the background daemon (--port, --host, --open, --dev, ...)
+rerail daemon stop       # stop the background daemon
+rerail status            # whether Rerail is started here, otherwise daemon/database/kernel
 rerail ui                # opens the rules page (--print only prints the URL)
 rerail session claude-code ID --open  # this session's status line and page URL; --open opens it
 rerail scan --session ID --scope repository --wait  # inspect findings in Sessions
@@ -173,22 +180,16 @@ rerail update check      # is a newer version on the channel?
 rerail update            # install it; `rerail update rollback` undoes it
 rerail reset             # delete this repository's session history, across all worktrees; rules stay
 rerail rules export      # dump global and this project's rules to ~/.rerail/rules.json
-rerail install --remove  # take Rerail back out of every harness
+rerail install --remove  # take Rerail out of every coding agent, stop the daemon, back up the database
 ```
 
 Inside OMP and Pi, `/rerail-settings` opens an editable settings menu and
 `/rerail-scan` chooses full-repository or Git-diff scope; one-shot scans are always log-only.
-Both target the current session automatically. OMP, Pi, Claude
-Code, and Cursor expose the exact
-`/rerail-disable` and `/rerail-enable` names. Slash completion also lists the
+Both target the current session automatically. Slash completion also lists the
 native OMP/Pi `/rerail-status`, `/rerail-check`, `/rerail-update`,
 `/rerail-rollback`, and `/rerail-reset` commands. These commands take no
-arguments. Disablement persists as `.rerail/disabled`; it suppresses recording,
-evaluation, steering, and daemon autostart only for that checkout. Existing
-data and the shared daemon are left intact. Codex cannot expose an exact
-third-party slash-command name; use `rerail disable` / `rerail enable` in its
-terminal.
-Restart the harness process after installing or rebuilding to load the commands.
+arguments.
+Restart the coding agent after installing or rebuilding to load the commands.
 Claude Code also retains general `/rerail` guidance at
 `~/.claude/commands/rerail.md`; its scan invocation must supply the exact session
 identity. See the [scan and settings contract](../README.md#scan-and-settings-controls)
@@ -203,14 +204,14 @@ Rerail keeps one database, `~/.rerail/rerail.sqlite` (`$RERAIL_HOME/rerail.sqlit
 holding the rules and the sessions, events, and work links of every repository
 on the machine; each session is attributed to its repository (`rerail status`
 names the file). The daemon's pages list the repository it was started in.
-Every runtime start and `rerail start` seed the rules bundled with the package
+Every runtime start and `rerail daemon start` seed the rules bundled with the package
 without overwriting a rule you edited or created (bootstrap records the digest
 each row was seeded from and only refreshes rows that still match it).
 `rerail update` first copies the database to `~/.rerail/rerail.sqlite.pre-update`;
 `rerail rules export [--output <file>]` and `rerail rules import <file>` move
 rules by hand. `rerail seed` fills the database with mock rules to work
 against. JSON rule files in
-`<project>/.omp|.pi|.claude|.codex|.cursor/cosine-rules.json` (as
+`<project>/.omp|.pi|.claude|.codex|.cursor/conversation-rules.json` (as
 `{"version": 1, "rules": []}` plus rules) are still read, but a database row
 with the same id wins.
 
@@ -228,6 +229,38 @@ store's compatibility floor (`v3` today) and changes whenever the floor rises.
 is neither (for example an `npx` copy) has no store and reports that on its
 first scan.
 
+### Starting and stopping Rerail
+
+Rerail is off in every repository until it is started there. Set-up and rules
+belong to the repository; on and off belong to each checkout, stored in
+`~/.rerail/rerail.sqlite`. A linked worktree follows the nearest checkout of its
+repository that contains it and was turned on or off, at any depth, and
+otherwise the main checkout, until it is started or stopped itself.
+
+Starting or stopping a checkout also reaches every worktree that follows it:
+the worktrees inside it without their own setting, and, from the main
+checkout, every linked worktree without its own setting, wherever it is on
+disk. Worktrees with their own setting, and checkouts that contain this one,
+keep their state.
+
+- `/rerail-start` (OMP, Pi, Claude Code, Cursor) or `rerail start` (terminal,
+  and the only spelling in Codex, which cannot expose an exact third-party
+  slash-command name) starts Rerail in the current checkout. In a
+  repository that has never been set up, it also does the first-time set-up
+  and seeds the default rules.
+- `/rerail-stop` or `rerail stop` stops Rerail in the current checkout: no
+  recording, evaluation, steering, or daemon autostart from its sessions.
+  Recorded history, rules, and the shared daemon stay, and other repositories
+  are unaffected.
+
+`rerail daemon start` and `rerail daemon stop` control the background daemon
+itself, which serves every started repository on the machine.
+
+Upgrading keeps everyone where they were: a repository with recorded history
+counts as started, and a checkout that carried the old `.rerail/disabled` marker
+counts as stopped (in a linked worktree, that worktree only). The marker is not
+read after the upgrade; delete it whenever you like.
+
 ### One main instance
 
 At most one main Rerail instance runs on a machine: the managed
@@ -238,8 +271,8 @@ pid, version, package root, and start time beside it in `main-instance.json`.
 The OS drops the lock however the daemon ends, `kill -9` included, so there is
 never a stale lock to clear. A second main daemon — another `$RERAIL_HOME`, or
 an orphan its `daemon.json` no longer names — exits at startup with
-`Another main Rerail instance is running: pid …, version …`, which `rerail start`
-prints from `daemon.log`; stop that process (`rerail stop`, or end it by pid)
+`Another main Rerail instance is running: pid …, version …`, which `rerail daemon start`
+prints from `daemon.log`; stop that process (`rerail daemon stop`, or end it by pid)
 and start again.
 
 Everything else in the managed installation goes through that daemon rather
@@ -282,11 +315,17 @@ just rerail-reset        # running checkout-local development container
 ```
 
 It deletes that repository's ended sessions and every session's events, work
-links, policy runs, and scan requests in one transaction. Rules, settings, and
+links, audits, and audit requests in one transaction. Rules, settings, and
 other repositories are untouched; the file is never unlinked, so open daemons
 and harness sessions keep working, and running sessions keep recording.
 
 ### Removing Rerail and restoring its databases
+
+`rerail install --remove` takes Rerail out of every coding agent, stops the
+daemon, and moves `rerail.sqlite` (with its `-wal`/`-shm`, and a legacy
+`rules.sqlite`) into `~/.rerail-clean-YYYYMMDD/rerail-home/`
+(`-YYYYMMDD-HHMMSS` when one from today exists), so your rules and history
+are kept in the same layout `just rerail --restore` reads.
 
 To take Rerail off a machine completely (the `just rerail` install and any
 `just rerail-dev --install-bridge` bridge), keeping its data in a backup:

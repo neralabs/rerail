@@ -7,7 +7,7 @@ fn compile_check(language: &str, ast: Value, finding: Value) -> Result<CompiledP
     let mut ast = ast;
     ast["language"] = json!(language);
     compile_document_with(
-        check_document(json!({ "id": "format", "forbid": { "ast": ast }, "finding": finding })),
+        check_document(json!({ "id": "format", "forbid": { "ast": ast }, "violation": finding })),
         &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
     )
 }
@@ -196,31 +196,31 @@ fn format_args_are_checked() {
     for (rule, expected) in [
         (
             json!({ "formatArgs": { "style": "brace", "string": "S", "args": "A" } }),
-            "/checks/0/forbid/ast/rule/formatArgs must hold unused, missing or both",
+            "/clauses/0/forbid/ast/rule/formatArgs must hold unused, missing or both",
         ),
         (
             json!({ "formatArgs": { "style": "c", "string": "S", "args": "A", "unused": { "kind": "identifier" } } }),
-            "/checks/0/forbid/ast/rule/formatArgs/style: unknown value `c`; expected brace, percent, printf or scanf",
+            "/clauses/0/forbid/ast/rule/formatArgs/style: unknown value `c`; expected brace, percent, printf or scanf",
         ),
         (
             json!({ "formatArgs": { "style": "brace", "args": "A", "unused": { "kind": "identifier" } } }),
-            "/checks/0/forbid/ast/rule/formatArgs/string is required",
+            "/clauses/0/forbid/ast/rule/formatArgs/string is required",
         ),
         (
             json!({ "formatArgs": { "style": "brace", "string": "$S", "args": "A", "unused": { "kind": "identifier" } } }),
-            "/checks/0/forbid/ast/rule/formatArgs/string: `$S` is not a capture name (A-Z, 0-9, _, without `$`)",
+            "/clauses/0/forbid/ast/rule/formatArgs/string: `$S` is not a capture name (A-Z, 0-9, _, without `$`)",
         ),
         (
             json!({ "formatArgs": { "style": "brace", "string": "S", "args": "A", "missing": { "kind": "placeholder" } } }),
-            "/checks/0/forbid/ast/rule/formatArgs/missing/kind: `placeholder` is not a braceFormat kind; expected one of format, literal, field, field_name, auto, index, name, attribute, element_index, conversion, format_spec, fill, align, sign, alternate, zero, width, grouping, precision, type, spec_error, error",
+            "/clauses/0/forbid/ast/rule/formatArgs/missing/kind: `placeholder` is not a braceFormat kind; expected one of format, literal, field, field_name, auto, index, name, attribute, element_index, conversion, format_spec, fill, align, sign, alternate, zero, width, grouping, precision, type, spec_error, error",
         ),
         (
             json!({ "formatArgs": { "style": "brace", "string": "S", "args": "A", "unused": { "capture": "U" } } }),
-            "/checks/0/forbid/ast/rule/formatArgs/unused/capture: capture binds a node of a parsed tree; use it inside parse (a pattern's metavariables capture host nodes)",
+            "/clauses/0/forbid/ast/rule/formatArgs/unused/capture: capture binds a node of a parsed tree; use it inside parse (a pattern's metavariables capture host nodes)",
         ),
         (
             json!({ "formatArgs": { "style": "brace", "string": "S", "args": "A", "unused": { "kind": "identifier" }, "extra": 1 } }),
-            "unknown field `extra` at /checks/0/forbid/ast/rule/formatArgs",
+            "unknown field `extra` at /clauses/0/forbid/ast/rule/formatArgs",
         ),
     ] {
         assert_eq!(
@@ -236,19 +236,19 @@ fn format_args_are_checked() {
     for (rule, expected) in [
         (
             json!({ "pattern": "$S.format($$$A)", "formatArgs": { "style": "brace", "string": "T", "args": "A", "unused": { "kind": "identifier" } } }),
-            "/checks/0/forbid/ast/rule/formatArgs/string: `$T` is not bound by the rule, its utils, or its constraints",
+            "/clauses/0/forbid/ast/rule/formatArgs/string: `$T` is not bound by the rule, its utils, or its constraints",
         ),
         (
             json!({ "pattern": "$S.format($A)", "formatArgs": { "style": "brace", "string": "S", "args": "A", "unused": { "kind": "identifier" } } }),
-            "/checks/0/forbid/ast/rule/formatArgs/args: a `.format` call's arguments are a list; capture them with `$$$A`",
+            "/clauses/0/forbid/ast/rule/formatArgs/args: a `.format` call's arguments are a list; capture them with `$$$A`",
         ),
         (
             json!({ "pattern": "$$$S % $R", "formatArgs": { "style": "percent", "string": "S", "args": "R", "missing": { "kind": "placeholder" } } }),
-            "/checks/0/forbid/ast/rule/formatArgs/string: `$$$S` captures a node list; the format string is one node",
+            "/clauses/0/forbid/ast/rule/formatArgs/string: `$$$S` captures a node list; the format string is one node",
         ),
         (
             json!({ "pattern": "$S % $R", "has": { "formatArgs": { "style": "percent", "string": "S", "args": "Q", "missing": { "kind": "placeholder" } } } }),
-            "/checks/0/forbid/ast/rule/has/formatArgs/args: `$Q` is not bound by the rule, its utils, or its constraints",
+            "/clauses/0/forbid/ast/rule/has/formatArgs/args: `$Q` is not bound by the rule, its utils, or its constraints",
         ),
     ] {
         assert_eq!(
@@ -267,7 +267,7 @@ fn format_args_are_checked() {
             json!({ "rule": { "pattern": "f($$$A)", "formatArgs": { "style": "brace", "string": "S", "args": "A", "unused": { "kind": "identifier" } } } }),
             finding()
         )),
-        "/checks/0/forbid/ast/rule/formatArgs: `formatArgs` is not available for typescript policies"
+        "/clauses/0/forbid/ast/rule/formatArgs: `formatArgs` is not available for typescript policies"
     );
 }
 

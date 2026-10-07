@@ -1,7 +1,6 @@
-use super::span_json;
-use crate::policy_dsl::findings::{self, Witness};
+use crate::policy_dsl::findings::{self, Captures, Span, Witness};
 use crate::policy_dsl::json::invalid;
-use crate::policy_dsl::json::{json_error, meta_name};
+use crate::policy_dsl::json::meta_name;
 use crate::policy_dsl::language::GrammarDialect;
 use crate::policy_dsl::lines::{LineTable, Terminators};
 use crate::policy_dsl::matcher::{
@@ -12,31 +11,22 @@ use crate::policy_dsl::model::{
     FileInput, FindingSpec, Limits, Metrics, PolicyScope, Query, RegexSource, Snapshot,
 };
 use crate::policy_dsl::query::select_when::{self, LeafRow, Leaves, Plan};
-use crate::policy_dsl::query::{MatcherStatement, PolicyStatements};
 use crate::policy_dsl::soundness::SyntaxErrors;
 use ast_grep_core::Doc;
 use ast_grep_core::matcher::NodeMatch;
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
 use ast_grep_language::LanguageExt;
 use napi::Result;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 pub(crate) enum WitnessError {
     TransformLimit,
-    Other(napi::Error),
 }
 
 type WitnessResult<T> = std::result::Result<T, WitnessError>;
-
-#[cfg(test)]
-thread_local! {
-    /// Tests make every witness on this thread fail with this error.
-    pub(crate) static FAIL_WITNESS: std::cell::Cell<Option<&'static str>> =
-        const { std::cell::Cell::new(None) };
-}
 
 #[cfg(test)]
 thread_local! {
@@ -62,15 +52,8 @@ pub(crate) fn witness_from_match<D: Doc>(
     matched: &NodeMatch<'_, D>,
     language: GrammarDialect,
     finding: Option<&FindingSpec>,
-    span: impl Fn(usize, usize) -> Value,
+    span: impl Fn(usize, usize) -> Span,
 ) -> WitnessResult<Witness> {
-    #[cfg(test)]
-    if let Some(reason) = FAIL_WITNESS.get() {
-        return Err(WitnessError::Other(napi::Error::new(
-            napi::Status::GenericFailure,
-            reason,
-        )));
-    }
     let groups = finding.map_or_else(Vec::new, |finding| {
         findings::node_groups(finding, language, matched.get_node())
     });
@@ -89,7 +72,7 @@ pub(crate) fn witnesses_from_match<D: Doc>(
     finding: &FindingSpec,
     room: usize,
     cancelled: impl Fn() -> bool,
-    span: impl Fn(usize, usize) -> Value,
+    span: impl Fn(usize, usize) -> Span,
 ) -> WitnessResult<Vec<Witness>> {
     let sets = findings::node_group_sets(finding, language, matched, room, &cancelled);
     let envs = regrouped(matched, Some(finding), &sets, &cancelled)?;
@@ -219,7 +202,7 @@ fn witness_with_groups<'t, D: Doc>(
     finding: Option<&FindingSpec>,
     groups: &[findings::NodeGroup],
     regrouped: Option<MetaVarEnv<'t, D>>,
-    span: impl Fn(usize, usize) -> Value,
+    span: impl Fn(usize, usize) -> Span,
 ) -> WitnessResult<Witness> {
     let mut captures = BTreeMap::new();
     let mut variables = matched
@@ -262,14 +245,14 @@ fn witness_with_groups<'t, D: Doc>(
     let (message, fix) = finding.map_or((None, None), |finding| {
         findings::ast_output(finding, language, matched, groups, &span)
     });
-    let mut captures = serde_json::to_value(captures)
-        .map_err(json_error)
-        .map_err(WitnessError::Other)?;
+    let mut captures = Captures::from_spans(captures);
     if let Some(finding) = finding.filter(|finding| !finding.project.is_empty()) {
-        captures.as_object_mut().expect("captures object").insert(
-            super::evidence::PROJECTION.to_owned(),
-            super::evidence::project(&finding.project, file, matched, groups),
-        );
+        captures.set_projection(Some(super::evidence::project(
+            &finding.project,
+            file,
+            matched,
+            groups,
+        )));
     }
     Ok(Witness {
         path: file.path.clone(),
@@ -285,7 +268,6 @@ fn witness_with_groups<'t, D: Doc>(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn evaluate_query(
     query: &Query,
-    statements: &PolicyStatements,
     snapshot: &Snapshot,
     _bindings: &BTreeMap<String, &Map<String, Value>>,
     scope: &PolicyScope,
@@ -297,7 +279,6 @@ pub(crate) fn evaluate_query(
     util_limit: &mut Option<(String, UtilLimit)>,
 ) -> Result<Option<Vec<Witness>>> {
     let leaf = Leaf {
-        statements,
         snapshot,
         scope,
         limits,
@@ -347,7 +328,6 @@ enum FileStep {
 /// Where a query's leaves read: the snapshot's files in the policy's scope.
 #[derive(Clone, Copy)]
 struct Leaf<'a> {
-    statements: &'a PolicyStatements,
     snapshot: &'a Snapshot,
     scope: &'a PolicyScope,
     limits: &'a Limits,
@@ -380,34 +360,17 @@ impl<'a> Leaf<'a> {
                         .map(Terminators::of)
                         .unwrap_or(Terminators::Eslint),
                 );
-                let span = |start, end| span_json(&lines, start, end);
-                let source_kind = match source {
-                    RegexSource::Content => {
-                        crate::policy_dsl::transducer::sql_backend::TextSource::Content
-                    }
-                    RegexSource::Path => {
-                        crate::policy_dsl::transducer::sql_backend::TextSource::Path
-                    }
-                };
-                let rows = crate::policy_dsl::query::regex_rows(
-                    regex.clone(),
-                    source_kind,
-                    self.limits.max_witnesses,
-                    Arc::clone(&file.source),
-                    Arc::from(file.path.as_str()),
-                    Arc::from(file.language.as_str()),
-                )
-                .map_err(|error| invalid(error.to_string()))?;
-                for (span_row, complete) in rows {
-                    let Some((start, end)) = span_row else {
-                        if !complete {
-                            return Ok(FileStep::Failed);
-                        }
-                        continue;
-                    };
+                let span = |start, end| lines.span(start, end);
+                let (matches, complete) = crate::policy_dsl::query::regex_matches(
+                    regex,
+                    haystack,
+                    self.limits.max_witnesses.saturating_add(1),
+                );
+                for range in matches {
+                    let (start, end) = (range.start, range.end);
                     let found = regex
                         .captures_at(haystack, start)
-                        .expect("terminal match has captures");
+                        .expect("a regex match has captures");
                     assert_eq!(found.get(0).expect("whole match").range(), start..end);
                     metrics.witnesses += 1;
                     if regex.capture_names().flatten().next().is_none()
@@ -416,7 +379,7 @@ impl<'a> Leaf<'a> {
                         witnesses.push(Witness {
                             path: file.path.clone(),
                             span: span(start, end),
-                            captures: json!({}),
+                            captures: Captures::default(),
                             message: None,
                             fix: None,
                         });
@@ -432,6 +395,9 @@ impl<'a> Leaf<'a> {
                             decided: true,
                         });
                     }
+                }
+                if !complete {
+                    return Ok(FileStep::Failed);
                 }
                 Ok(FileStep::Read {
                     witnesses,
@@ -458,13 +424,7 @@ impl<'a> Leaf<'a> {
                     FileScopeSlot::install(Vec::new(), file.module.clone(), !errors.is_empty())
                         .path(&file.path);
                 let _calls = crate::policy_dsl::calls::FileCallsSlot::for_path(&file.path);
-                let each = finding.and_then(|finding| finding.each.as_deref());
-                let statement = self
-                    .statements
-                    .of(grammar, each.is_some())
-                    .expect("the policy compiler compiled every AST rule's statement");
-                let decided = match evaluate_file_statement(
-                    statement,
+                let decided = match evaluate_file_check(
                     grammar,
                     file,
                     doc,
@@ -494,8 +454,8 @@ impl<'a> Leaf<'a> {
         }
     }
 
-    /// A `select_when` as its statement (`query::select_when`), each leaf read from the snapshot
-    /// as the statement asks for its rows.
+    /// A `select_when` answered by `query::select_when`, each leaf read from the snapshot as the
+    /// answer asks for its rows.
     fn select_when(
         self,
         query: &'a Query,
@@ -541,7 +501,7 @@ impl<'a> Leaf<'a> {
     }
 }
 
-/// A `select_when`'s leaves, each evaluated file by file, in snapshot order, as the statement
+/// A `select_when`'s leaves, each evaluated file by file, in snapshot order, as the answer
 /// reads its rows. A leaf ends where its evaluation would: at a failure, or (read for a decision)
 /// at its first witness.
 struct SnapshotLeaves<'a, 'w> {
@@ -550,7 +510,7 @@ struct SnapshotLeaves<'a, 'w> {
     finding: Option<&'a FindingSpec>,
     work: RefCell<(&'w mut Metrics, &'w mut Option<(String, UtilLimit)>)>,
     reads: Vec<RefCell<SnapshotRead>>,
-    /// The error that ended the statement, returned in its place.
+    /// The error that ended the answer, returned in its place.
     error: RefCell<Option<napi::Error>>,
 }
 
@@ -664,7 +624,7 @@ pub(crate) fn file_language(file: &FileInput) -> Option<GrammarDialect> {
     crate::policy_dsl::language::dialect_by_label(&file.language)
 }
 
-/// What the stateless evaluator does after one file's statement.
+/// What the stateless evaluator does after one file's check.
 enum FileOutcome {
     /// Go on with the next file.
     Continue,
@@ -706,12 +666,11 @@ pub(super) fn file_tape(
     Ok((doc, lines))
 }
 
-/// Evaluates one file with its grammar matcher's compiled statement on the file's tape, reporting
-/// as the node walk below does: nodes count towards `maxVisitedNodes` in preorder, witnesses
-/// in syntax-error regions and suppressed ones are dropped, the witness budget ends the file.
+/// Evaluates one file with its grammar matcher on the file's tape: nodes count towards
+/// `maxVisitedNodes` in preorder, witnesses in syntax-error regions and suppressed ones are
+/// dropped, the witness budget ends the file.
 #[allow(clippy::too_many_arguments)]
-fn evaluate_file_statement(
-    statement: &MatcherStatement,
+fn evaluate_file_check(
     grammar: &GrammarMatcher,
     file: &FileInput,
     doc: crate::policy_dsl::tape::TapeDoc,
@@ -725,38 +684,30 @@ fn evaluate_file_statement(
     witnesses: &mut Vec<Witness>,
 ) -> Result<FileOutcome> {
     use crate::policy_dsl::json::invalid;
+    use crate::policy_dsl::matcher::{Stopped, enumerate, node_at, run_check, with_file_memo};
     let count = doc.transducer_len();
-    let batch_file = crate::policy_dsl::transducer::sql_backend::BatchFile::new(
-        doc,
-        std::sync::Arc::from(file.path.as_str()),
-        std::sync::Arc::from(file.language.as_str()),
-        None,
-    )
-    .bounded(limits.max_visited_nodes);
+    let target = ast_grep_core::AstGrep::doc(doc);
     let visited = metrics.visited_nodes;
     let each = finding.and_then(|finding| finding.each.as_deref());
-    // A witness error ends the statement and is returned as it is, as the workspace does.
-    let mut other_error = None;
-    let outcome =
-        statement.with_batch(batch_file, |batch, plan| -> rusqlite::Result<FileOutcome> {
-            let view = batch.view();
-            let target = view.file(0).expect("the batch's one file");
-            let mut outcome = FileOutcome::Continue;
-            let _first = each.map(crate::policy_dsl::matcher::EachScope::start);
-            batch.run_while(plan, 0, None, grammar, util_work, |node, first, work| {
-                if visited + node as usize + 1 > limits.max_visited_nodes {
-                    outcome = FileOutcome::Limit(UtilLimit::Work);
-                    return Ok(false);
-                }
+    let mut outcome = FileOutcome::Continue;
+    let result = with_file_memo(&target, || {
+        let _first = each.map(crate::policy_dsl::matcher::EachScope::start);
+        run_check(
+            &target,
+            grammar,
+            None,
+            limits.max_visited_nodes.saturating_sub(visited),
+            util_work,
+            |node, first, work| {
                 let matches = match each {
                     Some(name) => {
                         let room = (limits.max_witnesses + 1).saturating_sub(metrics.witnesses);
-                        batch.enumerate(plan, 0, node, first, grammar, work, name, room)?
+                        enumerate(&target, grammar, node, first, work, name, room)?
                     }
                     None => vec![first],
                 };
                 for env in matches {
-                    let mut matched = NodeMatch::new(target.node(node), env.to_meta(target));
+                    let mut matched = NodeMatch::new(node_at(&target, node), env);
                     if let Some(transform) = &grammar.transform {
                         crate::policy_dsl::matcher::begin_check(grammar, *work);
                         if transform.apply(matched.get_env_mut()).is_err() {
@@ -769,7 +720,7 @@ fn evaluate_file_statement(
                     if errors.overlaps(&matched.get_node().range()) {
                         continue;
                     }
-                    let span = |start, end| span_json(&lines, start, end);
+                    let span = |start, end| lines.span(start, end);
                     let room = (limits.max_witnesses + 1).saturating_sub(metrics.witnesses);
                     let found = match finding.filter(|_| each.is_some()) {
                         Some(finding) => witnesses_from_match(
@@ -788,10 +739,6 @@ fn evaluate_file_statement(
                         Ok(found) => found,
                         Err(WitnessError::TransformLimit) => {
                             outcome = FileOutcome::Limit(UtilLimit::Work);
-                            return Ok(false);
-                        }
-                        Err(WitnessError::Other(error)) => {
-                            other_error = Some(error);
                             return Ok(false);
                         }
                     };
@@ -818,29 +765,17 @@ fn evaluate_file_statement(
                     }
                 }
                 Ok(true)
-            })?;
-            // `run_while` updates the owning matcher budget after the final SQLite step.
-            Ok(outcome)
-        });
-    if let Some(error) = other_error {
-        return Err(error);
+            },
+        )
+        .and_then(|result| result)
+    });
+    match result {
+        Ok(()) => {}
+        Err(Stopped::Limit(limit)) => return Ok(FileOutcome::Limit(limit)),
+        Err(Stopped::Deadline) => return Err(invalid("evaluation deadline exhausted")),
     }
-    match outcome.and_then(|outcome| outcome) {
-        Ok(FileOutcome::Continue) => {}
-        Ok(outcome) => return Ok(outcome),
-        Err(error) => {
-            let message = error.to_string();
-            return [
-                UtilLimit::Depth,
-                UtilLimit::Work,
-                UtilLimit::Scope,
-                UtilLimit::Value,
-            ]
-            .into_iter()
-            .find(|limit| message.contains(limit.message()))
-            .map(FileOutcome::Limit)
-            .ok_or_else(|| invalid(format!("query statement failed: {message}")));
-        }
+    if !matches!(outcome, FileOutcome::Continue) {
+        return Ok(outcome);
     }
     metrics.visited_nodes = visited + count;
     if metrics.visited_nodes > limits.max_visited_nodes {

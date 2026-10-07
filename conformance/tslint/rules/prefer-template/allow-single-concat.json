@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:prefer-template",
   "revision": 1,
+  "mode": "steer",
   "description": "Prefer template literals over string concatenation (outermost offending `+` expression). TSLint's recursive containsAnyStringLiterals/containsOnlyStringLiterals are recursive utils. Options: allow-single-concat",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "concat",
       "forbid": {
@@ -182,10 +183,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "PREFER_TEMPLATE",
-        "severity": "error",
         "message": "Use a template literal instead of concatenating with a string literal."
       }
     }

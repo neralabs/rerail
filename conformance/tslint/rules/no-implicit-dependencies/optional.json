@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-implicit-dependencies",
   "revision": 1,
+  "mode": "steer",
   "description": "PORT OF THE FIXTURE, NOT THE RULE: the dependency allow-list is hardcoded from test/rules/no-implicit-dependencies/package.json because the real rule reads the nearest package.json (cross-file). Option optional: also optionalDependencies.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "implicit-dependency",
       "forbid": {
@@ -74,10 +75,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_IMPLICIT_DEPENDENCIES",
-        "severity": "error",
         "message": "Module is not listed as dependency in package.json"
       }
     }

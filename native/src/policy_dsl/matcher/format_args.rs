@@ -5,24 +5,18 @@
 //! and `fscanf` calls as PHP 8.5.11 validates them (`scanf`).
 
 use super::AstMatcher;
-#[cfg(test)]
 use super::each::{self, HostRanges};
-#[cfg(test)]
 use super::exported::export;
-use super::facts::{Facts, Target, slot};
-#[cfg(test)]
 use super::parse::host_map;
 use super::parse::parsed_tree;
-#[cfg(test)]
 use super::util::{THREE_VALUED, UNKNOWN};
 use super::value::Reading;
+use crate::policy_dsl::identifier::python_identifier;
 use crate::policy_dsl::literal::{Grammar, Parsed, SubDoc, offsets};
 use crate::policy_dsl::value::Value;
-#[cfg(test)]
 use ast_grep_core::Matcher;
 use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{AstGrep, Doc, Node};
-#[cfg(test)]
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 
@@ -203,56 +197,6 @@ impl FormatArgs {
         }
     }
 
-    /// The query engine's view (`facts::slot`): the gate (its row carries the parsed template),
-    /// the unused arguments, the missing fields in the template's order, and whether either side
-    /// is incomplete.
-    pub(super) fn facts<'t, D: Doc>(&self, env: &MetaVarEnv<'t, D>, facts: &mut Facts<'t, D>) {
-        let (tree, unused, missing) = match self.prepare(env) {
-            Prepared::NoMatch => return,
-            Prepared::Unknown => {
-                facts.gate(-1, Target::None);
-                return;
-            }
-            Prepared::Sides {
-                tree,
-                unused,
-                missing,
-            } => (tree, unused, missing),
-        };
-        facts.gate(1, Target::Tree(tree.clone(), None));
-        for (candidate, known) in unused.candidates {
-            facts.push(slot::UNUSED, 0, i64::from(known), Target::Node(candidate));
-        }
-        let root = AstGrep::doc(SubDoc { tree: tree.clone() });
-        for part in root.root().dfs() {
-            if let Some((id, known)) = missing
-                .candidates
-                .iter()
-                .find(|(id, _)| *id == part.node_id())
-            {
-                facts.push(
-                    slot::MISSING,
-                    0,
-                    i64::from(*known),
-                    Target::TreeNode(tree.clone(), *id),
-                );
-            }
-        }
-        facts.push(
-            slot::INCOMPLETE,
-            0,
-            i64::from(unused.incomplete),
-            Target::None,
-        );
-        facts.push(
-            slot::INCOMPLETE,
-            0,
-            i64::from(missing.incomplete),
-            Target::None,
-        );
-    }
-
-    #[cfg(test)]
     pub(super) fn match_node<'t, D: Doc>(
         &self,
         node: Node<'t, D>,
@@ -333,7 +277,6 @@ impl FormatArgs {
 }
 
 /// A search's verdict when more candidates may exist than it saw: a miss is then unknown.
-#[cfg(test)]
 fn open(found: Option<bool>, incomplete: bool) -> Option<bool> {
     match found {
         Some(false) if incomplete => None,
@@ -342,7 +285,6 @@ fn open(found: Option<bool>, incomplete: bool) -> Option<bool> {
 }
 
 /// Three-valued `and`.
-#[cfg(test)]
 fn and(left: Option<bool>, right: Option<bool>) -> Option<bool> {
     match (left, right) {
         (Some(false), _) | (_, Some(false)) => Some(false),
@@ -353,7 +295,6 @@ fn and(left: Option<bool>, right: Option<bool>) -> Option<bool> {
 
 /// Whether some candidate matches `rule`, binding from the first known one that does: `Some(true)`,
 /// `None` when only unknown candidates (or unknown verdicts) could, `Some(false)` otherwise.
-#[cfg(test)]
 fn first<'t, D: Doc>(
     rule: &AstMatcher,
     candidates: Vec<(Node<'t, D>, bool)>,
@@ -416,7 +357,9 @@ fn brace<'t, D: Doc>(args: &[Node<'t, D>], fields: &Fields) -> (Side<Node<'t, D>
         match arg.kind().as_ref() {
             "keyword_argument" => {
                 if let Some(name) = arg.field("name") {
-                    keywords.push((arg.clone(), name.text().into_owned()));
+                    // A keyword's name is an identifier, NFKC-normalized; a field's name is
+                    // string content, read as written (CPython's `str.format` looks it up raw).
+                    keywords.push((arg.clone(), python_identifier(&name).into_owned()));
                 }
             }
             "dictionary_splat" => star_kwargs = true,

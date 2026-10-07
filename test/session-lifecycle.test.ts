@@ -12,6 +12,7 @@ import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../src/session-state.js";
 import type { CosineRule } from "../src/rule-schema.js";
 
 import { closeNativeTestDaemons, startNativeTestDaemon } from "./native-daemon-fixture.js";
+import { startTestRepository } from "./support/started-repository.js";
 type Context = OmpContext & PiContext;
 type Handler = (event: unknown, context: Context) => unknown;
 const directories: string[] = [];
@@ -26,6 +27,7 @@ async function harness(host: "omp" | "pi") {
   const cwd = mkdtempSync(join(tmpdir(), `rerail-${host}-startup-`));
   directories.push(cwd);
   vi.stubEnv("RERAIL_HOME", join(cwd, "home"));
+  startTestRepository(cwd);
   if (host === "omp") await startNativeTestDaemon(cwd);
   const handlers = new Map<string, Handler>();
   const commands = new Map<string, { handler(args: string, context: Context): unknown }>();
@@ -48,10 +50,10 @@ async function harness(host: "omp" | "pi") {
     ui: { notify() {} },
   } as unknown as Context;
   const rule: CosineRule = {
-    id: "checkout", reference: "Guest checkout remains available.",
+    id: "checkout", mode: "steer", reference: "Guest checkout remains available.",
     match: { operator: "gte", threshold: 0.99 },
     sample: { source: "assistant-text", boundary: "sentence", minimumTokens: 1 },
-    action: { delivery: "steer", content: "Check checkout requirements." },
+    action: { content: "Check checkout requirements." },
     repeat: { mode: "always" },
   };
   const createExtension = host === "omp" ? createCosineRulesExtension : createPiCosineRulesExtension;

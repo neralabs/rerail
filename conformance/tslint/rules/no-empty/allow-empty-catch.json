@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-empty",
   "revision": 1,
+  "mode": "steer",
   "description": "no-empty with allow-empty-catch: empty catch blocks are also allowed.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "empty-block",
       "forbid": {
@@ -83,10 +84,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_EMPTY",
-        "severity": "error",
         "message": "block is empty"
       }
     }

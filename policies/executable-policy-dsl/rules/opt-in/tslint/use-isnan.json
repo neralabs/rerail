@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:use-isnan",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `use-isnan` rule with its default options (https://palantir.github.io/tslint/rules/use-isnan/). Enforces use of isNaN() instead of comparing to NaN.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "nan-comparison",
       "forbid": {
@@ -58,10 +59,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "USE_ISNAN",
-        "severity": "error",
         "message": "Found an invalid comparison for NaN"
       }
     }

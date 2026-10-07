@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:no-floating-promises",
   "revision": 1,
+  "mode": "steer",
   "description": "Syntactic under-approximation: expression statements that are `x.then()`/`x.then(onFulfilled)` (no rejection handler), `x.finally(...)`, or `new Promise(...)`. Whether an arbitrary call returns a Promise needs the type checker. Anchor is the statement (same start as the expression).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "floating-then",
       "forbid": {
@@ -65,10 +66,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "NO_FLOATING_PROMISES",
-        "severity": "error",
         "message": "Promises must be handled appropriately"
       }
     }

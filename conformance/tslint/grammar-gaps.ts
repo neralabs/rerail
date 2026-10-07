@@ -76,19 +76,20 @@ async function kernelVerdict(probe: GrammarProbe): Promise<GrammarProbeResult["k
     format: "rerail.policy/v1",
     id: `grammar:${probe.id}`,
     revision: 1,
+    mode: "steer",
     description: probe.id,
     scope: { include: ["**/*"], exclude: [] },
-    checks: [{ id: "probe", forbid: { ast: { language: "typescript", rule } }, finding: { anchor: "witness.span", code: "PROBE", severity: "error", message: "probe" } }],
+    clauses: [{ id: "probe", forbid: { ast: { language: "typescript", rule } }, violation: { anchor: "witness.span", code: "PROBE", message: "probe" } }],
   });
   const workspace = new binding.PolicyDslWorkspace();
   try {
     workspace.addPolicy(binding.PolicyDslRuntime.compile(document, "json", capabilitiesJson()));
     const payload = JSON.stringify({ revision: 1, files: [{ path: "probe.ts", language: "typescript", source: probe.code }], removed: [] });
-    const { evaluation } = JSON.parse(await applyToWorkspace(workspace, payload)) as { evaluation: { findings: unknown[]; failures: Array<{ code: string }> } };
-    // `source-partial` (checks ran around the errors) and `source-incomplete` (a check skipped the file) both mean
+    const { evaluation } = JSON.parse(await applyToWorkspace(workspace, payload)) as { evaluation: { violations: unknown[]; failures: Array<{ code: string }> } };
+    // `source-partial` (clauses ran around the errors) and `source-incomplete` (a clause skipped the file) both mean
     // the grammar could not parse the whole probe.
     if (evaluation.failures.some(failure => PARSE_FAILURE_CODES.has(failure.code))) return "parse error";
-    if (probe.misparse !== undefined && evaluation.findings.length > 0) return "misparse";
+    if (probe.misparse !== undefined && evaluation.violations.length > 0) return "misparse";
     return "parses";
   } finally {
     workspace.close();

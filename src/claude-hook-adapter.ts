@@ -40,7 +40,7 @@ export function supportsClaudeHook(input: HookInput): boolean {
 
 export function claudeHookOutput(hook: string, deliveries: readonly AdapterDelivery[]): HookOutput {
   const content = deliveryText(deliveries);
-  if (content === undefined || !(CONTEXT_EVENTS[hook] === true || hook === "Stop")) return {};
+  if (content === undefined || CONTEXT_EVENTS[hook] !== true) return {};
   return prepareGuidanceOutput(
     { hookSpecificOutput: { hookEventName: hook, additionalContext: content } },
     deliveryRuleIds(deliveries),

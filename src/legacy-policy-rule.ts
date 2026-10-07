@@ -4,8 +4,8 @@ import { ruleDocumentDigest } from "./stable-json.js";
 
 /**
  * Stored `rerail.policy/v1` rows can predate the current schema. Before the kernel started rejecting them
- * (#2561) it accepted and ignored `ast.capture`, `regex.captures`, `finding.variables`, and any
- * `finding.anchor` string: every finding was reported at its witness span. Dropping those fields, and
+ * (#2561) it accepted and ignored `ast.capture`, `regex.captures`, `violation.variables`, and any
+ * `violation.anchor` string: every violation was reported at its witness span. Dropping those fields, and
  * anchoring a free-form anchor at `witness.span`, is therefore behavior-preserving. Normalization is
  * read-only: stored rows, their payload hashes, and their bundled source digests are never rewritten.
  */
@@ -48,7 +48,7 @@ function normalizeFinding(finding: unknown, hasQuery: boolean, path: string, cha
   if (!isObject(finding)) return finding;
   let next = finding;
   const anchor = finding.anchor;
-  // require_each, budget, and llm findings carry no source span, so the kernel accepts only witness.span there.
+  // require_each, budget, and llm violations carry no source span, so the kernel accepts only witness.span there.
   const legacyAnchor = typeof anchor === "string" && (!POLICY_FINDING_ANCHOR_PATTERN.test(anchor) || (!hasQuery && anchor !== "witness.span"));
   if (legacyAnchor) {
     next = { ...next, anchor: "witness.span" };
@@ -64,8 +64,8 @@ function normalizeFinding(finding: unknown, hasQuery: boolean, path: string, cha
 function normalizeCheck(check: unknown, path: string, changes: string[]): unknown {
   if (!isObject(check)) return check;
   let next = check;
-  const finding = normalizeFinding(check.finding, check.forbid !== undefined, `${path}/finding`, changes);
-  if (finding !== check.finding) next = { ...next, finding };
+  const finding = normalizeFinding(check.violation, check.forbid !== undefined, `${path}/violation`, changes);
+  if (finding !== check.violation) next = { ...next, violation: finding };
   const forbid = normalizeQuery(check.forbid, `${path}/forbid`, changes);
   if (forbid !== check.forbid) next = { ...next, forbid };
   return next;
@@ -81,9 +81,9 @@ export interface LegacyPolicyNormalization {
 /** Rewrite the pre-#2561 fields of a stored policy document into their current equivalent. */
 export function normalizeLegacyPolicyRule(rule: unknown): LegacyPolicyNormalization {
   const changes: string[] = [];
-  if (!isObject(rule) || !Array.isArray(rule.checks)) return { rule, changes };
-  const checks = rule.checks.map((check: unknown, index) => normalizeCheck(check, `checks/${index}`, changes));
-  return changes.length === 0 ? { rule, changes } : { rule: { ...rule, checks }, changes };
+  if (!isObject(rule) || !Array.isArray(rule.clauses)) return { rule, changes };
+  const checks = rule.clauses.map((check: unknown, index) => normalizeCheck(check, `clauses/${index}`, changes));
+  return changes.length === 0 ? { rule, changes } : { rule: { ...rule, clauses: checks }, changes };
 }
 
 /** Digest of a stored rule body exactly as it sits in the row, valid or not. */
@@ -114,12 +114,12 @@ export function readStoredPolicyRule(stored: unknown, sourceDigest: string | nul
     const reason = issue === undefined ? "invalid policy document" : `${issue.path.join("/") || "(root)"}: ${issue.message}`;
     return { ok: false, reason };
   }
-  const untouched = changes.length > 0 && sourceDigest !== null && storedDocumentDigest("policy", stored) === sourceDigest;
+  const untouched = changes.length > 0 && sourceDigest !== null && storedDocumentDigest("file", stored) === sourceDigest;
   return {
     ok: true,
     rule: parsed.data,
     changes,
-    sourceDigest: untouched ? storedDocumentDigest("policy", parsed.data) : sourceDigest,
+    sourceDigest: untouched ? storedDocumentDigest("file", parsed.data) : sourceDigest,
   };
 }
 

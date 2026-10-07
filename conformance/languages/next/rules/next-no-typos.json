@@ -1,0 +1,97 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-no-typos",
+  "revision": 1,
+  "mode": "steer",
+  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-typos: an exported function or variable whose name is one edit away from getStaticProps, getStaticPaths or getServerSideProps, in a file whose segment after the first `pages` is non-empty and not under /api.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "path": {
+              "regex": "^(?:[^p]|p(?:p|ap|agp|agep)*(?:[^pa]|a[^gp]|ag[^ep]|age[^sp]))*(?:p(?:p|ap|agp|agep)*(?:a|ag|age)?)?pages(?:[^p]|p(?:[^a]|$)|pa(?:[^g]|$)|pag(?:[^e]|$)|page(?:[^s]|$))",
+              "notRegex": "^(?:[^p]|p(?:p|ap|agp|agep)*(?:[^pa]|a[^gp]|ag[^ep]|age[^sp]))*(?:p(?:p|ap|agp|agep)*(?:a|ag|age)?)?pages/api(?:[^p]|p(?:p|ap|agp|agep)*(?:[^pa]|a[^gp]|ag[^ep]|age[^sp]))*(?:p(?:p|ap|agp|agep)*(?:a|ag|age)?)?/(?:[^/p]|p(?:[^a]|$)|pa(?:[^g]|$)|pag(?:[^e]|$)|page(?:[^s]|$))"
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "function_declaration",
+                    "has": {
+                      "field": "name",
+                      "regex": "^(?:[A-Za-z0-9_$]etStaticProps|etStaticProps|g[A-Za-z0-9_$]tStaticProps|gtStaticProps|ge[A-Za-z0-9_$]StaticProps|geStaticProps|get[A-Za-z0-9_$]taticProps|gettaticProps|getS[A-Za-z0-9_$]aticProps|getSaticProps|getSt[A-Za-z0-9_$]ticProps|getStticProps|getSta[A-Za-z0-9_$]icProps|getStaicProps|getStat[A-Za-z0-9_$]cProps|getStatcProps|getStati[A-Za-z0-9_$]Props|getStatiProps|getStatic[A-Za-z0-9_$]rops|getStaticrops|getStaticP[A-Za-z0-9_$]ops|getStaticPops|getStaticPr[A-Za-z0-9_$]ps|getStaticPrps|getStaticPro[A-Za-z0-9_$]s|getStaticPros|getStaticProp[A-Za-z0-9_$]|getStaticProp|[A-Za-z0-9_$]getStaticProps|g[A-Za-z0-9_$]etStaticProps|ge[A-Za-z0-9_$]tStaticProps|get[A-Za-z0-9_$]StaticProps|getS[A-Za-z0-9_$]taticProps|getSt[A-Za-z0-9_$]aticProps|getSta[A-Za-z0-9_$]ticProps|getStat[A-Za-z0-9_$]icProps|getStati[A-Za-z0-9_$]cProps|getStatic[A-Za-z0-9_$]Props|getStaticP[A-Za-z0-9_$]rops|getStaticPr[A-Za-z0-9_$]ops|getStaticPro[A-Za-z0-9_$]ps|getStaticProp[A-Za-z0-9_$]s|getStaticProps[A-Za-z0-9_$]|[A-Za-z0-9_$]etStaticPaths|etStaticPaths|g[A-Za-z0-9_$]tStaticPaths|gtStaticPaths|ge[A-Za-z0-9_$]StaticPaths|geStaticPaths|get[A-Za-z0-9_$]taticPaths|gettaticPaths|getS[A-Za-z0-9_$]aticPaths|getSaticPaths|getSt[A-Za-z0-9_$]ticPaths|getStticPaths|getSta[A-Za-z0-9_$]icPaths|getStaicPaths|getStat[A-Za-z0-9_$]cPaths|getStatcPaths|getStati[A-Za-z0-9_$]Paths|getStatiPaths|getStatic[A-Za-z0-9_$]aths|getStaticaths|getStaticP[A-Za-z0-9_$]ths|getStaticPths|getStaticPa[A-Za-z0-9_$]hs|getStaticPahs|getStaticPat[A-Za-z0-9_$]s|getStaticPats|getStaticPath[A-Za-z0-9_$]|getStaticPath|[A-Za-z0-9_$]getStaticPaths|g[A-Za-z0-9_$]etStaticPaths|ge[A-Za-z0-9_$]tStaticPaths|get[A-Za-z0-9_$]StaticPaths|getS[A-Za-z0-9_$]taticPaths|getSt[A-Za-z0-9_$]aticPaths|getSta[A-Za-z0-9_$]ticPaths|getStat[A-Za-z0-9_$]icPaths|getStati[A-Za-z0-9_$]cPaths|getStatic[A-Za-z0-9_$]Paths|getStaticP[A-Za-z0-9_$]aths|getStaticPa[A-Za-z0-9_$]ths|getStaticPat[A-Za-z0-9_$]hs|getStaticPath[A-Za-z0-9_$]s|getStaticPaths[A-Za-z0-9_$]|[A-Za-z0-9_$]etServerSideProps|etServerSideProps|g[A-Za-z0-9_$]tServerSideProps|gtServerSideProps|ge[A-Za-z0-9_$]ServerSideProps|geServerSideProps|get[A-Za-z0-9_$]erverSideProps|geterverSideProps|getS[A-Za-z0-9_$]rverSideProps|getSrverSideProps|getSe[A-Za-z0-9_$]verSideProps|getSeverSideProps|getSer[A-Za-z0-9_$]erSideProps|getSererSideProps|getServ[A-Za-z0-9_$]rSideProps|getServrSideProps|getServe[A-Za-z0-9_$]SideProps|getServeSideProps|getServer[A-Za-z0-9_$]ideProps|getServerideProps|getServerS[A-Za-z0-9_$]deProps|getServerSdeProps|getServerSi[A-Za-z0-9_$]eProps|getServerSieProps|getServerSid[A-Za-z0-9_$]Props|getServerSidProps|getServerSide[A-Za-z0-9_$]rops|getServerSiderops|getServerSideP[A-Za-z0-9_$]ops|getServerSidePops|getServerSidePr[A-Za-z0-9_$]ps|getServerSidePrps|getServerSidePro[A-Za-z0-9_$]s|getServerSidePros|getServerSideProp[A-Za-z0-9_$]|getServerSideProp|[A-Za-z0-9_$]getServerSideProps|g[A-Za-z0-9_$]etServerSideProps|ge[A-Za-z0-9_$]tServerSideProps|get[A-Za-z0-9_$]ServerSideProps|getS[A-Za-z0-9_$]erverSideProps|getSe[A-Za-z0-9_$]rverSideProps|getSer[A-Za-z0-9_$]verSideProps|getServ[A-Za-z0-9_$]erSideProps|getServe[A-Za-z0-9_$]rSideProps|getServer[A-Za-z0-9_$]SideProps|getServerS[A-Za-z0-9_$]ideProps|getServerSi[A-Za-z0-9_$]deProps|getServerSid[A-Za-z0-9_$]eProps|getServerSide[A-Za-z0-9_$]Props|getServerSideP[A-Za-z0-9_$]rops|getServerSidePr[A-Za-z0-9_$]ops|getServerSidePro[A-Za-z0-9_$]ps|getServerSideProp[A-Za-z0-9_$]s|getServerSideProps[A-Za-z0-9_$])$",
+                      "not": {
+                        "regex": "^(?:getStaticProps|getStaticPaths|getServerSideProps)$"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "variable_declarator",
+                    "has": {
+                      "field": "name",
+                      "kind": "identifier",
+                      "regex": "^(?:[A-Za-z0-9_$]etStaticProps|etStaticProps|g[A-Za-z0-9_$]tStaticProps|gtStaticProps|ge[A-Za-z0-9_$]StaticProps|geStaticProps|get[A-Za-z0-9_$]taticProps|gettaticProps|getS[A-Za-z0-9_$]aticProps|getSaticProps|getSt[A-Za-z0-9_$]ticProps|getStticProps|getSta[A-Za-z0-9_$]icProps|getStaicProps|getStat[A-Za-z0-9_$]cProps|getStatcProps|getStati[A-Za-z0-9_$]Props|getStatiProps|getStatic[A-Za-z0-9_$]rops|getStaticrops|getStaticP[A-Za-z0-9_$]ops|getStaticPops|getStaticPr[A-Za-z0-9_$]ps|getStaticPrps|getStaticPro[A-Za-z0-9_$]s|getStaticPros|getStaticProp[A-Za-z0-9_$]|getStaticProp|[A-Za-z0-9_$]getStaticProps|g[A-Za-z0-9_$]etStaticProps|ge[A-Za-z0-9_$]tStaticProps|get[A-Za-z0-9_$]StaticProps|getS[A-Za-z0-9_$]taticProps|getSt[A-Za-z0-9_$]aticProps|getSta[A-Za-z0-9_$]ticProps|getStat[A-Za-z0-9_$]icProps|getStati[A-Za-z0-9_$]cProps|getStatic[A-Za-z0-9_$]Props|getStaticP[A-Za-z0-9_$]rops|getStaticPr[A-Za-z0-9_$]ops|getStaticPro[A-Za-z0-9_$]ps|getStaticProp[A-Za-z0-9_$]s|getStaticProps[A-Za-z0-9_$]|[A-Za-z0-9_$]etStaticPaths|etStaticPaths|g[A-Za-z0-9_$]tStaticPaths|gtStaticPaths|ge[A-Za-z0-9_$]StaticPaths|geStaticPaths|get[A-Za-z0-9_$]taticPaths|gettaticPaths|getS[A-Za-z0-9_$]aticPaths|getSaticPaths|getSt[A-Za-z0-9_$]ticPaths|getStticPaths|getSta[A-Za-z0-9_$]icPaths|getStaicPaths|getStat[A-Za-z0-9_$]cPaths|getStatcPaths|getStati[A-Za-z0-9_$]Paths|getStatiPaths|getStatic[A-Za-z0-9_$]aths|getStaticaths|getStaticP[A-Za-z0-9_$]ths|getStaticPths|getStaticPa[A-Za-z0-9_$]hs|getStaticPahs|getStaticPat[A-Za-z0-9_$]s|getStaticPats|getStaticPath[A-Za-z0-9_$]|getStaticPath|[A-Za-z0-9_$]getStaticPaths|g[A-Za-z0-9_$]etStaticPaths|ge[A-Za-z0-9_$]tStaticPaths|get[A-Za-z0-9_$]StaticPaths|getS[A-Za-z0-9_$]taticPaths|getSt[A-Za-z0-9_$]aticPaths|getSta[A-Za-z0-9_$]ticPaths|getStat[A-Za-z0-9_$]icPaths|getStati[A-Za-z0-9_$]cPaths|getStatic[A-Za-z0-9_$]Paths|getStaticP[A-Za-z0-9_$]aths|getStaticPa[A-Za-z0-9_$]ths|getStaticPat[A-Za-z0-9_$]hs|getStaticPath[A-Za-z0-9_$]s|getStaticPaths[A-Za-z0-9_$]|[A-Za-z0-9_$]etServerSideProps|etServerSideProps|g[A-Za-z0-9_$]tServerSideProps|gtServerSideProps|ge[A-Za-z0-9_$]ServerSideProps|geServerSideProps|get[A-Za-z0-9_$]erverSideProps|geterverSideProps|getS[A-Za-z0-9_$]rverSideProps|getSrverSideProps|getSe[A-Za-z0-9_$]verSideProps|getSeverSideProps|getSer[A-Za-z0-9_$]erSideProps|getSererSideProps|getServ[A-Za-z0-9_$]rSideProps|getServrSideProps|getServe[A-Za-z0-9_$]SideProps|getServeSideProps|getServer[A-Za-z0-9_$]ideProps|getServerideProps|getServerS[A-Za-z0-9_$]deProps|getServerSdeProps|getServerSi[A-Za-z0-9_$]eProps|getServerSieProps|getServerSid[A-Za-z0-9_$]Props|getServerSidProps|getServerSide[A-Za-z0-9_$]rops|getServerSiderops|getServerSideP[A-Za-z0-9_$]ops|getServerSidePops|getServerSidePr[A-Za-z0-9_$]ps|getServerSidePrps|getServerSidePro[A-Za-z0-9_$]s|getServerSidePros|getServerSideProp[A-Za-z0-9_$]|getServerSideProp|[A-Za-z0-9_$]getServerSideProps|g[A-Za-z0-9_$]etServerSideProps|ge[A-Za-z0-9_$]tServerSideProps|get[A-Za-z0-9_$]ServerSideProps|getS[A-Za-z0-9_$]erverSideProps|getSe[A-Za-z0-9_$]rverSideProps|getSer[A-Za-z0-9_$]verSideProps|getServ[A-Za-z0-9_$]erSideProps|getServe[A-Za-z0-9_$]rSideProps|getServer[A-Za-z0-9_$]SideProps|getServerS[A-Za-z0-9_$]ideProps|getServerSi[A-Za-z0-9_$]deProps|getServerSid[A-Za-z0-9_$]eProps|getServerSide[A-Za-z0-9_$]Props|getServerSideP[A-Za-z0-9_$]rops|getServerSidePr[A-Za-z0-9_$]ops|getServerSidePro[A-Za-z0-9_$]ps|getServerSideProp[A-Za-z0-9_$]s|getServerSideProps[A-Za-z0-9_$])$",
+                      "not": {
+                        "regex": "^(?:getStaticProps|getStaticPaths|getServerSideProps)$"
+                      }
+                    },
+                    "inside": {
+                      "any": [
+                        {
+                          "kind": "lexical_declaration"
+                        },
+                        {
+                          "kind": "variable_declaration"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "export_statement",
+                  "pattern": "$E",
+                  "not": {
+                    "regex": "^export\\s+default\\s"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.E",
+        "code": "@next/next/no-typos",
+        "message": "A data-fetching export may be a typo of getStaticProps, getStaticPaths or getServerSideProps.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/no-typos"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-no-is-mounted",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-react 7.37.5 react/no-is-mounted: `this.isMounted()` inside an object property or a method (ESTree Property / MethodDefinition ancestor).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "kind": "member_expression",
+              "all": [
+                {
+                  "has": {
+                    "field": "object",
+                    "kind": "this"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "property",
+                    "regex": "^isMounted$"
+                  }
+                }
+              ]
+            },
+            "inside": {
+              "stopBy": "end",
+              "any": [
+                {
+                  "kind": "pair"
+                },
+                {
+                  "kind": "method_definition"
+                },
+                {
+                  "kind": "pair_pattern"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-is-mounted",
+        "message": "Do not use isMounted",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-is-mounted"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

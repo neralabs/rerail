@@ -21,7 +21,11 @@ import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../src/session-state.js";
 import { SqliteTranscriptStore } from "../src/transcript-store.js";
 import type { CosineRule } from "../src/rule-schema.js";
 import type { RerailCommandContext } from "../src/rerail-command.js";
+import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
 
+// Every test here builds real sessions (native model, kernel, rule catalog); on a loaded CI runner a
+// build alone can pass the 5 s default, whichever test happens to pay the cold start.
+vi.setConfig({ testTimeout: 30_000 });
 type Handler = (event: unknown, context: ExtensionContext) => unknown;
 type CommandHandler = (args: string, context: RerailCommandContext) => Promise<void>;
 interface PiHarness {
@@ -78,6 +82,7 @@ function createHarness(branch: unknown[] = []): PiHarness {
   const cwd = mkdtempSync(join(tmpdir(), "rerail-pi-extension-"));
   process.env.RERAIL_HOME = join(cwd, "home");
   temporaryDirectories.push(cwd);
+  startTestRepository(cwd);
   const handlers = new Map<string, Handler>();
   const commands = new Map<string, CommandHandler>();
   const messages: Array<{ message: unknown; options: unknown }> = [];
@@ -117,10 +122,11 @@ function receiptCount(harness: PiHarness, sessionId = "pi-test-session"): number
 
 const messageRule: CosineRule = {
   id: "checkout",
+  mode: "steer",
   reference: "Guest checkout remains available.",
   match: { operator: "gte", threshold: 0.99 },
   sample: { source: "assistant-text", boundary: "message", minimumTokens: 1 },
-  action: { delivery: "followUp", content: "Check checkout requirements." },
+  action: { content: "Check checkout requirements." },
   repeat: { mode: "always" },
 };
 
@@ -135,9 +141,9 @@ function install(harness: PiHarness, rules: readonly CosineRule[] = [messageRule
 }
 
 describe("Pi cosine-rules extension", () => {
-  it("evaluates a finalized assistant message when Pi emits no text deltas, and ignores a replayed end event", async () => {
+  it.each(["steer", "block"] as const)("evaluates a finalized assistant message when Pi emits no text deltas, and ignores a replayed end event (%s)", async mode => {
     const harness = createHarness();
-    await install(harness);
+    await install(harness, [{ ...messageRule, mode }]);
     const event = {
       type: "message_end",
       message: {
@@ -157,9 +163,9 @@ describe("Pi cosine-rules extension", () => {
           customType: RULE_MESSAGE_TYPE,
           content: "Check checkout requirements.",
           display: true,
-          details: { requested: "followUp", mechanism: expect.any(String), sessionId: expect.any(String) },
+          details: { requested: mode, mechanism: "native-queue", sessionId: expect.any(String) },
         },
-        options: { deliverAs: "followUp" },
+        options: { deliverAs: "steer" },
       },
     ]);
     expect(harness.entries.filter((entry) => entry.customType === MATCH_ENTRY_TYPE)).toHaveLength(1);
@@ -208,7 +214,7 @@ describe("Pi cosine-rules extension", () => {
 
   it("hands off remaining native guidance when an earlier receipt cannot be stored", async () => {
     const harness = createHarness();
-    await install(harness, [messageRule, { ...messageRule, id: "second", action: { delivery: "followUp", content: "Second guidance." } }]);
+    await install(harness, [messageRule, { ...messageRule, id: "second", action: { content: "Second guidance." } }]);
     const receipt = vi.spyOn(SqliteTranscriptStore.prototype, "recordSteeringDelivery").mockImplementationOnce(() => { throw new Error("receipt unavailable"); });
     const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
@@ -224,9 +230,9 @@ describe("Pi cosine-rules extension", () => {
     }
   });
 
-  it("does not count observe-only guidance", async () => {
+  it("does not send or count log-only guidance", async () => {
     const harness = createHarness();
-    await install(harness, [{ ...messageRule, action: { delivery: "observe", content: "For observation only." } }]);
+    await install(harness, [{ ...messageRule, mode: "log", action: { content: "For observation only." } }]);
     await harness.handlers.get("message_end")?.({
       type: "message_end",
       message: {
@@ -234,6 +240,7 @@ describe("Pi cosine-rules extension", () => {
         content: [{ type: "text", text: "Guest checkout remains available." }],
       },
     }, harness.context);
+    expect(harness.messages).toEqual([]);
     expect(receiptCount(harness)).toBe(0);
   });
 
@@ -291,7 +298,7 @@ describe("Pi cosine-rules extension", () => {
 
     const database = new Database(defaultRerailDatabasePath(), { readonly: true });
     expect(database.prepare(
-      "SELECT event_id AS eventId FROM events WHERE kind IN ('turn-end', 'tool-result') ORDER BY sequence",
+      "SELECT event_id AS eventId FROM events WHERE kind IN ('turn-end', 'result') ORDER BY sequence",
     ).all()).toEqual([
       { eventId: "turn-end:101:response-2" },
       { eventId: "tool-result:call-1" },
@@ -335,8 +342,9 @@ describe("Pi cosine-rules extension", () => {
       ...messageRule,
       id: "tool-input",
       reference: '{"a":"Guest checkout remains available.","z":1}',
+      mode: "log",
       sample: { source: "tool:submit", boundary: "tool-call", minimumTokens: 1 },
-      action: { delivery: "observe", content: "Observe the tool." },
+      action: { content: "Observe the tool." },
     };
     await install(harness, [toolRule]);
     const circular: { self?: unknown } = {};
@@ -403,7 +411,7 @@ describe("Pi cosine-rules extension", () => {
     }
   });
 
-  it("reattaches the retained dev checkout after rerail-disable closes its native client", async () => {
+  it("reattaches the retained dev checkout after rerail-stop closes its native client", async () => {
     const harness = createHarness();
     const dev = stubDevInstance(harness.context.cwd);
     createPiCosineRulesExtension({
@@ -419,8 +427,19 @@ describe("Pi cosine-rules extension", () => {
       select: async () => undefined,
       input: async () => undefined,
     };
-    await harness.commands.get("rerail-disable")?.("", { ui });
-    await harness.commands.get("rerail-enable")?.("", { ui });
+    // The launcher is the CLI's `start` / `stop`; here it changes the state the extension then reads.
+    const launch = (change: (workspace: string) => string) => launcher.spawn.mockImplementationOnce((_command: string, _args: readonly string[], spawnOptions: { cwd?: string }) => {
+      const child = new EventEmitter() as ChildProcess;
+      const output = Object.assign(new EventEmitter(), { setEncoding() {} });
+      Object.assign(child, { stdout: output, stderr: output });
+      change(spawnOptions.cwd!);
+      process.nextTick(() => child.emit("close", 0, null));
+      return child;
+    });
+    launch(workspace => stopTestRepository(workspace));
+    await harness.commands.get("rerail-stop")?.("", { ui });
+    launch(workspace => startTestRepository(workspace));
+    await harness.commands.get("rerail-start")?.("", { ui });
 
     expect(dev.operations).toEqual(["initialize", "close", "initialize"]);
   });

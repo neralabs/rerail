@@ -263,10 +263,10 @@ export function ruleDetail(rule: RuleResult, showEnds = false): string {
     for (const result of repaired.results) {
       const source = result.source.split("\n");
       out.push(`  repaired ${result.variant}/${result.lintPath}  expected ${result.expected.length}  TP ${result.truePositives}`);
-      for (const failure of result.engineFailures) out.push(`    ENGINE ${failure.code} [${failure.checkId}] ${failure.message}`);
+      for (const failure of result.engineFailures) out.push(`    ENGINE ${failure.code} [${failure.clauseId}] ${failure.message}`);
       if (result.partial !== undefined) out.push(`    PARTIAL ${result.partial}`);
       for (const failure of result.missed) out.push(...describe("FN", failure, source, `expected [${failure.message}]`));
-      for (const finding of result.extra) out.push(...describe("FP", finding, source, `check ${finding.checkId}`));
+      for (const finding of result.extra) out.push(...describe("FP", finding, source, `clause ${finding.clauseId}`));
     }
   }
 
@@ -290,7 +290,7 @@ export function ruleDetail(rule: RuleResult, showEnds = false): string {
       const ok = result.missed.length === 0 && result.extra.length === 0 && result.engineFailures.length === 0;
       const ends = result.endMismatches.length > 0 ? `  end mismatch ${result.endMismatches.length}` : "";
       out.push(`  ${result.lintPath}${result.javascript ? " (js)" : ""}  expected ${result.expected.length}  TP ${result.truePositives}${ok ? "  ok" : ""}${ends}`);
-      for (const failure of result.engineFailures) out.push(`    ENGINE ${failure.code} [${failure.checkId}] ${failure.message}`);
+      for (const failure of result.engineFailures) out.push(`    ENGINE ${failure.code} [${failure.clauseId}] ${failure.message}`);
       if (result.partial !== undefined) out.push(`    PARTIAL ${result.partial}`);
       if (result.fix !== undefined) {
         const { fix } = result;
@@ -301,7 +301,7 @@ export function ruleDetail(rule: RuleResult, showEnds = false): string {
       }
       const source = result.source.split("\n");
       for (const failure of result.missed) out.push(...describe("FN", failure, source, `expected [${failure.message}]`));
-      for (const finding of result.extra) out.push(...describe("FP", finding, source, `check ${finding.checkId}`));
+      for (const finding of result.extra) out.push(...describe("FP", finding, source, `clause ${finding.clauseId}`));
       for (const { expected, actual } of showEnds ? result.endMismatches : []) {
         out.push(`    END ${expected.startLine + 1}:${expected.startCol + 1} expected end ${expected.endLine + 1}:${expected.endCol + 1}, got ${actual.endLine + 1}:${actual.endCol + 1}`);
       }

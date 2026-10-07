@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RULE_MODES } from "./rule-mode.js";
 
 export const COSINE_RULE_DOCUMENT_VERSION = 1 as const;
 
@@ -7,8 +8,6 @@ export type MatchOperator = (typeof MATCH_OPERATORS)[number];
 export type SampleSource = "user-input" | "assistant-text" | `tool:${string}`;
 export const SAMPLE_BOUNDARIES = ["sentence", "message", "turn", "tool-call"] as const;
 export type SampleBoundary = (typeof SAMPLE_BOUNDARIES)[number];
-export const DELIVERY_MODES = ["observe", "steer", "followUp", "nextTurn"] as const;
-export type DeliveryMode = (typeof DELIVERY_MODES)[number];
 
 const MAX_ID_LENGTH = 128;
 const MAX_REFERENCE_LENGTH = 32_768;
@@ -103,6 +102,7 @@ function readsToolFields(condition: MatchCondition | undefined): boolean {
 export const cosineRuleSchema = z
   .object({
     id: nonEmptyString(MAX_ID_LENGTH),
+    mode: z.enum(RULE_MODES),
     /** Required by a similarity match and rejected by a structural one. */
     reference: nonEmptyString(MAX_REFERENCE_LENGTH).optional(),
     match: z.union([similarityMatchSchema, matchConditionSchema]),
@@ -115,7 +115,6 @@ export const cosineRuleSchema = z
       .strict(),
     action: z
       .object({
-        delivery: z.enum(DELIVERY_MODES),
         content: nonEmptyString(MAX_ACTION_LENGTH),
       })
       .strict(),

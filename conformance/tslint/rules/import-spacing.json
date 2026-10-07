@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:import-spacing",
   "revision": 1,
+  "mode": "steer",
   "description": "Ensures proper spacing between import statement keywords.",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "add-space-after-import",
       "forbid": {
@@ -27,10 +28,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "IMPORT_SPACING",
-        "severity": "error",
         "message": "Add space after 'import'"
       }
     },
@@ -51,10 +51,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "IMPORT_SPACING",
-        "severity": "error",
         "message": "Too many spaces after 'import'"
       }
     },
@@ -75,10 +74,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "IMPORT_SPACING",
-        "severity": "error",
         "message": "Line breaks are not allowed in import declaration"
       }
     },
@@ -90,10 +88,9 @@
           "pattern": "(?:[ \\t]*\\n\\s*from\\s*|\\s*from[ \\t]*\\n\\s*)[\\\"']"
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "IMPORT_SPACING",
-        "severity": "error",
         "message": "Line breaks are not allowed in import declaration"
       }
     },
@@ -105,10 +102,9 @@
           "pattern": "\\s*from[\\\"']"
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "IMPORT_SPACING",
-        "severity": "error",
         "message": "Add space after 'from'"
       }
     },
@@ -120,10 +116,9 @@
           "pattern": "\\s*from\\s{2,}[\\\"']"
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "IMPORT_SPACING",
-        "severity": "error",
         "message": "Too many spaces after 'from'"
       }
     },
@@ -135,10 +130,9 @@
           "pattern": "\\s{2,}from\\s*[\\\"']"
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "IMPORT_SPACING",
-        "severity": "error",
         "message": "Too many spaces before 'from'"
       }
     },
@@ -169,10 +163,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "IMPORT_SPACING",
-        "severity": "error",
         "message": "Add space before 'from'"
       }
     },
@@ -193,10 +186,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "IMPORT_SPACING",
-        "severity": "error",
         "message": "Add space after '*'"
       }
     },
@@ -217,10 +209,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "IMPORT_SPACING",
-        "severity": "error",
         "message": "Too many spaces after '*'"
       }
     },
@@ -241,10 +232,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "IMPORT_SPACING",
-        "severity": "error",
         "message": "Line breaks are not allowed in import declaration"
       }
     }

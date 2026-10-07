@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:one-variable-per-declaration",
   "revision": 1,
+  "mode": "steer",
   "description": "Port of TSLint's `one-variable-per-declaration` rule with its default options (https://palantir.github.io/tslint/rules/one-variable-per-declaration/). Disallows multiple variable definitions in the same declaration statement, including for-loop initializers.",
   "scope": {
     "include": [
@@ -24,7 +25,7 @@
       "**/*.gen.ts"
     ]
   },
-  "checks": [
+  "clauses": [
     {
       "id": "statement",
       "forbid": {
@@ -71,10 +72,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "ONE_VARIABLE_PER_DECLARATION",
-        "severity": "error",
         "message": "Multiple variable declarations in the same statement are forbidden"
       }
     },
@@ -119,10 +119,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "ONE_VARIABLE_PER_DECLARATION",
-        "severity": "error",
         "message": "Multiple variable declarations in the same statement are forbidden"
       }
     },
@@ -163,10 +162,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "ONE_VARIABLE_PER_DECLARATION",
-        "severity": "error",
         "message": "Multiple variable declarations in the same statement are forbidden"
       }
     }

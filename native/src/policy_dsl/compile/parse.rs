@@ -15,8 +15,8 @@ use crate::policy_dsl::language::{Family, GrammarDialect};
 use crate::policy_dsl::literal::{Grammar, LiteralHost};
 use crate::policy_dsl::matcher::Semantic;
 use crate::policy_dsl::matcher::{
-    AstMatcher, CaptureAnalysis, CompareText, Count, HostTest, ParseTest, Reading, SemanticText,
-    StopBy, Transform, parse_exported, table_reading,
+    AstMatcher, CaptureAnalysis, CompareText, Count, HostTest, ParseTest, Reading, Related,
+    SemanticText, StopBy, Transform, parse_exported, table_reading,
 };
 use crate::policy_dsl::model::Limits;
 use crate::policy_dsl::soundness::sound_under_errors;
@@ -532,7 +532,7 @@ pub(super) fn compile_sub_rule(
                 host,
                 gaps,
             )?;
-            terms.push(constructor(Box::new(inner), stop));
+            terms.push(constructor(Related::new(inner), stop));
             group_paths.push(format!("{path}/{key}"));
         }
     }
@@ -560,7 +560,7 @@ pub(super) fn compile_sub_rule(
             .find_map(|(name, constructor)| (*name == key).then_some(*constructor))
             .expect("count_bounds returns a relation key");
         terms.push(AstMatcher::Count(Box::new(Count {
-            relation: constructor(Box::new(inner), stop),
+            relation: constructor(Related::new(inner), stop),
             min,
             max,
         })));

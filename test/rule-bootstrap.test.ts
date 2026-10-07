@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { openRerailDatabase } from "../src/database.js";
 import { policyRuleSchema, type PolicyRule } from "../src/policy-schema.js";
 import { bootstrapRules, defaultRulesDumpPath, exportRules, importRules, loadBundledRules, readRulesDump } from "../src/rule-bootstrap.js";
@@ -13,6 +13,7 @@ import { SqliteRuleStore, type BundledRuleDocument, type RuleDocument } from "..
 import { ruleDocumentDigest } from "../src/stable-json.js";
 import { RERAIL_SCHEMA_COMPATIBILITY_FLOOR, RERAIL_SCHEMA_VERSION } from "../src/schema.js";
 import { MOCK_COSINE_RULES } from "../src/seed.js";
+import { createV14Database } from "./support/v14-database.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -28,20 +29,21 @@ async function temporaryDatabase(): Promise<string> {
 
 function policy(id: string, revision = 1, message = "No print"): PolicyRule {
   return policyRuleSchema.parse({
-    checks: [
+    clauses: [
       {
         id: `${id}:check`,
-        finding: { anchor: "witness.span", code: "FORBIDDEN_PRINT", message, severity: "error" },
+        violation: { anchor: "witness.span", code: "FORBIDDEN_PRINT", message },
         forbid: { regex: { pattern: "\\bprint\\(", source: "file.content" } },
       },
     ],
     format: "rerail.policy/v1",
     id,
     revision,
+    mode: "block",
   });
 }
 
-const bundled = (...rules: PolicyRule[]): RuleDocument[] => rules.map(rule => ({ kind: "policy", rule }));
+const bundled = (...rules: PolicyRule[]): RuleDocument[] => rules.map(rule => ({ kind: "file", rule }));
 
 describe("SqliteRuleStore.seed", () => {
   it("inserts new bundled rules with their digest and leaves them alone on the next run", async () => {
@@ -65,7 +67,7 @@ describe("SqliteRuleStore.seed", () => {
     const upstream = bundled(policy("bundled:a", 2, "Print is forbidden"), policy("bundled:b", 2, "Print is forbidden"));
     expect(store.seed(upstream, 3_000)).toEqual({ inserted: 0, refreshed: 1, kept: 1 });
     const edited = store.get("bundled:a");
-    expect(edited?.kind === "policy" && edited.rule.checks[0]?.finding?.message).toBe("Use the logger");
+    expect(edited?.kind === "file" && edited.rule.clauses[0]?.violation?.message).toBe("Use the logger");
     expect(edited?.revision).toBe(1);
     const refreshed = store.get("bundled:b");
     expect(refreshed?.revision).toBe(2);
@@ -76,10 +78,10 @@ describe("SqliteRuleStore.seed", () => {
 
   it("inserts an opt-in document disabled, and neither a refresh nor a re-seed changes its enabled state", async () => {
     const store = new SqliteRuleStore(await temporaryDatabase());
-    const optIn = (rule: PolicyRule): BundledRuleDocument => ({ kind: "policy", rule, enabledByDefault: false });
+    const optIn = (rule: PolicyRule): BundledRuleDocument => ({ kind: "file", rule, enabledByDefault: false });
 
     expect(store.seed([optIn(policy("pack:a")), optIn(policy("pack:b"))], 1_000)).toEqual({ inserted: 2, refreshed: 0, kept: 0 });
-    expect(store.get("pack:a")).toMatchObject({ enabled: false, sourceDigest: ruleDocumentDigest({ kind: "policy", rule: policy("pack:a") }) });
+    expect(store.get("pack:a")).toMatchObject({ enabled: false, sourceDigest: ruleDocumentDigest({ kind: "file", rule: policy("pack:a") }) });
     expect(store.policyRules()).toEqual([]);
     store.setEnabled({ ids: ["pack:b"] }, true, 1_500);
 
@@ -114,7 +116,7 @@ describe("rules dump", () => {
     store.close();
 
     const dump = readRulesDump(dumpPath);
-    expect(dump).toMatchObject({ version: 1, exportedAt: "2026-09-08T00:00:00.000Z" });
+    expect(dump).toMatchObject({ version: 5, exportedAt: "2026-09-08T00:00:00.000Z" });
     expect(JSON.parse(readFileSync(dumpPath, "utf8")).rules).toHaveLength(2);
 
     const restoredPath = join(temporaryDirectories[0]!, "restored.sqlite");
@@ -122,6 +124,23 @@ describe("rules dump", () => {
     expect(importRules(restored, dumpPath)).toBe(2);
     expect(restored.list()).toEqual(before);
     restored.close();
+  });
+
+  it("refuses to import a dump older than the current rule contract, or a catalog dump, with a clear message", async () => {
+    const path = await temporaryDatabase();
+    const dumpPath = defaultRulesDumpPath(path);
+    await mkdir(dirname(dumpPath), { recursive: true });
+    const store = new SqliteRuleStore(path);
+    try {
+      await writeFile(dumpPath, JSON.stringify({ version: 1, exportedAt: "2026-09-01T00:00:00.000Z", rules: [] }));
+      expect(() => importRules(store, dumpPath))
+        .toThrow(`${dumpPath} is a v1 rules dump, which predates the current rule contract; only v5 checkout dumps can be imported`);
+      await writeFile(dumpPath, JSON.stringify({ version: 4, exportedAt: "2026-09-01T00:00:00.000Z", rules: [] }));
+      expect(() => importRules(store, dumpPath)).toThrow(`${dumpPath} is a catalog rules dump; only v5 checkout dumps can be imported here`);
+      expect(store.count()).toBe(0);
+    } finally {
+      store.close();
+    }
   });
 
   it("restores the dump into an empty database before seeding, and skips it otherwise", async () => {
@@ -139,7 +158,7 @@ describe("rules dump", () => {
     const report = bootstrapRules(fresh, { bundled: bundled(policy("bundled:a", 2), policy("bundled:b")), dumpPath });
     expect(report).toEqual({ restored: 1, inserted: 1, refreshed: 0, kept: 1, dumpPath });
     const edited = fresh.get("bundled:a");
-    expect(edited?.kind === "policy" && edited.rule.checks[0]?.finding?.message).toBe("Use the logger");
+    expect(edited?.kind === "file" && edited.rule.clauses[0]?.violation?.message).toBe("Use the logger");
     expect(fresh.get("bundled:b")).toBeDefined();
 
     // A populated table ignores the dump even when it still exists.
@@ -149,12 +168,37 @@ describe("rules dump", () => {
     fresh.close();
   });
 
+  it("seeds past a catalog dump `rerail update` leaves beside the database, however old, and past a pre-contract checkout dump", async () => {
+    const path = await temporaryDatabase();
+    const dumpPath = defaultRulesDumpPath(path);
+    await mkdir(dirname(dumpPath), { recursive: true });
+    const warnings: string[] = [];
+    const write = vi.spyOn(process.stderr, "write").mockImplementation(chunk => {
+      warnings.push(String(chunk));
+      return true;
+    });
+    const store = new SqliteRuleStore(path);
+    try {
+      for (const version of [2, 3, 4, 1]) {
+        await writeFile(dumpPath, JSON.stringify({ version, exportedAt: "2026-09-01T00:00:00.000Z", rules: [{ kind: "policy", rule: { severity: "error" } }] }));
+        expect(bootstrapRules(store, { bundled: [], dumpPath })).toMatchObject({ restored: 0 });
+      }
+    } finally {
+      write.mockRestore();
+      store.close();
+    }
+    expect(warnings).toEqual([
+      ...[2, 3, 4].map(version => `rerail: did not restore ${dumpPath}: it is a v${version} catalog dump, and the catalog keeps its rules\n`),
+      `rerail: did not restore ${dumpPath}: it is a v1 rules dump, which predates the current rule contract\n`,
+    ]);
+  });
+
   it("defaults to the bundled documents, which all parse, carry unique ids, and are grouped by a nera-<group> prefix", () => {
     const documents = loadBundledRules();
     const defaults = documents.filter(document => document.enabledByDefault !== false);
     expect(defaults.length).toBeGreaterThan(MINIMUM_BUNDLED_RULES);
     expect(new Set(documents.map(document => document.rule.id)).size).toBe(documents.length);
-    expect(documents.every(document => document.kind === "policy")).toBe(true);
+    expect(documents.every(document => document.kind === "file")).toBe(true);
     expect(defaults.every(document => /^nera-[a-z-]+:[a-z0-9-]+$/u.test(document.rule.id))).toBe(true);
   });
 
@@ -219,16 +263,15 @@ describe("schema upgrades", () => {
     const stamped = new Database(path, { readonly: true });
     expect(stamped.pragma("user_version", { simple: true })).toBe(RERAIL_SCHEMA_COMPATIBILITY_FLOOR);
     expect(stamped.prepare("SELECT revision FROM rerail_schema_revision WHERE singleton = 1").get()).toEqual({ revision: RERAIL_SCHEMA_VERSION });
-    expect(stamped.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'policy_run_result_pages'").get()).toEqual({
-      name: "policy_run_result_pages",
+    expect(stamped.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audit_result_pages'").get()).toEqual({
+      name: "audit_result_pages",
     });
     stamped.close();
   });
 
   it("restamps a pre-floor v11 database with its v10 compatibility floor", async () => {
     const path = await temporaryDatabase();
-    openRerailDatabase(path).$client.close();
-    const legacy = new Database(path);
+    const legacy = createV14Database(path);
     legacy.exec("DROP TABLE rerail_schema_revision; PRAGMA user_version = 11");
     legacy.close();
 
@@ -241,8 +284,7 @@ describe("schema upgrades", () => {
 
   it("restamps an unreleased pre-floor v12 single-database file and keeps its repository attribution", async () => {
     const path = await temporaryDatabase();
-    openRerailDatabase(path).$client.close();
-    const branch = new Database(path);
+    const branch = createV14Database(path);
     branch.exec("DROP TABLE policy_run_result_pages; DROP TABLE rerail_schema_revision; PRAGMA user_version = 12");
     branch.prepare("INSERT INTO sessions (session_id, host, cwd, repository_id, started_at) VALUES ('s', 'omp', '/r', 'repo', 1)").run();
     branch.close();
@@ -251,7 +293,8 @@ describe("schema upgrades", () => {
     const upgraded = new Database(path, { readonly: true });
     expect(upgraded.pragma("user_version", { simple: true })).toBe(RERAIL_SCHEMA_COMPATIBILITY_FLOOR);
     expect(upgraded.prepare("SELECT revision FROM rerail_schema_revision WHERE singleton = 1").get()).toEqual({ revision: RERAIL_SCHEMA_VERSION });
-    expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'policy_run_result_pages'").get()).toBeDefined();
+    expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audit_result_pages'").get()).toBeDefined();
+    expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'policy_run%'").all()).toEqual([]);
     expect(upgraded.prepare("SELECT repository_id AS repositoryId FROM sessions").all()).toEqual([{ repositoryId: "repo" }]);
     upgraded.close();
   });
@@ -270,7 +313,7 @@ describe("schema upgrades", () => {
     const path = await temporaryDatabase();
     openRerailDatabase(path).$client.close();
     const newer = new Database(path);
-    newer.exec(`UPDATE rerail_schema_revision SET revision = ${RERAIL_SCHEMA_VERSION + 1}; PRAGMA user_version = 10`);
+    newer.exec(`UPDATE rerail_schema_revision SET revision = ${RERAIL_SCHEMA_VERSION + 1}; PRAGMA user_version = ${RERAIL_SCHEMA_COMPATIBILITY_FLOOR}`);
     newer.close();
 
     openRerailDatabase(path).$client.close();
@@ -292,14 +335,17 @@ describe("schema upgrades", () => {
       CREATE TABLE policy_dsl_catalog (singleton integer PRIMARY KEY, catalog_digest text NOT NULL, capabilities_json text NOT NULL,
         rule_count integer NOT NULL, CONSTRAINT policy_dsl_catalog_rule_count CHECK (rule_count > 0));
       INSERT INTO rules (id, kind, revision, enabled, scope, created_at, updated_at, format, checks_json)
-        VALUES ('old:rule', 'policy', 1, 1, 'repository', 1, 1, 'rerail.policy/v1', '[]');
+        VALUES ('old:rule', 'policy', 1, 1, 'repository', 1, 1, 'rerail.policy/v1', json_array(json_object(
+          'id', 'print', 'forbid', json_object('regex', json_object('source', 'file.content', 'pattern', 'print')),
+          'finding', json_object('code', 'PRINT', 'severity', 'error', 'anchor', 'witness.span', 'message', 'No print'))));
     `);
     legacy.close();
 
     openRerailDatabase(path).$client.close();
     const upgraded = new Database(path, { readonly: true });
     expect(upgraded.pragma("user_version", { simple: true })).toBe(RERAIL_SCHEMA_COMPATIBILITY_FLOOR);
-    expect(upgraded.prepare("SELECT id, source_digest AS sourceDigest FROM rules").all()).toEqual([{ id: "old:rule", sourceDigest: null }]);
+    expect(upgraded.prepare("SELECT id, mode, source_digest AS sourceDigest FROM rules").all())
+      .toEqual([{ id: "old:rule", mode: "steer", sourceDigest: null }]);
     expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'policy_dsl_%'").all()).toEqual([]);
     upgraded.close();
     expect(existsSync(`${path}-wal`)).toBe(true);

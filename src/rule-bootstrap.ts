@@ -6,12 +6,13 @@ import { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
 import { assertPolicyCompiles, PolicyCompileError } from "./policy-kernel-check.js";
 import { policyRuleSchema, POLICY_FORMAT, type PolicyRule } from "./policy-schema.js";
 import { cosineRuleSchema } from "./rule-schema.js";
-import { RULE_APPLICABILITIES, RULE_KINDS, RULE_ORIGINS, RULE_SCOPES, RULE_SYNC_STATES } from "./schema.js";
+import { RULE_APPLICABILITIES, RULE_KINDS, RULE_ORIGINS, RULE_SCOPES } from "./schema.js";
 import { SqliteRuleStore, type BundledRuleDocument, type RuleDocument, type SeedReport, type StoredRule } from "./rule-store.js";
 import { ScopedRuleCatalog } from "./scoped-rule-catalog.js";
 
-export const RULES_DUMP_VERSION = 1 as const;
-export const SCOPED_RULES_DUMP_VERSION = 2 as const;
+/** The checkout dump version; 2 through 4 are catalog (scoped) dump versions, so the two never share a number. */
+export const RULES_DUMP_VERSION = 5 as const;
+export const SCOPED_RULES_DUMP_VERSION = 4 as const;
 export const RULES_DUMP_FILE = "rules.json";
 
 /** `<package>/policies/executable-policy-dsl/rules`: the documents every project database is seeded with. */
@@ -26,10 +27,10 @@ export function defaultRulesDumpPath(databasePath: string): string {
 
 function parseRuleDocument(value: unknown, label: string): RuleDocument {
   const isPolicy = typeof value === "object" && value !== null && "format" in value && value.format === POLICY_FORMAT;
-  if (isPolicy) return { kind: "policy", rule: policyRuleSchema.parse(value) };
+  if (isPolicy) return { kind: "file", rule: policyRuleSchema.parse(value) };
   const cosine = cosineRuleSchema.safeParse(value);
-  if (cosine.success) return { kind: "cosine", rule: cosine.data };
-  throw new Error(`${label} is neither a ${POLICY_FORMAT} document nor a cosine rule: ${cosine.error.issues[0]?.message ?? "invalid"}`);
+  if (cosine.success) return { kind: "conversation", rule: cosine.data };
+  throw new Error(`${label} is neither a ${POLICY_FORMAT} document nor a conversation rule: ${cosine.error.issues[0]?.message ?? "invalid"}`);
 }
 
 /**
@@ -114,7 +115,14 @@ export interface RulesDump {
 
 /** Parse a dump file, validating every rule body against its kind. */
 export function readRulesDump(path: string): RulesDump {
-  const parsed = rulesDumpSchema.parse(parseJsonWithoutDuplicateKeys(readFileSync(path, "utf8"), path));
+  const raw = parseJsonWithoutDuplicateKeys(readFileSync(path, "utf8"), path) as { version?: unknown };
+  if (raw.version === SCOPED_RULES_DUMP_VERSION) {
+    throw new Error(`${path} is a catalog rules dump; only v${RULES_DUMP_VERSION} checkout dumps can be imported here`);
+  }
+  if (typeof raw.version === "number" && raw.version < RULES_DUMP_VERSION) {
+    throw new Error(`${path} is a v${raw.version} rules dump, which predates the current rule contract; only v${RULES_DUMP_VERSION} checkout dumps can be imported`);
+  }
+  const parsed = rulesDumpSchema.parse(raw);
   const rules = parsed.rules.map((entry, index): StoredRule => {
     const document = parseRuleDocument(entry.rule, `${path} rules[${index}]`);
     if (document.kind !== entry.kind) throw new Error(`${path} rules[${index}] body does not match kind ${entry.kind}`);
@@ -151,8 +159,6 @@ const scopedStoredEntrySchema = z.object({
   updatedAt: z.number().int(),
   sourceDigest: z.string().nullable(),
   catalogOrigin: z.enum(RULE_ORIGINS),
-  syncState: z.enum(RULE_SYNC_STATES),
-  upstreamRuleId: z.string().nullable(),
 }).strict();
 
 const scopedRulesDumpSchema = z.object({
@@ -180,7 +186,7 @@ export function exportScopedRules(store: ScopedRuleCatalog, path: string, now = 
 function assertDumpCompiles(path: string, documents: readonly RuleDocument[]): void {
   const problems: string[] = [];
   for (const [index, document] of documents.entries()) {
-    if (document.kind !== "policy") continue;
+    if (document.kind !== "file") continue;
     try {
       assertPolicyCompiles(document.rule);
     } catch (error) {
@@ -189,29 +195,19 @@ function assertDumpCompiles(path: string, documents: readonly RuleDocument[]): v
     }
   }
   if (problems.length > 0) {
-    throw new Error(`${path}: nothing imported; ${problems.length} policy rule(s) do not compile:\n${problems.join("\n")}`);
+    throw new Error(`${path}: nothing imported; ${problems.length} file rule(s) do not compile:\n${problems.join("\n")}`);
   }
 }
 
-/** Import v2 without flattening applicability; legacy v1 entries become project definitions. All or nothing. */
+/** Import a dump without flattening applicability. All or nothing. */
 export function importScopedRules(store: ScopedRuleCatalog, path: string): number {
   const source = resolve(path);
   const raw = parseJsonWithoutDuplicateKeys(readFileSync(source, "utf8"), path) as { version?: unknown };
   if (raw.version === RULES_DUMP_VERSION) {
-    const legacy = readRulesDump(source);
-    assertDumpCompiles(path, legacy.rules.map(entry => ({ kind: entry.kind, rule: entry.rule }) as RuleDocument));
-    return store.restore(legacy.rules.map(entry => ({
-      document: { kind: entry.kind, rule: entry.rule } as RuleDocument,
-      options: {
-        applicability: "project",
-        enabled: entry.enabled,
-        revision: entry.revision,
-        createdAt: entry.createdAt,
-        now: entry.updatedAt,
-        sourceDigest: entry.sourceDigest,
-        origin: "migrated",
-      },
-    })));
+    throw new Error(`${source} is a checkout rules dump; only v${SCOPED_RULES_DUMP_VERSION} catalog dumps can be imported`);
+  }
+  if (typeof raw.version === "number" && raw.version < SCOPED_RULES_DUMP_VERSION) {
+    throw new Error(`${source} is a v${raw.version} rules dump, which predates the current rule contract; only v${SCOPED_RULES_DUMP_VERSION} dumps can be imported`);
   }
   const parsed = scopedRulesDumpSchema.parse(raw);
   const entries = parsed.rules.map((entry, index) => {
@@ -227,8 +223,6 @@ export function importScopedRules(store: ScopedRuleCatalog, path: string): numbe
         now: entry.updatedAt,
         sourceDigest: entry.sourceDigest,
         origin: entry.catalogOrigin,
-        syncState: entry.syncState,
-        upstreamRuleId: entry.upstreamRuleId,
       },
     };
   });
@@ -250,13 +244,29 @@ export interface BootstrapReport extends SeedReport {
 }
 
 /**
+ * `rerail update` leaves a catalog dump (v2 before rule modes, v3 after, v4 since the current rule contract) where a
+ * checkout dump would sit. The catalog it came from keeps those rules, upgraded in place, so it is skipped rather
+ * than failing the bootstrap. A v1 checkout dump predates the current rule contract and is skipped too.
+ */
+function restoreRulesDump(store: SqliteRuleStore, dumpPath: string): number {
+  const { version } = JSON.parse(readFileSync(dumpPath, "utf8")) as { version?: unknown };
+  if (version === RULES_DUMP_VERSION) return importRules(store, dumpPath);
+  const catalogDump = typeof version === "number" && version > 1 && version <= SCOPED_RULES_DUMP_VERSION;
+  const reason = catalogDump
+    ? `it is a v${String(version)} catalog dump, and the catalog keeps its rules`
+    : `it is a v${String(version)} rules dump, which predates the current rule contract`;
+  process.stderr.write(`rerail: did not restore ${dumpPath}: ${reason}\n`);
+  return 0;
+}
+
+/**
  * Bring a project database's rules up to date: an empty table is first
  * restored from its dump (so a `rerail reset` or a fresh clone keeps the user's
  * rules), then the bundled documents are seeded without overwriting edits.
  */
 export function bootstrapRules(store: SqliteRuleStore, options: BootstrapRulesOptions = {}): BootstrapReport {
   const dumpPath = options.dumpPath ?? defaultRulesDumpPath(store.path);
-  const restored = store.count() === 0 && existsSync(dumpPath) ? importRules(store, dumpPath) : 0;
+  const restored = store.count() === 0 && existsSync(dumpPath) ? restoreRulesDump(store, dumpPath) : 0;
   const seeded = store.seed(options.bundled ?? loadBundledRules(), options.now);
   return { ...seeded, restored, dumpPath };
 }

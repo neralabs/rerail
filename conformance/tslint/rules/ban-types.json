@@ -2,6 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "tslint:ban-types",
   "revision": 1,
+  "mode": "steer",
   "description": "Bans specific types (config of the TSLint fixture: String -> string, Object, Fo*).",
   "scope": {
     "include": [
@@ -9,7 +10,7 @@
     ],
     "exclude": []
   },
-  "checks": [
+  "clauses": [
     {
       "id": "ban-string",
       "forbid": {
@@ -72,10 +73,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "BAN_TYPES",
-        "severity": "error",
         "message": "Don't use 'String' as a type. Use 'string' instead."
       }
     },
@@ -141,10 +141,9 @@
           }
         }
       },
-      "finding": {
+      "violation": {
         "anchor": "witness.span",
         "code": "BAN_TYPES",
-        "severity": "error",
         "message": "Don't use this type."
       }
     }

@@ -81,7 +81,7 @@ log: { type: stdout, level: warn }
   $setup = [Diagnostics.Process]::Start($start)
   $stdout = $setup.StandardOutput.ReadToEndAsync(); $stderr = $setup.StandardError.ReadToEndAsync()
   $setup.WaitForExit()
-  # The daemon must not inherit the installer's output pipe, or every captured `just rerail` hangs until `rerail stop`.
+  # The daemon must not inherit the installer's output pipe, or every captured `just rerail` hangs until `rerail daemon stop`.
   if (-not $stdout.Wait(15000)) { throw "the installer exited but its stdout stayed open: the daemon holds the caller's pipe" }
   Write-Host ($stdout.Result + $stderr.Result)
   if ($setup.ExitCode -ne 0) { throw "the installer exited $($setup.ExitCode)" }
@@ -94,20 +94,34 @@ log: { type: stdout, level: warn }
   if ($status -notmatch [regex]::Escape("running at http://127.0.0.1:$daemonPort")) { throw "rerail status does not show the setup-started daemon" }
   if ($status -notmatch "Native kernel: ok") { throw "the daemon has no working native kernel" }
 
+  Step "Starting Rerail in the project"
+  # Setup leaves the project never started, and hooks do nothing where Rerail is off.
+  Write-Host ((& $launcher start --repo $project) -join "`n")
+  if ($LASTEXITCODE -ne 0) { throw "rerail start exited $LASTEXITCODE" }
+
   Step "Running the harness hooks as each harness spawns them"
-  $payload = @{ session_id = "windows-smoke"; cwd = $project; hook_event_name = "SessionStart"; source = "startup" } | ConvertTo-Json -Compress
-  [IO.File]::WriteAllText("$base\payload.json", $payload)
+  foreach ($harness in @("claude", "codex")) {
+    $payload = @{ session_id = "windows-smoke-$harness"; cwd = $project; hook_event_name = "SessionStart"; source = "startup" } | ConvertTo-Json -Compress
+    [IO.File]::WriteAllText("$base\payload-$harness.json", $payload)
+  }
   $claude = (Get-Content -Raw "$sandbox\.claude\settings.json" | ConvertFrom-Json).hooks.SessionStart[0].hooks[0]
   if ($null -eq $claude.args) { throw "the Claude Code hook is not in exec form: $($claude.command)" }
   # Claude Code spawns exec-form hooks directly (no shell); Codex passes its command to PowerShell.
   $probe = "const {spawnSync}=require('child_process'),fs=require('fs');const [kind,a,b]=process.argv.slice(1);const input=fs.readFileSync(process.env.SMOKE_PAYLOAD);" +
     "const r=kind==='exec'?spawnSync(a,JSON.parse(fs.readFileSync(b,'utf8')),{input,encoding:'utf8',cwd:process.env.SMOKE_PROJECT}):spawnSync('powershell.exe',['-NoProfile','-Command',fs.readFileSync(a,'utf8')],{input,encoding:'utf8',cwd:process.env.SMOKE_PROJECT});" +
     "process.stdout.write('exit='+r.status+' '+(r.stdout+r.stderr).trim());process.exitCode=r.status"
-  $env:SMOKE_PAYLOAD = "$base\payload.json"; $env:SMOKE_PROJECT = $project
+  $env:SMOKE_PROJECT = $project
+  $env:SMOKE_PAYLOAD = "$base\payload-claude.json"
   [IO.File]::WriteAllText("$base\claude-args.json", (ConvertTo-Json -Compress @($claude.args)))
   Write-Host ("Claude Code exec-form hook: " + (Invoke-Node @("-e", "$probe", "exec", $claude.command, "$base\claude-args.json")))
+  $env:SMOKE_PAYLOAD = "$base\payload-codex.json"
   [IO.File]::WriteAllText("$base\codex-command.txt", (Get-Content -Raw "$sandbox\.codex\hooks.json" | ConvertFrom-Json).hooks.SessionStart[0].hooks[0].command)
   Write-Host ("Codex hook through PowerShell: " + (Invoke-Node @("-e", "$probe", "powershell", "$base\codex-command.txt")))
+  # An exit code alone proves nothing: a hook in a checkout where Rerail is off exits 0 too.
+  $recorded = (Invoke-RestMethod "http://127.0.0.1:$daemonPort/api/sessions").sessions | ForEach-Object { $_.sessionId }
+  foreach ($harness in @("claude", "codex")) {
+    if ($recorded -notcontains "windows-smoke-$harness") { throw "the $harness hook did not record its session; recorded: $($recorded -join ', ')" }
+  }
 
   Step "rerail update check"
   $update = (& $launcher update check) -join "`n"
@@ -120,7 +134,7 @@ log: { type: stdout, level: warn }
   if ((Get-Content -Raw "$sandbox\.claude\settings.json") -match "claude-hook") { throw "install --remove left Claude Code hooks behind" }
   Step "windows-install-smoke: PASS"
 } finally {
-  if (Test-Path $launcher) { & $launcher stop | Out-Null }
+  if (Test-Path $launcher) { & $launcher daemon stop | Out-Null }
   if ($null -ne $verdaccio) {
     # npm exec wraps Verdaccio in a child; stop the whole tree.
     & taskkill.exe /T /F /PID $verdaccio.Id 2>&1 | Out-Null

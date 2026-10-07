@@ -44,11 +44,11 @@ pub(super) fn collect_defines<'a>(
         let Some(define) = check.get("define") else {
             continue;
         };
-        let path = format!("/checks/{index}");
+        let path = format!("/clauses/{index}");
         let fields = object(check, &path)?;
-        if fields.contains_key("finding") {
+        if fields.contains_key("violation") {
             return Err(invalid(format!(
-                "{path}/finding: a define check reports nothing, so it has no finding"
+                "{path}/violation: a define clause reports nothing, so it has no violation"
             )));
         }
         if CHECK_FORMS.iter().any(|form| fields.contains_key(*form)) {
@@ -141,6 +141,7 @@ fn check_dialects<'u>(
         let table = Arc::new(UtilTable::new(
             utils.keys().cloned().collect(),
             utils.values().map(|util| !util.params.is_empty()).collect(),
+            vec![None; utils.len()],
         ));
         let scope = UtilScope {
             table: Arc::downgrade(&table),
@@ -206,13 +207,13 @@ mod tests {
     use serde_json::{Value, json};
 
     fn document(checks: Value) -> Value {
-        json!({ "format": "rerail.policy/v1", "id": "shared", "revision": 1, "checks": checks })
+        json!({ "format": "rerail.policy/v1", "id": "shared", "revision": 1, "mode": "steer", "clauses": checks })
     }
 
     fn query(id: &str, language: &str, ast: Value) -> Value {
         let mut ast = ast;
         ast["language"] = json!(language);
-        json!({ "id": id, "forbid": { "ast": ast }, "finding": finding() })
+        json!({ "id": id, "forbid": { "ast": ast }, "violation": finding() })
     }
 
     fn compile(checks: Value) -> napi::Result<crate::policy_dsl::CompiledPolicyDsl> {
@@ -223,11 +224,11 @@ mod tests {
     }
 
     fn check_ids(result: &Value) -> Vec<String> {
-        result["findings"]
+        result["violations"]
             .as_array()
             .expect("findings")
             .iter()
-            .map(|finding| finding["checkId"].as_str().expect("check id").to_owned())
+            .map(|finding| finding["clauseId"].as_str().expect("check id").to_owned())
             .collect()
     }
 
@@ -274,11 +275,11 @@ mod tests {
                 define,
                 query("py", "python", json!({ "rule": { "matches": "u" } }))
             ]))),
-            "/checks/1/forbid/ast/rule/matches: utility rule `u` is not defined in this query's utils or a define of its language"
+            "/clauses/1/forbid/ast/rule/matches: utility rule `u` is not defined in this query's utils or a define of its language"
         );
         assert_eq!(
             rejection(compile(json!([define]))),
-            "/checks must hold a check besides define: a define reports nothing"
+            "/clauses must hold a clause besides define: a define reports nothing"
         );
     }
 
@@ -296,14 +297,14 @@ mod tests {
                     json!({ "rule": { "kind": "identifier" } })
                 )
             ]))),
-            "/checks/0/define/utils/u/calls: `calls` is not available for typescript policies"
+            "/clauses/0/define/utils/u/calls: `calls` is not available for typescript policies"
         );
         assert_eq!(
             rejection(compile(json!([
                 ts(calls),
                 query("q", "typescript", json!({ "rule": { "matches": "u" } }))
             ]))),
-            "/checks/0/define/utils/u/calls: `calls` is not available for typescript policies"
+            "/clauses/0/define/utils/u/calls: `calls` is not available for typescript policies"
         );
     }
 
@@ -317,40 +318,40 @@ mod tests {
         );
         for (checks, reason) in [
             (
-                json!([{ "id": "d", "define": { "language": "typescript", "utils": {} }, "finding": finding() }, rule]),
-                "/checks/0/finding: a define check reports nothing, so it has no finding",
+                json!([{ "id": "d", "define": { "language": "typescript", "utils": {} }, "violation": finding() }, rule]),
+                "/clauses/0/violation: a define clause reports nothing, so it has no violation",
             ),
             (
                 json!([{ "id": "d", "define": { "utils": { "u": { "kind": "identifier" } } } }, rule]),
-                "/checks/0/define/language is required: utilities compile for one language",
+                "/clauses/0/define/language is required: utilities compile for one language",
             ),
             (
                 json!([{ "id": "d", "define": { "language": "rust", "utils": {} } }, rule]),
-                "/checks/0/define/language must equal python, typescript, javascript or php",
+                "/clauses/0/define/language must equal python, typescript, javascript or php",
             ),
             (
                 json!([{ "id": "d", "define": {} }, rule]),
-                "/checks/0/define must hold utils, options or config",
+                "/clauses/0/define must hold utils, options or config",
             ),
             (
                 json!([{ "id": "d", "define": { "language": "typescript", "utils": {}, "rules": {} } }, rule]),
-                "unknown field `rules` at /checks/0/define",
+                "unknown field `rules` at /clauses/0/define",
             ),
             (
                 json!([{ "id": "d", "define": { "language": "typescript", "utils": {} }, "forbid": {} }, rule]),
-                "/checks/0 must contain exactly one constraint form",
+                "/clauses/0 must contain exactly one constraint form",
             ),
             (
                 json!([ts(json!({ "u": { "kind": "identifier" } })), { "id": "e", "define": { "language": "typescript", "utils": { "u": { "kind": "number" } } } }, rule]),
-                "/checks/1/define/utils/u: utility rule `u` is already defined by another define of typescript",
+                "/clauses/1/define/utils/u: utility rule `u` is already defined by another define of typescript",
             ),
             (
                 json!([ts(json!({ "u": { "kind": "no_such_kind" } })), rule]),
-                "/checks/0/define/utils/u/kind: Kind `no_such_kind` is invalid. (typescript, tsx, javascript grammars)",
+                "/clauses/0/define/utils/u/kind: Kind `no_such_kind` is invalid. (typescript, tsx, javascript grammars)",
             ),
             (
                 json!([ts(json!({ "u": { "not": { "matches": "u" } } })), rule]),
-                "/checks/0/define/utils/u: utility rule `u` has a cyclic dependency in its `matches` sub-rule",
+                "/clauses/0/define/utils/u: utility rule `u` has a cyclic dependency in its `matches` sub-rule",
             ),
             (
                 json!([
@@ -361,7 +362,7 @@ mod tests {
                         json!({ "rule": { "matches": "u" }, "utils": { "local": { "kind": "identifier" } } })
                     )
                 ]),
-                "/checks/0/define/utils/u/matches: utility rule `local` is not defined in this query's utils or a define of its language",
+                "/clauses/0/define/utils/u/matches: utility rule `local` is not defined in this query's utils or a define of its language",
             ),
             (
                 json!([
@@ -372,11 +373,11 @@ mod tests {
                         json!({ "rule": { "matches": "u" }, "utils": { "u": { "kind": "number" } } })
                     )
                 ]),
-                "/checks/1/forbid/ast/utils/u: utility rule `u` is also defined by a define of typescript; rename one",
+                "/clauses/1/forbid/ast/utils/u: utility rule `u` is also defined by a define of typescript; rename one",
             ),
             (
-                json!([ts(json!({ "u": { "kind": "identifier" } })), { "id": "shared", "forbid": { "regex": { "source": "file.content", "pattern": "x" } }, "finding": finding() }]),
-                "duplicate check id `shared` at /checks/1",
+                json!([ts(json!({ "u": { "kind": "identifier" } })), { "id": "shared", "forbid": { "regex": { "source": "file.content", "pattern": "x" } }, "violation": finding() }]),
+                "duplicate clause id `shared` at /clauses/1",
             ),
         ] {
             assert_eq!(rejection(compile(checks)), reason);

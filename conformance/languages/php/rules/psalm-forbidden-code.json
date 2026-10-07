@@ -1,0 +1,64 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "psalm-forbidden-code",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Psalm 6.19.1 ForbiddenCode with no forbiddenFunctions configured: a call PHP resolves to var_dump or shell_exec (not a first-class callable), and a backtick shell command, which Psalm reads as a shell_exec call.",
+  "scope": {
+    "include": [
+      "**/*.php"
+    ],
+    "exclude": [
+      "**/*.blade.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "any": [
+              {
+                "kind": "function_call_expression",
+                "has": {
+                  "field": "function",
+                  "resolves": {
+                    "import": [
+                      "var_dump",
+                      "shell_exec"
+                    ]
+                  }
+                },
+                "not": {
+                  "has": {
+                    "field": "arguments",
+                    "has": {
+                      "kind": "variadic_placeholder"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "shell_command_expression"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "ForbiddenCode",
+        "message": "Unsafe var_dump or shell_exec",
+        "suppress": {
+          "psalm": {
+            "issues": [
+              "ForbiddenCode"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

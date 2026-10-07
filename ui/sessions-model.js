@@ -88,8 +88,8 @@ function applyEvent(b, e, pl) {
   switch (e.kind) {
     case "user-prompt": onPrompt(b, e, pl); break;
     case "assistant-message": onReply(b, e, pl); break;
-    case "tool-call": onToolCall(b, e, pl); break;
-    case "tool-result": onToolResult(b, e, pl); break;
+    case "call": onToolCall(b, e, pl); break;
+    case "result": onToolResult(b, e, pl); break;
     case "turn-end": onTurnEnd(b, e, pl); break;
     default: break;
   }
@@ -160,7 +160,7 @@ export function sessionCorrections(sessionId) {
   for (const f of data.findings) {
     if (f.sessionId !== sessionId) continue;
     const stored = data.rules.get(f.ruleId);
-    if (stored) out.push({ key: `${f.runId}:${f.id}`, finding: f, rule: stored });
+    if (stored) out.push({ key: `${f.auditId}:${f.id}`, finding: f, rule: stored });
   }
   return out;
 }

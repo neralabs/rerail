@@ -4,7 +4,7 @@ use super::read_cache::CacheKey;
 use super::rows::{generation, hash_params, intern_hash};
 use super::{
     CODEC_ZSTD, CachedBytes, ContentStore, HASH_SHA256, HashKey, SourceId, StoreError, StoreResult,
-    StoredPathObjects, StoredSourceObjects, TapeId, TapePayload,
+    StoredPathObjects, StoredSourceObjects, TapeId, TapePayload, compress,
 };
 #[cfg(test)]
 use rusqlite::Connection;
@@ -17,7 +17,7 @@ impl ContentStore {
     pub fn put_source(&self, source: &[u8], aliases: &[HashKey]) -> StoreResult<SourceId> {
         self.require_write_capacity()?;
         let canonical = HashKey::sha256(source);
-        let frame = zstd::stream::encode_all(Cursor::new(source), self.compression_level)?;
+        let frame = compress(source, self.compression_level)?;
         let raw_length = i64::try_from(source.len())
             .map_err(|_| StoreError::Invalid("source length exceeds i64".to_owned()))?;
         let mut connection = self
@@ -333,7 +333,7 @@ impl ContentStore {
                 "tape identifiers must be nonnegative".to_owned(),
             ));
         }
-        let frame = zstd::stream::encode_all(Cursor::new(tape), self.compression_level)?;
+        let frame = compress(tape, self.compression_level)?;
         let mut connection = self
             .connection
             .lock()

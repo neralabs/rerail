@@ -4,6 +4,7 @@ mod calls;
 mod compile;
 mod eval;
 mod findings;
+mod identifier;
 mod json;
 mod language;
 mod lines;
@@ -40,7 +41,6 @@ use json::{canonicalize_value, hex_digest, invalid, json_error, required_str, re
 use model::{CompiledPolicy, Snapshot};
 use napi::Result;
 use napi_derive::napi;
-use query::PolicyStatements;
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -61,11 +61,12 @@ impl PolicyDslRuntime {
         let canonical_value = canonicalize_value(document);
         let canonical = serde_json::to_string(&canonical_value).map_err(json_error)?;
         let digest = format!("sha256:{}", hex_digest(canonical.as_bytes()));
-        let (id, scope, checks, required, statements) =
+        let (id, rule_mode, scope, checks, required) =
             compile_document(&canonical_value, &capabilities)?;
         Ok(CompiledPolicyDsl {
             inner: Arc::new(CompiledPolicy {
                 id,
+                rule_mode,
                 canonical,
                 digest,
                 required_capabilities: serde_json::to_string(&required).map_err(json_error)?,
@@ -73,7 +74,6 @@ impl PolicyDslRuntime {
                 scope,
                 capabilities,
             }),
-            statements: Arc::new(statements),
         })
     }
 }
@@ -98,8 +98,6 @@ pub fn python_module_path(absolute: String) -> Option<napi::Either<String, Vec<S
 #[napi]
 pub struct CompiledPolicyDsl {
     inner: Arc<CompiledPolicy>,
-    /// The statements `inner`'s grammar matchers run as (`GrammarMatcher::statement`).
-    statements: Arc<PolicyStatements>,
 }
 
 #[napi]
@@ -130,7 +128,7 @@ impl CompiledPolicyDsl {
     #[napi]
     pub fn evaluate(&self, snapshot_json: String, mode: String) -> Result<String> {
         let snapshot = parse_snapshot(&snapshot_json)?;
-        let evaluation = evaluate_policy(&self.inner, &self.statements, &snapshot, &mode)?;
+        let evaluation = evaluate_policy(&self.inner, &snapshot, &mode)?;
         serde_json::to_string(&evaluation_json(evaluation, None, &[], &[])).map_err(json_error)
     }
 
@@ -138,7 +136,6 @@ impl CompiledPolicyDsl {
     pub fn open_session(&self, snapshot_json: String) -> Result<PolicyDslSession> {
         Ok(PolicyDslSession {
             policy: Arc::clone(&self.inner),
-            statements: Arc::clone(&self.statements),
             snapshot: parse_snapshot(&snapshot_json)?,
             previous_ids: BTreeSet::new(),
         })
@@ -148,7 +145,6 @@ impl CompiledPolicyDsl {
 #[napi]
 pub struct PolicyDslSession {
     policy: Arc<CompiledPolicy>,
-    statements: Arc<PolicyStatements>,
     snapshot: Snapshot,
     previous_ids: BTreeSet<String>,
 }
@@ -157,7 +153,7 @@ pub struct PolicyDslSession {
 impl PolicyDslSession {
     #[napi]
     pub fn evaluate(&mut self, mode: String) -> Result<String> {
-        let evaluation = evaluate_policy(&self.policy, &self.statements, &self.snapshot, &mode)?;
+        let evaluation = evaluate_policy(&self.policy, &self.snapshot, &mode)?;
         let current = finding_ids(&evaluation.findings);
         let added = current
             .difference(&self.previous_ids)
