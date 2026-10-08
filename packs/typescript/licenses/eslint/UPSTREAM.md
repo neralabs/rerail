@@ -3,8 +3,10 @@
 Upstream: [ESLint 10.11.0](https://github.com/eslint/eslint/tree/v10.11.0) (commit `3c0b7c6e1fe2dec778b97a996018126f22d437ae`). License: MIT (Copyright OpenJS Foundation and other contributors, <www.openjsf.org>); [`LICENSE`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
 The files listed below contain material copied from ESLint and remain under its license. Every other file in this
-pack is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): the rule documents in `rules/`, the recorder
-`upstream/generate.mjs`, and the `*.expected.json` recordings it writes by running ESLint.
+pack is Rerail's. The rule documents in `rules/` are Rerail's re-implementations of ESLint's and typescript-eslint's
+rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest
+is under the Apache License 2.0 (the pack's `LICENSE`): the recorder `upstream/generate.mjs`, and the `*.expected.json`
+recordings it writes by running ESLint.
 
 Each copied file is the `code` of one of the rule's own `valid` or `invalid` RuleTester cases, verbatim, written
 by `upstream/generate.mjs`: cases with rule options, a custom parser or type information are left out, and identical

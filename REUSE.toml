@@ -611,6 +611,15 @@ SPDX-License-Identifier = "MIT AND Apache-2.0"
 # Rule packs under packs/ (see packs/README.md): the tools' copied tests, one entry per
 
 # packs/python
+# Rule documents: Rerail's re-implementations of Bandit's and Ruff's rules, annotated with the licence the pack
+# publishes them under (its package.json); whether adapted rule documents need the upstream licence is an open legal
+# question (docs/pack-format.md#licensing).
+[[annotations]]
+path = "packs/python/rules/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2014 Hewlett-Packard Development Company, L.P.", "2022 Charles Marsh", "2005-2011 Divmod, Inc.", "2013-2014 Florent Xicluna", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
 # Bandit 1.8.6 (packs/python/licenses/bandit/UPSTREAM.md): verbatim
 [[annotations]]
 path = "packs/python/upstream/bandit/fixtures/**"
@@ -639,6 +648,15 @@ SPDX-License-Identifier = "MIT"
 
 # packs/php
 
+# Rule documents: Rerail's re-implementations of PHP_CodeSniffer's, PHPStan's and Psalm's rules, annotated with the
+# licence the pack publishes them under (its package.json); whether adapted rule documents need the upstream licence
+# is an open legal question (docs/pack-format.md#licensing).
+[[annotations]]
+path = "packs/php/rules/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2012 Squiz Pty Ltd (ABN 77 084 670 600)", "2023 PHPCSStandards and contributors", "2016 Ondřej Mirtes", "2025 PHPStan s.r.o.", "2016 Vimeo", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND BSD-3-Clause AND MIT"
+
 # PHP_CodeSniffer 4.0.4 (packs/php/licenses/php_codesniffer/UPSTREAM.md): verbatim
 [[annotations]]
 path = "packs/php/upstream/phpcs/fixtures/**"
@@ -661,6 +679,15 @@ SPDX-FileCopyrightText = "2016 Vimeo"
 SPDX-License-Identifier = "MIT"
 
 # packs/blade
+# Rule documents: Rerail's re-implementations of stillat/blade-parser's validators and Bladestan's and tlint's rules,
+# annotated with the licence the pack publishes them under (its package.json); whether adapted rule documents need the
+# upstream licence is an open legal question (docs/pack-format.md#licensing).
+[[annotations]]
+path = "packs/blade/rules/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["Johnathon Koster", "2023-present Tomas Votruba", "Tighten Co. <hello@tighten.co>", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
 # stillat/blade-parser 2.1.0 (packs/blade/licenses/blade-parser/UPSTREAM.md): verbatim
 [[annotations]]
 path = "packs/blade/upstream/blade-parser/fixtures/**"
@@ -684,6 +711,15 @@ SPDX-License-Identifier = "MIT"
 
 # packs/typescript
 
+# Rule documents: Rerail's re-implementations of ESLint's and typescript-eslint's rules, annotated with the licence the
+# pack publishes them under (its package.json); whether adapted rule documents need the upstream licence is an open
+# legal question (docs/pack-format.md#licensing).
+[[annotations]]
+path = "packs/typescript/rules/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["OpenJS Foundation and other contributors, <www.openjsf.org>", "2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
 # ESLint 10.11.0 (packs/typescript/licenses/eslint/UPSTREAM.md): derived or excerpted
 [[annotations]]
 path = "packs/typescript/upstream/eslint/fixtures/**"
@@ -699,6 +735,16 @@ SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2026
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
 # packs/react
+
+# Rule documents and candidate rule documents: Rerail's re-implementations of eslint-plugin-react's and
+# eslint-plugin-react-hooks' rules, annotated with the licence the pack publishes them under (its package.json);
+# whether adapted rule documents need the upstream licence is an open legal question (docs/pack-format.md#licensing).
+# The candidates' probes are Rerail's own and stay under the catch-all.
+[[annotations]]
+path = ["packs/react/rules/**", "packs/react/candidates/rules/**"]
+precedence = "override"
+SPDX-FileCopyrightText = ["2014 Yannick Croissant", "Meta Platforms, Inc. and affiliates.", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
 # eslint-plugin-react 7.37.5 (packs/react/licenses/eslint-plugin-react/UPSTREAM.md): verbatim
 [[annotations]]
@@ -721,6 +767,16 @@ SPDX-FileCopyrightText = "Meta Platforms, Inc. and affiliates."
 SPDX-License-Identifier = "MIT"
 
 # packs/node
+
+# Rule documents and candidate rule documents: Rerail's re-implementations of eslint-plugin-n's rules, annotated with
+# the licence the pack publishes them under (its package.json); whether adapted rule documents need the upstream
+# licence is an open legal question (docs/pack-format.md#licensing). The candidates' probes are Rerail's own and stay
+# under the catch-all.
+[[annotations]]
+path = ["packs/node/rules/**", "packs/node/candidates/rules/**"]
+precedence = "override"
+SPDX-FileCopyrightText = ["2015 Toru Nagashima", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
 # eslint-plugin-n 18.4.1 (packs/node/licenses/eslint-plugin-n/UPSTREAM.md): verbatim
 [[annotations]]
@@ -749,6 +805,16 @@ SPDX-FileCopyrightText = "2015 Toru Nagashima"
 SPDX-License-Identifier = "MIT"
 
 # packs/next
+# Rule documents and candidate rule documents: Rerail's re-implementations of @next/eslint-plugin-next's rules,
+# annotated with the licence the pack publishes them under (its package.json); whether adapted rule documents need the
+# upstream licence is an open legal question (docs/pack-format.md#licensing). The candidates' probes are Rerail's own
+# and stay under the catch-all.
+[[annotations]]
+path = ["packs/next/rules/**", "packs/next/candidates/rules/**"]
+precedence = "override"
+SPDX-FileCopyrightText = ["2025 Vercel, Inc.", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
 # Next.js 16.3.8 (packs/next/licenses/next.js/UPSTREAM.md): verbatim
 [[annotations]]
 path = [

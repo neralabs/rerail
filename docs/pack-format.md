@@ -178,9 +178,11 @@ release workflow is not wired yet; until it is, changesets accumulate and nothin
 
 Rerail's own material in a pack is Apache-2.0. Material copied or adapted from an upstream project keeps its licence:
 listed in `licenses/<project>/UPSTREAM.md` and annotated in the repository's `REUSE.toml`. The pack's `license`
-names every licence its published files carry (for example `Apache-2.0 AND MIT` for rules adapted from an MIT tool;
-whether adapted rule documents need the upstream licence is an open legal question). Only licences on the repository
-allowlist are accepted.
+names every licence its published files carry (for example `Apache-2.0 AND MIT` for rules adapted from an MIT tool).
+The pack's rule documents (`rules/`, and the rule documents under `candidates/`) are annotated in `REUSE.toml` with
+that same expression, `Apache-2.0 AND <upstream>`, so what `reuse lint` reports for them matches what the package
+publishes; whether adapted rule documents need the upstream licence is an open legal question. Only licences on the
+repository allowlist are accepted.
 
 ## Moving to this layout
 

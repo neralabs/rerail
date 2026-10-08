@@ -2,7 +2,7 @@
 
 Upstream: [TomasVotruba/bladestan](https://github.com/TomasVotruba/bladestan/tree/ceb0823cd4b4f400b64a008cace0d91e786a2859) at tag `0.11.7` (commit `ceb0823cd4b4f400b64a008cace0d91e786a2859`). License: MIT; [`LICENSE`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the templates of Bladestan's rule test (`tests/Rules/BladeRuleTest.php`, its fixtures under `tests/Rules/Fixture/` render them) and remain under Bladestan's license. Every other file in this pack is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): the rule documents in `rules/`, the recorders `upstream/common.py` and `upstream/bladestan/` (`generate.py`, `RecordTest.php`), and the recordings they write by running Bladestan.
+The files listed below are the templates of Bladestan's rule test (`tests/Rules/BladeRuleTest.php`, its fixtures under `tests/Rules/Fixture/` render them) and remain under Bladestan's license. Every other file in this pack is Rerail's. The rule documents in `rules/` are Rerail's re-implementations of the validators and lints of stillat/blade-parser, Bladestan and tlint, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the recorders `upstream/common.py` and `upstream/bladestan/` (`generate.py`, `RecordTest.php`), and the recordings they write by running Bladestan.
 
 Paths are relative to the pack directory, `packs/blade/`.
 

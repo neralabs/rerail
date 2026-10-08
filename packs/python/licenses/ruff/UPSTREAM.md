@@ -3,8 +3,10 @@
 Upstream: [Ruff 0.16.9](https://github.com/astral-sh/ruff/tree/0.16.9). License: MIT (Copyright (c) 2022 Charles Marsh); [`LICENSE`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
 The files listed below contain material copied from Ruff and remain under its license. Every other file in this
-pack is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): the rule documents in `rules/`, the recorders
-`upstream/common.py` and `upstream/ruff/generate.py`, and the `*.expected.json` outputs recorded by running Ruff.
+pack is Rerail's. The rule documents in `rules/` are Rerail's re-implementations of Bandit's and Ruff's rules,
+published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest is under
+the Apache License 2.0 (the pack's `LICENSE`): the recorders `upstream/common.py` and `upstream/ruff/generate.py`, and
+the `*.expected.json` outputs recorded by running Ruff.
 
 Ruff's `LICENSE` also carries the notices of the projects Ruff derives from, Pyflakes among them. Ruff's pyflakes fixtures come with that notice.
 
