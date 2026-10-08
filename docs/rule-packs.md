@@ -13,7 +13,7 @@ Only rules that already exist ship as packs. Rerail ships one:
 | Pack | Category | Rules | Where it applies | What it is |
 |---|---|--:|---|---|
 | Cyclomatic complexity (limit 6) | language | 3 | never recommended; chosen by hand | One rule each for Python, TypeScript and JavaScript that flags a function whose cyclomatic complexity, with lizard 1.24.0's decision points, is above 6. The documents are in `code-rule-dsl/rules/opt-in/complexity/`, seeded off. Group: Complexity. See [Cyclomatic complexity](#cyclomatic-complexity). |
-| TSLint | language | 74 | the `typescript` dependency, `*.ts` or `*.tsx` files | The golden TSLint ports in `code-rule-dsl/rules/opt-in/tslint/`: each passed TSLint's own test suite in the conformance harness, with TSLint's default options. Group: TSLint. |
+| TSLint | language | 75 | the `typescript` dependency, `*.ts` or `*.tsx` files | The golden TSLint ports in `code-rule-dsl/rules/opt-in/tslint/`: each passed TSLint's own test suite in the conformance harness, with TSLint's default options. Group: TSLint. |
 
 The rule lists are the pack files themselves: `policies/rule-packs/complexity.json` and `policies/rule-packs/tslint.json`. A rule's title comes from its document's description.
 
@@ -38,7 +38,7 @@ A pack is one file, `policies/rule-packs/<id>.json`, kept apart from the rule do
   "id": "tslint",
   "name": "TSLint",
   "category": "language",
-  "covers": "The 74 TSLint core rules ported to Rerail that pass TSLint's own test suite, with TSLint's default options.",
+  "covers": "The 75 TSLint core rules ported to Rerail that pass TSLint's own test suite, with TSLint's default options.",
   "reason": "matches TypeScript",
   "match": {
     "any": [

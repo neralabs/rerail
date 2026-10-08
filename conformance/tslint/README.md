@@ -196,7 +196,7 @@ pack doc and let the gate judge it.
 
 The harness scores a golden default doc with its shipped scope (TypeScript sources outside build output). A fixture
 file outside that scope is not evaluated and is reported as out of scope (`No` in the rules table, `outOfScope` in
-the summary), never as a miss. None of the 74 golden rules loses a fixture file this way. Non-golden ports keep their
+the summary), never as a miss. None of the 75 golden rules loses a fixture file this way. Non-golden ports keep their
 `**/*` scope.
 
 `golden.json` has one entry per golden rule: `verdict` (`PASS`, or `PASS (repaired fixture)` when invalid fixture

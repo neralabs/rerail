@@ -3,7 +3,7 @@
   "id": "tslint",
   "name": "TSLint",
   "category": "language",
-  "covers": "The 74 TSLint core rules ported to Rerail that pass TSLint's own test suite, with TSLint's default options.",
+  "covers": "The 75 TSLint core rules ported to Rerail that pass TSLint's own test suite, with TSLint's default options.",
   "reason": "matches TypeScript",
   "match": {
     "any": [
@@ -250,6 +250,11 @@
     {
       "id": "tslint:no-parameter-properties",
       "title": "Disallows parameter properties in class constructors",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-reference-import",
+      "title": "Disallows `/// <reference types>` for a module the file imports",
       "group": "TSLint"
     },
     {

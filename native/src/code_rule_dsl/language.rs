@@ -313,6 +313,16 @@ impl KindCatalog {
         }
     }
 
+    /// The embedded PHP's `comment` kind in the dialect's numbering (Blade's tapes), which the
+    /// dialect's own `comment` shadows in `kind_id`: a rule's `kind: comment` names both.
+    pub(crate) fn embedded_comment_kind(self) -> Option<u16> {
+        let embedded = self.embedded?;
+        match embedded.php.id_for_node_kind("comment", true) {
+            0 => None,
+            id => Some(embedded.shift(id)),
+        }
+    }
+
     pub(crate) fn kind_name(self, id: u16) -> Option<&'static str> {
         let (grammar, id) = self.kind_home(id);
         grammar.node_kind_for_id(id)
