@@ -8,20 +8,20 @@ the core package at the repository root.
 
 ## Pack layout
 
-The full specification (layout, manifest, validation data, `rerail pack check`, versioning, licensing) is
-[docs/pack-format.md](../docs/pack-format.md). In short, each pack lives in `packs/<id>/`:
+The structure and the validation contract are specified in [docs/pack-format.md](../docs/pack-format.md). In short,
+each pack lives in `packs/<id>/`:
 
 | Path | Contents | Published |
 | --- | --- | --- |
-| `package.json` | npm package `@neralabs/rerail-pack-<id>`, marked by `"rerail": { "pack": "./rerail-pack.json" }`; no dependencies | yes |
-| `rerail-pack.json` | Manifest: id, match, `coreRange`, `languages`, `license`, `upstream[]`, and each rule's title, group, mode and examples | yes |
-| `rules/*.json` | Rule documents | yes |
+| `package.json` | npm package `@neralabs/rerail-pack-<id>`; core version range as a peer dependency; no dependencies | yes |
+| `pack.json` | The pack (`rerail.rule-pack/v1`): match, and each rule's document, title, group, mode and examples | yes |
+| `rules/*.json` | Code-rule documents | yes |
 | `LICENSE`, `NOTICE`, `README.md` | The pack's licence, notice and description | yes |
 | `licenses/<project>/` | Upstream licence, verbatim, and `UPSTREAM.md` listing every copied or adapted file | yes |
-| `validation/` | Upstream tools' recorded findings, their copied tests, declared divergences, candidate rules | no |
+| `conformance.json`, `divergences.json`, `upstream/`, `candidates/` | For ported rules: the tools' recorded findings, their copied tests, declared divergences, ports under evaluation | no |
 
-A pack is data only: it never imports the core engine. Core loads it, and core validates it with
-`rerail pack check`.
+A pack is data only: it never imports the core engine. Core runs its rules, and the repository's tests validate
+every pack against the contract.
 
 ## Third-party material
 

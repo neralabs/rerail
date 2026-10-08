@@ -26,8 +26,8 @@ A rule honours its linter's suppression comments only where its document says so
 
 ## Format
 
-This is the current format, `rerail.rule-pack/v1`, for packs that ship inside core. Its successor, packs published as
-their own npm packages and validated with `rerail pack check`, is specified in [pack-format.md](pack-format.md).
+This is the pack format, `rerail.rule-pack/v1`. Today packs ship inside core; where they move to in this repository
+and what each must prove is specified in [pack-format.md](pack-format.md).
 
 A pack is one file, `policies/rule-packs/<id>.json`, kept apart from the rule documents it lists:
 
