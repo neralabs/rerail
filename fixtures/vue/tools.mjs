@@ -1,7 +1,7 @@
 // The Vue pack's pinned reference tools, loaded from the maintainer's install (never CI).
 //
 // Install once, by hand, into the gitignored `<checkout>/.rerail/tools/vue/` (a package.json with these exact
-// versions, then `npm install`). Every generator under rerail-fixtures/vue/ loads the tools from there, never from the
+// versions, then `npm install`). Every generator under fixtures/vue/ loads the tools from there, never from the
 // repository's own node_modules, and refuses any other version.
 
 import { existsSync, readFileSync } from "node:fs";

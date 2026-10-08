@@ -18,7 +18,7 @@
       "reason": "No pinned reference linter has a rule that reads callees transitively, which is what Rerail's calls capability answers.",
       "evidence": "Checked Ruff 0.16.9 and Bandit 1.8.6. Ruff's rules that look at a call read only the call itself or the direct callee: flake8-async's ASYNC2xx and flake8-bugbear's call rules match the callee's resolved name; RET503 (crates/ruff_linter/src/rules/flake8_return/rules/function.rs, is_noreturn_func) reads only the direct callee's own `def` in the same file for a `NoReturn` annotation; Pyflakes' rules read bindings, not callees. Bandit's call tests (B3xx, B6xx, B113, B505, B506) match the callee's qualified name through its import. None answers whether a function reaches a call of X through any chain of calls.",
       "coveredBy": [
-        "T2: rerail-fixtures/python/calls (calls::python_tests::python_calls_agree_with_the_runtime, against CPython 3.13.14 runtime traces)",
+        "T2: fixtures/python/calls (calls::python_tests::python_calls_agree_with_the_runtime, against CPython 3.13.14 runtime traces)",
         "T3: benchmark_python_calls_corpus (Jedi 0.19.2 over django)"
       ]
     }

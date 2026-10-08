@@ -29,7 +29,7 @@
       "reason": "No pinned reference linter has a rule that reads callees transitively, which is what Rerail's calls capability answers.",
       "evidence": "Checked PHPStan 2.2.16, Psalm 6.19.1 and PHP_CodeSniffer 4.0.4: every rule that looks at a call (PHPStan's CallToFunctionParametersRule and impossible-check rules, Psalm's ForbiddenCode and argument checks, PHP_CodeSniffer's ForbiddenFunctions and DeprecatedFunctions) reads only the direct callee's declaration or name. Psalm's taint analysis follows data flow into sinks, not the call graph, so none answers whether a function reaches a call of X through any chain of calls.",
       "coveredBy": [
-        "T2: rerail-fixtures/php/calls/php (calls::php_tests::php_calls_agree_with_phpstan_and_the_runtime)",
+        "T2: fixtures/php/calls/php (calls::php_tests::php_calls_agree_with_phpstan_and_the_runtime)",
         "T3: benchmark_php_calls_corpus (124,611 PHPStan-resolved calls over laravel and symfony, 0 disagreements)"
       ]
     }

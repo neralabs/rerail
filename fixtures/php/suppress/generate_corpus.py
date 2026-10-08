@@ -7,7 +7,7 @@ Psalm 6.19.1 and PHP_CodeSniffer 4.0.4, for `benchmark_php_suppression_corpus`
 
 From the checkout root:
 
-    python3 rerail-fixtures/php/suppress/generate_corpus.py .rerail/tools/php \
+    python3 fixtures/php/suppress/generate_corpus.py .rerail/tools/php \
         .rerail/t3/suppression/env .rerail/t3/suppression.input.json \
         laravel=.rerail/corpora/php/laravel:src,tests symfony=.rerail/corpora/php/symfony:src@8.2.x-dev
 

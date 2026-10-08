@@ -4,7 +4,7 @@
  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
  "source": {
   "kind": "fixtures",
-  "origin": "Rerail-authored (Apache-2.0), rerail-fixtures/rust/suppress/fixtures",
+  "origin": "Rerail-authored (Apache-2.0), fixtures/rust/suppress/fixtures",
   "clippy": "https://github.com/rust-lang/rust-clippy@49e2f89a2605a9a340e04955fdbefa9803e6027a",
   "rules": [
    "clippy::double_parens",
