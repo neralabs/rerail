@@ -2,6 +2,7 @@ import type { AuditFailure, AuditMode, AuditScope } from "./audit.js";
 import type { RuleMode } from "./rule-mode.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
+import { steerBlock } from "./rerail-steer.js";
 
 export type CodeRuleDslScalar = boolean | number | string | null;
 export type CodeRuleDslValue = CodeRuleDslScalar | CodeRuleDslValue[] | { [key: string]: CodeRuleDslValue };
@@ -1148,6 +1149,14 @@ export interface CodeRuleDslAstCount {
   follows?: CodeRuleDslAstRelation;
   min?: number;
   max?: number;
+  /**
+   * Metavariable name (without `$`) that a count which holds binds to `offset` plus the exact count, as decimal text.
+   * Only the violation's message may interpolate it; under `not` it binds nothing. The walk then runs to its end, and
+   * a count that is not known exactly (a node or stop verdict unknown) leaves the match unknown.
+   */
+  as?: string;
+  /** An integer added to the count `as` binds (default 0); only with `as`. */
+  offset?: number;
 }
 
 export type CodeRuleCheckpoint = "edit" | "function" | "turn" | "final";
@@ -1287,13 +1296,16 @@ function suggestedFix(fix: CodeRuleViolationFix): string {
   return `  Suggested fix: replace ${range} with:\n${indented}`;
 }
 
+/** One block per rule (`steerBlock`), its violations in first-seen order, each with its location and any fix. */
 export function renderSteer(violations: readonly CodeRuleViolation[]): string {
-  return violations
-    .map((violation) => {
-      const line = `${violation.code}${violationLocation(violation)}: ${violation.message}`;
-      return violation.fix === undefined ? line : `${line}\n${suggestedFix(violation.fix)}`;
-    })
-    .join("\n");
+  const byRule = new Map<string, string[]>();
+  for (const violation of violations) {
+    const line = `${violation.message}${violationLocation(violation)}`;
+    const lines = byRule.get(violation.ruleId) ?? [];
+    lines.push(violation.fix === undefined ? line : `${line}\n${suggestedFix(violation.fix)}`);
+    byRule.set(violation.ruleId, lines);
+  }
+  return [...byRule].map(([ruleId, lines]) => steerBlock(ruleId, lines.join("\n"))).join("\n\n");
 }
 
 /** Rule ids credited with a steer: the distinct `ruleId`s of the rendered violations, in first-seen order. */

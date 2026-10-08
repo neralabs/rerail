@@ -218,7 +218,9 @@ Moved: `python`, `php`, `blade`, `typescript`, `react`, `node` and `next`, each 
 `fixtures/<id>/rules/`, its candidates and probes, and the rule rows of its licence records. The ESLint recorder they
 share is `conformance/recorders/eslint-record.mjs`, and the TypeScript grammar census is `conformance/t1/typescript-syntax.ts`.
 TSLint moved to `packs/tslint/` and still ships inside core's package; its harness stays in `conformance/tslint/` as
-test support. Not moved yet: `rust`, `sql` and `vue`, which have upstream
+test support. The complexity rules (`code-rule-dsl/rules/opt-in/complexity/`, `policies/rule-packs/complexity.json`)
+moved to `packs/complexity/` the same way; their lizard parity test stays in `test/complexity-rules.test.ts`. Not
+moved yet: `rust`, `sql` and `vue`, which have upstream
 recordings but no rules: they stay in `fixtures/<id>/upstream/` beside each language's draft manifest
 (`fixtures/rust/upstream/conformance.draft.json`, `fixtures/sql/upstream/conformance.draft.json`,
 `fixtures/vue/upstream/rules.json`) until their packs gain rules, when the draft becomes `packs/<id>/conformance.json`

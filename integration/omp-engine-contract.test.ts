@@ -1,7 +1,10 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { linkSteers, steerBlock } from "../src/rerail-steer.js";
+import { dashboardOrigin } from "../src/session-presentation.js";
+import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID } from "./contract-code-rule.js";
 import { OmpHost } from "./omp-host.js";
 
 describe("OMP native code rule contract", () => {
@@ -24,9 +27,16 @@ describe("OMP native code rule contract", () => {
       const firstPostToolCall = evidence.calls[1];
       expect(firstPostToolCall).toBeDefined();
       expect(evidence.calls).toHaveLength(2);
-      expect(JSON.stringify(firstPostToolCall?.context.messages)).toContain("CURSOR_EXECUTE");
+      expect(JSON.stringify(firstPostToolCall?.context.messages)).toContain(CONTRACT_CURSOR_EXECUTE_MESSAGE);
+      // The OMP adapter links against the daemon of the host's Rerail home, not this process's.
+      vi.stubEnv("RERAIL_HOME", join(cwd, "home"));
+      const steer = linkSteers(
+        steerBlock(CONTRACT_CURSOR_EXECUTE_RULE_ID, `${CONTRACT_CURSOR_EXECUTE_MESSAGE} (api/route.py:2:5)`),
+        await dashboardOrigin(cwd),
+      );
+      vi.unstubAllEnvs();
       expect(evidence.branch).toEqual(expect.arrayContaining([
-        expect.objectContaining({ type: "custom_message", content: expect.stringContaining("CURSOR_EXECUTE") }),
+        expect.objectContaining({ type: "custom_message", content: expect.stringContaining(steer) }),
       ]));
       expect(host.frames.filter(frame => frame.type === "extension_error")).toEqual([]);
     } finally {

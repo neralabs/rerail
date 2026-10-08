@@ -10,6 +10,8 @@ import {
   type HookInput,
   type HookOutput,
 } from "./hook-adapter.js";
+import { sessionStartNote, steerHeadlines } from "./rerail-steer.js";
+import { dashboardOrigin, linkDeliveries } from "./session-presentation.js";
 
 const CODEX_EVENTS: EventTable = {
   SessionStart: true,
@@ -19,10 +21,12 @@ const CODEX_EVENTS: EventTable = {
   Stop: true,
 };
 
+/** Events whose `additionalContext` reaches the model; Codex adds it as a developer message. */
 const CONTEXT_EVENTS: EventTable = {
   SessionStart: true,
   UserPromptSubmit: true,
   PreToolUse: true,
+  PostToolUse: true,
 };
 
 /** Stop carries steers too: Codex continues the turn with it as a `decision: "block"` reason. */
@@ -34,15 +38,22 @@ export function supportsCodexHook(input: HookInput): boolean {
   return CODEX_EVENTS[requiredText(input, "hook_event_name")] === true;
 }
 
-export function codexHookOutput(hook: string, deliveries: readonly AdapterDelivery[]): HookOutput {
+/**
+ * Steers reach the model as context (or, at `Stop`, as the reason to keep going) and the person as one
+ * `systemMessage` line per rule. `note` is the session-start note, which only the model sees.
+ */
+export function codexHookOutput(hook: string, deliveries: readonly AdapterDelivery[], note?: string): HookOutput {
   const content = deliveryText(deliveries);
-  if (content === undefined) return {};
+  const headlines = content === undefined ? [] : steerHeadlines(content);
+  const visible = headlines.length === 0 ? {} : { systemMessage: headlines.join("\n") };
   const ruleIds = deliveryRuleIds(deliveries);
-  if (hook === "Stop") return prepareGuidanceOutput({ decision: "block", reason: content }, ruleIds);
-  if (CONTEXT_EVENTS[hook] === true) {
-    return prepareGuidanceOutput({ hookSpecificOutput: { hookEventName: hook, additionalContext: content } }, ruleIds);
+  if (hook === "Stop") {
+    return content === undefined ? {} : prepareGuidanceOutput({ ...visible, decision: "block", reason: content }, ruleIds);
   }
-  return {};
+  const context = [note, content].filter(text => text !== undefined).join("\n\n");
+  if (context === "" || CONTEXT_EVENTS[hook] !== true) return {};
+  const output = { ...visible, hookSpecificOutput: { hookEventName: hook, additionalContext: context } };
+  return content === undefined ? output : prepareGuidanceOutput(output, ruleIds);
 }
 
 export async function handleCodexEvent(
@@ -51,8 +62,12 @@ export async function handleCodexEvent(
   storageRoot: string,
 ): Promise<HookOutput> {
   const hook = requiredText(input, "hook_event_name");
+  const sessionId = requiredText(input, "session_id");
   const deliveries: AdapterDelivery[] = [];
   for (const event of codexHookEvents(input)) deliveries.push(...await eventLoop.ingest(event));
-  const path = pendingPath(storageRoot, "codex", requiredText(input, "session_id"));
-  return codexHookOutput(hook, await routeDeliveries(path, hook, deliveries, CARRY_EVENTS));
+  const path = pendingPath(storageRoot, "codex", sessionId);
+  // The runtime keeps steer links relative; they point at this checkout's dashboard only here.
+  const cwd = requiredText(input, "cwd");
+  const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "codex", sessionId) : undefined;
+  return codexHookOutput(hook, await linkDeliveries(await routeDeliveries(path, hook, deliveries, CARRY_EVENTS), cwd), note);
 }

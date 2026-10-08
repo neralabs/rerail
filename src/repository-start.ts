@@ -3,7 +3,7 @@ import { basename, dirname, resolve, sep } from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "./database.js";
 import type { Harness } from "./harness-registration.js";
-import { readRepositoryIdAt, repositoryIdentityLocation, type RepositoryIdentityLocation } from "./repository-identity.js";
+import { readRepositoryIdAt, repositoryIdentityLocation, repositoryName, type RepositoryIdentityLocation } from "./repository-identity.js";
 import { loadBundledRules } from "./rule-bootstrap.js";
 import { checkoutStarts, repositoryStarts, ruleRepositories } from "./schema.js";
 import { resolveRepositoryContext, ScopedRuleCatalog, type RepositoryContext } from "./scoped-rule-catalog.js";
@@ -201,6 +201,29 @@ export function workspaceStartState(workspace: string, databasePath = defaultRer
   }
 }
 
+/**
+ * `workspaceStartState` for readers that refresh often and must never fail on a database they cannot
+ * read (the status line, `/rerail`): undefined where the database cannot be opened or has no start tables.
+ */
+export function readOnlyStartState(workspace: string, databasePath = defaultRerailDatabasePath()): RepositoryStartState | undefined {
+  if (!existsSync(databasePath)) return "never";
+  const location = repositoryIdentityLocation(workspace);
+  const repositoryId = readRepositoryIdAt(location.identityPath);
+  if (repositoryId === undefined) return "never";
+  let database: RerailDatabase;
+  try {
+    database = openRerailDatabase(databasePath, { readonly: true });
+  } catch {
+    return undefined;
+  }
+  try {
+    if (!hasStartTables(database)) return undefined;
+    return checkoutStartState(database, checkoutAt(location, repositoryId));
+  } finally {
+    database.$client.close();
+  }
+}
+
 /** The state of the checkout a resolved repository context runs in, as seeding needs it. */
 export function contextStartState(databasePath: string, context: RepositoryContext): RepositoryStartState {
   const database = openRerailDatabase(databasePath);
@@ -280,20 +303,12 @@ export async function hookRerailStarted(host: RerailHost, workspace: string, dat
   return isRerailStarted(workspace, databasePath);
 }
 
-/** The repository's own name: the main checkout's folder for a linked worktree, else the checkout's folder. */
-export function repositoryName(workspace: string): string {
-  const location = repositoryIdentityLocation(workspace);
-  const commonDirectory = dirname(location.identityPath);
-  return location.git && basename(commonDirectory) === ".git" ? basename(dirname(commonDirectory)) : basename(location.workspaceRoot);
-}
-
 /** How start and stop name the checkout they changed: the repository, or a worktree of it. */
 function checkoutName(workspace: string): string {
   const repository = repositoryName(workspace);
   const location = repositoryIdentityLocation(workspace);
   return location.main ? repository : `${basename(location.workspaceRoot)}, a worktree of ${repository}`;
 }
-
 /**
  * Where start and stop talk to the person: a terminal, or a coding agent that relays the text.
  * PR C's set-up swaps in its screens and questions behind this seam.

@@ -27,7 +27,8 @@ import type { SessionDatabaseOptions } from "./session-database-options.js";
 import type { ConversationRuleSourceOptions } from "./rule-sources.js";
 import { registerRerailCommands } from "./rerail-command.js";
 import { createOmpPresentation } from "./omp-presentation.js";
-import { readRepositoryState } from "./session-presentation.js";
+import { dashboardOrigin, linkDeliveries, readRepositoryState } from "./session-presentation.js";
+import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote } from "./rerail-steer.js";
 import { registerConversationRulesTool } from "./tool.js";
 
 export { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, TURN_ENTRY_TYPE } from "./session-state.js";
@@ -145,8 +146,9 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
       return pending;
     };
 
-    const sendDeliveries = (current: NativeSessionClient, deliveries: readonly AdapterDelivery[]): Promise<void> =>
-      sendNativeDeliveries(deliveries, async (message, options_) => {
+    // The runtime keeps steer links relative; they point at this checkout's dashboard only here.
+    const sendDeliveries = async (current: NativeSessionClient, deliveries: readonly AdapterDelivery[]): Promise<void> =>
+      sendNativeDeliveries(await linkDeliveries(deliveries, currentContext?.cwd), async (message, options_) => {
         const context = currentContext;
         pi.sendMessage(message, options_);
         if (context === undefined
@@ -310,7 +312,7 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
         databasePath: () => options.databasePath === undefined
           ? undefined
           : resolve(currentContext?.cwd ?? process.cwd(), options.databasePath),
-        // Reset retires this session's daemon-owned runtime and reattaches even on failure.
+        // Rage-quit retires this session's runtime before removing Rerail; reattach rebuilds it if the removal fails.
         detach: async () => {
           presentation.stop();
           await closeRuntime();
@@ -325,10 +327,16 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
     pi.on("session_branch", (_event, ctx) => attach(ctx));
     pi.on("session_tree", (_event, ctx) => attach(ctx));
 
+    // The first prompt of each session also carries the session-start note, hidden from the person (design A1).
+    const notedSessions = new Set<string>();
     pi.on("before_agent_start", async (event) => {
       const session = await sessionFor();
       if (session === undefined) return;
       await ingest(userPromptEvent(session.sessionId, `input:${randomUUID()}`, event.prompt));
+      if (notedSessions.has(session.sessionId)) return;
+      notedSessions.add(session.sessionId);
+      const content = sessionStartNote(await dashboardOrigin(session.cwd), "omp", session.sessionId);
+      return { message: { customType: SESSION_NOTE_MESSAGE_TYPE, content, display: false } };
     });
 
     pi.on("context", async (event) => {

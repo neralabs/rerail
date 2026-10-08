@@ -27,6 +27,8 @@ import {
   type ClaudeStatusRegistration,
   type ClaudeStatusLine,
 } from "./claude-status-store.js";
+import { commandFileText, MANAGED_SKILL_MARKER, type CommandFileContext } from "./rerail-command-files.js";
+import { RERAIL_COMMANDS, type RerailCommandName } from "./rerail-commands.js";
 import { stableJsonText } from "./stable-json.js";
 
 export type Harness = "omp" | "pi" | "claude-code" | "codex" | "cursor";
@@ -36,12 +38,6 @@ export const HARNESSES: readonly Harness[] = ["omp", "pi", "claude-code", "codex
 export interface RegistrationOptions {
   /** Installed package root containing package.json, dist/ and hooks/. */
   root: string;
-  /**
-   * Package root to read packaged templates (skills) from when `root` is a
-   * link that does not exist yet, as in `install --root <checkout> --dry-run`.
-   * Registrations are still rendered against `root`. Defaults to `root`.
-   */
-  templateRoot?: string;
   home?: string;
   nodePath?: string;
   harnesses?: readonly Harness[];
@@ -71,7 +67,6 @@ type Mode = "register" | "unregister";
 interface Context {
   mode: Mode;
   root: string;
-  templateRoot: string;
   packageRoots: Map<string, Promise<boolean>>;
   home: string;
   nodePath: string;
@@ -259,138 +254,18 @@ function hookExecEntry(context: Context, executable: string): JsonObject {
   return { type: "command", command: "node", args: [join(dist, HOOK_LAUNCHER), context.nodePath, join(dist, executable)] };
 }
 
-/** The Claude Code slash command that runs the launcher through the same node and package root as the hooks. */
-function claudeCommandText(context: Context): string {
-  const command = directCommand(context, "cli.js");
-  // One grant per subcommand the body may run; `Bash(<cli> *)` would also cover `daemon`, `mcp-bridge`, ...
-  const allowed = ["status", "session *", "start", "stop", "update *", "reset", "scan *", "settings *"]
-    .map(subcommand => `Bash(${command} ${subcommand})`)
-    .join(", ");
-  return [
-    "---",
-    "description: Rerail session status and launcher — start, stop, update, reset, scan, settings",
-    `allowed-tools: ${allowed}`,
-    "---",
-    "",
-    "Show Rerail for this exact session when `$ARGUMENTS` is empty. Otherwise `$ARGUMENTS` is a complete Rerail CLI command: `status`, `start`, `stop`, `update check`, `update`, `update rollback`, `reset`, `scan ...`, or `settings ...`. Map `check` to `update check` and `rollback` to `update rollback`.",
-    "",
-    "`stop` stops Rerail in this checkout and the worktrees that follow it (from the main checkout, every linked worktree without its own setting): nothing is recorded, audited or steered there, and rules and history are kept. `start` starts them again, setting the repo up the first time.",
-    "",
-    "A `scan` or `settings` invocation MUST include `--session <session-id>` explicitly; use the exact session identity, never guess a latest session. The session may belong to any repository recorded in the Rerail database.",
-    "",
-    "Run exactly one command and report its output verbatim:",
-    "",
-    "Default (no arguments):",
-    "",
-    "```sh",
-    `${command} session claude-code '\${CLAUDE_SESSION_ID}'`,
-    "```",
-    "",
-    "Explicit launcher action:",
-    "",
-    "```sh",
-    `${command} ${"$ARGUMENTS"}`,
-    "```",
-    "",
-    "Do not run anything else. If the command fails, show the error and stop.",
-    "",
-  ].join("\n");
-}
 
 type PromptCommandHarness = "claude-code" | "cursor";
-type StartCommandAction = "start" | "stop";
-type PageCommand = "ui" | "session";
-type PromptCommand = "rerail" | StartCommandAction | PageCommand;
-
-/** Cursor prompt commands cannot see the conversation id, so only Claude Code gets `/rerail` and `/rerail-session`. */
-const PROMPT_COMMANDS: Record<PromptCommandHarness, readonly PromptCommand[]> = {
-  "claude-code": ["rerail", "start", "stop", "ui", "session"],
-  cursor: ["start", "stop", "ui"],
-};
-
-/** Command files earlier versions installed and this one replaces; removed when they are ours. */
-const RETIRED_PROMPT_COMMANDS: readonly string[] = ["rerail-disable", "rerail-enable"];
-
-function promptCommandName(command: PromptCommand): string {
-  if (command === "rerail") return "rerail";
-  return command === "start" || command === "stop" ? `rerail-${command}` : `rerail-${command}`;
-}
-
-function startSlashCommandText(context: Context, harness: PromptCommandHarness, action: StartCommandAction): string {
-  const command = `${directCommand(context, "cli.js")} ${action}`;
-  const description = action === "start"
-    ? "Start Rerail in this checkout, setting the repo up the first time"
-    : "Stop Rerail in this checkout; rules and history are kept";
-  const body = [
-    `${description}.`,
-    "",
-    "Run exactly one command and report its output verbatim:",
-    "",
-    "```sh",
-    command,
-    "```",
-    "",
-    "Do not run anything else. If the command fails, show the error and stop.",
-    "",
-  ];
-  return harness === "claude-code"
-    ? ["---", `description: ${description}`, `allowed-tools: Bash(${command})`, "---", "", ...body].join("\n")
-    : body.join("\n");
-}
 
 /**
- * Opens a Rerail page as a tab in the window the agent runs in before falling back to the desktop
- * browser. The CLI's own opener is Orca-first (`openDashboard`), so the command never needs an `orca`
- * grant; Cursor's built-in browser is the one in-window path the CLI cannot reach, and only the
- * Cursor variant of the prompt is read by an agent that has it. The URL is read first so the
- * fallback is the only step that launches anything.
+ * Command files and Codex skills earlier versions installed and this one no longer does; removed when they are ours.
+ * The earlier `$rerail` skill sits where the `$rerail` command skill goes, so registering replaces it.
  */
-function pageCommandText(context: Context, harness: PromptCommandHarness, page: PageCommand): string {
-  const cli = directCommand(context, "cli.js");
-  const session = `${cli} session claude-code '\${CLAUDE_SESSION_ID}'`;
-  const description = page === "ui" ? "Open the Rerail rules page for this checkout" : "Open this session's Rerail page";
-  const printCommand = page === "ui" ? `${cli} ui --print` : session;
-  const openCommand = page === "ui" ? `${cli} ui` : `${session} --open`;
-  const body = [
-    `${description}.`,
-    "",
-    "Get the URL without opening anything. Run exactly this and read the URL from its output:",
-    "",
-    "```sh",
-    printCommand,
-    "```",
-    "",
-    page === "ui"
-      ? "If the command fails, show the error and stop."
-      : "The last line of the output is the URL. If there is no URL line, show the text and stop. If the command fails, show the error and stop.",
-    "",
-    "Open the URL as a tab in this window before reaching for the desktop browser, in this order:",
-    "",
-    ...(harness === "claude-code"
-      ? [`- Under Orca (\`ORCA_TAB_ID\` set): run \`${openCommand}\`. It opens the page as a tab in the Orca window and falls back to the desktop browser on its own.`]
-      : []),
-    "- In Cursor with a built-in browser tool: navigate that browser to the URL — it opens as a tab in the Cursor window.",
-    `- Otherwise let the CLI open the desktop browser: \`${openCommand}\`.`,
-    "",
-    "Report the URL and where it was opened. Do not run anything else.",
-    "",
-  ];
-  if (harness !== "claude-code") return body.join("\n");
-  const allowed = page === "ui" ? `Bash(${printCommand}), Bash(${openCommand})` : `Bash(${cli} session claude-code *)`;
-  return ["---", `description: ${description}`, `allowed-tools: ${allowed}`, "---", "", ...body].join("\n");
-}
+const RETIRED_PROMPT_COMMANDS: readonly string[] = ["rerail-session", "rerail-disable", "rerail-enable"];
+const RETIRED_CODEX_SKILLS: readonly string[] = [];
 
-function promptCommandText(context: Context, harness: PromptCommandHarness, command: PromptCommand): string {
-  switch (command) {
-    case "rerail":
-      return claudeCommandText(context);
-    case "start":
-    case "stop":
-      return startSlashCommandText(context, harness, command);
-    case "ui":
-    case "session":
-      return pageCommandText(context, harness, command);
-  }
+function commandContext(context: Context): CommandFileContext {
+  return { cli: directCommand(context, "cli.js"), packageRoot: context.root };
 }
 
 function describe(context: Context, detail: string): string {
@@ -845,28 +720,30 @@ function planOmpMcp(context: Context): Promise<Plan> {
   });
 }
 
-async function planCodexSkill(context: Context): Promise<Plan> {
-  const path = join(context.home, ".codex", "skills", "rerail", "SKILL.md");
+function codexSkillPath(context: Context, name: string): string {
+  const path = join(context.home, ".codex", "skills", name, "SKILL.md");
   assertInside(path, context.home, "home");
+  return path;
+}
+
+/** Removes a Codex skill only when Rerail wrote it for this installation; a skill someone else owns stays. */
+function planCodexSkillRemoval(context: Context, name: string, path: string, existing: TextFile): Plan {
+  if (!existing.text.includes(MANAGED_SKILL_MARKER) || !existing.text.includes(join(context.root, "dist", "cli.js"))) {
+    return { change: { harness: "codex", path, action: "unchanged", detail: `no $${name} skill from this Rerail installation to remove` } };
+  }
+  return planMutation(context, "codex", path, "updated", `remove the $${name} skill`, () => unlink(path));
+}
+
+async function planCodexSkill(context: Context, name: RerailCommandName): Promise<Plan> {
+  const path = codexSkillPath(context, name);
   const existing = await readTextFile(path);
-  const marker = "<!-- Managed by @neralabs/rerail -->";
-  const owned = existing.text.includes(marker);
-  if (existing.exists && !owned) {
-    return { change: { harness: "codex", path, action: "unchanged", detail: "user-owned Rerail skill: left in place" } };
+  if (existing.exists && !existing.text.includes(MANAGED_SKILL_MARKER)) {
+    return { change: { harness: "codex", path, action: "unchanged", detail: `user-owned $${name} skill: left in place` } };
   }
-  if (context.mode === "unregister") {
-    if (!owned || !existing.text.includes(join(context.root, "dist", "cli.js"))) {
-      return { change: { harness: "codex", path, action: "unchanged", detail: "no skill from this Rerail installation to remove" } };
-    }
-    return planMutation(context, "codex", path, "updated", "remove the Rerail skill", () => unlink(path));
-  }
-  const template = await readFile(join(context.templateRoot, "skills", "rerail", "SKILL.md"), "utf8");
-  if (!template.includes("RERAIL_COMMAND")) throw new Error("Packaged Rerail skill is missing its command placeholder");
-  const text = `${template.replaceAll("RERAIL_COMMAND", directCommand(context, "cli.js")).trimEnd()}\n\n${marker}\n`;
-  if (existing.text === text) {
-    return { change: { harness: "codex", path, action: "unchanged", detail: "Rerail skill: already in place" } };
-  }
-  return planMutation(context, "codex", path, existing.exists ? "updated" : "created", "register the Rerail session skill",
+  if (context.mode === "unregister") return planCodexSkillRemoval(context, name, path, existing);
+  const text = commandFileText("codex", name, commandContext(context));
+  if (existing.text === text) return { change: { harness: "codex", path, action: "unchanged", detail: `$${name} skill: already in place` } };
+  return planMutation(context, "codex", path, existing.exists ? "updated" : "created", `register the $${name} skill`,
     () => writeTextFile(path, text, existing));
 }
 
@@ -880,28 +757,38 @@ function promptCommandPath(context: Context, harness: PromptCommandHarness, name
 function planPromptCommandRemoval(context: Context, harness: PromptCommandHarness, name: string, path: string, existing: TextFile): Plan {
   if (!existing.exists) return { change: { harness, path, action: "unchanged", detail: `no /${name} command: nothing to remove` } };
   if (!existing.text.includes(join(context.root, "dist", "cli.js")))
-    return { change: { harness, path, action: "unchanged", detail: `/${name} command is not rerail's: left in place` } };
+    return { change: { harness, path, action: "unchanged", detail: `/${name} command is not Rerail's: left in place` } };
   return planMutation(context, harness, path, "updated", `remove the /${name} command`, () => unlink(path));
 }
 
 /** Prompt commands share root ownership checks, atomic installation, and conservative removal. */
-async function planPromptCommand(context: Context, harness: PromptCommandHarness, command: PromptCommand): Promise<Plan> {
-  const name = promptCommandName(command);
+async function planPromptCommand(context: Context, harness: PromptCommandHarness, name: RerailCommandName): Promise<Plan> {
   const path = promptCommandPath(context, harness, name);
   const existing = await readTextFile(path);
   if (context.mode === "unregister") return planPromptCommandRemoval(context, harness, name, path, existing);
-  const text = promptCommandText(context, harness, command);
+  const text = commandFileText(harness, name, commandContext(context));
   if (existing.exists && existing.text === text) return { change: { harness, path, action: "unchanged", detail: `/${name} command: already in place` } };
   return planMutation(context, harness, path, existing.exists ? "updated" : "created", `register the /${name} command`,
     () => writeTextFile(path, text, existing));
 }
 
-/** A retired command file of ours, in either mode; absent or foreign files produce no plan at all. */
-async function planRetiredPromptCommand(context: Context, harness: PromptCommandHarness, name: string): Promise<Plan | undefined> {
-  const path = promptCommandPath(context, harness, name);
-  const existing = await readTextFile(path);
-  const plan = planPromptCommandRemoval(context, harness, name, path, existing);
-  return plan.change.action === "unchanged" ? undefined : plan;
+/** The Rerail commands of one coding agent, plus removal of the ones earlier versions installed. */
+async function planAgentCommands(context: Context, harness: PromptCommandHarness | "codex"): Promise<Plan[]> {
+  const plans: Plan[] = [];
+  for (const { name } of RERAIL_COMMANDS) {
+    plans.push(harness === "codex" ? await planCodexSkill(context, name) : await planPromptCommand(context, harness, name));
+  }
+  // A retired file of ours goes in either mode; absent or foreign files produce no plan at all.
+  for (const name of harness === "codex" ? RETIRED_CODEX_SKILLS : RETIRED_PROMPT_COMMANDS) {
+    const path = harness === "codex" ? codexSkillPath(context, name) : promptCommandPath(context, harness, name);
+    const existing = await readTextFile(path);
+    if (!existing.exists) continue;
+    const plan = harness === "codex"
+      ? planCodexSkillRemoval(context, name, path, existing)
+      : planPromptCommandRemoval(context, harness, name, path, existing);
+    if (plan.change.action !== "unchanged") plans.push(plan);
+  }
+  return plans;
 }
 
 function planHarness(harness: Harness, context: Context): Promise<Plan> {
@@ -947,7 +834,6 @@ async function run(options: RegistrationOptions, mode: Mode): Promise<Registrati
   const context: Context = {
     mode,
     root,
-    templateRoot: options.templateRoot === undefined ? root : resolve(options.templateRoot),
     packageRoots: new Map(),
     home,
     nodePath: options.nodePath ?? process.execPath,
@@ -986,14 +872,7 @@ async function run(options: RegistrationOptions, mode: Mode): Promise<Registrati
         }
       }
     }
-    if (harness === "codex") plans.push(await planCodexSkill(context));
-    if (harness === "claude-code" || harness === "cursor") {
-      for (const command of PROMPT_COMMANDS[harness]) plans.push(await planPromptCommand(context, harness, command));
-      for (const name of RETIRED_PROMPT_COMMANDS) {
-        const plan = await planRetiredPromptCommand(context, harness, name);
-        if (plan !== undefined) plans.push(plan);
-      }
-    }
+    if (harness === "codex" || harness === "claude-code" || harness === "cursor") plans.push(...await planAgentCommands(context, harness));
     if (mode === "register" && projectDir !== undefined) plans.push(planProjectRules(harness, projectDir, context));
   }
   for (const plan of plans) await plan.apply?.();

@@ -112,7 +112,7 @@ The Rerail database (`$RERAIL_HOME/rerail.sqlite`) is the source of truth for ru
 
 Rule documents bundled with the package are core's own rules, under `code-rule-dsl/rules/` and seeded enabled (none ship today), and the rules of the packs core ships, under `packs/<id>/rules/` and seeded disabled. Rerail 0.1.0 ships one pack, the TSLint ports in `packs/tslint/rules/`. Bootstrap — run by every runtime start and `rerail daemon start` — seeds those documents into the catalog as project rules without clobbering yours: a new id is inserted with its `source_digest`; a row whose content still equals the document it was seeded from follows the bundled document when a package update changes it; a row you edited or created is never touched, and `enabled` is never reset. `rerail rules export` dumps the global and current-project rules to `$RERAIL_HOME/rules.json` (or `--output <file>`) and `rerail rules import <file>` loads one back. `rerail update` first copies the whole database to `$RERAIL_HOME/rerail.sqlite.pre-update`; `rerail reset` never touches rules.
 
-Rule packs (`packs/<id>/`, [pack format](docs/pack-format.md)) hold rule documents in `rules/` and a `pack.json` that lists each with its document, a title and a group, and a match definition (file globs or `package.json` dependencies) used to explain why it fits. Rerail ships one, **TSLint**: the 74 golden TSLint ports. A pack for a project's own conventions is added the same way: a pack directory with its rule documents and a `pack.json` listing them. `recommendRulePacks` matches a repository's files and manifests against every pack locally, with no model and no network, and returns each fitting pack with its rule count and the reason. Packs are not attached to repositories yet: choosing them and seeding their rules in place of the bundled rules is future work. See [Rule packs](docs/rule-packs.md).
+Rule packs (`packs/<id>/`, [pack format](docs/pack-format.md)) hold rule documents in `rules/` and a `pack.json` that lists each with its document, a title and a group, and a match definition (file globs or `package.json` dependencies) used to explain why it fits. Rerail ships two: **TSLint**, the 74 golden TSLint ports, and **complexity**, three cyclomatic complexity rules chosen by hand. A pack for a project's own conventions is added the same way: a pack directory with its rule documents and a `pack.json` listing them. `recommendRulePacks` matches a repository's files and manifests against every pack locally, with no model and no network, and returns each fitting pack with its rule count and the reason. Packs are not attached to repositories yet: choosing them and seeding their rules in place of the bundled rules is future work. See [Rule packs](docs/rule-packs.md).
 
 A file rule is a `rerail.policy/v1` document: a path `scope` and a list of regex, AST, or relational clauses the native engine evaluates, each with the violation it reports. The [code-rule DSL reference](docs/code-rule-dsl-reference.html) documents every construct, and [Tool-call rules](docs/tool-call-rules.md) covers structural matching of tool calls. A conversation rule file looks like this:
 
@@ -217,7 +217,7 @@ Prerequisites:
 
 `setup` installs the package under `~/.rerail/versions/<version>`, points `~/.rerail/current` and the launcher `~/.rerail/bin/rerail` (`rerail.cmd` on Windows) at it, registers Rerail with every coding harness it finds on the machine, and starts the daemon. Add `~/.rerail/bin` to `PATH` and restart the harnesses. Make the first run `npx @neralabs/rerail setup --dry-run` to see what it would change; `--harness <list>` limits registration. `rerail update` shells out to `npm` and uses the same `~/.npmrc`. `rerail install --remove` takes Rerail out of every coding agent, stops the daemon, and moves `rerail.sqlite` into a dated backup so rules and history are kept. [Installing Rerail](docs/installation.md) describes what setup writes, how to remove Rerail, and the managed-installation layout.
 
-Rerail is off in every repository until it is started there. OMP, Pi, Claude Code, and Cursor use the same spellings: `/rerail-start` starts Rerail in the current checkout and the worktrees that follow it (from the main checkout, every linked worktree without its own setting) and `/rerail-stop` stops them, immediately detaching the active runtime; in Codex use `rerail start` / `rerail stop`. OMP and Pi register these commands natively. Claude Code and Cursor receive named command files during `rerail install`; Claude Code also receives `/rerail-ui` and `/rerail-session`, and Cursor `/rerail-ui`, prompt commands that open the Rerail page as a tab in the Orca or Cursor window before falling back to the system browser. `/rerail-settings` edits saved defaults through native selectors; `/rerail-scan` prompts for one-shot options. Maintenance commands are `/rerail-status`, `/rerail-check`, `/rerail-update`, `/rerail-rollback`, and `/rerail-reset` (with confirmation). Restart the harness process after installing or rebuilding to refresh command registration. Claude Code also retains the general `/rerail` launcher guidance at `~/.claude/commands/rerail.md`, written by `rerail install` and removed by `rerail install --remove`. Codex cannot expose an exact third-party slash-command name; run `rerail start` or `rerail stop` in its terminal. See [Scan and settings controls](#scan-and-settings-controls) for targeting and host differences.
+Rerail is off in every repository until it is started there. Every coding agent gets one command set: `/rerail` (what Rerail is doing here, and every command), `/rerail-ui` (open the dashboard), `/rerail-create` (create a rule in your own words), `/rerail-start`, `/rerail-stop`, `/rerail-update` (install the newest version), and `/rerail-rage-quit` (remove Rerail from this computer; rules and history are kept in a backup). `/rerail-start` starts Rerail in the current checkout and the worktrees that follow it (from the main checkout, every linked worktree without its own setting) and `/rerail-stop` stops them, immediately detaching the active runtime. OMP and Pi register these commands natively. Claude Code and Cursor receive user-level command files in `~/.claude/commands/` and `~/.cursor/commands/` during `rerail install` (and `rerail setup`), removed by `rerail install --remove`. Codex receives one skill per command under `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-ui`, `$rerail-start`, and so on. Registration also removes the `/rerail-session` command file an earlier version wrote, when it is Rerail's own. Restart the coding agent after installing or rebuilding to refresh command registration. Settings, audits, status, update checks, rollback, and reset are CLI commands (`rerail settings`, `rerail scan`, `rerail status`, `rerail update check`, `rerail update rollback`, `rerail reset`). See [Scan and settings controls](#scan-and-settings-controls) for targeting and coding-agent differences.
 
 Supported native targets:
 
@@ -369,29 +369,19 @@ Results carry source revisions. Empty checkpoints do not invalidate buffered vio
 
 An audit returns violations and concrete execution failures, not an `unknown` verdict. Unreadable sources, unavailable generated ranges, missing capabilities, exhausted budgets, and evaluator errors are stored in `audits`, never rendered as conversation observations. `audit_requests_create` submits an audit request for a session and `GET /api/audits` exposes paginated audit records.
 
-OMP and Pi expose native argument-free commands with descriptions in slash completion. Claude Code and Cursor install the same `/rerail-start` and `/rerail-stop` names as user-level prompt commands; Claude Code also gets `/rerail-ui` and `/rerail-session`, Cursor `/rerail-ui`. Those prompt commands open the page as a tab in the Orca or Cursor window before falling back to the system browser:
+OMP and Pi expose the commands natively, with descriptions in slash completion. Claude Code and Cursor install the same names as user-level prompt commands, and Codex as `$rerail-*` skills:
 
-| Command           | Interaction                                                                                                                        |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `/rerail-settings` | View saved ongoing defaults; select scope or mode to change it. Each selection saves immediately.                                  |
-| `/rerail-scan`     | Choose `repository` or `git-diff`; the scan always runs log-only.                                                                  |
-| `/rerail-start`   | Start Rerail in this checkout and attach it to the current session; the first time in a repository also sets it up.                |
-| `/rerail-stop`    | Stop recording, evaluation, steering, and daemon autostart in this checkout. The shared daemon stays available to others.          |
-| `/rerail-ui`       | Open the Rerail rules page in the browser (the same link the status line's rule count carries).                                     |
-| `/rerail-session`  | Open this session's Rerail page in the browser (the same link `/rerail` prints).                                                     |
-| `/rerail-status`   | Show whether Rerail is stopped here, otherwise daemon and installed version status.                                               |
-| `/rerail-check`    | Check for an update without installing it.                                                                                         |
-| `/rerail-update`   | Install a Rerail update.                                                                                                            |
-| `/rerail-rollback` | Restore the previous installed version.                                                                                            |
-| `/rerail-reset`    | Confirm before deleting this repository's Rerail session history, across all its worktrees. Rules are kept.                         |
+| Command            | Interaction                                                                                                                        |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `/rerail`          | Show whether Rerail is on in this repository, its rule count, how often it steered this session, the session's dashboard link, and every command. Rendered by `rerail session`; Cursor gets the repository-level form. |
+| `/rerail-ui`       | Open the dashboard.                                                                                                                |
+| `/rerail-create`   | Create a rule in your own words: the coding agent drafts it, tests it with `rerail rules test <draft.json>`, reads it back, and adds it with `rerail rules add <draft.json>` only after you say yes. |
+| `/rerail-start`    | Start Rerail in this checkout and attach it to the current session; the first time in a repository also sets it up.               |
+| `/rerail-stop`     | Stop recording, evaluation, steering, and daemon autostart in this checkout. The shared daemon stays available to others.          |
+| `/rerail-update`   | Install the newest Rerail version.                                                                                                 |
+| `/rerail-rage-quit` | Remove Rerail from this computer (`rerail install --remove`); rules and history are kept in a backup. Asks first: OMP and Pi use a native selector, and Claude Code does not pre-approve the removal. |
 
-Escape cancels a pending choice without saving it or submitting a scan; settings
-already saved remain saved. Explicit scans cannot reconstruct AI-generated edit
-ranges, so AI-output is offered only as an automatic-scan default. Git-diff
-scans include tracked, staged, and untracked changed files while respecting Git
-ignore rules. `/rerail-scan` waits up to ten seconds, then reports the latest
-request status without changing saved defaults. Both commands bind to the
-session and checkout where the dialog opened.
+A rule draft for `/rerail-create` is `{ kind, rule, cases: { caught: [...], passed: [...] } }`. `rerail rules test` validates it and runs its cases plus a pass over the repository without writing anything; `rerail rules add` stores it as an enabled rule for this repository and refuses to replace a rule shipped by Rerail.
 
 Rerail is off in every repository until it is started there. Set-up and rules
 belong to the repository; on and off belong to each checkout. A linked worktree
@@ -409,17 +399,12 @@ the next one-shot Claude Code, Codex, or Cursor hook runs. It persists across
 coding agent and daemon restarts, does not delete history or rules, and does
 not stop the machine-wide daemon. In a stopped checkout no events are
 recorded, no file or conversation rules run, no guidance is delivered, and hooks do
-not autostart or contact the daemon. The footer in Claude Code and OMP reads
-"not on here" while a daemon is running to say so. `/rerail-status` reports
-whether Rerail is on in this checkout before the shared-daemon state.
-
-The exact `/rerail-start` and `/rerail-stop` names are available in OMP, Pi,
-Claude Code, and Cursor. Codex currently namespaces custom prompts rather than
-allowing an exact third-party slash-command name, so its equivalent is the
-terminal CLI spelling `rerail start` / `rerail stop`.
+not autostart or contact the daemon. The footer in Claude Code, OMP, and Pi reads
+`Rerail ○ not on here` while a daemon is running to say so. `/rerail` and `rerail status`
+report whether Rerail is on in this checkout.
 
 The terminal CLI retains `rerail scan` and `rerail settings` with flags. Outside
-the harness, select a session explicitly; Rerail never guesses the most recent:
+the coding agent, select a session explicitly; Rerail never guesses the most recent:
 
 ```sh
 rerail settings --session <session-id>

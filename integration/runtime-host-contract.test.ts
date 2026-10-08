@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { RerailRuntime } from "../src/runtime.js";
-import { seedContractCodeRuleForRoot } from "./contract-code-rule.js";
+import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedContractCodeRuleForRoot } from "./contract-code-rule.js";
+import { steerText } from "./steer-text.js";
 import { decodeRerailEventFrame } from "../src/event-protocol.js";
 import type { AdapterDelivery } from "../src/adapter-contract.js";
 
@@ -17,7 +18,7 @@ afterEach(() => {
 async function codeRuleSteers(runtime: RerailRuntime, sessionId: string, initial: readonly AdapterDelivery[], paths: string[]): Promise<AdapterDelivery[]> {
   const deliveries = [...initial];
   let poll = 0;
-  const steers = () => deliveries.filter(delivery => delivery.requested === "steer" && delivery.content.includes("CURSOR_EXECUTE"));
+  const steers = () => deliveries.filter(delivery => delivery.requested === "steer" && delivery.ruleIds.includes(CONTRACT_CURSOR_EXECUTE_RULE_ID));
   await expect.poll(async () => {
     if (paths.every(path => steers().some(delivery => delivery.content.includes(path)))) return [];
     deliveries.push(...await runtime.ingest({
@@ -71,7 +72,7 @@ describe("shared host engine", () => {
           sessionId: session.sessionId,
           requested: "steer",
           mechanism: "native-queue",
-          content: "CONVERSATION: preserve transaction atomicity",
+          content: await steerText("require-transaction-guidance", "CONVERSATION: preserve transaction atomicity"),
           // Conversation rule matches are not code-rule steers: steer attribution only credits code rules.
           ruleIds: [],
         },
@@ -94,7 +95,7 @@ describe("shared host engine", () => {
         output: { ok: true },
       });
       expect(await codeRuleSteers(runtime, session.sessionId, codeRule, ["api/route.py"])).toEqual([
-        expect.objectContaining({ requested: "steer", mechanism: "native-queue", content: expect.stringContaining("CURSOR_EXECUTE") }),
+        expect.objectContaining({ requested: "steer", mechanism: "native-queue", content: expect.stringContaining(CONTRACT_CURSOR_EXECUTE_MESSAGE) }),
       ]);
       const repeated = await runtime.ingest({
         kind: "user-prompt",
@@ -205,7 +206,7 @@ describe("shared host engine", () => {
         sessionId: session.sessionId,
         text: "Changed route.",
       });
-      expect(turn.filter(delivery => delivery.content.includes("CURSOR_EXECUTE"))).toEqual([]);
+      expect(turn.filter(delivery => delivery.ruleIds.includes(CONTRACT_CURSOR_EXECUTE_RULE_ID))).toEqual([]);
     } finally {
       await runtime?.dispose();
       await rm(root, { recursive: true, force: true });

@@ -6,6 +6,18 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { readClaudeStatusCommand, type ClaudeStatusLine } from "./claude-status-store.js";
 import { formatTerminalStatus, readPresentation } from "./session-presentation.js";
+import type { RepositoryStartState } from "./repository-start.js";
+
+/**
+ * The checkout's start state from the database, read-only: the status line refreshes often and must never
+ * take the write lock, so where a carry-over would have to run first it cannot say (undefined, "not running").
+ * Loaded only when no daemon answers: the reader links Drizzle and SQLite, about 170 ms per status-line run.
+ */
+async function localStartState(root: string): Promise<RepositoryStartState | undefined> {
+  // Static import cannot work here: it would load Drizzle and SQLite on every status-line run, daemon or not.
+  const reader = await import("./repository-start.js");
+  return reader.readOnlyStartState(root);
+}
 
 const STATUS_TIMEOUT_MS = 2_000;
 const MAX_INPUT_BYTES = 1_048_576;
@@ -26,7 +38,8 @@ async function rerailStatus(chunks: Buffer[], validInput: boolean): Promise<stri
     const { session_id: sessionId, cwd, workspace } = payload.data;
     const root = [workspace?.project_dir, cwd].find(path => path !== undefined && isAbsolute(path));
     if (root === undefined) return "Rerail | session unavailable";
-    const result = await readPresentation({ sessionId, host: "claude-code", cwd: root });
+    // Nothing autostarts where Rerail is off, so with no daemon answering the checkout's own state decides.
+    const result = await readPresentation({ sessionId, host: "claude-code", cwd: root, startState: () => localStartState(root) });
     return result.presence === "silent" ? "" : formatTerminalStatus(result);
   } catch {
     return "Rerail | unavailable";

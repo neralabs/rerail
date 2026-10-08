@@ -1,26 +1,41 @@
-import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { formatTerminalStatus, notOnHerePresentation, readPresentation } from "./session-presentation.js";
 
 const STATUS_KEY = "rerail";
 const REFRESH_MS = 5_000;
 
+/**
+ * What the footer needs from an OMP or Pi extension context. OMP schedules through its own timers so
+ * they stop with the session; Pi has none, so the footer falls back to an unref'd process timer.
+ */
+export interface PresentationContext {
+  cwd: string;
+  hasUI?: boolean;
+  sessionManager: { getSessionId(): string };
+  ui: { setWidget(key: string, content: string[] | undefined, options?: { placement?: "aboveEditor" | "belowEditor" }): void };
+  setInterval?(callback: () => void, ms: number): unknown;
+  clearTimer?(timer: never): void;
+}
+
 export interface OmpPresentation {
   /** `off`: Rerail is off in this checkout, so nothing runs and no daemon is there to ask. */
-  start(ctx: ExtensionContext, options?: { off?: boolean }): void;
+  start(ctx: PresentationContext, options?: { off?: boolean }): void;
   stop(): void;
 }
 
 /** Presentation follows the runtime's session lifecycle, never its enforcement path. */
-export function createOmpPresentation(): OmpPresentation {
-  let current: ExtensionContext | undefined;
-  let timer: NodeJS.Timeout | undefined;
+export function createOmpPresentation(host: "omp" | "pi" = "omp"): OmpPresentation {
+  let current: PresentationContext | undefined;
+  let timer: unknown;
   let generation = 0;
   let pending = false;
 
   function stop(): void {
     generation += 1;
     if (current?.hasUI) {
-      if (timer !== undefined) current.clearTimer(timer);
+      if (timer !== undefined) {
+        if (current.clearTimer === undefined) clearInterval(timer as NodeJS.Timeout);
+        else current.clearTimer(timer as never);
+      }
       current.ui.setWidget(STATUS_KEY, undefined);
     }
     timer = undefined;
@@ -28,7 +43,7 @@ export function createOmpPresentation(): OmpPresentation {
     pending = false;
   }
 
-  async function refresh(ctx: ExtensionContext): Promise<void> {
+  async function refresh(ctx: PresentationContext): Promise<void> {
     const sessionId = ctx.sessionManager.getSessionId();
     const cwd = ctx.cwd;
     const startedGeneration = generation;
@@ -36,7 +51,7 @@ export function createOmpPresentation(): OmpPresentation {
       && ctx.sessionManager.getSessionId() === sessionId && ctx.cwd === cwd;
     pending = true;
     try {
-      const presentation = await readPresentation({ sessionId, host: "omp", cwd });
+      const presentation = await readPresentation({ sessionId, host, cwd });
       if (!isCurrent()) return;
       ctx.ui.setWidget(STATUS_KEY,
         presentation.presence === "silent" ? undefined : [formatTerminalStatus(presentation)],
@@ -51,7 +66,7 @@ export function createOmpPresentation(): OmpPresentation {
     }
   }
 
-  function start(ctx: ExtensionContext, options: { off?: boolean } = {}): void {
+  function start(ctx: PresentationContext, options: { off?: boolean } = {}): void {
     stop();
     if (!ctx.hasUI) return;
     current = ctx;
@@ -60,9 +75,10 @@ export function createOmpPresentation(): OmpPresentation {
       ctx.ui.setWidget(STATUS_KEY, [formatTerminalStatus(notOnHerePresentation())], { placement: "belowEditor" });
       return;
     }
-    timer = ctx.setInterval(() => {
+    const tick = (): void => {
       if (!pending) void refresh(ctx);
-    }, REFRESH_MS);
+    };
+    timer = ctx.setInterval === undefined ? setInterval(tick, REFRESH_MS).unref() : ctx.setInterval(tick, REFRESH_MS);
     // Daemon reads must not hold up session initialization or steer delivery.
     void refresh(ctx);
   }

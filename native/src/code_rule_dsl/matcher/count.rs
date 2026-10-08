@@ -4,7 +4,8 @@ use super::util::{THREE_VALUED, UNKNOWN, UTIL_EXCEEDED};
 use super::{StopBy, spend_util_step};
 use crate::code_rule_dsl::budget;
 use ast_grep_core::matcher::Matcher;
-use ast_grep_core::meta_var::MetaVarEnv;
+use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
+use ast_grep_core::source::Content;
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -13,19 +14,39 @@ use std::ops::ControlFlow;
 /// `count`: how many nodes along a relation's walk match its rule, bounded by `min`/`max`
 /// (a Rerail extension). The walk is the relation's own, except that `has` keeps descending
 /// below a match (every matching descendant counts) and stops only where `stopBy` says. The
-/// rule reads the caller's bindings; like `not`, nothing it binds is kept.
+/// rule reads the caller's bindings; like `not`, nothing it binds is kept. With `as`, the count
+/// itself is bound as text (`CountBinding`).
 #[derive(Clone)]
 pub(crate) struct Count {
     /// `Inside`, `Has`, `Precedes` or `Follows`.
     pub(crate) relation: AstMatcher,
     pub(crate) min: usize,
     pub(crate) max: Option<usize>,
+    pub(crate) binding: Option<CountBinding>,
+}
+
+/// `as` and `offset`: a count that holds binds `offset` plus the exact count, in decimal, as a
+/// transformed variable named `name`, which only a finding's message reads. The walk then runs to
+/// its end rather than stopping at `min`, and a count it cannot know exactly is unknown.
+#[derive(Clone, Debug)]
+pub(crate) struct CountBinding {
+    pub(crate) name: String,
+    pub(crate) offset: i64,
+}
+
+impl CountBinding {
+    fn bind<D: Doc>(&self, env: &mut Cow<MetaVarEnv<'_, D>>, found: usize) {
+        let value = i128::try_from(found).unwrap_or(i128::MAX) + i128::from(self.offset);
+        let bytes = <D::Source as Content>::decode_str(&value.to_string()).into_owned();
+        env.to_mut()
+            .insert_transformation(&MetaVariable::Multiple, &self.name, bytes);
+    }
 }
 
 impl Count {
     /// Three-valued: a node whose verdict is unknown may or may not count, and an unknown stop
     /// verdict may hide any number of further nodes. When the bounds could go either way the count
-    /// fails with `UNKNOWN` set.
+    /// fails with `UNKNOWN` set; so does a bound count (`as`) whose exact value is not known.
     pub(super) fn holds<'tree, D: Doc>(
         &self,
         node: &Node<'tree, D>,
@@ -50,9 +71,10 @@ impl Count {
             let mut probe = Cow::Borrowed(env.as_ref());
             if rule.match_node_with_env(candidate, &mut probe).is_some() {
                 found += 1;
-                // Past `max` the answer is no; at `min` with no `max` it is yes.
+                // Past `max` the answer is no; at `min` with no `max` it is yes, unless the
+                // count is bound, which needs every node counted.
                 if self.max.is_some_and(|max| found > max)
-                    || (self.max.is_none() && found >= self.min)
+                    || (self.max.is_none() && self.binding.is_none() && found >= self.min)
                 {
                     return ControlFlow::Break(());
                 }
@@ -102,16 +124,26 @@ impl Count {
         if three {
             UNKNOWN.set(saved);
         }
-        if walked.is_break() && UTIL_EXCEEDED.get().is_some() {
+        // A bound count breaks off before its end only past `max`; any other break is a spent
+        // budget, and a partial count is no value to report.
+        if walked.is_break()
+            && (UTIL_EXCEEDED.get().is_some()
+                || (self.binding.is_some() && self.max.is_none_or(|max| found <= max)))
+        {
             return false;
         }
         // The true count lies in `found..=found + unknown`, unbounded above after an unknown stop.
         let high = (!open.get()).then_some(found + unknown);
-        let holds = found >= self.min
+        let exact = self.binding.is_none() || high == Some(found);
+        let holds = exact
+            && found >= self.min
             && self
                 .max
                 .is_none_or(|max| high.is_some_and(|high| high <= max));
         if holds {
+            if let Some(binding) = &self.binding {
+                binding.bind(env, found);
+            }
             return true;
         }
         let fails =
@@ -235,6 +267,191 @@ mod tests {
             CAPABILITIES.to_owned(),
         ));
         assert!(reason.contains("capture.ARG"), "{reason}");
+    }
+
+    /// The typescript `ast` query (`rule`, and `utils` or `constraints`) as one clause reporting
+    /// `violation`.
+    fn bound_clause(mut ast: Value, violation: Value) -> Value {
+        ast["language"] = json!("typescript");
+        clause_document(
+            json!({ "id": "ast-match", "forbid": { "ast": ast }, "violation": violation }),
+        )
+    }
+
+    fn report(message: &str) -> Value {
+        json!({ "anchor": "witness.span", "code": "CYCLOMATIC_COMPLEXITY", "message": message })
+    }
+
+    /// The messages of the violations `ast` reports in `source`, each rendering `message`.
+    fn messages(ast: Value, message: &str, source: &str) -> Vec<String> {
+        let document = bound_clause(ast, report(message));
+        let compiled = compile_document_with(document, &capabilities_with(|_| {}))
+            .unwrap_or_else(|error| panic!("{}", error.reason));
+        let result = evaluate_file(&compiled, "typescript", "a.ts", source);
+        assert_eq!(result["failures"], json!([]), "{result}");
+        result["violations"]
+            .as_array()
+            .expect("violations")
+            .iter()
+            .map(|violation| violation["message"].as_str().expect("message").to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_bound_count_renders_its_whole_count_plus_offset_in_the_message() {
+        let ifs = |n: usize| "  if (a) {}\n".repeat(n);
+        let source = format!(
+            "function wide(a) {{\n{}}}\nfunction narrow(a) {{\n{}}}\n",
+            ifs(9),
+            ifs(2)
+        );
+        let decisions = json!({ "kind": "if_statement", "stopBy": "end" });
+        let rule =
+            |count: Value| json!({ "rule": { "kind": "function_declaration", "count": count } });
+        let message = "Cyclomatic complexity $CCN (limit 6).";
+        // Past `min` the walk goes on to the end: nine decisions, plus one.
+        assert_eq!(
+            messages(
+                rule(json!({ "has": decisions, "min": 6, "as": "CCN", "offset": 1 })),
+                message,
+                &source
+            ),
+            ["Cyclomatic complexity 10 (limit 6)."]
+        );
+        // Each function binds its own count; `offset` defaults to 0 and may be negative.
+        assert_eq!(
+            messages(
+                rule(json!({ "has": decisions, "min": 2, "as": "CCN" })),
+                message,
+                &source
+            ),
+            [
+                "Cyclomatic complexity 9 (limit 6).",
+                "Cyclomatic complexity 2 (limit 6)."
+            ]
+        );
+        assert_eq!(
+            messages(
+                rule(json!({ "has": decisions, "max": 2, "as": "CCN", "offset": -3 })),
+                message,
+                &source
+            ),
+            ["Cyclomatic complexity -1 (limit 6)."]
+        );
+        // A utility shares its caller's environment, the count's value too.
+        let utility = json!({
+            "rule": { "matches": "complex" },
+            "utils": { "complex": { "kind": "function_declaration",
+                "count": { "has": decisions, "min": 6, "as": "CCN", "offset": 1 } } },
+        });
+        assert_eq!(
+            messages(utility, message, &source),
+            ["Cyclomatic complexity 10 (limit 6)."]
+        );
+    }
+
+    #[test]
+    fn a_bound_count_that_may_miss_a_node_is_unknown_and_reports_nothing() {
+        // `if (u)` may or may not be a decision: `f` has two or three, `g` exactly two.
+        let source = "function f(a, u) {\n  if (a) {}\n  if (a) {}\n  if (u) {}\n}\n\
+                      function g(a) {\n  if (a) {}\n  if (a) {}\n}\n";
+        let decisions =
+            json!({ "kind": "if_statement", "stopBy": "end", "testUnknown": "^if \\(u\\)" });
+        let unbound = json!({ "has": decisions, "min": 2 });
+        let bound = json!({ "has": decisions, "min": 2, "as": "CCN" });
+        let rule = |rule: Value| json!({ "rule": rule });
+        let function = |count: &Value| json!({ "kind": "function_declaration", "count": count });
+        // Without `as` the two known decisions reach `min` in both.
+        assert_eq!(messages(rule(function(&unbound)), "m", source), ["m", "m"]);
+        // With it `f`'s exact count is unknown: no finding, and no finding for its negation either.
+        assert_eq!(messages(rule(function(&bound)), "$CCN", source), ["2"]);
+        assert_eq!(
+            messages(
+                rule(json!({ "kind": "function_declaration", "not": { "count": bound } })),
+                "m",
+                source
+            ),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn only_a_bound_count_walks_past_min() {
+        let capabilities = capabilities_with(|capabilities| {
+            capabilities["limits"]["maxVisitedNodes"] = json!(10_000)
+        });
+        let source = format!("{}x;{}\n", "{ y; ".repeat(200), "}".repeat(200));
+        let run = |count: Value| {
+            let ast = json!({ "rule": { "kind": "statement_block", "count": count } });
+            let rule = compile_document_with(bound_clause(ast, violation()), &capabilities)
+                .unwrap_or_else(|error| panic!("{}", error.reason));
+            evaluate_file(&rule, "typescript", "a.ts", &source)
+        };
+        let identifiers = json!({ "kind": "identifier", "stopBy": "end" });
+        // Without `as` each block stops at its first identifier, a few nodes in.
+        assert_violations(&run(json!({ "has": identifiers, "min": 1 })), 200);
+        // With it every block counts its whole subtree: quadratic in depth, past the budget.
+        let result = run(json!({ "has": identifiers, "min": 1, "as": "N" }));
+        assert_eq!(
+            result["failures"],
+            json!([{ "clauseId": "ast-match", "code": "budget-exceeded", "message": UtilLimit::Work.message(), "path": "a.ts" }]),
+            "{result}"
+        );
+    }
+
+    #[test]
+    fn a_count_value_is_for_the_message_alone() {
+        let count =
+            json!({ "has": { "kind": "if_statement", "stopBy": "end" }, "min": 1, "as": "CCN" });
+        let bound = json!({ "rule": { "kind": "function_declaration", "count": count } });
+        let mut constrained = bound.clone();
+        constrained["constraints"] = json!({ "CCN": { "regex": "^1$" } });
+        for (ast, violation, expected) in [
+            (
+                bound.clone(),
+                json!({ "anchor": "witness.span", "code": "C", "message": "m", "fix": "$CCN" }),
+                "/clauses/0/violation/fix: `$CCN` is a count's value, which only a message may interpolate",
+            ),
+            (
+                bound.clone(),
+                json!({ "anchor": "capture.CCN", "code": "C", "message": "m" }),
+                "/clauses/0/violation/anchor: `capture.CCN` names no capture; the query binds no captures",
+            ),
+            (
+                bound.clone(),
+                report("$$$CCN"),
+                "/clauses/0/violation/message: `$$$CCN`: a count's value is text; use `$CCN`",
+            ),
+            (
+                json!({ "rule": { "kind": "function_declaration", "not": { "count": count } } }),
+                report("$CCN"),
+                "/clauses/0/violation/message: `$CCN` names no capture; the query binds no captures; write `\\$CCN` for literal text",
+            ),
+            (
+                json!({ "rule": { "kind": "function_declaration", "count": count,
+                    "has": { "kind": "identifier", "pattern": "$CCN" } } }),
+                report("$CCN"),
+                "/clauses/0/violation/message: `$CCN` names both a capture and a count's value; rename one",
+            ),
+            (
+                json!({ "rule": { "kind": "function_declaration", "count": count,
+                    "has": { "kind": "identifier", "pattern": "$NAME" },
+                    "compare": { "left": "CCN", "op": "eq", "right": "NAME" } } }),
+                report("$CCN"),
+                "/clauses/0/forbid/ast/rule/compare/left: `$CCN` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)",
+            ),
+            (
+                constrained,
+                report("$CCN"),
+                "/clauses/0/forbid/ast/constraints/CCN: metavariable `$CCN` is not defined by the rule, its utils, or its constraints",
+            ),
+        ] {
+            let reason = rejection(compile_document_with(
+                bound_clause(ast, violation),
+                &capabilities_with(|_| {}),
+            ));
+            assert_eq!(reason, expected);
+        }
     }
 
     #[test]

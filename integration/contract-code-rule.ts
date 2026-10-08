@@ -5,13 +5,15 @@ import { openScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
 
 /**
  * The example code rule the engine/host contract tests exercise: an api-scoped rule that flags
- * `cursor.execute(` with the CURSOR_EXECUTE code the assertions look for. The tests own it rather than
- * depending on which rules ship as bundled defaults; its compliant form (a transaction helper) carries no
- * `cursor.execute(`, so it isolates the mechanism these tests measure.
+ * `cursor.execute(`; assertions identify its steer by the rule id in the steer header and by its message.
+ * The tests own it rather than depending on which rules ship as bundled defaults; its compliant form (a
+ * transaction helper) carries no `cursor.execute(`, so it isolates the mechanism these tests measure.
  */
+export const CONTRACT_CURSOR_EXECUTE_RULE_ID = "contract:cursor-execute";
+export const CONTRACT_CURSOR_EXECUTE_MESSAGE = "Direct cursor access bypasses the typed API and backend portability.";
 export const CONTRACT_CURSOR_EXECUTE_CODE_RULE = {
   format: "rerail.policy/v1",
-  id: "contract:cursor-execute",
+  id: CONTRACT_CURSOR_EXECUTE_RULE_ID,
   revision: 1,
   mode: "steer",
   scope: { include: ["api/**/*"], exclude: [] },
@@ -19,7 +21,7 @@ export const CONTRACT_CURSOR_EXECUTE_CODE_RULE = {
     {
       id: "cursor-execute",
       forbid: { regex: { pattern: "cursor\\.execute\\s*\\(", source: "file.content" } },
-      violation: { anchor: "witness.span", code: "CURSOR_EXECUTE", message: "Direct cursor access bypasses the typed API and backend portability." },
+      violation: { anchor: "witness.span", code: "CURSOR_EXECUTE", message: CONTRACT_CURSOR_EXECUTE_MESSAGE },
     },
   ],
 };

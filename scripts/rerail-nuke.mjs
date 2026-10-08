@@ -12,8 +12,11 @@ import { BACKUP_PREFIX, BACKUP_RERAIL_HOME, launcherPath, loadSqlite, processAli
 
 /** The coding agents `rerail install` registers with, and the config directory whose presence selects each. */
 export const HARNESS_CONFIG_DIRS = { omp: join(".omp", "agent"), pi: join(".pi", "agent"), "claude-code": ".claude", codex: ".codex", cursor: ".cursor" };
-export const CLAUDE_COMMANDS = ["rerail.md", "rerail-start.md", "rerail-stop.md", "rerail-ui.md", "rerail-session.md"];
-export const CURSOR_COMMANDS = ["rerail-start.md", "rerail-stop.md", "rerail-ui.md"];
+/** The Rerail command set (`src/rerail-commands.ts`): command files for Claude Code and Cursor, skills for Codex. */
+export const RERAIL_COMMAND_NAMES = ["rerail", "rerail-ui", "rerail-create", "rerail-start", "rerail-stop", "rerail-update", "rerail-rage-quit"];
+/** Plus `/rerail-session`, which an earlier version wrote. */
+export const CLAUDE_COMMANDS = [...RERAIL_COMMAND_NAMES.map(name => `${name}.md`), "rerail-session.md"];
+export const CURSOR_COMMANDS = RERAIL_COMMAND_NAMES.map(name => `${name}.md`);
 export const CLAUDE_PLUGIN = "rerail@rerail-dev";
 export const CLAUDE_MARKETPLACE = "rerail-dev";
 export const MCP_SERVER = "rerail";
@@ -348,12 +351,12 @@ function configBackupSteps({ home, backupRoot, targets, matches }) {
   });
 }
 
-/** Rerail's prompt commands and Codex skill into the backup, only when they run the Rerail home's CLI. */
+/** Rerail's prompt commands and Codex skills into the backup, only when they run the Rerail home's CLI. */
 function commandSteps({ home, backupRoot, matches }) {
   const moves = [
     ...CLAUDE_COMMANDS.map(name => [join(home, ".claude", "commands", name), join(backupRoot, "claude-commands", name)]),
     ...CURSOR_COMMANDS.map(name => [join(home, ".cursor", "commands", name), join(backupRoot, "cursor-commands", name)]),
-    [join(home, ".codex", "skills", "rerail"), join(backupRoot, "codex-skill-rerail")],
+    ...RERAIL_COMMAND_NAMES.map(name => [join(home, ".codex", "skills", name), join(backupRoot, `codex-skill-${name}`)]),
   ];
   return moves
     .filter(([source]) => referencesRerailHome(source, matches))

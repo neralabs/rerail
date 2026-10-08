@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 export const GIT_EXECUTABLE = process.platform === "win32" ? String.raw`C:\Program Files\Git\cmd\git.exe` : "/usr/bin/git";
 
@@ -30,6 +30,13 @@ export function repositoryIdentityLocation(workspace: string): RepositoryIdentit
   const [commonDirectory, gitDirectory] = directories.stdout.trim().split("\n").map(line => resolve(line.trim()));
   if (commonDirectory === undefined || gitDirectory === undefined) throw new Error(`could not resolve Git common directory for ${workspaceRoot}`);
   return { git: true, workspaceRoot, identityPath: join(commonDirectory, "rerail-repository-id"), main: commonDirectory === gitDirectory };
+}
+
+/** The repository's own name: the main checkout's folder for a linked worktree, else the checkout's folder. */
+export function repositoryName(workspace: string): string {
+  const location = repositoryIdentityLocation(workspace);
+  const commonDirectory = dirname(location.identityPath);
+  return location.git && basename(commonDirectory) === ".git" ? basename(dirname(commonDirectory)) : basename(location.workspaceRoot);
 }
 
 /** The repository id `workspace` already has, without creating one; passive readers use it. */

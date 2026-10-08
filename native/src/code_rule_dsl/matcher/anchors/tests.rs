@@ -502,7 +502,7 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             }
         }
     }
-    assert_eq!(queries.len(), 119, "pinned catalog query inventory");
+    assert_eq!(queries.len(), 122, "pinned catalog query inventory");
     // Every catalog grammar needs a fixture here; an unknown language fails rather than being skipped.
     let fixtures = [
         (
@@ -514,6 +514,11 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             "typescript",
             GrammarDialect::TypeScript,
             "function run(db: any, id: string): string {\n  const rows = db.query(\"select * from users where id = \" + id);\n  return rows as any;\n}\n",
+        ),
+        (
+            "javascript",
+            GrammarDialect::JavaScript,
+            "function route(a, b, c) {\n  if (a) return 1;\n  if (b) return 2;\n  if (c) return 3;\n  for (const x of a) { if (x) return 4; }\n  while (b) { if (c) break; }\n  return a && b ? 5 : 6;\n}\n",
         ),
     ];
     for (query, _) in &queries {

@@ -7,7 +7,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "./adapter-contract.js";
 import { claudeWorkspace } from "./claude-event-adapter.js";
-import { readPresentation, readRulesDashboard } from "./session-presentation.js";
+import { readPresentation, readRulesDashboard, readSummaryState } from "./session-presentation.js";
+import { renderRerailSummary } from "./rerail-summary.js";
 import {
   assertLocalEngineEntitlement,
   authorizedUpdateChannel,
@@ -19,7 +20,10 @@ import {
   type SignedUpdatePolicy,
 } from "./activation-cli.js";
 import { CustomerActivationManager, CustomerProfileStore } from "./customer-profile.js";
-import { repositoryName, startRerail, stopRerail, workspaceStartState, type RepositorySetupIo } from "./repository-start.js";
+import {
+  readOnlyStartState, startRerail, stopRerail, workspaceStartState, type RepositorySetupIo, type RepositoryStartState,
+} from "./repository-start.js";
+import { readRepositoryIdAt, repositoryIdentityLocation, repositoryName } from "./repository-identity.js";
 import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "./daemon.js";
 import { defaultRerailDatabasePath, RERAIL_DATABASE_FILE } from "./database.js";
 import {
@@ -36,7 +40,8 @@ import { runRerailMcpBridge } from "./mcp-bridge.js";
 import { runResetCommand, runRulesCommand, snapshotDatabaseBeforeUpdate } from "./project-cli.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
-import { openScopedRuleCatalog } from "./scoped-rule-catalog.js";
+import { runRuleDraftCommand } from "./rule-draft.js";
+import { openScopedRuleCatalog, ScopedRuleCatalog } from "./scoped-rule-catalog.js";
 import { parseHostNames, runInstallCommand, runSetupCommand } from "./setup-cli.js";
 import { defaultRerailHome } from "./rerail-home.js";
 import {
@@ -108,12 +113,14 @@ function usage(): string {
     "  rerail status",
     "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--open]",
     "  rerail daemon stop",
-    "  rerail session [<host> <session-id>] [--open]",
+    "  rerail session [<host> [<session-id>]] [--open]",
     "  rerail ui [--print]",
     "  rerail seed",
     "  rerail reset",
     "  rerail rules export [--output <rules.json>]",
     "  rerail rules import <rules.json>",
+    "  rerail rules test <draft.json> [--repo <dir>] [--json]",
+    "  rerail rules add <draft.json> [--repo <dir>]",
     "  rerail [--profile <name>] events",
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
     "  rerail settings --session <id> [--scope repository|touched-files|ai-output] [--mode log|steer] [--json]",
@@ -134,8 +141,8 @@ function printDaemon(daemon: RunningDaemon): void {
   process.stdout.write(`Rerail daemon ${state.version} running at ${state.url} (pid ${state.pid}, ${health.ui} UI)\n`);
   process.stdout.write(`Database: ${health.database.path}${health.database.exists ? "" : " (not created yet)"}\n`);
   process.stdout.write(health.native.ok
-    ? `Native kernel: ok (version ${health.native.kernelVersion})\n`
-    : `Native kernel: unavailable: ${health.native.error}\n`);
+    ? `Engine: ok (version ${health.native.kernelVersion})\n`
+    : `Engine: unavailable: ${health.native.error}\n`);
 }
 
 async function runDaemonStartCommand(args: readonly string[], home: string): Promise<number> {
@@ -196,8 +203,8 @@ function runSeedCommand(args: readonly string[]): number {
     catalog.close();
   }
   process.stdout.write(
-    `Seeded ${database}: ${result.codeRules} policy rules, `
-    + `${result.conversationRules} cosine rules, ${result.sessions} session, ${result.events} events, `
+    `Seeded ${database}: ${result.codeRules} file rules, `
+    + `${result.conversationRules} conversation rules, ${result.sessions} session, ${result.events} events, `
     + `${result.workLinks} work links.\n`,
   );
   return 0;
@@ -262,24 +269,62 @@ async function runUpdateCommand(
   return 0;
 }
 
-/** Read the caller's exact session; Codex supplies its thread identity to shell tools. `--open` also opens the session page. */
+/**
+ * Rules on in `workspace`'s repository, for `/rerail` where the coding agent cannot name its session.
+ * A status read: it never writes, and where the catalog cannot be read (busy, or not yet set up) the
+ * summary drops the count line rather than failing.
+ */
+function enabledRuleCount(workspace: string): number | null {
+  const location = repositoryIdentityLocation(workspace);
+  const repositoryId = readRepositoryIdAt(location.identityPath);
+  if (repositoryId === undefined) return null;
+  let catalog: ScopedRuleCatalog | undefined;
+  try {
+    catalog = ScopedRuleCatalog.openReadOnly(defaultRerailDatabasePath(), { repositoryId, workspaceRoot: location.workspaceRoot });
+    return catalog?.list({ enabled: true }).length ?? null;
+  } catch (error) {
+    process.stderr.write(`rerail: could not count this repo's rules: ${error instanceof Error ? error.message : String(error)}\n`);
+    return null;
+  } finally {
+    catalog?.close();
+  }
+}
+
+/**
+ * `/rerail`: what Rerail is doing for the caller's exact session, then every command. Codex supplies its
+ * thread identity to shell tools; Cursor names only itself, so it gets the repository's state instead.
+ * `--open` also opens the session page (or the dashboard, without a session).
+ */
 async function runSessionCommand(rawArgs: readonly string[]): Promise<number> {
   const open = rawArgs.includes("--open");
   const args = open ? rawArgs.filter(argument => argument !== "--open") : rawArgs;
   const host = args.length === 0 ? "codex" : args[0];
   const sessionId = args.length === 0 ? process.env.CODEX_THREAD_ID : args[1];
-  if ((args.length !== 0 && args.length !== 2) || host === undefined
-      || !Object.hasOwn(ADAPTER_CAPABILITIES, host) || !sessionId?.trim()) {
-    throw new Error("Usage: rerail session [<host> <session-id>] [--open]; inside Codex, rerail session uses CODEX_THREAD_ID");
+  if (args.length > 2 || host === undefined || !Object.hasOwn(ADAPTER_CAPABILITIES, host)
+      || (args.length !== 1 && !sessionId?.trim())) {
+    throw new Error("Usage: rerail session [<host> [<session-id>]] [--open]; inside Codex, rerail session uses CODEX_THREAD_ID");
   }
-  const presentation = await readPresentation({
-    host: host as RerailHost, sessionId, cwd: claudeWorkspace(process.cwd()), onDemand: true,
-  });
-  const link = presentation.url === null ? "" : `\n${presentation.url}`;
-  process.stdout.write(`${presentation.text}${link}\n`);
+  const cwd = claudeWorkspace(process.cwd());
+  // Nothing autostarts where Rerail is off, so with no daemon answering the checkout's own state decides,
+  // read without ever taking the write lock.
+  const startState = (): RepositoryStartState | undefined => readOnlyStartState(cwd);
+  const presentation = sessionId === undefined
+    ? null
+    : await readPresentation({ host: host as RerailHost, sessionId, cwd, onDemand: true, startState });
+  const repositoryState = presentation === null ? await readSummaryState(cwd, host as RerailHost, startState) : presentation.repositoryState;
+  const rulesUrl = (await readRulesDashboard({ cwd })).url;
+  process.stdout.write(`${renderRerailSummary({
+    presentation,
+    repositoryState,
+    ruleCount: presentation === null && repositoryState === "started" ? enabledRuleCount(cwd) : null,
+    rulesUrl,
+    repositoryName: repositoryName(cwd),
+    sigil: host === "codex" ? "$" : "/",
+  })}\n`);
   if (!open) return 0;
-  if (presentation.url === null) return 3;
-  if (await openDashboard(presentation.url) === "orca-tab") process.stdout.write("Opened in the Orca window.\n");
+  const page = presentation?.url ?? rulesUrl;
+  if (page === null) return 3;
+  if (await openDashboard(page) === "orca-tab") process.stdout.write("Opened in the Orca window.\n");
   return 0;
 }
 
@@ -420,6 +465,7 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "install") return await runInstallCommand(args, { home, packageRoot, updater });
   if (command === "session") return await runSessionCommand(args);
   if (command === "seed") return runSeedCommand(args);
+  if (command === "rules" && (args[0] === "test" || args[0] === "add")) return await runRuleDraftCommand(args[0], args.slice(1), usage);
   if (command === "rules") return runRulesCommand(args, usage);
   if (command === "reset") return runResetCommand(args, usage);
   const daemonExit = await runDaemonCommand(command, args, home);

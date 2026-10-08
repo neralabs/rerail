@@ -102,13 +102,13 @@ describe("SqliteRuleStore.seed", () => {
 const MINIMUM_BUNDLED_RULES = 10;
 
 describe("bundled rules", () => {
-  it("ships only the TSLint pack: every document parses as a file rule with a unique tslint:<rule> id, disabled by default", () => {
+  it("ships only opt-in packs: every document parses as a file rule with a unique <pack>:<rule> id, disabled by default", () => {
     const documents = loadBundledRules();
     expect(documents.length).toBeGreaterThan(MINIMUM_BUNDLED_RULES);
     expect(new Set(documents.map(document => document.rule.id)).size).toBe(documents.length);
     expect(documents.every(document => document.kind === "file")).toBe(true);
     expect(documents.every(document => document.enabledByDefault === false)).toBe(true);
-    expect(documents.every(document => /^tslint:[a-z0-9-]+$/u.test(document.rule.id))).toBe(true);
+    expect(documents.every(document => /^(?:complexity|tslint):[a-z0-9-]+$/u.test(document.rule.id))).toBe(true);
     expect(documents.map(document => document.rule.id)).not.toContain("tslint:file-header");
   });
 

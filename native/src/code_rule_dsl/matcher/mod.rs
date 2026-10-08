@@ -39,7 +39,7 @@ pub(super) use binding::BindingTest;
 pub(super) use binds::{BindingCount, BindingFilter, Binds, Redefines, ScopeName};
 pub(super) use captures::{Capture, CaptureAnalysis, collect_variables, parse_exported};
 pub(super) use compare::{Collation, CompareOp, CompareText, Comparison, EqClass, SemanticText};
-pub(super) use count::Count;
+pub(super) use count::{Count, CountBinding};
 pub(crate) use each::binding_range;
 pub(crate) use exported::{WITNESS_NODE, export_text, exported_span, is_span_variable};
 pub(crate) use format_args::{FormatArgs, Style};
@@ -424,12 +424,9 @@ impl AstMatcher {
     fn binds_nothing(&self) -> bool {
         match self {
             Self::Semantic(semantic) => semantic.binds_nothing(),
-            Self::Kind(_)
-            | Self::Regex(_)
-            | Self::Not(_)
-            | Self::Compare(_)
-            | Self::Count(_)
-            | Self::Never => true,
+            Self::Kind(_) | Self::Regex(_) | Self::Not(_) | Self::Compare(_) | Self::Never => true,
+            // A count binds its value under `as`.
+            Self::Count(count) => count.binding.is_none(),
             #[cfg(test)]
             Self::TestUnknown(_) => true,
             Self::All(items) | Self::Any(items) => items.iter().all(Self::binds_nothing),

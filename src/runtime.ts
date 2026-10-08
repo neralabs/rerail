@@ -32,6 +32,7 @@ import { conversationRuleLoader } from "./rule-sources.js";
 import { RULE_MODES } from "./rule-mode.js";
 import { restorableRule, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
+import { steerBlock } from "./rerail-steer.js";
 import { SqliteSessionStore } from "./session-store.js";
 import type {
   ContentItem,
@@ -1007,7 +1008,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         sessionId: sample.sessionId,
         requested: match.mode,
         mechanism: ADAPTER_CAPABILITIES[state.descriptor.host].delivery[match.mode],
-        content: match.action.content,
+        content: steerBlock(match.ruleId, match.action.content),
         // Conversation rule matches are not code-rule steers, so they carry no code-rule ids.
         ruleIds: [],
       };

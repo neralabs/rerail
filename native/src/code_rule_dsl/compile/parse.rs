@@ -245,10 +245,16 @@ pub(super) fn validate_sub_rule(
     }
     if let Some(count) = rule.get("count") {
         let count_path = format!("{path}/count");
-        let (key, relation, _, _) = count_bounds(count, &count_path)?;
+        let spec = count_bounds(count, &count_path)?;
+        if spec.binding.is_some() {
+            return Err(invalid(format!(
+                "{count_path}/as: a parsed tree's count binds nothing; count in the ast query's \
+                 own rule to report its value"
+            )));
+        }
         validate_sub_relation(
-            relation,
-            &format!("{count_path}/{key}"),
+            spec.relation,
+            &format!("{count_path}/{}", spec.key),
             grammar,
             hosted,
             limits,
@@ -546,23 +552,24 @@ pub(super) fn compile_sub_rule(
     }
     if let Some(count) = rule.get("count") {
         let count_path = format!("{path}/count");
-        let (key, relation, min, max) = count_bounds(count, &count_path)?;
+        let spec = count_bounds(count, &count_path)?;
         let (inner, stop) = compile_sub_relation(
-            relation,
+            spec.relation,
             grammar,
-            &format!("{count_path}/{key}"),
+            &format!("{count_path}/{}", spec.key),
             transform,
             host,
             gaps,
         )?;
         let constructor = AST_RELATIONS
             .iter()
-            .find_map(|(name, constructor)| (*name == key).then_some(*constructor))
+            .find_map(|(name, constructor)| (*name == spec.key).then_some(*constructor))
             .expect("count_bounds returns a relation key");
         terms.push(AstMatcher::Count(Box::new(Count {
             relation: constructor(Related::new(inner), stop),
-            min,
-            max,
+            min: spec.min,
+            max: spec.max,
+            binding: None,
         })));
     }
     if let Some(compare) = rule.get("compare") {

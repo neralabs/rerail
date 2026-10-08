@@ -42,7 +42,7 @@ function violations(compiled: NativeCompiledCodeRuleDsl, path: string, source: s
 
 const bundled = loadBundledRules(bundledRulesDirectory());
 const documents = bundled.filter(document => document.enabledByDefault !== false);
-const optIn = bundled.filter(document => document.enabledByDefault === false);
+const optIn = bundled.filter(document => document.enabledByDefault === false && document.rule.id.startsWith("tslint:"));
 /** Rule id -> rule file stem; the fixture file shares the stem. Core ships no rules of its own today, so the directory may be absent. */
 const stemByRuleId: Record<string, string> = Object.fromEntries(
   (existsSync(bundledRulesDirectory()) ? readdirSync(bundledRulesDirectory()) : [])
@@ -83,7 +83,7 @@ describe("bundled rules", () => {
 describe("TSLint pack", () => {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
   it("is exactly the golden set, consistent with conformance.json and the PASS audit", () => {
-    expect(corePackDirectories().map(directory => join(directory, "rules"))).toEqual([PACK_DIRECTORY]);
+    expect(corePackDirectories().map(directory => join(directory, "rules"))).toContain(PACK_DIRECTORY);
     expect(optIn.map(document => document.rule.id).sort()).toEqual(goldenRules().map(rule => `tslint:${rule}`));
     expect(Object.keys(loadGoldenManifest().rules).sort()).toEqual(goldenRules());
     expect(checkGolden()).toEqual([]);

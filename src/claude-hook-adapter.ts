@@ -1,6 +1,6 @@
 import { rm } from "node:fs/promises";
 import { hookText, type AdapterDelivery, type RerailEventLoop } from "./adapter-contract.js";
-import { claudeHookEvents } from "./claude-event-adapter.js";
+import { claudeHookEvents, claudeWorkspace } from "./claude-event-adapter.js";
 import {
   deliveryRuleIds,
   deliveryText,
@@ -11,6 +11,8 @@ import {
   type HookInput,
   type HookOutput,
 } from "./hook-adapter.js";
+import { sessionStartNote, steerHeadlines } from "./rerail-steer.js";
+import { dashboardOrigin, linkDeliveries } from "./session-presentation.js";
 
 const CLAUDE_EVENTS: EventTable = {
   SessionStart: true,
@@ -38,13 +40,20 @@ export function supportsClaudeHook(input: HookInput): boolean {
   return CLAUDE_EVENTS[requiredText(input, "hook_event_name")] === true;
 }
 
-export function claudeHookOutput(hook: string, deliveries: readonly AdapterDelivery[]): HookOutput {
+/**
+ * Steers reach the model as `additionalContext` and the person as one `systemMessage` line per rule
+ * (Claude Code shows it under the tool call). `note` is the session-start note, which only the model sees.
+ */
+export function claudeHookOutput(hook: string, deliveries: readonly AdapterDelivery[], note?: string): HookOutput {
   const content = deliveryText(deliveries);
-  if (content === undefined || CONTEXT_EVENTS[hook] !== true) return {};
-  return prepareGuidanceOutput(
-    { hookSpecificOutput: { hookEventName: hook, additionalContext: content } },
-    deliveryRuleIds(deliveries),
-  );
+  const context = [note, content].filter(text => text !== undefined).join("\n\n");
+  if (context === "" || CONTEXT_EVENTS[hook] !== true) return {};
+  const headlines = content === undefined ? [] : steerHeadlines(content);
+  const output = {
+    ...(headlines.length === 0 ? {} : { systemMessage: headlines.join("\n") }),
+    hookSpecificOutput: { hookEventName: hook, additionalContext: context },
+  };
+  return content === undefined ? output : prepareGuidanceOutput(output, deliveryRuleIds(deliveries));
 }
 
 export async function handleClaudeEvent(
@@ -53,12 +62,16 @@ export async function handleClaudeEvent(
   storageRoot: string,
 ): Promise<HookOutput> {
   const hook = requiredText(input, "hook_event_name");
+  const sessionId = requiredText(input, "session_id");
   const deliveries: AdapterDelivery[] = [];
   for (const event of claudeHookEvents(input)) deliveries.push(...await eventLoop.ingest(event));
-  const path = pendingPath(storageRoot, "claude-code", requiredText(input, "session_id"));
+  const path = pendingPath(storageRoot, "claude-code", sessionId);
   if (hook === "SessionEnd") {
     await rm(path, { force: true });
     return {};
   }
-  return claudeHookOutput(hook, await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS));
+  // The runtime keeps steer links relative; they point at this checkout's dashboard only here.
+  const cwd = claudeWorkspace(input.cwd);
+  const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "claude-code", sessionId) : undefined;
+  return claudeHookOutput(hook, await linkDeliveries(await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS), cwd), note);
 }

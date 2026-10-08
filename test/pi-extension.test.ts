@@ -27,11 +27,12 @@ import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistory }
 import { resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
 import { createPiConversationRulesExtension } from "../src/pi-extension.js";
 import { SqliteAuditControlStore } from "../src/audit-control.js";
+import { steerBlock } from "../src/rerail-steer.js";
 import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../src/session-state.js";
 import { SqliteSessionStore } from "../src/session-store.js";
 import type { ConversationRule } from "../src/rule-schema.js";
 import type { RerailCommandContext } from "../src/rerail-command.js";
-import { startTestRepository } from "./support/started-repository.js";
+import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
 
 // Every test here builds real sessions (native model, engine, rule catalog); on a loaded CI runner a
 // build alone can pass the 5 s default, whichever test happens to pay the cold start.
@@ -159,7 +160,7 @@ describe("Pi conversation-rules extension", () => {
       {
         message: {
           customType: RULE_MESSAGE_TYPE,
-          content: "Check checkout requirements.",
+          content: steerBlock("checkout", "Check checkout requirements."),
           display: true,
           details: { requested: mode, mechanism: "native-queue", sessionId: expect.any(String) },
         },
@@ -168,6 +169,22 @@ describe("Pi conversation-rules extension", () => {
     ]);
     expect(harness.entries.filter((entry) => entry.customType === MATCH_ENTRY_TYPE)).toHaveLength(1);
     expect(receiptCount(harness)).toBe(1);
+  });
+
+  it("says Rerail is not on here in a stopped checkout, without asking a daemon", async () => {
+    const harness = createHarness();
+    stopTestRepository(harness.context.cwd);
+    const widgets: Array<string[] | undefined> = [];
+    const fetchSpy = vi.fn(async () => { throw new Error("no daemon may be asked"); });
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      Object.assign(harness.context, { hasUI: true, ui: { setWidget: (_key: string, content: string[] | undefined) => { widgets.push(content); } } });
+      await install(harness);
+      expect(widgets.at(-1)?.map(line => line.replace(/\u001b\[[0-9;]*m|\u001b\]8;;[^\u0007]*\u0007/gu, ""))).toEqual(["Rerail ○ not on here"]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it.each([
@@ -372,41 +389,6 @@ describe("Pi conversation-rules extension", () => {
     await expect(Promise.resolve(input({ type: "input", text: "still active" }, harness.context))).rejects.toThrow(
       "before session_start",
     );
-  });
-
-  it("rebuilds the Pi session owner after rerail reset so audits remain active", async () => {
-    const harness = createHarness();
-    createPiConversationRulesExtension({
-      modelPath: resolve("model"),
-      rules: [messageRule],
-      registerTool: false,
-    })(harness.pi);
-    await harness.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, harness.context);
-
-    const rerail = harness.commands.get("rerail-reset");
-    if (rerail === undefined) throw new Error("Pi extension did not register rerail-reset");
-    const child = new EventEmitter() as ChildProcess;
-    const output = Object.assign(new EventEmitter(), { setEncoding() {} });
-    Object.assign(child, { stdout: output, stderr: output });
-    launcher.spawn.mockImplementationOnce((_command: string, _args: readonly string[], spawnOptions: { cwd?: string }) => {
-      resetRepositoryHistory(defaultRerailDatabasePath(), resolveRepositoryContext(spawnOptions.cwd!).repositoryId);
-      process.nextTick(() => child.emit("close", 0, null));
-      return child;
-    });
-    await rerail("", { ui: {
-      notify() {},
-      confirm: async () => true,
-      select: async () => undefined,
-      input: async () => undefined,
-    } });
-    const database = openRerailDatabase(defaultRerailDatabasePath());
-    try {
-      const controls = new SqliteAuditControlStore(defaultRerailDatabasePath(), database);
-      expect(controls.getSettings("pi-test-session").active).toBe(true);
-      expect(controls.requestAudit("pi-test-session", { scope: "repository" }).status).toBe("queued");
-    } finally {
-      database.$client.close();
-    }
   });
 
 

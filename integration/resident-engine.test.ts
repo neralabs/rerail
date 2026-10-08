@@ -9,7 +9,9 @@ import { runCursorHook } from "../src/cursor-hook.js";
 import { stopDaemon } from "../src/daemon-control.js";
 import type { AdapterDelivery } from "../src/adapter-contract.js";
 import { SqliteSessionReader } from "../src/session-store.js";
-import { seedContractCodeRule } from "./contract-code-rule.js";
+import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedContractCodeRule } from "./contract-code-rule.js";
+import { cursorRelayed, steerText } from "./steer-text.js";
+import { steerHeadlines } from "../src/rerail-steer.js";
 import { startTestRepository, startTestRepositoryById } from "../test/support/started-repository.js";
 const originalRerailHome = process.env.RERAIL_HOME;
 let isolatedRerailHome: string;
@@ -84,12 +86,13 @@ describe("engine service", () => {
           sessionId: session.sessionId,
           text: "continue",
         }),
-        "CURSOR_EXECUTE",
+        CONTRACT_CURSOR_EXECUTE_RULE_ID,
       )).toEqual([
         expect.objectContaining({
           sessionId: session.sessionId,
           mechanism: "native-queue",
-          content: expect.stringContaining("CURSOR_EXECUTE"),
+          content: expect.stringContaining(CONTRACT_CURSOR_EXECUTE_MESSAGE),
+          ruleIds: expect.arrayContaining([CONTRACT_CURSOR_EXECUTE_RULE_ID]),
         }),
       ]);
       await ingestEngineEvent(socketPath, { kind: "session-end", eventId: "end", sessionId: session.sessionId });
@@ -136,8 +139,7 @@ describe("engine service", () => {
         },
         options,
       );
-      expect(initial).toEqual({});
-      expect(await runCodexHook(
+      const stop = await runCodexHook(
         {
           ...common,
           hook_event_name: "Stop",
@@ -146,10 +148,14 @@ describe("engine service", () => {
           last_assistant_message: "Done.",
         },
         options,
-      )).toEqual({
-        decision: "block",
-        reason: expect.stringContaining("CURSOR_EXECUTE"),
-      });
+      );
+      const steer = await steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, `${CONTRACT_CURSOR_EXECUTE_MESSAGE} (api/route.py:2:5)`, common.cwd);
+      const shown = expect.stringContaining(steerHeadlines(steer)[0]!);
+      // Policy evaluation settles in the background: the steer returns as PostToolUse context when it is
+      // ready by then, otherwise as the Stop follow-up — exactly once either way.
+      expect([initial, stop]).toEqual(Object.keys(initial).length === 0
+        ? [{}, { decision: "block", reason: expect.stringContaining(steer), systemMessage: shown }]
+        : [{ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: expect.stringContaining(steer) }, systemMessage: shown }, {}]);
     } finally {
       await service?.close();
       await rm(root, { recursive: true, force: true });
@@ -204,7 +210,7 @@ describe("engine service", () => {
         }),
         "DAEMON_ENGINE_MATCH",
       )).toEqual([
-        expect.objectContaining({ content: "DAEMON_ENGINE_MATCH", mechanism: "additional-context" }),
+        expect.objectContaining({ content: await steerText("resident", "DAEMON_ENGINE_MATCH"), mechanism: "additional-context" }),
       ]);
     } finally {
       await daemon?.close();
@@ -253,8 +259,11 @@ describe("engine service", () => {
           session,
           text: "continue",
         }),
-        "CURSOR_EXECUTE",
-      )).toEqual([expect.objectContaining({ content: expect.stringContaining("CURSOR_EXECUTE") })]);
+        CONTRACT_CURSOR_EXECUTE_RULE_ID,
+      )).toEqual([expect.objectContaining({
+        content: expect.stringContaining(CONTRACT_CURSOR_EXECUTE_MESSAGE),
+        ruleIds: expect.arrayContaining([CONTRACT_CURSOR_EXECUTE_RULE_ID]),
+      })]);
     } finally {
       await service?.close();
       await rm(root, { recursive: true, force: true });
@@ -318,7 +327,7 @@ describe("engine service", () => {
             text: "continue",
           }, configuration),
           project,
-        )).toEqual([expect.objectContaining({ content: project, sessionId: session.sessionId })]);
+        )).toEqual([expect.objectContaining({ content: await steerText("project-rule", project), sessionId: session.sessionId })]);
       }
     } finally {
       await service?.close();
@@ -375,6 +384,7 @@ describe("engine service", () => {
         },
         options,
       );
+      const recovery = await steerText("recovery", "CURSOR_RECOVERY", common.workspace_roots[0]!);
       let pollCount = 0;
       await expect.poll(
         async () => {
@@ -389,7 +399,7 @@ describe("engine service", () => {
           return runCursorHook({ ...tool, hook_event_name: "postToolUse", tool_output: "written" }, options);
         },
         { timeout: 10_000, interval: 10 },
-      ).toEqual({ additional_context: "CURSOR_RECOVERY" });
+      ).toEqual({ additional_context: cursorRelayed(recovery) });
     } finally {
       await service?.close();
       await rm(root, { recursive: true, force: true });
@@ -467,7 +477,7 @@ describe("engine service", () => {
         outputs.push(await runCursorHook({ ...read, hook_event_name: "preToolUse", tool_input: { file_path: file } }, options));
         outputs.push(await runCursorHook({ ...read, hook_event_name: "postToolUse", tool_output: input.content }, options));
         const content = outputs.flatMap(Object.values).filter((value): value is string => typeof value === "string").join("\n");
-        return ["CURSOR_WRITE_CALL", "CURSOR_WRITE_RESULT", "CURSOR_EXECUTE"].filter(marker => !content.includes(marker));
+        return ["CURSOR_WRITE_CALL", "CURSOR_WRITE_RESULT", CONTRACT_CURSOR_EXECUTE_RULE_ID].filter(marker => !content.includes(marker));
       }, { timeout: 10_000, interval: 10 }).toEqual([]);
     } finally {
       await service?.close();
@@ -504,12 +514,13 @@ describe("engine service", () => {
       const options = { storageRoot, modelPath: resolve("model"), kernelSocketPath: socketPath };
       const common = { cwd: root, session_id: "stop-rule", turn_id: "turn" };
       await runCodexHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, options);
+      const reason = await steerText("turn-steer", "CONTINUE_AFTER_STOP", common.cwd);
       expect(
         await runCodexHook(
           { ...common, hook_event_name: "Stop", last_assistant_message: "Preserve database transaction atomicity" },
           options,
         ),
-      ).toEqual({ decision: "block", reason: "CONTINUE_AFTER_STOP" });
+      ).toEqual({ decision: "block", reason, systemMessage: steerHeadlines(reason).join("\n") });
     } finally {
       await service?.close();
       await rm(root, { recursive: true, force: true });
@@ -634,7 +645,7 @@ describe("engine service", () => {
           },
           options,
         ),
-      ).toEqual({ additional_context: marker });
+      ).toEqual({ additional_context: cursorRelayed(await steerText("transcript-prompt", marker, common.workspace_roots[0]!)) });
       expect(
         await runCursorHook(
           {
@@ -748,7 +759,7 @@ describe("engine service", () => {
           },
           options,
         ),
-      ).toEqual({ additional_context: marker });
+      ).toEqual({ additional_context: cursorRelayed(await steerText("native-prompt", marker, common.workspace_roots[0]!)) });
       expect(
         await runCursorHook(
           {

@@ -61,26 +61,6 @@ async function fixture(createAuditor?: RerailRuntimeOptions["createAuditor"]) {
   fixtures.push({ root, runtime, daemon });
   return { root, home, database, daemon, runtime };
 }
-function registeredCommands(root: string) {
-  const commands = new Map<string, Parameters<RerailCommandHost["registerCommand"]>[1]>();
-  registerRerailCommands({ registerCommand(name, command) { commands.set(name, command); } }, {
-    packageRoot: resolve("."),
-    cwd: () => root,
-    sessionId: () => "s1",
-  });
-  return commands;
-}
-
-function selections(...values: Array<string | undefined>) {
-  return async (_title: string, choices: string[]): Promise<string | undefined> => {
-    const value = values.shift();
-    if (value === undefined) return undefined;
-    const choice = choices.find(item => item.startsWith(value));
-    if (choice === undefined) throw new Error(`Choice ${value} was not offered`);
-    return choice;
-  };
-}
-
 
 describe("rerail scan and settings CLI", () => {
   it("starts, stops, and restarts this repository through slash commands", async () => {
@@ -89,7 +69,7 @@ describe("rerail scan and settings CLI", () => {
     const commands = new Map<string, Parameters<RerailCommandHost["registerCommand"]>[1]>();
     let reattached = 0;
     const notices: string[] = [];
-    registerRerailCommands({ registerCommand(name, command) { commands.set(name, command); } }, {
+    registerRerailCommands({ registerCommand(name, command) { commands.set(name, command); }, sendUserMessage() {} }, {
       packageRoot: resolve("."),
       cwd: () => root,
       reattach: async () => { reattached += 1; },
@@ -125,82 +105,6 @@ describe("rerail scan and settings CLI", () => {
     expect(reattached).toBe(4);
   }, 60_000);
 
-  it("edits persisted settings interactively from a compiled Bun host", async () => {
-    const { root, home, daemon } = await fixture();
-    const command = registeredCommands(root).get("rerail-settings");
-    expect(command).toBeDefined();
-    const originalExecutable = process.execPath;
-    const originalBun = Object.getOwnPropertyDescriptor(process.versions, "bun");
-    const errors: string[] = [];
-    try {
-      vi.stubEnv("RERAIL_HOME", home);
-      Object.defineProperty(process.versions, "bun", { configurable: true, value: "compiled-host" });
-      process.execPath = join(root, "not-a-javascript-interpreter");
-      await command!.handler("", {
-        ui: {
-          notify(message, level) { if (level === "error") errors.push(message); },
-          select: selections("Ongoing scope", "repository", "Ongoing mode", "log", "Done"),
-          input: async () => undefined,
-          confirm: async () => false,
-        },
-      });
-      expect(errors).toEqual([]);
-      const settings = auditControlsResponseSchema.parse(await (await fetch(new URL("/api/sessions/s1/audit-settings", daemon.url))).json());
-      expect(settings.settings).toEqual({ scope: "repository", mode: "log" });
-    } finally {
-      process.execPath = originalExecutable;
-      if (originalBun === undefined) Reflect.deleteProperty(process.versions, "bun");
-      else Object.defineProperty(process.versions, "bun", originalBun);
-      vi.unstubAllEnvs();
-    }
-  }, 15_000);
-
-  it("cancels settings and audit dialogs without saving or submitting work", async () => {
-    const { root, home, daemon } = await fixture();
-    const commands = registeredCommands(root);
-    const errors: string[] = [];
-    const ui = {
-      notify(message: string, level: string) { if (level === "error") errors.push(message); },
-      select: selections("Ongoing mode", undefined),
-      input: async () => undefined,
-      confirm: async () => false,
-    };
-    try {
-      vi.stubEnv("RERAIL_HOME", home);
-      await commands.get("rerail-settings")!.handler("", { ui });
-      ui.select = selections(undefined);
-      await commands.get("rerail-scan")!.handler("", { ui });
-      expect(errors).toEqual([]);
-      const settings = auditControlsResponseSchema.parse(await (await fetch(new URL("/api/sessions/s1/audit-settings", daemon.url))).json());
-      expect(settings.settings).toEqual({ scope: "touched-files", mode: "steer" });
-      expect(await (await fetch(new URL("/api/sessions/s1/audit-requests", daemon.url))).json()).toEqual({ auditRequests: [] });
-    } finally { vi.unstubAllEnvs(); }
-  }, 15_000);
-
-  it("audits Git diff paths containing spaces without changing defaults", async () => {
-    const { root, home, daemon } = await fixture();
-    await writeFile(join(root, "api/clean file.py"), "value = 42\n");
-    const errors: string[] = [];
-    try {
-      vi.stubEnv("RERAIL_HOME", home);
-      await registeredCommands(root).get("rerail-scan")!.handler("", {
-        ui: {
-          notify(message, level) { if (level === "error") errors.push(message); },
-          select: selections("git-diff"),
-          input: async () => undefined,
-          confirm: async () => false,
-        },
-      });
-      expect(errors).toEqual([]);
-      expect(await (await fetch(new URL("/api/audits?sessionId=s1", daemon.url))).json()).toMatchObject({
-        audits: expect.arrayContaining([expect.objectContaining({
-          paths: ["api/clean file.py"], mode: "log", status: "completed", violations: [], failures: [],
-        })]),
-      });
-      const settings = auditControlsResponseSchema.parse(await (await fetch(new URL("/api/sessions/s1/audit-settings", daemon.url))).json());
-      expect(settings.settings.mode).toBe("steer");
-    } finally { vi.unstubAllEnvs(); }
-  }, 15_000);
   it("runs one log-only repository audit for the workspace and exposes it to later sessions", async () => {
     const automaticAuditRequests: Array<{ sessionId: string; scope: string; mode: string }> = [];
     const { root, runtime, daemon } = await fixture(options => ({

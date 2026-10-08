@@ -11,6 +11,8 @@ import {
   type HookInput,
   type HookOutput,
 } from "./hook-adapter.js";
+import { sessionStartNote, steerHeadlines } from "./rerail-steer.js";
+import { dashboardOrigin, linkDeliveries } from "./session-presentation.js";
 import { steers } from "./rule-mode.js";
 
 export type CursorHookInput = HookInput;
@@ -117,15 +119,25 @@ export function cursorHookEvent(input: CursorHookInput): AdapterEvent {
   throw new Error(`Unsupported Cursor hook event: ${hook}`);
 }
 
-export function cursorHookOutput(hook: string, deliveries: readonly AdapterDelivery[]): CursorHookOutput {
+/** Cursor has no message line for the person, so the model is asked to relay each steer's one line itself. */
+function relayedSteer(content: string): string {
+  const headlines = steerHeadlines(content);
+  if (headlines.length === 0) return content;
+  return `${content}\n\nCursor shows the person none of this. Start your next reply to them with:\n${headlines.join("\n")}`;
+}
+
+/** `note` is the session-start note, which only the model sees. */
+export function cursorHookOutput(hook: string, deliveries: readonly AdapterDelivery[], note?: string): CursorHookOutput {
   if (hook === "beforeSubmitPrompt") return { continue: true };
   if (hook === "preToolUse") return { permission: "allow" };
   const content = deliveryText(deliveries);
-  if (content === undefined) return {};
   const ruleIds = deliveryRuleIds(deliveries);
   if (hook === "sessionStart" || hook === "postToolUse") {
-    return prepareGuidanceOutput({ additional_context: content }, ruleIds);
+    const context = [note, content === undefined ? undefined : relayedSteer(content)].filter(text => text !== undefined).join("\n\n");
+    if (context === "") return {};
+    return content === undefined ? { additional_context: context } : prepareGuidanceOutput({ additional_context: context }, ruleIds);
   }
+
   return {};
 }
 
@@ -155,5 +167,7 @@ export async function handleCursorEvent(
     // Preserve the steer until a post-tool result can actually carry it.
     sessionStart: true, postToolUse: true,
   });
-  return cursorHookOutput(hook, available);
+  // The runtime keeps steer links relative; they point at this checkout's dashboard only here.
+  const note = hook === "sessionStart" ? sessionStartNote(await dashboardOrigin(descriptor.cwd), "cursor", descriptor.sessionId) : undefined;
+  return cursorHookOutput(hook, await linkDeliveries(available, descriptor.cwd), note);
 }

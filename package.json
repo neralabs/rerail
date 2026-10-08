@@ -55,12 +55,13 @@
     ".codex-plugin",
     ".cursor-plugin",
     "hooks",
-    "skills",
     "CHANGELOG.md",
     "THIRD_PARTY_NOTICES",
     "code-rule-dsl/rules",
     "packs/tslint/pack.json",
-    "packs/tslint/rules"
+    "packs/tslint/rules",
+    "packs/complexity/pack.json",
+    "packs/complexity/rules"
   ],
   "scripts": {
     "build": "npm run build:clean && npm run build:native && npm run build:ts && npm run build:omp && npm run build:events && npm run build:cursor && npm run build:claude && npm run build:codex && npm run build:ui",

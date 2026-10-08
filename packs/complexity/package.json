@@ -1,0 +1,24 @@
+{
+  "name": "@neralabs/rerail-pack-complexity",
+  "version": "0.1.0",
+  "description": "Rerail rule pack: cyclomatic complexity limits for Python, TypeScript and JavaScript functions.",
+  "license": "Apache-2.0",
+  "files": [
+    "pack.json",
+    "rules",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@neralabs/rerail": ">=0.1.0-0 <0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@neralabs/rerail": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "restricted"
+  }
+}

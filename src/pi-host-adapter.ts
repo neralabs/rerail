@@ -13,6 +13,8 @@ import {
 import { registerPiSemanticTools, type NativeSemanticToolRuntime } from "./native-semantic-tools.js";
 import { registerPiConversationRulesCommand, type PiConversationRulesCommandRuntime } from "./pi-command.js";
 import { registerRerailCommands } from "./rerail-command.js";
+import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote } from "./rerail-steer.js";
+import { dashboardOrigin } from "./session-presentation.js";
 import { registerPiConversationRulesTool, type PiConversationRulesToolRuntime } from "./pi-tool.js";
 
 interface PiMessage {
@@ -144,6 +146,15 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
       throw new Error("cosine-rules extension received input before session_start");
     }
     await runtime.ingest(userPromptEvent(session.sessionId, `input:${randomUUID()}`, event.text));
+  });
+  // The first prompt of each session also carries the session-start note, hidden from the person (design A1).
+  const notedSessions = new Set<string>();
+  pi.on("before_agent_start", async () => {
+    const session = await runtime.sessionFor();
+    if (session === undefined || notedSessions.has(session.sessionId)) return;
+    notedSessions.add(session.sessionId);
+    const content = sessionStartNote(await dashboardOrigin(session.cwd), "pi", session.sessionId);
+    return { message: { customType: SESSION_NOTE_MESSAGE_TYPE, content, display: false } };
   });
   pi.on("message_update", async event => {
     if (event.message.role !== "assistant" || event.assistantMessageEvent.type !== "text_delta") return;

@@ -24,11 +24,12 @@ export function bundledRulesDirectory(): string {
 }
 
 /**
- * The rule packs core ships inside its own package (`package.json` `files`) until it loads installed packs: TSLint.
+ * The rule packs core ships inside its own package (`package.json` `files`) until it loads installed packs: TSLint and
+ * complexity.
  * Each is a `packs/<id>/` directory in the pack layout (`docs/pack-format.md`); its `rules/` documents are seeded
  * disabled, and its `pack.json` is read by `src/rule-packs.ts`.
  */
-export const CORE_RULE_PACKS = ["tslint"] as const;
+export const CORE_RULE_PACKS = ["tslint", "complexity"] as const;
 
 /** `<package>/packs/<id>` for each pack core ships. */
 export function corePackDirectories(): string[] {

@@ -14,23 +14,34 @@ function violation(overrides: Partial<CodeRuleViolation> = {}): CodeRuleViolatio
 }
 
 describe("renderSteer", () => {
-  it("renders a violation without a fix as one line", () => {
-    expect(renderSteer([violation()])).toBe("NO_LOG (src/a.ts:3:15): log of user");
+  it("renders one rule's violation as a Rerail steer with its location and Why link", () => {
+    expect(renderSteer([violation()])).toBe([
+      "▲ Rerail · p  Steered.",
+      "log of user (src/a.ts:3:15)",
+      "Why? → #rule/p",
+    ].join("\n"));
   });
 
-  it("appends a single-line suggested fix with its replaced range", () => {
+  it("groups violations under their rule, in first-seen order, with each fix under its violation", () => {
     const fixed = violation({ fix: { span: span(2, 2, 2, 19), text: "logger.info(user)" } });
-    expect(renderSteer([fixed, violation({ code: "OTHER" })])).toBe([
-      "NO_LOG (src/a.ts:3:15): log of user",
+    const other = violation({ ruleId: "acme:no-print", message: "print call", span: span(5, 0, 5, 5) });
+    expect(renderSteer([fixed, other, violation({ span: span(7, 1, 7, 2) })])).toBe([
+      "▲ Rerail · p  Steered.",
+      "log of user (src/a.ts:3:15)",
       "  Suggested fix: replace 3:3-3:20 with `logger.info(user)`",
-      "OTHER (src/a.ts:3:15): log of user",
+      "log of user (src/a.ts:8:2)",
+      "Why? → #rule/p",
+      "",
+      "▲ Rerail · acme:no-print  Steered.",
+      "print call (src/a.ts:6:1)",
+      "Why? → #rule/acme%3Ano-print",
     ].join("\n"));
   });
 
   it("indents a multi-line fix and cuts one longer than the steer limit", () => {
     const multi = violation({ fix: { span: span(1, 2, 3, 4), text: "logger.info(a, {\n    b,\n  })" } });
-    expect(renderSteer([multi])).toBe([
-      "NO_LOG (src/a.ts:3:15): log of user",
+    expect(renderSteer([multi])).toContain([
+      "log of user (src/a.ts:3:15)",
       "  Suggested fix: replace 2:3-4:5 with:",
       "    logger.info(a, {",
       "        b,",

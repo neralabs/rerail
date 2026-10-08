@@ -18,11 +18,14 @@ import { defaultRerailDatabasePath } from "./database.js";
 import { daemonEngineSocket } from "./daemon-control.js";
 import { ingestEngineEvent } from "./engine-service.js";
 import { isMainRerailBuild } from "./rerail-build.js";
+import { linkDeliveries } from "./session-presentation.js";
 
 export interface RerailEventStreamOptions {
   eventLoop: RerailEventLoop;
   input: Readable;
   output: Writable;
+  /** The checkout steers link to when an event names no session cwd; defaults to the process cwd. */
+  workspaceRoot?: string | undefined;
 }
 
 async function writeLine(output: Writable, line: string): Promise<void> {
@@ -47,29 +50,40 @@ function errorFrame(line: string, error: unknown): RerailEventErrorFrame {
   return { eventId: eventIdFromLine(line), error: { code, message } };
 }
 
+/**
+ * Ingests one frame and returns its result. The runtime keeps steer links relative; this stream is the
+ * harness's adapter, so it links them for the session's checkout (remembered from events that name it).
+ */
+async function frameResult(line: string, eventLoop: RerailEventLoop, sessionCwds: Map<string, string>, workspaceRoot: string): Promise<string> {
+  try {
+    const { event } = decodeRerailEventFrame(line);
+    const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
+    if (event.session !== undefined) sessionCwds.set(sessionId, event.session.cwd);
+    const deliveries = await eventLoop.ingest(event);
+    const linked = await linkDeliveries(deliveries, sessionCwds.get(sessionId) ?? workspaceRoot);
+    if (event.kind === "session-end") sessionCwds.delete(sessionId);
+    return encodeRerailEventResult({ eventId: event.eventId, deliveries: linked });
+  } catch (error) {
+    return encodeRerailEventResult(errorFrame(line, error));
+  }
+}
+
 export async function serveRerailEventStream(options: RerailEventStreamOptions): Promise<void> {
   const lines = createInterface({ input: options.input, crlfDelay: Infinity });
   let initialized = false;
+  const workspaceRoot = options.workspaceRoot ?? process.cwd();
+  const sessionCwds = new Map<string, string>();
   for await (const line of lines) {
     if (!initialized) {
       initialized = true;
-      if (line !== RERAIL_EVENT_PROTOCOL_PREFACE) {
-        await writeLine(options.output, encodeRerailEventResult({
-          eventId: null,
-          error: { code: "unsupported-version", message: `Expected ${RERAIL_EVENT_PROTOCOL_PREFACE}` },
-        }));
-        return;
-      }
-      continue;
+      if (line === RERAIL_EVENT_PROTOCOL_PREFACE) continue;
+      await writeLine(options.output, encodeRerailEventResult({
+        eventId: null,
+        error: { code: "unsupported-version", message: `Expected ${RERAIL_EVENT_PROTOCOL_PREFACE}` },
+      }));
+      return;
     }
-    if (line === "") continue;
-    try {
-      const frame = decodeRerailEventFrame(line);
-      const deliveries = await options.eventLoop.ingest(frame.event);
-      await writeLine(options.output, encodeRerailEventResult({ eventId: frame.event.eventId, deliveries: [...deliveries] }));
-    } catch (error) {
-      await writeLine(options.output, encodeRerailEventResult(errorFrame(line, error)));
-    }
+    if (line !== "") await writeLine(options.output, await frameResult(line, options.eventLoop, sessionCwds, workspaceRoot));
   }
 }
 
@@ -114,12 +128,12 @@ export async function runRerailEventStream(options: RunRerailEventStreamOptions 
         return await ingestEngineEvent(socketPath, event, configuration);
       },
     };
-    await serveRerailEventStream({ eventLoop, input, output });
+    await serveRerailEventStream({ eventLoop, input, output, workspaceRoot });
     return;
   }
   const runtime = new RerailRuntime({ ...configuration, startGate: true });
   try {
-    await serveRerailEventStream({ eventLoop: runtime, input, output });
+    await serveRerailEventStream({ eventLoop: runtime, input, output, workspaceRoot });
   } finally {
     await runtime.dispose();
   }
