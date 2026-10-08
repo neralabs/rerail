@@ -319,26 +319,6 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2022 Charles Marsh", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
-# eslint-plugin-react 7.37.5 (react/licenses/eslint-plugin-react/UPSTREAM.md): verbatim
-[[annotations]]
-path = [
-  "fixtures/react/rules/eslint-plugin-react/fixtures/**",
-  "fixtures/react/rules/eslint-plugin-react/tests/**",
-]
-precedence = "override"
-SPDX-FileCopyrightText = "2014 Yannick Croissant"
-SPDX-License-Identifier = "MIT"
-
-# eslint-plugin-react-hooks 7.1.1 (facebook/react) (react/licenses/react/UPSTREAM.md): verbatim
-[[annotations]]
-path = [
-  "fixtures/react/rules/eslint-plugin-react-hooks/fixtures/**",
-  "fixtures/react/rules/eslint-plugin-react-hooks/tests/**",
-]
-precedence = "override"
-SPDX-FileCopyrightText = "Meta Platforms, Inc. and affiliates."
-SPDX-License-Identifier = "MIT"
-
 # rust-clippy (Rust 1.99.0) (rust/licenses/clippy/UPSTREAM.md): verbatim
 [[annotations]]
 path = "fixtures/rust/rules/clippy/fixtures/**"
@@ -747,4 +727,26 @@ path = [
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2022 Charles Marsh"
+SPDX-License-Identifier = "MIT"
+
+# packs/react
+
+# eslint-plugin-react 7.37.5 (packs/react/licenses/eslint-plugin-react/UPSTREAM.md): verbatim
+[[annotations]]
+path = [
+  "packs/react/upstream/eslint-plugin-react/fixtures/**",
+  "packs/react/upstream/eslint-plugin-react/tests/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2014 Yannick Croissant"
+SPDX-License-Identifier = "MIT"
+
+# eslint-plugin-react-hooks 7.1.1 (facebook/react) (packs/react/licenses/react/UPSTREAM.md): verbatim
+[[annotations]]
+path = [
+  "packs/react/upstream/eslint-plugin-react-hooks/fixtures/**",
+  "packs/react/upstream/eslint-plugin-react-hooks/tests/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "Meta Platforms, Inc. and affiliates."
 SPDX-License-Identifier = "MIT"

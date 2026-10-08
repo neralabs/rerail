@@ -1,0 +1,153 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "react",
+  "name": "React",
+  "category": "framework",
+  "covers": "18 eslint-plugin-react and eslint-plugin-react-hooks rules ported to Rerail, each scored against the plugin's own recorded findings on its test cases.",
+  "reason": "matches React",
+  "match": {
+    "any": [
+      {
+        "npmDependencies": [
+          "react"
+        ]
+      },
+      {
+        "files": [
+          "**/*.jsx"
+        ],
+        "label": "*.jsx files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "react-no-danger",
+      "document": "rules/react-no-danger.json",
+      "title": "react/no-danger: No danger",
+      "group": "eslint-plugin-react",
+      "examples": {
+        "caught": {
+          "path": "src/Note.jsx",
+          "text": "export const Note = ({ html }) => <div dangerouslySetInnerHTML={{ __html: html }} />;\n"
+        },
+        "passes": {
+          "path": "src/Note.jsx",
+          "text": "export const Note = ({ text }) => <div>{text}</div>;\n"
+        }
+      }
+    },
+    {
+      "id": "react-no-find-dom-node",
+      "document": "rules/react-no-find-dom-node.json",
+      "title": "react/no-find-dom-node: No find DOM node",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-no-is-mounted",
+      "document": "rules/react-no-is-mounted.json",
+      "title": "react/no-is-mounted: No is mounted",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-no-render-return-value",
+      "document": "rules/react-no-render-return-value.json",
+      "title": "react/no-render-return-value: No render return value",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-jsx-no-duplicate-props",
+      "document": "rules/react-jsx-no-duplicate-props.json",
+      "title": "react/jsx-no-duplicate-props: JSX no duplicate props",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-no-children-prop",
+      "document": "rules/react-no-children-prop.json",
+      "title": "react/no-children-prop: No children prop",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-jsx-no-comment-textnodes",
+      "document": "rules/react-jsx-no-comment-textnodes.json",
+      "title": "react/jsx-no-comment-textnodes: JSX no comment textnodes",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-void-dom-elements-no-children",
+      "document": "rules/react-void-dom-elements-no-children.json",
+      "title": "react/void-dom-elements-no-children: Void DOM elements no children",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-self-closing-comp",
+      "document": "rules/react-self-closing-comp.json",
+      "title": "react/self-closing-comp: Self closing comp",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-no-string-refs",
+      "document": "rules/react-no-string-refs.json",
+      "title": "react/no-string-refs: No string refs",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-no-direct-mutation-state",
+      "document": "rules/react-no-direct-mutation-state.json",
+      "title": "react/no-direct-mutation-state: No direct mutation state",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-no-danger-with-children",
+      "document": "rules/react-no-danger-with-children.json",
+      "title": "react/no-danger-with-children: No danger with children",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-button-has-type",
+      "document": "rules/react-button-has-type.json",
+      "title": "react/button-has-type: Button has type",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-jsx-key",
+      "document": "rules/react-jsx-key.json",
+      "title": "react/jsx-key: JSX key",
+      "group": "eslint-plugin-react",
+      "examples": {
+        "caught": {
+          "path": "src/List.tsx",
+          "text": "export const List = ({ items }) => <ul>{items.map(item => <li>{item.name}</li>)}</ul>;\n"
+        },
+        "passes": {
+          "path": "src/List.tsx",
+          "text": "export const List = ({ items }) => <ul>{items.map(item => <li key={item.id}>{item.name}</li>)}</ul>;\n"
+        }
+      }
+    },
+    {
+      "id": "react-jsx-no-undef",
+      "document": "rules/react-jsx-no-undef.json",
+      "title": "react/jsx-no-undef: JSX no undef",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-no-unescaped-entities",
+      "document": "rules/react-no-unescaped-entities.json",
+      "title": "react/no-unescaped-entities: No unescaped entities",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-jsx-no-target-blank",
+      "document": "rules/react-jsx-no-target-blank.json",
+      "title": "react/jsx-no-target-blank: JSX no target blank",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-hooks-rules-of-hooks",
+      "document": "rules/react-hooks-rules-of-hooks.json",
+      "title": "react-hooks/rules-of-hooks: Rules of hooks",
+      "group": "eslint-plugin-react-hooks"
+    }
+  ]
+}

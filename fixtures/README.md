@@ -24,17 +24,17 @@ Rerail's `native/src/code_rule_dsl/` and `conformance/languages/`.
 | `typescript/` | ESLint 10.11.0, typescript-eslint 8.70.1, TypeScript 5.9.3 | `rules` |
 | `next/` | @next/eslint-plugin-next 16.3.8, ESLint 10.11.0, typescript-eslint 8.70.1 | `candidates`, `policies`, `probes`, `rules` |
 | `node/` | eslint-plugin-n 18.4.1, ESLint 10.11.0, globals 17.13.0 | `candidates`, `policies`, `probes`, `rules` |
-| `react/` | eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1, ESLint 9.39.5 | `candidates`, `policies`, `probes`, `rules` |
 | `vue/` | @vue/compiler-sfc 3.5.43, vue-eslint-parser 10.4.1, eslint-plugin-vue 10.11.1, ESLint 10.11.0 | `grammar`, `rules`, `view` |
 | `rust/` | rustc, clippy and rust-analyzer 1.99.0, tree-sitter-rust 0.24.2, syn 2 | `feasibility`, `grammar`, `literal`, `rules`, `suppress` |
 | `sql/` | SQLFluff 4.4.0, PostgreSQL 18 parser (pglast 8.5), SQLite 3.50.4, MySQL 8.4.11 | `names`, `rules`, `suppress`, `t1`, `t3`, `value` |
 
-`frameworks/eslint_record.mjs` is the recorder the `next/`, `node/` and `react/` generators share. `rules/` holds a
+`../conformance/recorders/eslint-record.mjs` is the recorder the ESLint-based packs' generators share. `rules/` holds a
 pack's T4 recordings: each ported rule's upstream test cases (`fixtures/`) and pinned public corpora
 (`corpus-<name>.expected.json`). `candidates/` and `probes/` are runnable packs scored against those recordings, and
 `grammar/`, `t1/`, `t3/` and `feasibility/` hold the measurement tools of a pack's earlier tiers. A pack that has
 moved to `packs/<id>/` ([pack format](../docs/pack-format.md#moving-to-this-layout)) takes its `rules/`,
-`candidates/` and its rule tools' licences with it: Python's are in `packs/python/`.
+`candidates/` and its rule tools' licences with it: Python's are in `packs/python/`, React's (the whole `react/`
+family) in `packs/react/`.
 
 Each oracle stays whole inside its feature directory (generator, inputs and recorded output together), so every
 generator reads and writes relative to its own directory. A generator that needs pinned tools or corpus checkouts
@@ -68,8 +68,6 @@ upstream path and whether the copy is verbatim, derived or an excerpt. Those fil
 | `typescript/licenses/typescript-eslint/` | typescript-eslint 8.70.1 | MIT |
 | `next/licenses/next.js/` | Next.js 16.3.8 (@next/eslint-plugin-next) | MIT |
 | `node/licenses/eslint-plugin-n/` | eslint-plugin-n 18.4.1 | MIT |
-| `react/licenses/eslint-plugin-react/` | eslint-plugin-react 7.37.5 | MIT |
-| `react/licenses/react/` | facebook/react (eslint-plugin-react-hooks 7.1.1) | MIT |
 | `vue/licenses/eslint-plugin-vue/` | eslint-plugin-vue 10.11.1 | MIT |
 | `rust/licenses/clippy/` | rust-clippy (Rust 1.99.0) | MIT OR Apache-2.0 |
 | `sql/licenses/sqlfluff/` | SQLFluff 4.4.0 | MIT |

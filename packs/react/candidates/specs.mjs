@@ -1,5 +1,5 @@
 // The React pack's policies as compact specs, one entry per pack rule (`candidate: true`: a draft that does not pass
-// its fixtures yet, written to rerail-fixtures/react/candidates/). build.mjs turns each into a rerail.policy/v1 document
+// its fixtures yet, written to packs/react/candidates/). build.mjs turns each into a rerail.policy/v1 document
 // (scope, violation, eslint suppression and a shared `define` are added there). Edit here, then run build.mjs.
 const R = "eslint-plugin-react";
 const H = "eslint-plugin-react-hooks";

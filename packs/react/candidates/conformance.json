@@ -29,7 +29,7 @@
       "version": "7.1.1"
     }
   ],
-  "oracles": "../rules",
+  "oracles": "../upstream",
   "rules": [
     {
       "id": "react-react-in-jsx-scope",

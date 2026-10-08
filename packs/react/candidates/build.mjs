@@ -1,19 +1,18 @@
-// Writes the React pack's policies from specs.mjs: rerail/conformance/languages/react/rules/<id>.json (ported rules)
-// and rerail-fixtures/react/candidates/rules/<id>.json (candidates). The two pack.json files are maintained by hand and
-// must list exactly the ported / candidate specs (id, upstream, policy, capabilities, match), which this script checks.
-// Candidates are scored as their own pack: cd rerail && node --import tsx conformance/languages/cli.ts
-//   --pack-dir ../rerail-fixtures/react/candidates --corpus-root <checkout>/.rerail/corpora/react
-// Usage: node rerail-fixtures/react/policies/build.mjs
+// Writes the React pack's policies from specs.mjs: packs/react/rules/<id>.json (ported rules) and
+// packs/react/candidates/rules/<id>.json (candidates). The two conformance.json files are maintained by hand and must
+// list exactly the ported / candidate specs (id, upstream, policy, capabilities, match), which this script checks.
+// Candidates are scored as their own pack: node --import tsx conformance/languages/cli.ts
+//   --pack-dir packs/react/candidates --corpus-root <checkout>/.rerail/corpora/react
+// Usage: node packs/react/candidates/build.mjs
 // Run offline by a maintainer, never in CI.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SPECS } from "./specs.mjs";
 
-const ORACLES = dirname(dirname(fileURLToPath(import.meta.url)));
-const REPOSITORY = dirname(dirname(ORACLES));
-const PACK_DIRECTORY = join(REPOSITORY, "conformance", "languages", "react");
-const CANDIDATES = join(ORACLES, "candidates");
+const CANDIDATES = dirname(fileURLToPath(import.meta.url));
+const PACK_DIRECTORY = dirname(CANDIDATES);
+const REPOSITORY = dirname(dirname(PACK_DIRECTORY));
 const EXTENSIONS = ["ts", "mts", "cts", "tsx", "js", "jsx", "mjs", "cjs"];
 
 /** A check's own utilities: those the document's shared define does not already hold. */
@@ -68,7 +67,7 @@ for (const [directory, specs] of [
   [PACK_DIRECTORY, SPECS.filter(spec => !spec.candidate)],
   [CANDIDATES, SPECS.filter(spec => spec.candidate)],
 ]) {
-  const path = join(directory, "pack.json");
+  const path = join(directory, "conformance.json");
   const listed = JSON.stringify(JSON.parse(readFileSync(path, "utf8")).rules);
   if (listed !== JSON.stringify(specs.map(manifest))) throw new Error(`${relative(REPOSITORY, path)} rules differ from the specs`);
 }
