@@ -30,7 +30,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
 
       # Every file carries licence information and every licence it names has its text in LICENSES/.
       - name: REUSE lint
