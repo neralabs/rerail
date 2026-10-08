@@ -132,14 +132,14 @@ export async function consolidateDatabase(sourceDir, name, stagingDir) {
   return staged;
 }
 
-/** Rows in the rule catalog, or undefined when the database has no `catalog_rules` table. */
+/** Rows in the rule library, or undefined when the database has no `library_rules` table. */
 export async function countRules(databasePath) {
   const { DatabaseSync } = await loadSqlite();
   const database = new DatabaseSync(databasePath, { readOnly: true });
   try {
-    const found = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'catalog_rules'").get();
+    const found = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'library_rules'").get();
     if (found === undefined) return undefined;
-    return { table: "catalog_rules", count: Number(database.prepare("SELECT count(*) AS n FROM catalog_rules").get().n) };
+    return { table: "library_rules", count: Number(database.prepare("SELECT count(*) AS n FROM library_rules").get().n) };
   } finally {
     database.close();
   }

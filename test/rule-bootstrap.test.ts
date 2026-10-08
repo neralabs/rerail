@@ -7,9 +7,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase } from "../src/database.js";
 import { codeRuleSchema, type CodeRule } from "../src/code-rule-schema.js";
-import { loadBundledRules } from "../src/rule-bootstrap.js";
-import { SqliteRuleStore, type BundledRuleDocument, type RuleDocument } from "../src/rule-store.js";
-import { ruleDocumentDigest } from "../src/stable-json.js";
+import { loadBundledRules } from "../src/bundled-rule-documents.js";
 import { RERAIL_SCHEMA_VERSION } from "../src/schema.js";
 
 const temporaryDirectories: string[] = [];
@@ -40,74 +38,15 @@ function codeRule(id: string, revision = 1, message = "No print"): CodeRule {
   });
 }
 
-const bundled = (...rules: CodeRule[]): RuleDocument[] => rules.map(rule => ({ kind: "file", rule }));
-
-describe("SqliteRuleStore.seed", () => {
-  it("inserts new bundled rules with their digest and leaves them alone on the next run", async () => {
-    const store = new SqliteRuleStore(await temporaryDatabase());
-    const documents = bundled(codeRule("bundled:a"), codeRule("bundled:b"));
-
-    expect(store.seed(documents, 1_000)).toEqual({ inserted: 2, refreshed: 0, kept: 0 });
-    expect(store.get("bundled:a")).toMatchObject({ sourceDigest: ruleDocumentDigest(documents[0]!), createdAt: 1_000 });
-    expect(store.seed(documents, 2_000)).toEqual({ inserted: 0, refreshed: 0, kept: 2 });
-    expect(store.get("bundled:a")?.updatedAt).toBe(1_000);
-    store.close();
-  });
-
-  it("follows an upstream change only while the row is untouched, and never overwrites an edit", async () => {
-    const store = new SqliteRuleStore(await temporaryDatabase());
-    store.seed(bundled(codeRule("bundled:a"), codeRule("bundled:b")), 1_000);
-    store.setEnabled({ ids: ["bundled:b"] }, false, 1_500);
-    // The user edits rule a in place; rule b only had its enabled flag flipped, which is state, not content.
-    store.upsertCodeRule(codeRule("bundled:a", 1, "Use the logger"), { now: 2_000 });
-
-    const upstream = bundled(codeRule("bundled:a", 2, "Print is forbidden"), codeRule("bundled:b", 2, "Print is forbidden"));
-    expect(store.seed(upstream, 3_000)).toEqual({ inserted: 0, refreshed: 1, kept: 1 });
-    const edited = store.get("bundled:a");
-    expect(edited?.kind === "file" && edited.rule.clauses[0]?.violation?.message).toBe("Use the logger");
-    expect(edited?.revision).toBe(1);
-    const refreshed = store.get("bundled:b");
-    expect(refreshed?.revision).toBe(2);
-    expect(refreshed?.enabled).toBe(false);
-    expect(refreshed?.sourceDigest).toBe(ruleDocumentDigest(upstream[1]!));
-    store.close();
-  });
-
-  it("inserts an opt-in document disabled, and neither a refresh nor a re-seed changes its enabled state", async () => {
-    const store = new SqliteRuleStore(await temporaryDatabase());
-    const optIn = (rule: CodeRule): BundledRuleDocument => ({ kind: "file", rule, enabledByDefault: false });
-
-    expect(store.seed([optIn(codeRule("pack:a")), optIn(codeRule("pack:b"))], 1_000)).toEqual({ inserted: 2, refreshed: 0, kept: 0 });
-    expect(store.get("pack:a")).toMatchObject({ enabled: false, sourceDigest: ruleDocumentDigest({ kind: "file", rule: codeRule("pack:a") }) });
-    expect(store.codeRules()).toEqual([]);
-    store.setEnabled({ ids: ["pack:b"] }, true, 1_500);
-
-    expect(store.seed([optIn(codeRule("pack:a", 2)), optIn(codeRule("pack:b", 2))], 2_000)).toEqual({ inserted: 0, refreshed: 2, kept: 0 });
-    expect(store.get("pack:a")).toMatchObject({ enabled: false, revision: 2 });
-    expect(store.get("pack:b")).toMatchObject({ enabled: true, revision: 2 });
-    expect(store.codeRules().map(rule => rule.id)).toEqual(["pack:b"]);
-    store.close();
-  });
-
-  it("never touches a user-created rule that collides with a new bundled id", async () => {
-    const store = new SqliteRuleStore(await temporaryDatabase());
-    store.upsertCodeRule(codeRule("shared:id", 7, "Mine"), { now: 1_000 });
-    expect(store.seed(bundled(codeRule("shared:id")), 2_000)).toEqual({ inserted: 0, refreshed: 0, kept: 1 });
-    expect(store.get("shared:id")).toMatchObject({ revision: 7, sourceDigest: null });
-    store.close();
-  });
-});
-
 /** A sanity floor, not the exact count. */
 const MINIMUM_BUNDLED_RULES = 10;
 
 describe("bundled rules", () => {
-  it("ships only opt-in packs: every document parses as a file rule with a unique <pack>:<rule> id, disabled by default", () => {
+  it("ships only opt-in packs: every document parses as a file rule with a unique <pack>:<rule> id", () => {
     const documents = loadBundledRules();
     expect(documents.length).toBeGreaterThan(MINIMUM_BUNDLED_RULES);
     expect(new Set(documents.map(document => document.rule.id)).size).toBe(documents.length);
     expect(documents.every(document => document.kind === "file")).toBe(true);
-    expect(documents.every(document => document.enabledByDefault === false)).toBe(true);
     expect(documents.every(document => /^(?:complexity|tslint):[a-z0-9-]+$/u.test(document.rule.id))).toBe(true);
     expect(documents.map(document => document.rule.id)).not.toContain("tslint:file-header");
   });
@@ -124,11 +63,11 @@ describe("bundled rules", () => {
     await write("opt-in/alpha/b.json", "alpha:b");
     await write("opt-in/alpha/a.json", "alpha:a");
     await writeFile(join(root, "opt-in", "alpha", "README.md"), "# alpha pack\n");
-    expect(loadBundledRules(root).map(document => [document.rule.id, document.enabledByDefault])).toEqual([
-      ["example:default", undefined],
-      ["alpha:a", false],
-      ["alpha:b", false],
-      ["zeta:a", false],
+    expect(loadBundledRules(root).map(document => document.rule.id)).toEqual([
+      "example:default",
+      "alpha:a",
+      "alpha:b",
+      "zeta:a",
     ]);
 
     await write("opt-in/zeta/b.json", "alpha:a");
@@ -150,9 +89,9 @@ describe("bundled rules", () => {
     await writeFile(join(root, "opt-in", ".hidden-pack", "x.json"), JSON.stringify(codeRule("hidden:x")));
     await writeFile(join(root, "opt-in", ".DS_Store"), "\u0000\u0001binary");
     await writeFile(join(root, "opt-in", "README.md"), "# opt-in packs\n");
-    expect(loadBundledRules(root).map(document => [document.rule.id, document.enabledByDefault])).toEqual([
-      ["example:default", undefined],
-      ["tslint:a", false],
+    expect(loadBundledRules(root).map(document => document.rule.id)).toEqual([
+      "example:default",
+      "tslint:a",
     ]);
   });
 });
@@ -209,7 +148,7 @@ describe("database schema", () => {
       const created = new Database(path, { readonly: true });
       expect(created.pragma("journal_mode", { simple: true })).toBe("wal");
       expect(created.pragma("user_version", { simple: true })).toBe(RERAIL_SCHEMA_VERSION);
-      expect(created.prepare("SELECT count(*) AS tables FROM sqlite_master WHERE type = 'table' AND name = 'catalog_rules'").get()).toEqual({ tables: 1 });
+      expect(created.prepare("SELECT count(*) AS tables FROM sqlite_master WHERE type = 'table' AND name = 'library_rules'").get()).toEqual({ tables: 1 });
       created.close();
     }
   }, 60_000);

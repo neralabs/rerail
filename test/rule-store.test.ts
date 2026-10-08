@@ -5,6 +5,8 @@ import { join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderRerailSchemaModule, SCHEMA_SQL_PATH } from "../scripts/generate-schema-sql.js";
+import { openRerailDatabase } from "../src/database.js";
+import { getLibraryRule, listLibraryRules } from "../src/rule-library.js";
 import { parseConversationRuleDocument } from "../src/rule-schema.js";
 import { SqliteRuleStore } from "../src/rule-store.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, MOCK_SESSION_ID, mockSessionId, seedRerailDatabase } from "../src/seed.js";
@@ -227,16 +229,16 @@ describe("seedRerailDatabase", () => {
 
     expect(first).toEqual({ codeRules: 3, conversationRules: 2, sessions: 1, events: 4, workLinks: 2 });
     expect(second).toEqual(first);
-    const rules = new SqliteRuleStore(path);
-    expect(rules.list().map(stored => [stored.rule.id, stored.kind, stored.enabled])).toEqual([
-      ["mock-cosine-migration-warning", "conversation", false],
-      ["mock-cosine-prefer-generated-client", "conversation", true],
-      ["mock-generated-client-imports", "file", true],
-      ["mock-lazy-query-shaping", "file", true],
-      ["mock-no-console-log", "file", true],
+    const database = openRerailDatabase(path);
+    expect(listLibraryRules(database).map(rule => [rule.document.rule.id, rule.document.kind])).toEqual([
+      ["mock-cosine-migration-warning", "conversation"],
+      ["mock-cosine-prefer-generated-client", "conversation"],
+      ["mock-generated-client-imports", "file"],
+      ["mock-lazy-query-shaping", "file"],
+      ["mock-no-console-log", "file"],
     ]);
-    expect(rules.get("mock-no-console-log")?.createdAt).toBe(100_000);
-    rules.close();
+    expect(getLibraryRule(database, "mock-no-console-log")?.createdAt).toBe(100_000);
+    database.$client.close();
     const reader = new SqliteSessionReader(path);
     expect(reader.sessions()).toEqual([expect.objectContaining({ sessionId: MOCK_SESSION_ID, host: "omp", cwd: "/workspace", eventCount: 4 })]);
     expect(reader.workLinks(MOCK_SESSION_ID).map(link => link.kind)).toEqual(["git-branch", "linear-issue"]);
