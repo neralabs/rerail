@@ -15,6 +15,9 @@ npx vitest run test/packs.test.ts                    # every pack: checks 1 to 6
 npx vitest run test/packs.test.ts -t "pack python"   # one pack
 ```
 
+A pull request that changes a pack adds a changeset (`npx changeset`); see
+[versioning](../docs/pack-format.md#versioning-and-release). Pack versions and changelogs are never edited by hand.
+
 ## Pack layout
 
 Each pack lives in `packs/<id>/`:

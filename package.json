@@ -119,6 +119,7 @@
   },
   "devDependencies": {
     "@ast-grep/cli": "0.45.3",
+    "@changesets/cli": "3.0.3",
     "@earendil-works/pi-agent-core": "0.85.1",
     "@earendil-works/pi-ai": "0.85.1",
     "@earendil-works/pi-coding-agent": "0.87.1",

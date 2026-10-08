@@ -162,8 +162,17 @@ is not part of this contract.
 | A rule added; the core range widened | minor |
 | A rule removed or renamed; a default mode made stricter; the core range narrowed | major |
 
-Each pack is released on its own: a tag `pack-<id>-v<version>` publishes `packs/<id>/` through the release workflow
-and trusted publishing, under `next` first and `latest` once promoted, `restricted` until launch like core.
+Pack versions are managed with [changesets](https://github.com/changesets/changesets): a pull request that changes a
+pack adds a changeset (`npx changeset`) naming the pack's package and the bump from the table above, with a one-line
+summary for users. Nobody edits a pack's `version` or `CHANGELOG.md` by hand: `npx changeset version` applies the
+pending changesets, bumps each pack and writes its `CHANGELOG.md` when packs are released. Changesets cover only the
+packs: the core package at the repository root keeps its `v<version>` tag release and the root `CHANGELOG.md`, and a
+changeset naming `@neralabs/rerail` is refused. A pack's first pull request adds it at `0.1.0` with a `minor` changeset
+for its initial rules.
+
+Each pack is released on its own: its package publishes `packs/<id>/` through the release workflow and trusted
+publishing, under `next` first and `latest` once promoted, `restricted` until launch like core. Publishing from the
+release workflow is not wired yet; until it is, changesets accumulate and nothing is published.
 
 ## Licensing
 

@@ -177,6 +177,13 @@ npm install --package-lock-only --ignore-scripts   # packs/* are npm workspaces:
 npx vitest run test/packs.test.ts -t "pack laravel"
 ```
 
+Then add a changeset for the new pack (`minor`, "Add the Laravel pack: …"). Every later change to a pack adds one too;
+[versioning](pack-format.md#versioning-and-release) says which bump:
+
+```sh
+npx changeset   # pick @neralabs/rerail-pack-laravel, choose the bump, write the summary
+```
+
 Each check and each rule is one test; a failure names the rule and the file, for example
 `laravel:no-dd: the caught example (app/Http/Controllers/UserController.php) produces no LARAVEL-NO-DD violation`.
 A rule needs proof: `examples` (one caught, one that passes, each with a `path` inside the rule's scope), or a port
