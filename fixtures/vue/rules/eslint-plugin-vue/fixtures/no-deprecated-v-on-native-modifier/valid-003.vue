@@ -1,0 +1,1 @@
+<template><input @native.enter='fire'></template>

@@ -1,0 +1,1 @@
+const {foo: foo, bar: bar, ...stuff} = myObject;

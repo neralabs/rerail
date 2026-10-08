@@ -1,0 +1,46 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-runtime-automatic-unused-react",
+  "revision": 1,
+  "mode": "log",
+  "description": "Fact: the automatic JSX runtime (languageOptions.jsxPragma null): JSX reads no binding, so an imported React that nothing else reads is unused. Reported at the import's name. The runtime is a per-query option today; a project's tsconfig `jsx` setting (react-jsx) cannot select it.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "jsxPragma": null
+          },
+          "rule": {
+            "kind": "identifier",
+            "regex": "^React$",
+            "binds": {
+              "form": "import",
+              "used": false
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-probe/runtime-automatic-unused-react",
+        "message": "Fact"
+      }
+    }
+  ]
+}

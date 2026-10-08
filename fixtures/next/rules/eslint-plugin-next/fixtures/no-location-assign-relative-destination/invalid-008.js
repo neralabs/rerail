@@ -1,0 +1,1 @@
+globalThis.location.href = '/dashboard'

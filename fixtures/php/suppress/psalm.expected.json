@@ -1,0 +1,2178 @@
+{
+ "psalm": "Psalm 6.19.1@e2ca44251c1f1aa2e35452d426895746b47de64e",
+ "parents": {
+  "AbstractInstantiation": null,
+  "AbstractMethodCall": null,
+  "AmbiguousConstantInheritance": null,
+  "ArgumentTypeCoercion": null,
+  "AssignmentToVoid": null,
+  "CheckType": null,
+  "CircularReference": null,
+  "ClassMustBeFinal": null,
+  "ComplexFunction": null,
+  "ComplexMethod": null,
+  "ConfigIssue": null,
+  "ConflictingReferenceConstraint": null,
+  "ConstantDeclarationInTrait": null,
+  "ConstructorSignatureMismatch": null,
+  "ContinueOutsideLoop": null,
+  "DeprecatedClass": null,
+  "DeprecatedConstant": null,
+  "DeprecatedFunction": null,
+  "DeprecatedInterface": null,
+  "DeprecatedMethod": null,
+  "DeprecatedProperty": null,
+  "DeprecatedTrait": null,
+  "DirectConstructorCall": null,
+  "DocblockTypeContradiction": null,
+  "DuplicateArrayKey": null,
+  "DuplicateClass": null,
+  "DuplicateConstant": null,
+  "DuplicateEnumCase": null,
+  "DuplicateEnumCaseValue": null,
+  "DuplicateFunction": null,
+  "DuplicateMethod": null,
+  "DuplicateParam": null,
+  "DuplicateProperty": null,
+  "EmptyArrayAccess": null,
+  "ExtensionRequirementViolation": null,
+  "FalsableReturnStatement": null,
+  "FalseOperand": "InvalidOperand",
+  "ForbiddenCode": null,
+  "IfThisIsMismatch": null,
+  "ImplementationRequirementViolation": null,
+  "ImplementedParamTypeMismatch": "MoreSpecificImplementedParamType",
+  "ImplementedReturnTypeMismatch": null,
+  "ImplicitToStringCast": null,
+  "ImpureByReferenceAssignment": null,
+  "ImpureFunctionCall": null,
+  "ImpureMethodCall": null,
+  "ImpurePropertyAssignment": null,
+  "ImpurePropertyFetch": null,
+  "ImpureStaticProperty": null,
+  "ImpureStaticVariable": null,
+  "ImpureVariable": null,
+  "InaccessibleClassConstant": null,
+  "InaccessibleMethod": null,
+  "InaccessibleProperty": null,
+  "IncompatibleTypeParameters": null,
+  "InheritorViolation": null,
+  "InterfaceInstantiation": null,
+  "InternalClass": null,
+  "InternalMethod": null,
+  "InternalProperty": null,
+  "InvalidArgument": null,
+  "InvalidArrayAccess": null,
+  "InvalidArrayAssignment": null,
+  "InvalidArrayOffset": null,
+  "InvalidAttribute": null,
+  "InvalidCast": null,
+  "InvalidCatch": null,
+  "InvalidClass": null,
+  "InvalidClassConstantType": null,
+  "InvalidClone": null,
+  "InvalidConstantAssignmentValue": null,
+  "InvalidDocblock": null,
+  "InvalidDocblockParamName": "InvalidDocblock",
+  "InvalidEnumBackingType": null,
+  "InvalidEnumCaseValue": null,
+  "InvalidEnumMethod": null,
+  "InvalidExtendClass": null,
+  "InvalidFalsableReturnType": null,
+  "InvalidFunctionCall": null,
+  "InvalidGlobal": null,
+  "InvalidInterfaceImplementation": null,
+  "InvalidIterator": null,
+  "InvalidLiteralArgument": "InvalidArgument",
+  "InvalidMethodCall": null,
+  "InvalidNamedArgument": null,
+  "InvalidNullableReturnType": null,
+  "InvalidOperand": null,
+  "InvalidOverride": null,
+  "InvalidParamDefault": null,
+  "InvalidParent": null,
+  "InvalidPassByReference": null,
+  "InvalidPropertyAssignment": null,
+  "InvalidPropertyAssignmentValue": null,
+  "InvalidPropertyFetch": null,
+  "InvalidReturnStatement": null,
+  "InvalidReturnType": null,
+  "InvalidScalarArgument": null,
+  "InvalidScope": null,
+  "InvalidStaticInvocation": null,
+  "InvalidStringClass": null,
+  "InvalidTemplateParam": null,
+  "InvalidThrow": null,
+  "InvalidToString": null,
+  "InvalidTraversableImplementation": null,
+  "InvalidTypeImport": null,
+  "LessSpecificClassConstantType": null,
+  "LessSpecificImplementedReturnType": null,
+  "LessSpecificReturnStatement": null,
+  "LessSpecificReturnType": null,
+  "LiteralKeyUnshapedArray": null,
+  "LoopInvalidation": null,
+  "MethodSignatureMismatch": null,
+  "MethodSignatureMustOmitReturnType": null,
+  "MethodSignatureMustProvideReturnType": null,
+  "MismatchingDocblockParamType": null,
+  "MismatchingDocblockPropertyType": null,
+  "MismatchingDocblockReturnType": null,
+  "MissingClassConstType": null,
+  "MissingClosureParamType": null,
+  "MissingClosureReturnType": null,
+  "MissingConstructor": null,
+  "MissingDependency": null,
+  "MissingDocblockType": null,
+  "MissingFile": null,
+  "MissingImmutableAnnotation": null,
+  "MissingOverrideAttribute": null,
+  "MissingParamType": null,
+  "MissingPropertyType": null,
+  "MissingReturnType": null,
+  "MissingTemplateParam": null,
+  "MissingThrowsDocblock": null,
+  "MixedArgument": null,
+  "MixedArgumentTypeCoercion": null,
+  "MixedArrayAccess": null,
+  "MixedArrayAssignment": null,
+  "MixedArrayOffset": null,
+  "MixedArrayTypeCoercion": null,
+  "MixedAssignment": null,
+  "MixedClone": null,
+  "MixedFunctionCall": null,
+  "MixedMethodCall": null,
+  "MixedOperand": null,
+  "MixedPropertyAssignment": null,
+  "MixedPropertyFetch": null,
+  "MixedPropertyTypeCoercion": null,
+  "MixedReturnStatement": null,
+  "MixedReturnTypeCoercion": null,
+  "MixedStringOffsetAssignment": null,
+  "MoreSpecificImplementedParamType": null,
+  "MoreSpecificReturnType": null,
+  "MutableDependency": null,
+  "NamedArgumentNotAllowed": null,
+  "NoEnumProperties": null,
+  "NoInterfaceProperties": null,
+  "NoValue": null,
+  "NonInvariantDocblockPropertyType": null,
+  "NonInvariantPropertyType": null,
+  "NonStaticSelfCall": null,
+  "NonVariableReferenceReturn": null,
+  "NullArgument": "InvalidArgument",
+  "NullArrayAccess": "InvalidArrayAccess",
+  "NullArrayOffset": "InvalidArrayOffset",
+  "NullFunctionCall": "InvalidFunctionCall",
+  "NullIterator": "InvalidIterator",
+  "NullOperand": "InvalidOperand",
+  "NullPropertyAssignment": "InvalidPropertyAssignment",
+  "NullPropertyFetch": "InvalidPropertyFetch",
+  "NullReference": null,
+  "NullableReturnStatement": null,
+  "OverriddenFinalConstant": null,
+  "OverriddenFinalProperty": null,
+  "OverriddenInterfaceConstant": null,
+  "OverriddenMethodAccess": null,
+  "OverriddenPropertyAccess": null,
+  "ParadoxicalCondition": null,
+  "ParamNameMismatch": null,
+  "ParentNotFound": null,
+  "ParseError": null,
+  "PossibleRawObjectIteration": "RawObjectIteration",
+  "PossiblyFalseArgument": "InvalidArgument",
+  "PossiblyFalseIterator": "InvalidIterator",
+  "PossiblyFalseOperand": "InvalidOperand",
+  "PossiblyFalsePropertyAssignmentValue": "InvalidPropertyAssignmentValue",
+  "PossiblyFalseReference": null,
+  "PossiblyInvalidArgument": "InvalidArgument",
+  "PossiblyInvalidArrayAccess": "InvalidArrayAccess",
+  "PossiblyInvalidArrayAssignment": "InvalidArrayAssignment",
+  "PossiblyInvalidArrayOffset": "InvalidArrayOffset",
+  "PossiblyInvalidCast": "InvalidCast",
+  "PossiblyInvalidClone": "InvalidClone",
+  "PossiblyInvalidDocblockTag": "InvalidDocblockTag",
+  "PossiblyInvalidFunctionCall": "InvalidFunctionCall",
+  "PossiblyInvalidIterator": "InvalidIterator",
+  "PossiblyInvalidMethodCall": "InvalidMethodCall",
+  "PossiblyInvalidOperand": "InvalidOperand",
+  "PossiblyInvalidPropertyAssignment": "InvalidPropertyAssignment",
+  "PossiblyInvalidPropertyAssignmentValue": "InvalidPropertyAssignmentValue",
+  "PossiblyInvalidPropertyFetch": "InvalidPropertyFetch",
+  "PossiblyNullArgument": "InvalidArgument",
+  "PossiblyNullArrayAccess": "InvalidArrayAccess",
+  "PossiblyNullArrayAssignment": "InvalidArrayAssignment",
+  "PossiblyNullArrayOffset": "InvalidArrayOffset",
+  "PossiblyNullFunctionCall": "InvalidFunctionCall",
+  "PossiblyNullIterator": "InvalidIterator",
+  "PossiblyNullOperand": "InvalidOperand",
+  "PossiblyNullPropertyAssignment": "InvalidPropertyAssignment",
+  "PossiblyNullPropertyAssignmentValue": "InvalidPropertyAssignmentValue",
+  "PossiblyNullPropertyFetch": "InvalidPropertyFetch",
+  "PossiblyNullReference": "NullReference",
+  "PossiblyUndefinedArrayOffset": null,
+  "PossiblyUndefinedGlobalVariable": "UndefinedGlobalVariable",
+  "PossiblyUndefinedIntArrayOffset": "PossiblyUndefinedArrayOffset",
+  "PossiblyUndefinedMethod": "UndefinedMethod",
+  "PossiblyUndefinedStringArrayOffset": "PossiblyUndefinedArrayOffset",
+  "PossiblyUndefinedVariable": "UndefinedVariable",
+  "PossiblyUnusedMethod": "UnusedMethod",
+  "PossiblyUnusedParam": "UnusedParam",
+  "PossiblyUnusedProperty": "UnusedProperty",
+  "PossiblyUnusedReturnValue": "UnusedReturnValue",
+  "PrivateFinalMethod": null,
+  "PropertyNotSetInConstructor": null,
+  "PropertyTypeCoercion": null,
+  "PsalmInternalError": null,
+  "RawObjectIteration": null,
+  "RedundantCast": null,
+  "RedundantCastGivenDocblockType": "RedundantCast",
+  "RedundantCondition": null,
+  "RedundantConditionGivenDocblockType": "RedundantCondition",
+  "RedundantFlag": null,
+  "RedundantFunctionCall": null,
+  "RedundantFunctionCallGivenDocblockType": "RedundantFunctionCall",
+  "RedundantIdentityWithTrue": null,
+  "RedundantPropertyInitializationCheck": null,
+  "ReferenceConstraintViolation": null,
+  "ReferenceReusedFromConfusingScope": null,
+  "ReservedWord": null,
+  "RiskyCast": null,
+  "RiskyTruthyFalsyComparison": null,
+  "StringIncrement": "InvalidOperand",
+  "TaintedCallable": "TaintedInput",
+  "TaintedCookie": "TaintedInput",
+  "TaintedCustom": "TaintedInput",
+  "TaintedEval": "TaintedInput",
+  "TaintedExtract": "TaintedInput",
+  "TaintedFile": "TaintedInput",
+  "TaintedHeader": "TaintedInput",
+  "TaintedHtml": "TaintedInput",
+  "TaintedInclude": "TaintedInput",
+  "TaintedLdap": "TaintedInput",
+  "TaintedSSRF": "TaintedInput",
+  "TaintedShell": "TaintedInput",
+  "TaintedSleep": "TaintedInput",
+  "TaintedSql": "TaintedInput",
+  "TaintedSystemSecret": "TaintedInput",
+  "TaintedTextWithQuotes": "TaintedInput",
+  "TaintedUnserialize": "TaintedInput",
+  "TaintedUserSecret": "TaintedInput",
+  "TaintedXpath": "TaintedInput",
+  "TooFewArguments": null,
+  "TooManyArguments": null,
+  "TooManyTemplateParams": null,
+  "Trace": null,
+  "TraitMethodSignatureMismatch": "MethodSignatureMismatch",
+  "TypeDoesNotContainNull": null,
+  "TypeDoesNotContainType": null,
+  "UncaughtThrowInGlobalScope": null,
+  "UndefinedAttributeClass": null,
+  "UndefinedClass": null,
+  "UndefinedConstant": null,
+  "UndefinedDocblockClass": "UndefinedClass",
+  "UndefinedFunction": null,
+  "UndefinedGlobalVariable": null,
+  "UndefinedInterface": null,
+  "UndefinedInterfaceMethod": "UndefinedMethod",
+  "UndefinedMagicMethod": "UndefinedMethod",
+  "UndefinedMagicPropertyAssignment": "UndefinedPropertyAssignment",
+  "UndefinedMagicPropertyFetch": "UndefinedPropertyFetch",
+  "UndefinedMethod": null,
+  "UndefinedPropertyAssignment": null,
+  "UndefinedPropertyFetch": null,
+  "UndefinedThisPropertyAssignment": null,
+  "UndefinedThisPropertyFetch": null,
+  "UndefinedTrace": null,
+  "UndefinedTrait": null,
+  "UndefinedVariable": null,
+  "UnevaluatedCode": null,
+  "UnhandledMatchCondition": null,
+  "UnimplementedAbstractMethod": null,
+  "UnimplementedInterfaceMethod": null,
+  "UninitializedProperty": "PropertyNotSetInConstructor",
+  "UnnecessaryVarAnnotation": null,
+  "UnrecognizedExpression": null,
+  "UnrecognizedStatement": null,
+  "UnresolvableConstant": null,
+  "UnresolvableInclude": null,
+  "UnsafeGenericInstantiation": null,
+  "UnsafeInstantiation": null,
+  "UnsupportedPropertyReferenceUsage": null,
+  "UnsupportedReferenceUsage": null,
+  "UnusedBaselineEntry": null,
+  "UnusedClass": null,
+  "UnusedClosureParam": "UnusedParam",
+  "UnusedConstructor": "UnusedMethod",
+  "UnusedDocblockParam": null,
+  "UnusedForeachValue": "UnusedVariable",
+  "UnusedFunctionCall": null,
+  "UnusedIssueHandlerSuppression": null,
+  "UnusedMethod": null,
+  "UnusedMethodCall": null,
+  "UnusedParam": null,
+  "UnusedProperty": null,
+  "UnusedPsalmSuppress": null,
+  "UnusedReturnValue": null,
+  "UnusedVariable": null
+ },
+ "declarations.php": {
+  "all": [
+   [
+    "ClassMustBeFinal",
+    162,
+    177
+   ],
+   [
+    "ClassMustBeFinal",
+    265,
+    275
+   ],
+   [
+    "ClassMustBeFinal",
+    959,
+    968
+   ],
+   [
+    "MissingClassConstType",
+    1033,
+    1059
+   ],
+   [
+    "MissingClassConstType",
+    1079,
+    1100
+   ],
+   [
+    "MissingClosureReturnType",
+    2199,
+    2212
+   ],
+   [
+    "MissingClosureReturnType",
+    2299,
+    2309
+   ],
+   [
+    "MissingPropertyType",
+    336,
+    355
+   ],
+   [
+    "MissingPropertyType",
+    369,
+    383
+   ],
+   [
+    "MixedArgument",
+    95,
+    106
+   ],
+   [
+    "MixedArgument",
+    234,
+    248
+   ],
+   [
+    "MixedArgument",
+    495,
+    504
+   ],
+   [
+    "MixedArgument",
+    572,
+    586
+   ],
+   [
+    "MixedArgument",
+    1260,
+    1277
+   ],
+   [
+    "MixedArgument",
+    1432,
+    1446
+   ],
+   [
+    "MixedArgument",
+    1583,
+    1599
+   ],
+   [
+    "MixedArgument",
+    1757,
+    1770
+   ],
+   [
+    "MixedArgument",
+    1919,
+    1930
+   ],
+   [
+    "MixedArgument",
+    2061,
+    2075
+   ],
+   [
+    "MixedArgument",
+    2468,
+    2476
+   ],
+   [
+    "MixedArgument",
+    2673,
+    2686
+   ],
+   [
+    "NullReference",
+    944,
+    946
+   ],
+   [
+    "PossiblyNullReference",
+    712,
+    714
+   ],
+   [
+    "PossiblyNullReference",
+    812,
+    814
+   ],
+   [
+    "UndefinedConstant",
+    1046,
+    1059
+   ],
+   [
+    "UndefinedConstant",
+    1087,
+    1100
+   ],
+   [
+    "UndefinedVariable",
+    95,
+    106
+   ],
+   [
+    "UndefinedVariable",
+    234,
+    248
+   ],
+   [
+    "UndefinedVariable",
+    495,
+    504
+   ],
+   [
+    "UndefinedVariable",
+    572,
+    586
+   ],
+   [
+    "UndefinedVariable",
+    1260,
+    1277
+   ],
+   [
+    "UndefinedVariable",
+    1432,
+    1446
+   ],
+   [
+    "UndefinedVariable",
+    1583,
+    1599
+   ],
+   [
+    "UndefinedVariable",
+    1757,
+    1770
+   ],
+   [
+    "UndefinedVariable",
+    1919,
+    1930
+   ],
+   [
+    "UndefinedVariable",
+    2061,
+    2075
+   ],
+   [
+    "UndefinedVariable",
+    2468,
+    2476
+   ],
+   [
+    "UndefinedVariable",
+    2673,
+    2686
+   ]
+  ],
+  "kept": [
+   [
+    "ClassMustBeFinal",
+    162,
+    177
+   ],
+   [
+    "ClassMustBeFinal",
+    265,
+    275
+   ],
+   [
+    "ClassMustBeFinal",
+    959,
+    968
+   ],
+   [
+    "MissingClassConstType",
+    1033,
+    1059
+   ],
+   [
+    "MissingClassConstType",
+    1079,
+    1100
+   ],
+   [
+    "MissingPropertyType",
+    369,
+    383
+   ],
+   [
+    "MixedArgument",
+    95,
+    106
+   ],
+   [
+    "MixedArgument",
+    234,
+    248
+   ],
+   [
+    "MixedArgument",
+    495,
+    504
+   ],
+   [
+    "MixedArgument",
+    572,
+    586
+   ],
+   [
+    "MixedArgument",
+    1260,
+    1277
+   ],
+   [
+    "MixedArgument",
+    1432,
+    1446
+   ],
+   [
+    "MixedArgument",
+    1583,
+    1599
+   ],
+   [
+    "MixedArgument",
+    1757,
+    1770
+   ],
+   [
+    "MixedArgument",
+    1919,
+    1930
+   ],
+   [
+    "MixedArgument",
+    2061,
+    2075
+   ],
+   [
+    "MixedArgument",
+    2468,
+    2476
+   ],
+   [
+    "MixedArgument",
+    2673,
+    2686
+   ],
+   [
+    "NullReference",
+    944,
+    946
+   ],
+   [
+    "PossiblyNullReference",
+    712,
+    714
+   ],
+   [
+    "UndefinedConstant",
+    1087,
+    1100
+   ],
+   [
+    "UndefinedVariable",
+    572,
+    586
+   ],
+   [
+    "UndefinedVariable",
+    1432,
+    1446
+   ],
+   [
+    "UndefinedVariable",
+    1757,
+    1770
+   ],
+   [
+    "UndefinedVariable",
+    2468,
+    2476
+   ]
+  ],
+  "keptSuppressAll": [
+   [
+    "ClassMustBeFinal",
+    162,
+    177
+   ],
+   [
+    "ClassMustBeFinal",
+    265,
+    275
+   ],
+   [
+    "ClassMustBeFinal",
+    959,
+    968
+   ],
+   [
+    "MissingClassConstType",
+    1033,
+    1059
+   ],
+   [
+    "MissingClassConstType",
+    1079,
+    1100
+   ],
+   [
+    "MissingPropertyType",
+    369,
+    383
+   ],
+   [
+    "MixedArgument",
+    95,
+    106
+   ],
+   [
+    "MixedArgument",
+    234,
+    248
+   ],
+   [
+    "MixedArgument",
+    495,
+    504
+   ],
+   [
+    "MixedArgument",
+    572,
+    586
+   ],
+   [
+    "MixedArgument",
+    1260,
+    1277
+   ],
+   [
+    "MixedArgument",
+    1432,
+    1446
+   ],
+   [
+    "MixedArgument",
+    1583,
+    1599
+   ],
+   [
+    "MixedArgument",
+    1757,
+    1770
+   ],
+   [
+    "MixedArgument",
+    1919,
+    1930
+   ],
+   [
+    "MixedArgument",
+    2061,
+    2075
+   ],
+   [
+    "MixedArgument",
+    2468,
+    2476
+   ],
+   [
+    "MixedArgument",
+    2673,
+    2686
+   ],
+   [
+    "NullReference",
+    944,
+    946
+   ],
+   [
+    "PossiblyNullReference",
+    712,
+    714
+   ],
+   [
+    "UndefinedConstant",
+    1087,
+    1100
+   ],
+   [
+    "UndefinedVariable",
+    572,
+    586
+   ],
+   [
+    "UndefinedVariable",
+    1432,
+    1446
+   ],
+   [
+    "UndefinedVariable",
+    1757,
+    1770
+   ],
+   [
+    "UndefinedVariable",
+    2468,
+    2476
+   ]
+  ]
+ },
+ "leaks.php": {
+  "all": [
+   [
+    "ForbiddenCode",
+    535,
+    558
+   ],
+   [
+    "ForbiddenCode",
+    571,
+    594
+   ],
+   [
+    "ForbiddenCode",
+    1183,
+    1198
+   ],
+   [
+    "ForbiddenCode",
+    1328,
+    1339
+   ],
+   [
+    "MixedArgument",
+    42,
+    51
+   ],
+   [
+    "MixedArgument",
+    136,
+    148
+   ],
+   [
+    "MixedArgument",
+    194,
+    207
+   ],
+   [
+    "MixedArgument",
+    304,
+    315
+   ],
+   [
+    "MixedArgument",
+    326,
+    338
+   ],
+   [
+    "MixedArgument",
+    388,
+    404
+   ],
+   [
+    "MixedArgument",
+    513,
+    525
+   ],
+   [
+    "MixedArgument",
+    651,
+    659
+   ],
+   [
+    "MixedArgument",
+    741,
+    751
+   ],
+   [
+    "MixedArgument",
+    817,
+    827
+   ],
+   [
+    "MixedArgument",
+    944,
+    952
+   ],
+   [
+    "MixedArgument",
+    959,
+    968
+   ],
+   [
+    "MixedArgument",
+    1005,
+    1013
+   ],
+   [
+    "MixedArgument",
+    1097,
+    1108
+   ],
+   [
+    "MixedArgument",
+    1307,
+    1316
+   ],
+   [
+    "MixedArgument",
+    1422,
+    1433
+   ],
+   [
+    "MixedArgument",
+    1501,
+    1513
+   ],
+   [
+    "UndefinedGlobalVariable",
+    817,
+    827
+   ],
+   [
+    "UndefinedGlobalVariable",
+    944,
+    952
+   ],
+   [
+    "UndefinedGlobalVariable",
+    959,
+    968
+   ],
+   [
+    "UndefinedGlobalVariable",
+    1501,
+    1513
+   ],
+   [
+    "UndefinedVariable",
+    42,
+    51
+   ],
+   [
+    "UndefinedVariable",
+    136,
+    148
+   ],
+   [
+    "UndefinedVariable",
+    194,
+    207
+   ],
+   [
+    "UndefinedVariable",
+    304,
+    315
+   ],
+   [
+    "UndefinedVariable",
+    326,
+    338
+   ],
+   [
+    "UndefinedVariable",
+    388,
+    404
+   ],
+   [
+    "UndefinedVariable",
+    513,
+    525
+   ],
+   [
+    "UndefinedVariable",
+    544,
+    557
+   ],
+   [
+    "UndefinedVariable",
+    580,
+    593
+   ],
+   [
+    "UndefinedVariable",
+    651,
+    659
+   ],
+   [
+    "UndefinedVariable",
+    741,
+    751
+   ],
+   [
+    "UndefinedVariable",
+    1005,
+    1013
+   ],
+   [
+    "UndefinedVariable",
+    1097,
+    1108
+   ],
+   [
+    "UndefinedVariable",
+    1307,
+    1316
+   ],
+   [
+    "UndefinedVariable",
+    1422,
+    1433
+   ]
+  ],
+  "kept": [
+   [
+    "ForbiddenCode",
+    571,
+    594
+   ],
+   [
+    "ForbiddenCode",
+    1183,
+    1198
+   ],
+   [
+    "MixedArgument",
+    42,
+    51
+   ],
+   [
+    "MixedArgument",
+    194,
+    207
+   ],
+   [
+    "MixedArgument",
+    651,
+    659
+   ],
+   [
+    "MixedArgument",
+    741,
+    751
+   ],
+   [
+    "MixedArgument",
+    817,
+    827
+   ],
+   [
+    "MixedArgument",
+    1422,
+    1433
+   ],
+   [
+    "UndefinedGlobalVariable",
+    817,
+    827
+   ],
+   [
+    "UndefinedGlobalVariable",
+    959,
+    968
+   ],
+   [
+    "UndefinedGlobalVariable",
+    1501,
+    1513
+   ],
+   [
+    "UndefinedVariable",
+    42,
+    51
+   ],
+   [
+    "UndefinedVariable",
+    136,
+    148
+   ],
+   [
+    "UndefinedVariable",
+    194,
+    207
+   ],
+   [
+    "UndefinedVariable",
+    326,
+    338
+   ],
+   [
+    "UndefinedVariable",
+    388,
+    404
+   ],
+   [
+    "UndefinedVariable",
+    544,
+    557
+   ],
+   [
+    "UndefinedVariable",
+    580,
+    593
+   ],
+   [
+    "UndefinedVariable",
+    651,
+    659
+   ],
+   [
+    "UndefinedVariable",
+    741,
+    751
+   ],
+   [
+    "UndefinedVariable",
+    1005,
+    1013
+   ],
+   [
+    "UndefinedVariable",
+    1097,
+    1108
+   ],
+   [
+    "UndefinedVariable",
+    1422,
+    1433
+   ]
+  ],
+  "keptSuppressAll": [
+   [
+    "ForbiddenCode",
+    571,
+    594
+   ],
+   [
+    "ForbiddenCode",
+    1183,
+    1198
+   ],
+   [
+    "MixedArgument",
+    42,
+    51
+   ],
+   [
+    "MixedArgument",
+    194,
+    207
+   ],
+   [
+    "MixedArgument",
+    651,
+    659
+   ],
+   [
+    "MixedArgument",
+    741,
+    751
+   ],
+   [
+    "MixedArgument",
+    817,
+    827
+   ],
+   [
+    "MixedArgument",
+    1422,
+    1433
+   ],
+   [
+    "UndefinedGlobalVariable",
+    817,
+    827
+   ],
+   [
+    "UndefinedGlobalVariable",
+    959,
+    968
+   ],
+   [
+    "UndefinedGlobalVariable",
+    1501,
+    1513
+   ],
+   [
+    "UndefinedVariable",
+    42,
+    51
+   ],
+   [
+    "UndefinedVariable",
+    136,
+    148
+   ],
+   [
+    "UndefinedVariable",
+    194,
+    207
+   ],
+   [
+    "UndefinedVariable",
+    326,
+    338
+   ],
+   [
+    "UndefinedVariable",
+    388,
+    404
+   ],
+   [
+    "UndefinedVariable",
+    544,
+    557
+   ],
+   [
+    "UndefinedVariable",
+    580,
+    593
+   ],
+   [
+    "UndefinedVariable",
+    651,
+    659
+   ],
+   [
+    "UndefinedVariable",
+    741,
+    751
+   ],
+   [
+    "UndefinedVariable",
+    1005,
+    1013
+   ],
+   [
+    "UndefinedVariable",
+    1097,
+    1108
+   ],
+   [
+    "UndefinedVariable",
+    1422,
+    1433
+   ]
+  ]
+ },
+ "statements.php": {
+  "all": [
+   [
+    "MissingClosureReturnType",
+    2158,
+    2176
+   ],
+   [
+    "MixedArgument",
+    41,
+    46
+   ],
+   [
+    "MixedArgument",
+    102,
+    112
+   ],
+   [
+    "MixedArgument",
+    183,
+    188
+   ],
+   [
+    "MixedArgument",
+    274,
+    282
+   ],
+   [
+    "MixedArgument",
+    350,
+    357
+   ],
+   [
+    "MixedArgument",
+    425,
+    435
+   ],
+   [
+    "MixedArgument",
+    567,
+    575
+   ],
+   [
+    "MixedArgument",
+    669,
+    679
+   ],
+   [
+    "MixedArgument",
+    733,
+    739
+   ],
+   [
+    "MixedArgument",
+    781,
+    785
+   ],
+   [
+    "MixedArgument",
+    846,
+    857
+   ],
+   [
+    "MixedArgument",
+    909,
+    921
+   ],
+   [
+    "MixedArgument",
+    972,
+    984
+   ],
+   [
+    "MixedArgument",
+    1039,
+    1052
+   ],
+   [
+    "MixedArgument",
+    1107,
+    1118
+   ],
+   [
+    "MixedArgument",
+    1179,
+    1194
+   ],
+   [
+    "MixedArgument",
+    1246,
+    1255
+   ],
+   [
+    "MixedArgument",
+    1266,
+    1275
+   ],
+   [
+    "MixedArgument",
+    1327,
+    1341
+   ],
+   [
+    "MixedArgument",
+    1393,
+    1410
+   ],
+   [
+    "MixedArgument",
+    1501,
+    1513
+   ],
+   [
+    "MixedArgument",
+    1570,
+    1580
+   ],
+   [
+    "MixedArgument",
+    1656,
+    1667
+   ],
+   [
+    "MixedArgument",
+    1735,
+    1744
+   ],
+   [
+    "MixedArgument",
+    1781,
+    1792
+   ],
+   [
+    "MixedArgument",
+    1861,
+    1872
+   ],
+   [
+    "MixedArgument",
+    1967,
+    1996
+   ],
+   [
+    "MixedArgument",
+    2088,
+    2099
+   ],
+   [
+    "MixedArgument",
+    2286,
+    2297
+   ],
+   [
+    "MixedArgument",
+    2369,
+    2376
+   ],
+   [
+    "MixedArgument",
+    2438,
+    2444
+   ],
+   [
+    "MixedArgument",
+    2451,
+    2464
+   ],
+   [
+    "MixedArgument",
+    2528,
+    2547
+   ],
+   [
+    "MixedArgument",
+    2617,
+    2629
+   ],
+   [
+    "MixedArgument",
+    2718,
+    2731
+   ],
+   [
+    "MixedArgument",
+    2787,
+    2797
+   ],
+   [
+    "MixedArgument",
+    2853,
+    2858
+   ],
+   [
+    "MixedArgument",
+    2898,
+    2907
+   ],
+   [
+    "MixedArgument",
+    2961,
+    2980
+   ],
+   [
+    "RedundantCondition",
+    1635,
+    1639
+   ],
+   [
+    "RedundantCondition",
+    1683,
+    1687
+   ],
+   [
+    "UndefinedGlobalVariable",
+    2898,
+    2907
+   ],
+   [
+    "UndefinedGlobalVariable",
+    2961,
+    2980
+   ],
+   [
+    "UndefinedVariable",
+    41,
+    46
+   ],
+   [
+    "UndefinedVariable",
+    102,
+    112
+   ],
+   [
+    "UndefinedVariable",
+    183,
+    188
+   ],
+   [
+    "UndefinedVariable",
+    274,
+    282
+   ],
+   [
+    "UndefinedVariable",
+    350,
+    357
+   ],
+   [
+    "UndefinedVariable",
+    425,
+    435
+   ],
+   [
+    "UndefinedVariable",
+    567,
+    575
+   ],
+   [
+    "UndefinedVariable",
+    669,
+    679
+   ],
+   [
+    "UndefinedVariable",
+    733,
+    739
+   ],
+   [
+    "UndefinedVariable",
+    781,
+    785
+   ],
+   [
+    "UndefinedVariable",
+    846,
+    857
+   ],
+   [
+    "UndefinedVariable",
+    909,
+    921
+   ],
+   [
+    "UndefinedVariable",
+    972,
+    984
+   ],
+   [
+    "UndefinedVariable",
+    1039,
+    1052
+   ],
+   [
+    "UndefinedVariable",
+    1107,
+    1118
+   ],
+   [
+    "UndefinedVariable",
+    1179,
+    1194
+   ],
+   [
+    "UndefinedVariable",
+    1246,
+    1255
+   ],
+   [
+    "UndefinedVariable",
+    1266,
+    1275
+   ],
+   [
+    "UndefinedVariable",
+    1327,
+    1341
+   ],
+   [
+    "UndefinedVariable",
+    1393,
+    1410
+   ],
+   [
+    "UndefinedVariable",
+    1501,
+    1513
+   ],
+   [
+    "UndefinedVariable",
+    1570,
+    1580
+   ],
+   [
+    "UndefinedVariable",
+    1656,
+    1667
+   ],
+   [
+    "UndefinedVariable",
+    1735,
+    1744
+   ],
+   [
+    "UndefinedVariable",
+    1781,
+    1792
+   ],
+   [
+    "UndefinedVariable",
+    1861,
+    1872
+   ],
+   [
+    "UndefinedVariable",
+    1967,
+    1996
+   ],
+   [
+    "UndefinedVariable",
+    2088,
+    2099
+   ],
+   [
+    "UndefinedVariable",
+    2167,
+    2176
+   ],
+   [
+    "UndefinedVariable",
+    2286,
+    2297
+   ],
+   [
+    "UndefinedVariable",
+    2369,
+    2376
+   ],
+   [
+    "UndefinedVariable",
+    2438,
+    2444
+   ],
+   [
+    "UndefinedVariable",
+    2451,
+    2464
+   ],
+   [
+    "UndefinedVariable",
+    2528,
+    2547
+   ],
+   [
+    "UndefinedVariable",
+    2617,
+    2629
+   ],
+   [
+    "UndefinedVariable",
+    2718,
+    2731
+   ],
+   [
+    "UndefinedVariable",
+    2787,
+    2797
+   ],
+   [
+    "UndefinedVariable",
+    2853,
+    2858
+   ]
+  ],
+  "kept": [
+   [
+    "MissingClosureReturnType",
+    2158,
+    2176
+   ],
+   [
+    "MixedArgument",
+    41,
+    46
+   ],
+   [
+    "MixedArgument",
+    102,
+    112
+   ],
+   [
+    "MixedArgument",
+    350,
+    357
+   ],
+   [
+    "MixedArgument",
+    425,
+    435
+   ],
+   [
+    "MixedArgument",
+    733,
+    739
+   ],
+   [
+    "MixedArgument",
+    781,
+    785
+   ],
+   [
+    "MixedArgument",
+    846,
+    857
+   ],
+   [
+    "MixedArgument",
+    909,
+    921
+   ],
+   [
+    "MixedArgument",
+    972,
+    984
+   ],
+   [
+    "MixedArgument",
+    1039,
+    1052
+   ],
+   [
+    "MixedArgument",
+    1107,
+    1118
+   ],
+   [
+    "MixedArgument",
+    1179,
+    1194
+   ],
+   [
+    "MixedArgument",
+    1246,
+    1255
+   ],
+   [
+    "MixedArgument",
+    1266,
+    1275
+   ],
+   [
+    "MixedArgument",
+    1327,
+    1341
+   ],
+   [
+    "MixedArgument",
+    1393,
+    1410
+   ],
+   [
+    "MixedArgument",
+    1501,
+    1513
+   ],
+   [
+    "MixedArgument",
+    1570,
+    1580
+   ],
+   [
+    "MixedArgument",
+    1656,
+    1667
+   ],
+   [
+    "MixedArgument",
+    1735,
+    1744
+   ],
+   [
+    "MixedArgument",
+    1781,
+    1792
+   ],
+   [
+    "MixedArgument",
+    1861,
+    1872
+   ],
+   [
+    "MixedArgument",
+    1967,
+    1996
+   ],
+   [
+    "MixedArgument",
+    2088,
+    2099
+   ],
+   [
+    "MixedArgument",
+    2286,
+    2297
+   ],
+   [
+    "MixedArgument",
+    2369,
+    2376
+   ],
+   [
+    "MixedArgument",
+    2438,
+    2444
+   ],
+   [
+    "MixedArgument",
+    2451,
+    2464
+   ],
+   [
+    "MixedArgument",
+    2528,
+    2547
+   ],
+   [
+    "MixedArgument",
+    2617,
+    2629
+   ],
+   [
+    "MixedArgument",
+    2718,
+    2731
+   ],
+   [
+    "MixedArgument",
+    2787,
+    2797
+   ],
+   [
+    "MixedArgument",
+    2853,
+    2858
+   ],
+   [
+    "MixedArgument",
+    2898,
+    2907
+   ],
+   [
+    "MixedArgument",
+    2961,
+    2980
+   ],
+   [
+    "RedundantCondition",
+    1635,
+    1639
+   ],
+   [
+    "RedundantCondition",
+    1683,
+    1687
+   ],
+   [
+    "UndefinedGlobalVariable",
+    2898,
+    2907
+   ],
+   [
+    "UndefinedVariable",
+    41,
+    46
+   ],
+   [
+    "UndefinedVariable",
+    669,
+    679
+   ],
+   [
+    "UndefinedVariable",
+    733,
+    739
+   ],
+   [
+    "UndefinedVariable",
+    781,
+    785
+   ],
+   [
+    "UndefinedVariable",
+    909,
+    921
+   ],
+   [
+    "UndefinedVariable",
+    972,
+    984
+   ],
+   [
+    "UndefinedVariable",
+    1039,
+    1052
+   ],
+   [
+    "UndefinedVariable",
+    1107,
+    1118
+   ],
+   [
+    "UndefinedVariable",
+    1179,
+    1194
+   ],
+   [
+    "UndefinedVariable",
+    1266,
+    1275
+   ],
+   [
+    "UndefinedVariable",
+    1393,
+    1410
+   ],
+   [
+    "UndefinedVariable",
+    1781,
+    1792
+   ],
+   [
+    "UndefinedVariable",
+    1861,
+    1872
+   ],
+   [
+    "UndefinedVariable",
+    2286,
+    2297
+   ],
+   [
+    "UndefinedVariable",
+    2451,
+    2464
+   ],
+   [
+    "UndefinedVariable",
+    2617,
+    2629
+   ],
+   [
+    "UndefinedVariable",
+    2718,
+    2731
+   ],
+   [
+    "UndefinedVariable",
+    2787,
+    2797
+   ]
+  ],
+  "keptSuppressAll": [
+   [
+    "MissingClosureReturnType",
+    2158,
+    2176
+   ],
+   [
+    "MixedArgument",
+    41,
+    46
+   ],
+   [
+    "MixedArgument",
+    102,
+    112
+   ],
+   [
+    "MixedArgument",
+    350,
+    357
+   ],
+   [
+    "MixedArgument",
+    425,
+    435
+   ],
+   [
+    "MixedArgument",
+    733,
+    739
+   ],
+   [
+    "MixedArgument",
+    909,
+    921
+   ],
+   [
+    "MixedArgument",
+    972,
+    984
+   ],
+   [
+    "MixedArgument",
+    1039,
+    1052
+   ],
+   [
+    "MixedArgument",
+    1107,
+    1118
+   ],
+   [
+    "MixedArgument",
+    1179,
+    1194
+   ],
+   [
+    "MixedArgument",
+    1246,
+    1255
+   ],
+   [
+    "MixedArgument",
+    1266,
+    1275
+   ],
+   [
+    "MixedArgument",
+    1327,
+    1341
+   ],
+   [
+    "MixedArgument",
+    1393,
+    1410
+   ],
+   [
+    "MixedArgument",
+    1501,
+    1513
+   ],
+   [
+    "MixedArgument",
+    1570,
+    1580
+   ],
+   [
+    "MixedArgument",
+    1656,
+    1667
+   ],
+   [
+    "MixedArgument",
+    1735,
+    1744
+   ],
+   [
+    "MixedArgument",
+    1781,
+    1792
+   ],
+   [
+    "MixedArgument",
+    1861,
+    1872
+   ],
+   [
+    "MixedArgument",
+    1967,
+    1996
+   ],
+   [
+    "MixedArgument",
+    2088,
+    2099
+   ],
+   [
+    "MixedArgument",
+    2286,
+    2297
+   ],
+   [
+    "MixedArgument",
+    2369,
+    2376
+   ],
+   [
+    "MixedArgument",
+    2438,
+    2444
+   ],
+   [
+    "MixedArgument",
+    2451,
+    2464
+   ],
+   [
+    "MixedArgument",
+    2528,
+    2547
+   ],
+   [
+    "MixedArgument",
+    2617,
+    2629
+   ],
+   [
+    "MixedArgument",
+    2718,
+    2731
+   ],
+   [
+    "MixedArgument",
+    2787,
+    2797
+   ],
+   [
+    "MixedArgument",
+    2853,
+    2858
+   ],
+   [
+    "MixedArgument",
+    2898,
+    2907
+   ],
+   [
+    "MixedArgument",
+    2961,
+    2980
+   ],
+   [
+    "RedundantCondition",
+    1635,
+    1639
+   ],
+   [
+    "RedundantCondition",
+    1683,
+    1687
+   ],
+   [
+    "UndefinedGlobalVariable",
+    2898,
+    2907
+   ],
+   [
+    "UndefinedVariable",
+    41,
+    46
+   ],
+   [
+    "UndefinedVariable",
+    669,
+    679
+   ],
+   [
+    "UndefinedVariable",
+    733,
+    739
+   ],
+   [
+    "UndefinedVariable",
+    909,
+    921
+   ],
+   [
+    "UndefinedVariable",
+    972,
+    984
+   ],
+   [
+    "UndefinedVariable",
+    1039,
+    1052
+   ],
+   [
+    "UndefinedVariable",
+    1107,
+    1118
+   ],
+   [
+    "UndefinedVariable",
+    1179,
+    1194
+   ],
+   [
+    "UndefinedVariable",
+    1266,
+    1275
+   ],
+   [
+    "UndefinedVariable",
+    1393,
+    1410
+   ],
+   [
+    "UndefinedVariable",
+    1781,
+    1792
+   ],
+   [
+    "UndefinedVariable",
+    1861,
+    1872
+   ],
+   [
+    "UndefinedVariable",
+    2286,
+    2297
+   ],
+   [
+    "UndefinedVariable",
+    2451,
+    2464
+   ],
+   [
+    "UndefinedVariable",
+    2617,
+    2629
+   ],
+   [
+    "UndefinedVariable",
+    2718,
+    2731
+   ],
+   [
+    "UndefinedVariable",
+    2787,
+    2797
+   ]
+  ]
+ }
+}

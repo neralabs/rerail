@@ -1,0 +1,324 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-no-page-custom-font",
+  "revision": 1,
+  "mode": "steer",
+  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-page-custom-font: a <link> whose literal href is a Google Fonts CSS URL, unless the file is pages/_document (last `pages` piece starts with /_document) and the link is inside the default-exported component.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "page",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "path": {
+              "notRegex": "pages(?:/_document(?:[^p]|p(?:p|ap|agp|agep)*(?:[^pa]|a[^gp]|ag[^ep]|age[^sp]))*(?:p(?:p|ap|agp|agep)*(?:a|ag|age)?)?)?$"
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "jsx_opening_element"
+                  },
+                  {
+                    "kind": "jsx_self_closing_element"
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^link$"
+                }
+              },
+              {
+                "has": {
+                  "kind": "jsx_attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "kind": "property_identifier",
+                        "regex": "^href$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "string",
+                            "value": {
+                              "startsWith": "https://fonts.googleapis.com/css"
+                            }
+                          },
+                          {
+                            "kind": "jsx_expression",
+                            "has": {
+                              "kind": "string",
+                              "value": {
+                                "startsWith": "https://fonts.googleapis.com/css"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/no-page-custom-font",
+        "message": "Custom fonts not added in `pages/_document.js` will only load for a single page. This is discouraged. See: https://nextjs.org/docs/messages/no-page-custom-font",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/no-page-custom-font"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "document",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "path": {
+              "regex": "pages/_document(?:[^p]|p(?:p|ap|agp|agep)*(?:[^pa]|a[^gp]|ag[^ep]|age[^sp]))*(?:p(?:p|ap|agp|agep)*(?:a|ag|age)?)?$"
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "jsx_opening_element"
+                      },
+                      {
+                        "kind": "jsx_self_closing_element"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "field": "name",
+                      "kind": "identifier",
+                      "regex": "^link$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "jsx_attribute",
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "property_identifier",
+                            "regex": "^href$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "string",
+                                "value": {
+                                  "startsWith": "https://fonts.googleapis.com/css"
+                                }
+                              },
+                              {
+                                "kind": "jsx_expression",
+                                "has": {
+                                  "kind": "string",
+                                  "value": {
+                                    "startsWith": "https://fonts.googleapis.com/css"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "function_declaration",
+                        "inside": {
+                          "kind": "export_statement",
+                          "regex": "^export\\s+default\\s"
+                        }
+                      },
+                      {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "class_declaration"
+                                  },
+                                  {
+                                    "kind": "class",
+                                    "inside": {
+                                      "kind": "export_statement"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "has": {
+                                  "kind": "class_heritage",
+                                  "any": [
+                                    {
+                                      "has": {
+                                        "kind": "identifier",
+                                        "pattern": "$D"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "kind": "extends_clause",
+                                        "has": {
+                                          "field": "value",
+                                          "kind": "identifier",
+                                          "pattern": "$D"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "kind": "program",
+                                  "stopBy": "end",
+                                  "has": {
+                                    "kind": "import_statement",
+                                    "all": [
+                                      {
+                                        "has": {
+                                          "field": "source",
+                                          "kind": "string",
+                                          "value": {
+                                            "eq": "next/document"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "has": {
+                                          "kind": "import_clause",
+                                          "has": {
+                                            "kind": "identifier",
+                                            "pattern": "$D"
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "inside": {
+                              "kind": "export_statement",
+                              "regex": "^export\\s+default\\s"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "function_declaration"
+                              },
+                              {
+                                "kind": "class_declaration"
+                              },
+                              {
+                                "kind": "function_expression"
+                              },
+                              {
+                                "kind": "class"
+                              },
+                              {
+                                "kind": "variable_declarator"
+                              }
+                            ]
+                          },
+                          {
+                            "has": {
+                              "field": "name",
+                              "pattern": "$X"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "kind": "program",
+                              "stopBy": "end",
+                              "has": {
+                                "kind": "export_statement",
+                                "has": {
+                                  "field": "value",
+                                  "kind": "identifier",
+                                  "pattern": "$X"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/no-page-custom-font",
+        "message": "Using `<link />` outside of `<Head>` will disable automatic font optimization. This is discouraged. See: https://nextjs.org/docs/messages/no-page-custom-font",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/no-page-custom-font"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+[
+ "const o = { a: 1, 'b': 2, \"c\\u0064\": 3, 1: 4, 0x10: 5, 1.5e21: 6, 1n: 7, 0.1: 8, 1_000: 9, 0o10: 10, .5: 11, 1e-7: 12 };\n",
+ "const o = { [8]: 1, ['e']: 2, [`f`]: 3, [`g${x}`]: 4, [h]: 5, [null]: 6, [true]: 7, [/re/g]: 8, [(('m'))]: 9, ['a' + 'b']: 10, [0x1n]: 11, [-1]: 12 };\n",
+ "const o = { \\u0069: 1, \\u{6A}: 2, i, get j() { return 1; }, set k(v) {}, l() {}, async m() {}, *n() {}, 'o'() {} };\n",
+ "class C { a = 1; 'b'() {} static [1]() {} #p = 1; get q() { return 1; } [`r`] = 2; static s; 0x2: number; t() { return this.#p; } }\n",
+ "interface I { a: string; 'b'(): void; [1]: number; c?: number; [k: string]: unknown }\ntype T = { d: string; 2(): void };\n",
+ "obj.a; obj['b']; obj[1]; obj[`c`]; obj[x]; obj?.d; obj?.['e']; obj[0x10]; obj.f.g; obj[(('h'))];\n",
+ "const { a: z, 'b': y, [1]: w, c, d = 1, ...rest } = o;\n",
+ "const o = { '\\u{1F600}': 1, '\\uD83D': 2, 'a\\x62': 3, '\\0': 4 };\n",
+ "const o = { [`\\u0061`]: 1, [`a\\nb`]: 2, [`${''}`]: 3, [/a\\//gimsuy]: 4, [1e21]: 5, [0.1]: 6, [-0]: 7, [0]: 8, [false]: 9, [(`p`)]: 10, [1_0n]: 11, ['\\x71']: 12, [`r\\\n`]: 13 };\nclass D { [`s`]() {} static [/t/] = 1; [`${u}`] = 2 }\nx[`v`]; x[/w/]; x[1e-7]; x[(`y`)];\n"
+]

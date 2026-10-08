@@ -1,0 +1,1 @@
+import b from 'buffer'; b.SlowBuffer

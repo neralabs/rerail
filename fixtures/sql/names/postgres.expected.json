@@ -1,0 +1,853 @@
+{
+ "tool": "libpg_query",
+ "version": "pglast 8.5, PostgreSQL 18.6",
+ "source": "postgres.sql",
+ "statements": [
+  {
+   "kind": "SelectStmt",
+   "line": 1,
+   "relations": [
+    {
+     "line": 1,
+     "column": 73,
+     "value": [
+      "public",
+      "t"
+     ]
+    }
+   ],
+   "columns": [
+    {
+     "line": 1,
+     "column": 8,
+     "value": [
+      "a"
+     ]
+    },
+    {
+     "line": 1,
+     "column": 11,
+     "value": [
+      "A"
+     ]
+    },
+    {
+     "line": 1,
+     "column": 16,
+     "value": [
+      "Mixed Case"
+     ]
+    },
+    {
+     "line": 1,
+     "column": 30,
+     "value": [
+      "b",
+      "c"
+     ]
+    },
+    {
+     "line": 1,
+     "column": 35,
+     "value": [
+      "public",
+      "t",
+      "col"
+     ]
+    },
+    {
+     "line": 1,
+     "column": 49,
+     "value": [
+      "Schema",
+      "Table",
+      "x"
+     ]
+    }
+   ],
+   "constants": []
+  },
+  {
+   "kind": "SelectStmt",
+   "line": 2,
+   "relations": [
+    {
+     "line": 2,
+     "column": 43,
+     "value": [
+      "t"
+     ]
+    }
+   ],
+   "columns": [
+    {
+     "line": 2,
+     "column": 8,
+     "value": [
+      "École"
+     ]
+    },
+    {
+     "line": 2,
+     "column": 15,
+     "value": [
+      "ÉCOLE"
+     ]
+    },
+    {
+     "line": 2,
+     "column": 24,
+     "value": [
+      "école"
+     ]
+    },
+    {
+     "line": 2,
+     "column": 31,
+     "value": [
+      "straße"
+     ]
+    }
+   ],
+   "constants": []
+  },
+  {
+   "kind": "SelectStmt",
+   "line": 3,
+   "relations": [
+    {
+     "line": 3,
+     "column": 58,
+     "value": [
+      "U&t"
+     ]
+    }
+   ],
+   "columns": [
+    {
+     "line": 3,
+     "column": 8,
+     "value": [
+      "data"
+     ]
+    },
+    {
+     "line": 3,
+     "column": 29,
+     "value": [
+      "dat"
+     ]
+    }
+   ],
+   "constants": []
+  },
+  {
+   "kind": "SelectStmt",
+   "line": 4,
+   "relations": [
+    {
+     "line": 4,
+     "column": 89,
+     "value": [
+      "t"
+     ]
+    }
+   ],
+   "columns": [
+    {
+     "line": 4,
+     "column": 8,
+     "value": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   ],
+   "constants": []
+  },
+  {
+   "kind": "SelectStmt",
+   "line": 5,
+   "relations": [
+    {
+     "line": 5,
+     "column": 49,
+     "value": [
+      "t"
+     ]
+    }
+   ],
+   "columns": [
+    {
+     "line": 5,
+     "column": 8,
+     "value": [
+      "ééééééééééééééééééééééééééééééé"
+     ]
+    }
+   ],
+   "constants": []
+  },
+  {
+   "kind": "SelectStmt",
+   "line": 6,
+   "relations": [
+    {
+     "line": 6,
+     "column": 28,
+     "value": [
+      "t"
+     ]
+    },
+    {
+     "line": 6,
+     "column": 36,
+     "value": [
+      "u"
+     ]
+    },
+    {
+     "line": 6,
+     "column": 39,
+     "value": [
+      "v"
+     ]
+    },
+    {
+     "line": 6,
+     "column": 70,
+     "value": [
+      "q"
+     ]
+    }
+   ],
+   "columns": [
+    {
+     "line": 6,
+     "column": 8,
+     "value": [
+      "x\"y"
+     ]
+    },
+    {
+     "line": 6,
+     "column": 16,
+     "value": [
+      "t",
+      "*"
+     ]
+    },
+    {
+     "line": 6,
+     "column": 21,
+     "value": [
+      "*"
+     ]
+    },
+    {
+     "line": 6,
+     "column": 63,
+     "value": [
+      "z"
+     ]
+    }
+   ],
+   "constants": []
+  },
+  {
+   "kind": "SelectStmt",
+   "line": 7,
+   "relations": [
+    {
+     "line": 7,
+     "column": 29,
+     "value": [
+      "cat",
+      "sch",
+      "rel"
+     ]
+    }
+   ],
+   "columns": [
+    {
+     "line": 7,
+     "column": 8,
+     "value": [
+      "cat",
+      "sch",
+      "rel",
+      "col"
+     ]
+    }
+   ],
+   "constants": []
+  },
+  {
+   "kind": "InsertStmt",
+   "line": 8,
+   "relations": [
+    {
+     "line": 8,
+     "column": 13,
+     "value": [
+      "s",
+      "t"
+     ]
+    }
+   ],
+   "columns": [
+    {
+     "line": 8,
+     "column": 74,
+     "value": [
+      "excluded",
+      "b"
+     ]
+    }
+   ],
+   "constants": [
+    {
+     "line": 8,
+     "column": 32,
+     "value": [
+      "number",
+      "1"
+     ]
+    },
+    {
+     "line": 8,
+     "column": 35,
+     "value": [
+      "string",
+      "x"
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "UpdateStmt",
+   "line": 9,
+   "relations": [
+    {
+     "line": 9,
+     "column": 8,
+     "value": [
+      "t"
+     ]
+    }
+   ],
+   "columns": [
+    {
+     "line": 9,
+     "column": 26,
+     "value": [
+      "b"
+     ]
+    },
+    {
+     "line": 9,
+     "column": 42,
+     "value": [
+      "c"
+     ]
+    }
+   ],
+   "constants": [
+    {
+     "line": 9,
+     "column": 18,
+     "value": [
+      "number",
+      "1"
+     ]
+    },
+    {
+     "line": 9,
+     "column": 30,
+     "value": [
+      "number",
+      "2"
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "DeleteStmt",
+   "line": 10,
+   "relations": [
+    {
+     "line": 10,
+     "column": 18,
+     "value": [
+      "t"
+     ]
+    },
+    {
+     "line": 10,
+     "column": 26,
+     "value": [
+      "u"
+     ]
+    }
+   ],
+   "columns": [
+    {
+     "line": 10,
+     "column": 34,
+     "value": [
+      "t",
+      "id"
+     ]
+    },
+    {
+     "line": 10,
+     "column": 41,
+     "value": [
+      "u",
+      "id"
+     ]
+    }
+   ],
+   "constants": []
+  },
+  {
+   "kind": "SelectStmt",
+   "line": 11,
+   "relations": [
+    {
+     "line": 11,
+     "column": 45,
+     "value": [
+      "c"
+     ]
+    }
+   ],
+   "columns": [
+    {
+     "line": 11,
+     "column": 36,
+     "value": [
+      "one"
+     ]
+    }
+   ],
+   "constants": [
+    {
+     "line": 11,
+     "column": 19,
+     "value": [
+      "number",
+      "1"
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "CreateStmt",
+   "line": 12,
+   "relations": [
+    {
+     "line": 12,
+     "column": 14,
+     "value": [
+      "New",
+      "T"
+     ]
+    }
+   ],
+   "columns": [],
+   "constants": [
+    {
+     "line": 12,
+     "column": 40,
+     "value": [
+      "number",
+      "42"
+     ]
+    },
+    {
+     "line": 12,
+     "column": 63,
+     "value": [
+      "string",
+      "none"
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "SelectStmt",
+   "line": 13,
+   "relations": [],
+   "columns": [],
+   "constants": [
+    {
+     "line": 13,
+     "column": 8,
+     "value": [
+      "number",
+      "1"
+     ]
+    },
+    {
+     "line": 13,
+     "column": 11,
+     "value": [
+      "number",
+      "-1"
+     ]
+    },
+    {
+     "line": 13,
+     "column": 15,
+     "value": [
+      "number",
+      "-2"
+     ]
+    },
+    {
+     "line": 13,
+     "column": 20,
+     "value": [
+      "number",
+      "1.5"
+     ]
+    },
+    {
+     "line": 13,
+     "column": 25,
+     "value": [
+      "number",
+      "0.5"
+     ]
+    },
+    {
+     "line": 13,
+     "column": 29,
+     "value": [
+      "number",
+      "5"
+     ]
+    },
+    {
+     "line": 13,
+     "column": 33,
+     "value": [
+      "number",
+      "1000"
+     ]
+    },
+    {
+     "line": 13,
+     "column": 38,
+     "value": [
+      "number",
+      "0.0015"
+     ]
+    },
+    {
+     "line": 13,
+     "column": 46,
+     "value": [
+      "number",
+      "31"
+     ]
+    },
+    {
+     "line": 13,
+     "column": 52,
+     "value": [
+      "number",
+      "15"
+     ]
+    },
+    {
+     "line": 13,
+     "column": 58,
+     "value": [
+      "number",
+      "5"
+     ]
+    },
+    {
+     "line": 13,
+     "column": 65,
+     "value": [
+      "number",
+      "1000000"
+     ]
+    },
+    {
+     "line": 13,
+     "column": 76,
+     "value": [
+      "number",
+      "9223372036854775808"
+     ]
+    },
+    {
+     "line": 13,
+     "column": 97,
+     "value": [
+      "number",
+      "466400000"
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "SelectStmt",
+   "line": 14,
+   "relations": [],
+   "columns": [],
+   "constants": [
+    {
+     "line": 14,
+     "column": 8,
+     "value": [
+      "string",
+      "a'b"
+     ]
+    },
+    {
+     "line": 14,
+     "column": 16,
+     "value": [
+      "string",
+      "a\nb"
+     ]
+    },
+    {
+     "line": 14,
+     "column": 25,
+     "value": [
+      "string",
+      "AAA'"
+     ]
+    },
+    {
+     "line": 14,
+     "column": 46,
+     "value": [
+      "string",
+      "dat"
+     ]
+    },
+    {
+     "line": 14,
+     "column": 59,
+     "value": [
+      "string",
+      "dat"
+     ]
+    },
+    {
+     "line": 14,
+     "column": 84,
+     "value": [
+      "string",
+      "x"
+     ]
+    },
+    {
+     "line": 14,
+     "column": 91,
+     "value": [
+      "string",
+      "y$$z"
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "SelectStmt",
+   "line": 15,
+   "relations": [],
+   "columns": [],
+   "constants": [
+    {
+     "line": 15,
+     "column": 8,
+     "value": [
+      "string",
+      "ab"
+     ]
+    },
+    {
+     "line": 16,
+     "column": 8,
+     "value": [
+      "string",
+      "cd"
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "SelectStmt",
+   "line": 18,
+   "relations": [],
+   "columns": [],
+   "constants": [
+    {
+     "line": 18,
+     "column": 8,
+     "value": [
+      "bits",
+      "b1010"
+     ]
+    },
+    {
+     "line": 18,
+     "column": 17,
+     "value": [
+      "bits",
+      "x1F"
+     ]
+    },
+    {
+     "line": 18,
+     "column": 25,
+     "value": [
+      "string",
+      "nat"
+     ]
+    },
+    {
+     "line": 18,
+     "column": 32,
+     "value": [
+      "bool",
+      true
+     ]
+    },
+    {
+     "line": 18,
+     "column": 38,
+     "value": [
+      "bool",
+      false
+     ]
+    },
+    {
+     "line": 18,
+     "column": 45,
+     "value": [
+      "null"
+     ]
+    },
+    {
+     "line": 18,
+     "column": 51,
+     "value": [
+      "string",
+      "ll"
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "SelectStmt",
+   "line": 19,
+   "relations": [],
+   "columns": [],
+   "constants": [
+    {
+     "line": 19,
+     "column": 8,
+     "value": [
+      "string",
+      "1"
+     ]
+    },
+    {
+     "line": 19,
+     "column": 23,
+     "value": [
+      "string",
+      "2"
+     ]
+    },
+    {
+     "line": 19,
+     "column": 45,
+     "value": [
+      "string",
+      "1 day"
+     ]
+    },
+    {
+     "line": 19,
+     "column": 59,
+     "value": [
+      "string",
+      "2020-01-01"
+     ]
+    },
+    {
+     "line": 19,
+     "column": 77,
+     "value": [
+      "string",
+      "3"
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "SelectStmt",
+   "line": 20,
+   "relations": [
+    {
+     "line": 20,
+     "column": 35,
+     "value": [
+      "t"
+     ]
+    }
+   ],
+   "columns": [
+    {
+     "line": 20,
+     "column": 43,
+     "value": [
+      "x"
+     ]
+    }
+   ],
+   "constants": [
+    {
+     "line": 20,
+     "column": 8,
+     "value": [
+      "string",
+      "ünïcödé"
+     ]
+    },
+    {
+     "line": 20,
+     "column": 19,
+     "value": [
+      "string",
+      "日本語"
+     ]
+    },
+    {
+     "line": 20,
+     "column": 26,
+     "value": [
+      "string",
+      "😀"
+     ]
+    },
+    {
+     "line": 20,
+     "column": 47,
+     "value": [
+      "string",
+      "tail"
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,1 @@
+<template><template scope="props">{{props}}</template></template>

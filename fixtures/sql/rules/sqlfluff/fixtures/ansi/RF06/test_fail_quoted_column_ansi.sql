@@ -1,0 +1,2 @@
+SELECT d."DATE"
+FROM d

@@ -1,0 +1,1 @@
+<a {...someObject} href="foobar" target="_blank"></a>

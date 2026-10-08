@@ -41,6 +41,9 @@
     "semantic-search",
     "cosine-similarity"
   ],
+  "workspaces": [
+    "packs/*"
+  ],
   "files": [
     "dist",
     "native/*.node",
@@ -73,7 +76,8 @@
     "build:codex": "esbuild src/codex-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/codex-hook.js",
     "check": "tsc --noEmit",
     "check:native": "cargo fmt --manifest-path Cargo.toml --all -- --check && cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings && cargo clippy --manifest-path native/Cargo.toml --features policy-profile --all-targets -- -D warnings",
-    "check:all": "npm run check && npm run check:native && npm run check:ui-tokens && npm run check:reference",
+    "check:all": "npm run check && npm run check:native && npm run check:ui-tokens && npm run check:reference && npm run check:licenses",
+    "check:licenses": "node scripts/check-licenses.mjs",
     "check:reference": "node scripts/policy-dsl-reference.mjs grammar",
     "check:ui-tokens": "node scripts/check-ui-tokens.mjs",
     "test": "vitest run --dir test",

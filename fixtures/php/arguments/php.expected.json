@@ -1,0 +1,1083 @@
+{
+    "php": "8.5.11",
+    "cases": [
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "",
+            "slots": [
+                [
+                    "absent"
+                ],
+                [
+                    "absent"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "1",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "absent"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "1, 2",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "1, 2, 3",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "int",
+                    "3"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "1, 2, 3, 4",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "int",
+                    "3"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "'x', [1], null",
+            "slots": [
+                [
+                    "string",
+                    "78"
+                ],
+                [
+                    "array",
+                    [
+                        [
+                            [
+                                "int",
+                                "0"
+                            ],
+                            [
+                                "int",
+                                "1"
+                            ]
+                        ]
+                    ]
+                ],
+                [
+                    "null"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "a: 1",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "absent"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "b: 2",
+            "slots": [
+                [
+                    "absent"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "c: 3, a: 1",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "absent"
+                ],
+                [
+                    "int",
+                    "3"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "1, c: 3",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "absent"
+                ],
+                [
+                    "int",
+                    "3"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "1, b: 2, c: 3",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "int",
+                    "3"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "b: 2, a: 1",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "1, a: 2",
+            "error": "Error: Named parameter $a overwrites previous argument"
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "a: 1, a: 2",
+            "error": "Error: Named parameter $a overwrites previous argument"
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "a: 1, 2",
+            "error": "Cannot use positional argument after named argument"
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "1, 2, b: 3",
+            "error": "Error: Named parameter $b overwrites previous argument"
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "A: 1",
+            "slots": [
+                [
+                    "absent"
+                ],
+                [
+                    "absent"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "d: 4",
+            "slots": [
+                [
+                    "absent"
+                ],
+                [
+                    "absent"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "1, d: 4, b: 2",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...[1, 2]",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...[1, 2, 3, 4]",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "int",
+                    "3"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...['b' => 2]",
+            "slots": [
+                [
+                    "absent"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...['b' => 2, 'a' => 1]",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "1, ...['c' => 3]",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "absent"
+                ],
+                [
+                    "int",
+                    "3"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...[1], ...[2]",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...[1, 'c' => 3]",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "absent"
+                ],
+                [
+                    "int",
+                    "3"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...['a' => 1, 2]",
+            "error": "Error: Cannot use positional argument after named argument during unpacking"
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...[5 => 1, 7 => 2]",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...[]",
+            "slots": [
+                [
+                    "absent"
+                ],
+                [
+                    "absent"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...['a' => 1], b: 2",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...['a' => 1], a: 2",
+            "error": "Error: Named parameter $a overwrites previous argument"
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...[1, 2], c: 3",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "int",
+                    "3"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...[1], 2",
+            "error": "Cannot use positional argument after argument unpacking"
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "1, ...[], b: 2",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...['1' => 'x']",
+            "slots": [
+                [
+                    "string",
+                    "78"
+                ],
+                [
+                    "absent"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...[true => 'x']",
+            "slots": [
+                [
+                    "string",
+                    "78"
+                ],
+                [
+                    "absent"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...['0' => 'x', 'b' => 'y']",
+            "slots": [
+                [
+                    "string",
+                    "78"
+                ],
+                [
+                    "string",
+                    "79"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...[1, 'a' => 2]",
+            "error": "Error: Named parameter $a overwrites previous argument"
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...[[1]]",
+            "slots": [
+                [
+                    "array",
+                    [
+                        [
+                            [
+                                "int",
+                                "0"
+                            ],
+                            [
+                                "int",
+                                "1"
+                            ]
+                        ]
+                    ]
+                ],
+                [
+                    "absent"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "(1), (b: 2)",
+            "error": "syntax error, unexpected token \":\""
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...$x",
+            "prelude": "$x = [1, 2];",
+            "unknown": {
+                "a": "`...$x` may pass it",
+                "b": "`...$x` may pass it",
+                "c": "`...$x` may pass it"
+            },
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "1, ...$x",
+            "prelude": "$x = ['c' => 3];",
+            "unknown": {
+                "b": "`...$x` may pass it",
+                "c": "`...$x` may pass it"
+            },
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "absent"
+                ],
+                [
+                    "int",
+                    "3"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...$x, b: 2",
+            "prelude": "$x = [1];",
+            "unknown": {
+                "a": "`...$x` may pass it",
+                "b": "`...$x` may pass it by position, then `b: 2` is refused",
+                "c": "`...$x` may pass it"
+            },
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...$x",
+            "prelude": "$x = ['b' => 2];",
+            "unknown": {
+                "a": "`...$x` may pass it",
+                "b": "`...$x` may pass it",
+                "c": "`...$x` may pass it"
+            },
+            "slots": [
+                [
+                    "absent"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "x"
+            ],
+            "call": "x: 1",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "x"
+            ],
+            "call": "X: 1",
+            "slots": [
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "x",
+                "y"
+            ],
+            "call": "1",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "1, 2, ...$x",
+            "prelude": "$x = [3];",
+            "unknown": {
+                "c": "`...$x` may pass it"
+            },
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "int",
+                    "3"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "1, ...[2], ...$x",
+            "prelude": "$x = ['c' => 3];",
+            "unknown": {
+                "c": "`...$x` may pass it"
+            },
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "int",
+                    "3"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "...[1], ...$x, ...['c' => 3]",
+            "prelude": "$x = [2];",
+            "unknown": {
+                "b": "`...$x` may pass it",
+                "c": "`...$x` may pass it by name, then `'c' => 3` is refused"
+            },
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ],
+                [
+                    "int",
+                    "3"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a"
+            ],
+            "call": "a: 1, x: 2, x: 3",
+            "error": "Error: Named parameter $x overwrites previous argument"
+        },
+        {
+            "signature": [
+                "a"
+            ],
+            "call": "...['a' => 1, 'x' => 2], x: 3",
+            "error": "Error: Named parameter $x overwrites previous argument"
+        },
+        {
+            "signature": [
+                "a"
+            ],
+            "call": "...['x' => 1], ...['a' => 2, 'x' => 3]",
+            "error": "Error: Named parameter $x overwrites previous argument"
+        },
+        {
+            "signature": [
+                "a"
+            ],
+            "call": "...['x' => 1, 'a' => 2, 'x' => 3]",
+            "slots": [
+                [
+                    "int",
+                    "2"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b"
+            ],
+            "call": "1, ...$x, x: 2, x: 3",
+            "prelude": "$x = [];",
+            "error": "Error: Named parameter $x overwrites previous argument"
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "1, c: 3",
+            "callee": "new class",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "absent"
+                ],
+                [
+                    "int",
+                    "3"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "",
+            "callee": "new class",
+            "slots": [
+                [
+                    "absent"
+                ],
+                [
+                    "absent"
+                ],
+                [
+                    "absent"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b"
+            ],
+            "call": "...[1], b: 2",
+            "callee": "new class",
+            "slots": [
+                [
+                    "int",
+                    "1"
+                ],
+                [
+                    "int",
+                    "2"
+                ]
+            ]
+        },
+        {
+            "signature": [
+                "a"
+            ],
+            "call": "a: 1, a: 2",
+            "callee": "new class",
+            "error": "Error: Named parameter $a overwrites previous argument"
+        }
+    ]
+}

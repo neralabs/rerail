@@ -1,0 +1,287 @@
+{
+ "tool": "labels",
+ "version": "1",
+ "source": {
+  "kind": "fixtures",
+  "origin": "hand-labelled",
+  "rules": [
+   "probe-builtin-module-specifier",
+   "probe-cjs-scope-bindings",
+   "probe-cjs-wrapper-scope",
+   "probe-esm-require-unbound",
+   "probe-node-globals",
+   "probe-node-globals-undeclared",
+   "probe-script-global-scope"
+  ],
+  "files": [
+   "cjs/scope.cjs",
+   "esm/require.cjs",
+   "esm/require.mjs",
+   "globals/node-globals.js",
+   "modules/specifiers.cjs",
+   "modules/specifiers.mjs",
+   "wrapper/no-declaration.js",
+   "wrapper/top-level-var.js"
+  ]
+ },
+ "findings": [
+  {
+   "rule": "probe-builtin-module-specifier",
+   "path": "cjs/scope.cjs",
+   "line": 1,
+   "column": 20
+  },
+  {
+   "rule": "probe-builtin-module-specifier",
+   "path": "esm/require.cjs",
+   "line": 1,
+   "column": 20
+  },
+  {
+   "rule": "probe-builtin-module-specifier",
+   "path": "esm/require.mjs",
+   "line": 1,
+   "column": 20
+  },
+  {
+   "rule": "probe-builtin-module-specifier",
+   "path": "esm/require.mjs",
+   "line": 3,
+   "column": 31
+  },
+  {
+   "rule": "probe-builtin-module-specifier",
+   "path": "modules/specifiers.cjs",
+   "line": 1,
+   "column": 20
+  },
+  {
+   "rule": "probe-builtin-module-specifier",
+   "path": "modules/specifiers.cjs",
+   "line": 2,
+   "column": 22
+  },
+  {
+   "rule": "probe-builtin-module-specifier",
+   "path": "modules/specifiers.cjs",
+   "line": 4,
+   "column": 37
+  },
+  {
+   "rule": "probe-builtin-module-specifier",
+   "path": "modules/specifiers.mjs",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "probe-builtin-module-specifier",
+   "path": "modules/specifiers.mjs",
+   "line": 2,
+   "column": 26
+  },
+  {
+   "rule": "probe-builtin-module-specifier",
+   "path": "modules/specifiers.mjs",
+   "line": 3,
+   "column": 18
+  },
+  {
+   "rule": "probe-builtin-module-specifier",
+   "path": "modules/specifiers.mjs",
+   "line": 6,
+   "column": 15
+  },
+  {
+   "rule": "probe-builtin-module-specifier",
+   "path": "modules/specifiers.mjs",
+   "line": 7,
+   "column": 29
+  },
+  {
+   "rule": "probe-builtin-module-specifier",
+   "path": "wrapper/top-level-var.js",
+   "line": 1,
+   "column": 23
+  },
+  {
+   "rule": "probe-cjs-scope-bindings",
+   "path": "cjs/scope.cjs",
+   "line": 1,
+   "column": 12
+  },
+  {
+   "rule": "probe-cjs-scope-bindings",
+   "path": "cjs/scope.cjs",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "probe-cjs-scope-bindings",
+   "path": "cjs/scope.cjs",
+   "line": 2,
+   "column": 25
+  },
+  {
+   "rule": "probe-cjs-scope-bindings",
+   "path": "cjs/scope.cjs",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "probe-cjs-scope-bindings",
+   "path": "cjs/scope.cjs",
+   "line": 3,
+   "column": 16
+  },
+  {
+   "rule": "probe-cjs-scope-bindings",
+   "path": "cjs/scope.cjs",
+   "line": 11,
+   "column": 21
+  },
+  {
+   "rule": "probe-cjs-scope-bindings",
+   "path": "esm/require.cjs",
+   "line": 1,
+   "column": 12
+  },
+  {
+   "rule": "probe-cjs-scope-bindings",
+   "path": "esm/require.cjs",
+   "line": 2,
+   "column": 13
+  },
+  {
+   "rule": "probe-cjs-scope-bindings",
+   "path": "modules/specifiers.cjs",
+   "line": 1,
+   "column": 12
+  },
+  {
+   "rule": "probe-cjs-scope-bindings",
+   "path": "modules/specifiers.cjs",
+   "line": 2,
+   "column": 14
+  },
+  {
+   "rule": "probe-cjs-scope-bindings",
+   "path": "modules/specifiers.cjs",
+   "line": 3,
+   "column": 15
+  },
+  {
+   "rule": "probe-cjs-scope-bindings",
+   "path": "wrapper/top-level-var.js",
+   "line": 1,
+   "column": 15
+  },
+  {
+   "rule": "probe-cjs-wrapper-scope",
+   "path": "modules/specifiers.cjs",
+   "line": 4,
+   "column": 12
+  },
+  {
+   "rule": "probe-cjs-wrapper-scope",
+   "path": "wrapper/no-declaration.js",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "probe-esm-require-unbound",
+   "path": "esm/require.mjs",
+   "line": 1,
+   "column": 12
+  },
+  {
+   "rule": "probe-esm-require-unbound",
+   "path": "esm/require.mjs",
+   "line": 2,
+   "column": 13
+  },
+  {
+   "rule": "probe-node-globals",
+   "path": "globals/node-globals.js",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "probe-node-globals",
+   "path": "globals/node-globals.js",
+   "line": 2,
+   "column": 13
+  },
+  {
+   "rule": "probe-node-globals",
+   "path": "globals/node-globals.js",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "probe-node-globals",
+   "path": "globals/node-globals.js",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "probe-node-globals",
+   "path": "modules/specifiers.cjs",
+   "line": 4,
+   "column": 12
+  },
+  {
+   "rule": "probe-node-globals",
+   "path": "wrapper/no-declaration.js",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "probe-node-globals-undeclared",
+   "path": "globals/node-globals.js",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "probe-node-globals-undeclared",
+   "path": "globals/node-globals.js",
+   "line": 2,
+   "column": 13
+  },
+  {
+   "rule": "probe-node-globals-undeclared",
+   "path": "globals/node-globals.js",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "probe-node-globals-undeclared",
+   "path": "globals/node-globals.js",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "probe-node-globals-undeclared",
+   "path": "modules/specifiers.cjs",
+   "line": 4,
+   "column": 12
+  },
+  {
+   "rule": "probe-node-globals-undeclared",
+   "path": "wrapper/no-declaration.js",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "probe-script-global-scope",
+   "path": "wrapper/no-declaration.js",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "probe-script-global-scope",
+   "path": "wrapper/top-level-var.js",
+   "line": 2,
+   "column": 1
+  }
+ ]
+}

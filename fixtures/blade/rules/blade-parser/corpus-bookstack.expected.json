@@ -1,0 +1,36 @@
+{
+ "tool": "blade-parser",
+ "version": "2.1.0",
+ "source": {
+  "kind": "corpus",
+  "name": "bookstack",
+  "repository": "https://github.com/BookStackApp/BookStack",
+  "commit": "f585a7d9100a99cba8479c1ef5fd56e05562daea",
+  "rules": [
+   "ComponentShorthandVariableParameterValidator",
+   "DebugDirectiveValidator",
+   "DuplicateConditionExpressionsValidator",
+   "ForElseStructureValidator",
+   "NoArgumentsValidator",
+   "RequiredArgumentsValidator"
+  ],
+  "skipped": []
+ },
+ "findings": [
+  {
+   "rule": "RequiredArgumentsValidator",
+   "path": "resources/views/pages/parts/pointer.blade.php",
+   "line": 24
+  },
+  {
+   "rule": "RequiredArgumentsValidator",
+   "path": "resources/views/pages/parts/pointer.blade.php",
+   "line": 25
+  },
+  {
+   "rule": "RequiredArgumentsValidator",
+   "path": "resources/views/pages/parts/pointer.blade.php",
+   "line": 42
+  }
+ ]
+}

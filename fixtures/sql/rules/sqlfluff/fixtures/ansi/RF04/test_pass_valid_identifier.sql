@@ -1,0 +1,1 @@
+CREATE TABLE artist(artist_name TEXT)

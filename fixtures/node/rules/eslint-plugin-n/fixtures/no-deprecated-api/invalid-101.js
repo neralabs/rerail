@@ -1,0 +1,1 @@
+GLOBAL; /*globals GLOBAL*/

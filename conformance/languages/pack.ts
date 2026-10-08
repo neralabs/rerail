@@ -7,7 +7,7 @@ import { compareDeterministicStrings } from "../../src/stable-json.js";
 
 export const HARNESS_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 export const RERAIL_ROOT = resolve(HARNESS_DIRECTORY, "..", "..");
-/** The conformance fixtures checkout: `RERAIL_FIXTURES_DIR` (relative to the repository root) or the `fixtures/` submodule. */
+/** The conformance fixtures: `RERAIL_FIXTURES_DIR` (relative to the repository root) or the repository's `fixtures/`. */
 export const ORACLES_ROOT = resolve(RERAIL_ROOT, process.env.RERAIL_FIXTURES_DIR || "fixtures");
 /** Where `--write` puts reports: `.rerail/` is gitignored, so reports are never committed. */
 export const REPORTS_DIRECTORY = join(RERAIL_ROOT, ".rerail", "reports");

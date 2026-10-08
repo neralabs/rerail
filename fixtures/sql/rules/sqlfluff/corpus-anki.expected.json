@@ -1,0 +1,159 @@
+{
+ "tool": "sqlfluff",
+ "version": "4.4.0",
+ "source": {
+  "kind": "corpus",
+  "name": "anki",
+  "repository": "https://github.com/ankitects/anki",
+  "commit": "d52ca669f6deac5966b1c5035bc2dc77c78d3260",
+  "rules": [
+   "AL04",
+   "AL08",
+   "AL09",
+   "AM01",
+   "AM02",
+   "AM05",
+   "AM09",
+   "CV02",
+   "CV04",
+   "CV05",
+   "CV08",
+   "PG01",
+   "PG02",
+   "RF04",
+   "RF05",
+   "RF06",
+   "ST01",
+   "ST02",
+   "ST08",
+   "ST10"
+  ],
+  "skipped": [
+   "rslib/src/search/note_original_position_order.sql",
+   "rslib/src/storage/card/add_card.sql",
+   "rslib/src/storage/card/add_card_if_unique.sql",
+   "rslib/src/storage/card/add_or_update.sql",
+   "rslib/src/storage/card/deck_due_counts.sql",
+   "rslib/src/storage/card/fix_low_ease.sql",
+   "rslib/src/storage/card/get_card.sql",
+   "rslib/src/storage/card/get_ignored_before_count.sql",
+   "rslib/src/storage/card/update_card.sql",
+   "rslib/src/storage/deck/all_decks_and_original_of_search_cards.sql",
+   "rslib/src/storage/notetype/field_names_for_notes.sql",
+   "rslib/src/storage/revlog/studied_today_by_deck.sql",
+   "rslib/src/storage/schema11.sql",
+   "rslib/src/sync/media/database/server/schema_v3.sql",
+   "rslib/src/sync/media/database/server/schema_v4.sql"
+  ]
+ },
+ "findings": [
+  {
+   "rule": "AM05",
+   "path": "rslib/src/search/note_decks_order.sql",
+   "line": 9,
+   "column": 3
+  },
+  {
+   "rule": "AM05",
+   "path": "rslib/src/storage/note/notes_types_checksums_decks.sql",
+   "line": 9,
+   "column": 3
+  },
+  {
+   "rule": "AM09",
+   "path": "rslib/src/storage/dbcheck/invalid_ids_update.sql",
+   "line": 6,
+   "column": 5
+  },
+  {
+   "rule": "AM09",
+   "path": "rslib/src/sync/media/database/server/entry/changes.sql",
+   "line": 11,
+   "column": 1
+  },
+  {
+   "rule": "CV04",
+   "path": "rslib/src/storage/deck/due_counts.sql",
+   "line": 28,
+   "column": 3
+  },
+  {
+   "rule": "RF04",
+   "path": "rslib/src/storage/upgrades/schema14_upgrade.sql",
+   "line": 9,
+   "column": 3
+  },
+  {
+   "rule": "RF05",
+   "path": "rslib/src/storage/dbcheck/invalid_ids_create.sql",
+   "line": 4,
+   "column": 8
+  },
+  {
+   "rule": "RF05",
+   "path": "rslib/src/storage/dbcheck/invalid_ids_create.sql",
+   "line": 5,
+   "column": 15
+  },
+  {
+   "rule": "RF05",
+   "path": "rslib/src/storage/dbcheck/invalid_ids_create.sql",
+   "line": 26,
+   "column": 6
+  },
+  {
+   "rule": "RF05",
+   "path": "rslib/src/storage/dbcheck/invalid_ids_create.sql",
+   "line": 27,
+   "column": 12
+  },
+  {
+   "rule": "RF05",
+   "path": "rslib/src/storage/dbcheck/invalid_ids_update.sql",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "RF05",
+   "path": "rslib/src/storage/dbcheck/invalid_ids_update.sql",
+   "line": 2,
+   "column": 5
+  },
+  {
+   "rule": "RF05",
+   "path": "rslib/src/storage/dbcheck/invalid_ids_update.sql",
+   "line": 5,
+   "column": 28
+  },
+  {
+   "rule": "RF05",
+   "path": "rslib/src/storage/dbcheck/invalid_ids_update.sql",
+   "line": 5,
+   "column": 45
+  },
+  {
+   "rule": "RF05",
+   "path": "rslib/src/storage/dbcheck/invalid_ids_update.sql",
+   "line": 8,
+   "column": 7
+  },
+  {
+   "rule": "RF05",
+   "path": "rslib/src/storage/dbcheck/invalid_ids_update.sql",
+   "line": 8,
+   "column": 24
+  },
+  {
+   "rule": "ST01",
+   "path": "rslib/src/storage/card/congrats.sql",
+   "line": 16,
+   "column": 9
+  },
+  {
+   "rule": "ST01",
+   "path": "rslib/src/storage/notetype/existing_cards.sql",
+   "line": 14,
+   "column": 5
+  }
+ ]
+}

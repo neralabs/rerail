@@ -1,0 +1,1 @@
+function handler(location) { location.href = '/foo'; location.assign('/foo') }

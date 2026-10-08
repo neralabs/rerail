@@ -1,0 +1,1 @@
+function func({foo: foo = 1, 'bar': bar = 1, baz: baz}) {}

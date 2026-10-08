@@ -1,0 +1,1 @@
+<template><div v-for="x in foo">{{value | f(x)}}</div></template>

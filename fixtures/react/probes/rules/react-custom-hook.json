@@ -1,0 +1,64 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-custom-hook",
+  "revision": 1,
+  "mode": "log",
+  "description": "Fact: a custom hook definition: a function declaration, or a declarator whose value is a function, named `useX`. Reported at the name.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "identifier",
+            "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$",
+            "any": [
+              {
+                "inside": {
+                  "field": "name",
+                  "kind": "function_declaration"
+                }
+              },
+              {
+                "inside": {
+                  "field": "name",
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "value",
+                    "any": [
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "function_expression"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-probe/custom-hook",
+        "message": "Fact"
+      }
+    }
+  ]
+}

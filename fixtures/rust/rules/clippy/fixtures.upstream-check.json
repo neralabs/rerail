@@ -1,0 +1,5 @@
+{
+ "clippy": "clippy 0.1.99 (b940084d7e 2026-09-28)",
+ "differences": {},
+ "origin": "https://github.com/rust-lang/rust-clippy@49e2f89a2605a9a340e04955fdbefa9803e6027a"
+}

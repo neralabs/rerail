@@ -1,0 +1,644 @@
+{
+ "tool": "ruff",
+ "version": "0.16.9",
+ "source": {
+  "kind": "corpus",
+  "name": "django",
+  "repository": "https://github.com/django/django",
+  "commit": "fd91518f17c8a84fa47fe0e5534ef46afa7a0f7a",
+  "rules": [
+   "B011",
+   "B028",
+   "B905",
+   "E711",
+   "E722",
+   "F507",
+   "F523",
+   "F524",
+   "F601",
+   "F632",
+   "F722",
+   "F811",
+   "F821",
+   "F823",
+   "F841",
+   "PIE796",
+   "SIM222"
+  ],
+  "skipped": []
+ },
+ "findings": [
+  {
+   "rule": "B011",
+   "path": "django/core/handlers/asgi.py",
+   "line": 226,
+   "column": 16
+  },
+  {
+   "rule": "B011",
+   "path": "django/db/models/functions/datetime.py",
+   "line": 102,
+   "column": 20
+  },
+  {
+   "rule": "B028",
+   "path": "django/contrib/auth/hashers.py",
+   "line": 311,
+   "column": 9
+  },
+  {
+   "rule": "B028",
+   "path": "django/contrib/contenttypes/management/__init__.py",
+   "line": 35,
+   "column": 17
+  },
+  {
+   "rule": "B028",
+   "path": "django/core/cache/backends/base.py",
+   "line": 119,
+   "column": 13
+  },
+  {
+   "rule": "B028",
+   "path": "django/core/mail/__init__.py",
+   "line": 401,
+   "column": 9
+  },
+  {
+   "rule": "B028",
+   "path": "django/core/mail/message.py",
+   "line": 78,
+   "column": 5
+  },
+  {
+   "rule": "B028",
+   "path": "django/core/mail/message.py",
+   "line": 111,
+   "column": 5
+  },
+  {
+   "rule": "B028",
+   "path": "django/core/mail/message.py",
+   "line": 447,
+   "column": 13
+  },
+  {
+   "rule": "B028",
+   "path": "django/core/management/commands/dumpdata.py",
+   "line": 206,
+   "column": 21
+  },
+  {
+   "rule": "B028",
+   "path": "django/core/management/commands/dumpdata.py",
+   "line": 261,
+   "column": 21
+  },
+  {
+   "rule": "B028",
+   "path": "django/core/management/commands/loaddata.py",
+   "line": 276,
+   "column": 17
+  },
+  {
+   "rule": "B028",
+   "path": "django/core/management/commands/makemigrations.py",
+   "line": 162,
+   "column": 21
+  },
+  {
+   "rule": "B028",
+   "path": "django/db/backends/postgresql/base.py",
+   "line": 525,
+   "column": 13
+  },
+  {
+   "rule": "B028",
+   "path": "django/db/backends/sqlite3/base.py",
+   "line": 174,
+   "column": 13
+  },
+  {
+   "rule": "B028",
+   "path": "django/db/backends/utils.py",
+   "line": 67,
+   "column": 13
+  },
+  {
+   "rule": "B028",
+   "path": "django/db/backends/utils.py",
+   "line": 98,
+   "column": 13
+  },
+  {
+   "rule": "B028",
+   "path": "django/db/backends/utils.py",
+   "line": 111,
+   "column": 13
+  },
+  {
+   "rule": "B028",
+   "path": "django/db/models/fields/__init__.py",
+   "line": 1654,
+   "column": 17
+  },
+  {
+   "rule": "B028",
+   "path": "django/db/models/fields/__init__.py",
+   "line": 1713,
+   "column": 13
+  },
+  {
+   "rule": "B028",
+   "path": "django/db/models/query.py",
+   "line": 1610,
+   "column": 17
+  },
+  {
+   "rule": "B028",
+   "path": "django/forms/widgets.py",
+   "line": 256,
+   "column": 13
+  },
+  {
+   "rule": "B028",
+   "path": "django/template/defaulttags.py",
+   "line": 90,
+   "column": 17
+  },
+  {
+   "rule": "B028",
+   "path": "django/utils/translation/template.py",
+   "line": 172,
+   "column": 29
+  },
+  {
+   "rule": "B028",
+   "path": "django/utils/translation/trans_real.py",
+   "line": 161,
+   "column": 17
+  },
+  {
+   "rule": "B028",
+   "path": "django/views/debug.py",
+   "line": 507,
+   "column": 17
+  },
+  {
+   "rule": "B905",
+   "path": "django/contrib/admin/helpers.py",
+   "line": 346,
+   "column": 31
+  },
+  {
+   "rule": "B905",
+   "path": "django/contrib/admin/options.py",
+   "line": 2002,
+   "column": 32
+  },
+  {
+   "rule": "B905",
+   "path": "django/contrib/admin/templatetags/admin_list.py",
+   "line": 335,
+   "column": 26
+  },
+  {
+   "rule": "B905",
+   "path": "django/contrib/admin/templatetags/admin_list.py",
+   "line": 344,
+   "column": 26
+  },
+  {
+   "rule": "B905",
+   "path": "django/contrib/contenttypes/fields.py",
+   "line": 439,
+   "column": 39
+  },
+  {
+   "rule": "B905",
+   "path": "django/contrib/gis/geos/mutable_list.py",
+   "line": 276,
+   "column": 24
+  },
+  {
+   "rule": "B905",
+   "path": "django/contrib/gis/geos/mutable_list.py",
+   "line": 297,
+   "column": 23
+  },
+  {
+   "rule": "B905",
+   "path": "django/contrib/gis/utils/ogrinspect.py",
+   "line": 198,
+   "column": 53
+  },
+  {
+   "rule": "B905",
+   "path": "django/contrib/postgres/signals.py",
+   "line": 41,
+   "column": 31
+  },
+  {
+   "rule": "B905",
+   "path": "django/core/cache/backends/redis.py",
+   "line": 139,
+   "column": 54
+  },
+  {
+   "rule": "B905",
+   "path": "django/core/management/commands/makemigrations.py",
+   "line": 435,
+   "column": 44
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/backends/base/schema.py",
+   "line": 61,
+   "column": 22
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/backends/base/schema.py",
+   "line": 1225,
+   "column": 37
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/backends/oracle/operations.py",
+   "line": 312,
+   "column": 21
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/backends/postgresql/compiler.py",
+   "line": 60,
+   "column": 28
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/backends/sqlite3/operations.py",
+   "line": 166,
+   "column": 31
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/migrations/autodetector.py",
+   "line": 430,
+   "column": 27
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/migrations/operations/base.py",
+   "line": 59,
+   "column": 32
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/migrations/operations/models.py",
+   "line": 477,
+   "column": 22
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/migrations/operations/models.py",
+   "line": 574,
+   "column": 41
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/migrations/state.py",
+   "line": 1013,
+   "column": 43
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/base.py",
+   "line": 537,
+   "column": 31
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/base.py",
+   "line": 544,
+   "column": 31
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/base.py",
+   "line": 1269,
+   "column": 29
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/enums.py",
+   "line": 31,
+   "column": 30
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/expressions.py",
+   "line": 1412,
+   "column": 35
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/fields/composite.py",
+   "line": 46,
+   "column": 31
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/fields/composite.py",
+   "line": 143,
+   "column": 29
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/fields/related.py",
+   "line": 792,
+   "column": 47
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/fields/tuple_lookups.py",
+   "line": 115,
+   "column": 33
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/fields/tuple_lookups.py",
+   "line": 163,
+   "column": 52
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/fields/tuple_lookups.py",
+   "line": 209,
+   "column": 25
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/fields/tuple_lookups.py",
+   "line": 237,
+   "column": 25
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/fields/tuple_lookups.py",
+   "line": 265,
+   "column": 25
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/fields/tuple_lookups.py",
+   "line": 293,
+   "column": 25
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/fields/tuple_lookups.py",
+   "line": 367,
+   "column": 41
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/fields/tuple_lookups.py",
+   "line": 392,
+   "column": 60
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/fields/tuple_lookups.py",
+   "line": 409,
+   "column": 56
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/indexes.py",
+   "line": 265,
+   "column": 53
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/lookups.py",
+   "line": 350,
+   "column": 23
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/lookups.py",
+   "line": 353,
+   "column": 35
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/query.py",
+   "line": 937,
+   "column": 45
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/query.py",
+   "line": 938,
+   "column": 42
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/query.py",
+   "line": 959,
+   "column": 48
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/query.py",
+   "line": 960,
+   "column": 42
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/query.py",
+   "line": 978,
+   "column": 31
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/sql/compiler.py",
+   "line": 645,
+   "column": 33
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/sql/compiler.py",
+   "line": 1805,
+   "column": 58
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/sql/compiler.py",
+   "line": 1814,
+   "column": 36
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/sql/compiler.py",
+   "line": 1818,
+   "column": 40
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/sql/compiler.py",
+   "line": 1883,
+   "column": 31
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/sql/compiler.py",
+   "line": 1946,
+   "column": 32
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/sql/query.py",
+   "line": 650,
+   "column": 21
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/sql/query.py",
+   "line": 2439,
+   "column": 32
+  },
+  {
+   "rule": "B905",
+   "path": "django/db/models/sql/query.py",
+   "line": 2617,
+   "column": 33
+  },
+  {
+   "rule": "B905",
+   "path": "django/dispatch/dispatcher.py",
+   "line": 260,
+   "column": 24
+  },
+  {
+   "rule": "B905",
+   "path": "django/dispatch/dispatcher.py",
+   "line": 319,
+   "column": 26
+  },
+  {
+   "rule": "B905",
+   "path": "django/dispatch/dispatcher.py",
+   "line": 388,
+   "column": 24
+  },
+  {
+   "rule": "B905",
+   "path": "django/dispatch/dispatcher.py",
+   "line": 460,
+   "column": 26
+  },
+  {
+   "rule": "B905",
+   "path": "django/forms/boundfield.py",
+   "line": 287,
+   "column": 44
+  },
+  {
+   "rule": "B905",
+   "path": "django/forms/fields.py",
+   "line": 1176,
+   "column": 37
+  },
+  {
+   "rule": "B905",
+   "path": "django/forms/widgets.py",
+   "line": 1041,
+   "column": 13
+  },
+  {
+   "rule": "B905",
+   "path": "django/forms/widgets.py",
+   "line": 1067,
+   "column": 40
+  },
+  {
+   "rule": "B905",
+   "path": "django/forms/widgets.py",
+   "line": 1073,
+   "column": 40
+  },
+  {
+   "rule": "B905",
+   "path": "django/middleware/csrf.py",
+   "line": 66,
+   "column": 13
+  },
+  {
+   "rule": "B905",
+   "path": "django/middleware/csrf.py",
+   "line": 80,
+   "column": 13
+  },
+  {
+   "rule": "B905",
+   "path": "django/template/defaulttags.py",
+   "line": 242,
+   "column": 42
+  },
+  {
+   "rule": "B905",
+   "path": "django/test/runner.py",
+   "line": 1313,
+   "column": 37
+  },
+  {
+   "rule": "B905",
+   "path": "django/test/utils.py",
+   "line": 690,
+   "column": 55
+  },
+  {
+   "rule": "B905",
+   "path": "django/urls/resolvers.py",
+   "line": 771,
+   "column": 43
+  },
+  {
+   "rule": "B905",
+   "path": "django/utils/regex_helper.py",
+   "line": 193,
+   "column": 17
+  },
+  {
+   "rule": "B905",
+   "path": "django/utils/regex_helper.py",
+   "line": 330,
+   "column": 31
+  },
+  {
+   "rule": "B905",
+   "path": "django/utils/regex_helper.py",
+   "line": 331,
+   "column": 39
+  },
+  {
+   "rule": "B905",
+   "path": "django/utils/translation/trans_real.py",
+   "line": 124,
+   "column": 28
+  },
+  {
+   "rule": "F821",
+   "path": "django/core/handlers/asgi.py",
+   "line": 210,
+   "column": 20
+  },
+  {
+   "rule": "F821",
+   "path": "django/dispatch/dispatcher.py",
+   "line": 60,
+   "column": 12
+  }
+ ]
+}

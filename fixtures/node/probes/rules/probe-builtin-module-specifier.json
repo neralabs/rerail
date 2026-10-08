@@ -1,0 +1,117 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "probe-builtin-module-specifier",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Node fact: builtin module names (eslint-plugin-n 18.4.1 NodeBuiltinModules: bare names, `node:` names and node:-only modules such as node:test and node:sqlite) as specifiers of require, process.getBuiltinModule, import/export declarations and import(); a value test, so template literals without substitutions count.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "require",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "template_string",
+                "not": {
+                  "has": {
+                    "kind": "template_substitution"
+                  }
+                }
+              }
+            ],
+            "value": {
+              "regex": "^(?:assert|node:assert|assert/strict|node:assert/strict|async_hooks|node:async_hooks|buffer|node:buffer|child_process|node:child_process|cluster|node:cluster|console|node:console|crypto|node:crypto|dgram|node:dgram|diagnostics_channel|node:diagnostics_channel|dns|node:dns|dns/promises|node:dns/promises|domain|events|node:events|fs|node:fs|fs/promises|node:fs/promises|http2|node:http2|http|node:http|node:_http_agent|node:_http_client|node:_http_common|node:_http_incoming|node:_http_outgoing|node:_http_server|https|node:https|inspector|node:inspector|inspector/promises|node:inspector/promises|module|node:module|net|node:net|os|node:os|path|node:path|path/posix|node:path/posix|path/win32|node:path/win32|perf_hooks|node:perf_hooks|process|node:process|punycode|querystring|node:querystring|readline|node:readline|readline/promises|node:readline/promises|repl|node:repl|node:sea|stream|node:stream|stream/promises|node:stream/promises|stream/web|node:stream/web|stream/consumers|node:stream/consumers|node:_stream_duplex|node:_stream_passthrough|node:_stream_readable|node:_stream_transform|node:_stream_wrap|node:_stream_writable|string_decoder|node:string_decoder|node:sqlite|node:test|timers|node:timers|timers/promises|node:timers/promises|tls|node:tls|node:_tls_common|node:_tls_wrap|trace_events|node:trace_events|tty|node:tty|url|node:url|util|node:util|util/types|node:util/types|v8|node:v8|vm|node:vm|wasi|node:wasi|worker_threads|node:worker_threads|zlib|node:zlib)$"
+            },
+            "nthChild": {
+              "position": 1,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "field": "arguments",
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "regex": "^require$"
+                    },
+                    {
+                      "kind": "import"
+                    },
+                    {
+                      "kind": "member_expression",
+                      "has": {
+                        "field": "property",
+                        "regex": "^getBuiltinModule$"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "probe-builtin-module-specifier",
+        "message": "builtin module"
+      }
+    },
+    {
+      "id": "declaration",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "string",
+            "value": {
+              "regex": "^(?:assert|node:assert|assert/strict|node:assert/strict|async_hooks|node:async_hooks|buffer|node:buffer|child_process|node:child_process|cluster|node:cluster|console|node:console|crypto|node:crypto|dgram|node:dgram|diagnostics_channel|node:diagnostics_channel|dns|node:dns|dns/promises|node:dns/promises|domain|events|node:events|fs|node:fs|fs/promises|node:fs/promises|http2|node:http2|http|node:http|node:_http_agent|node:_http_client|node:_http_common|node:_http_incoming|node:_http_outgoing|node:_http_server|https|node:https|inspector|node:inspector|inspector/promises|node:inspector/promises|module|node:module|net|node:net|os|node:os|path|node:path|path/posix|node:path/posix|path/win32|node:path/win32|perf_hooks|node:perf_hooks|process|node:process|punycode|querystring|node:querystring|readline|node:readline|readline/promises|node:readline/promises|repl|node:repl|node:sea|stream|node:stream|stream/promises|node:stream/promises|stream/web|node:stream/web|stream/consumers|node:stream/consumers|node:_stream_duplex|node:_stream_passthrough|node:_stream_readable|node:_stream_transform|node:_stream_wrap|node:_stream_writable|string_decoder|node:string_decoder|node:sqlite|node:test|timers|node:timers|timers/promises|node:timers/promises|tls|node:tls|node:_tls_common|node:_tls_wrap|trace_events|node:trace_events|tty|node:tty|url|node:url|util|node:util|util/types|node:util/types|v8|node:v8|vm|node:vm|wasi|node:wasi|worker_threads|node:worker_threads|zlib|node:zlib)$"
+            },
+            "inside": {
+              "field": "source",
+              "any": [
+                {
+                  "kind": "import_statement"
+                },
+                {
+                  "kind": "export_statement"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "probe-builtin-module-specifier",
+        "message": "builtin module"
+      }
+    }
+  ]
+}

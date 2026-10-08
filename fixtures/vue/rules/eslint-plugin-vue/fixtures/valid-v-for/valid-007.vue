@@ -1,0 +1,1 @@
+<template><div><your-component v-for="x in list" :key="x.id"></your-component></div></template>

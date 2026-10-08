@@ -1,0 +1,1 @@
+<template><div><div class :class></div></div></template>

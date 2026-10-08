@@ -1,0 +1,1 @@
+<template><div><div v-for="(a,{b,c}) in list"></div></div></template>

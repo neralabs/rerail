@@ -1,0 +1,1 @@
+<MyComponent children={async function() {}} />;

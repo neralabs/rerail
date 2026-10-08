@@ -1,0 +1,1 @@
+<template><div v-if="foo"></div></template>

@@ -1,0 +1,376 @@
+{
+ "tool": "eslint-plugin-next",
+ "version": "16.3.8",
+ "source": {
+  "kind": "corpus",
+  "name": "next-examples",
+  "repository": "https://github.com/vercel/next.js",
+  "commit": "6194d642b6fd743437da21dac3c720a587e6b9b2",
+  "rules": [
+   "@next/next/google-font-display",
+   "@next/next/google-font-preconnect",
+   "@next/next/inline-script-id",
+   "@next/next/next-script-for-ga",
+   "@next/next/no-assign-module-variable",
+   "@next/next/no-async-client-component",
+   "@next/next/no-before-interactive-script-outside-document",
+   "@next/next/no-css-tags",
+   "@next/next/no-document-import-in-page",
+   "@next/next/no-duplicate-head",
+   "@next/next/no-head-element",
+   "@next/next/no-head-import-in-document",
+   "@next/next/no-img-element",
+   "@next/next/no-location-assign-relative-destination",
+   "@next/next/no-page-custom-font",
+   "@next/next/no-script-component-in-head",
+   "@next/next/no-styled-jsx-in-document",
+   "@next/next/no-sync-scripts",
+   "@next/next/no-title-in-document-head",
+   "@next/next/no-typos",
+   "@next/next/no-unwanted-polyfillio"
+  ],
+  "skipped": [
+   "examples/with-custom-babel-config/pages/index.js",
+   "examples/with-flow/components/Page.js",
+   "examples/with-kea/pages/index.js"
+  ]
+ },
+ "findings": [
+  {
+   "rule": "@next/next/no-css-tags",
+   "path": "examples/with-react-toolbox/pages/index.js",
+   "line": 11,
+   "column": 9
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/auth0/pages/advanced/ssr-profile.tsx",
+   "line": 16,
+   "column": 9
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/auth0/pages/index.tsx",
+   "line": 29,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/auth0/pages/profile.tsx",
+   "line": 16,
+   "column": 9
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/blog-starter/src/app/_components/avatar.tsx",
+   "line": 9,
+   "column": 7
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/blog-with-comment/components/comment/list.tsx",
+   "line": 24,
+   "column": 17
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/cms-agilitycms/lib/components/image.tsx",
+   "line": 203,
+   "column": 13
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/cms-agilitycms/lib/components/image.tsx",
+   "line": 217,
+   "column": 24
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/cms-sitecore-xmcloud/src/Navigation.tsx",
+   "line": 13,
+   "column": 13
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/cms-sitefinity/components/avatar.tsx",
+   "line": 9,
+   "column": 7
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/cms-sitefinity/components/cover-image.tsx",
+   "line": 12,
+   "column": 5
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/cms-webiny/lib/rich-text-renderer.tsx",
+   "line": 115,
+   "column": 5
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-clerk/app/api-request.tsx",
+   "line": 57,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-clerk/app/api-request.tsx",
+   "line": 66,
+   "column": 13
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-clerk/app/page.tsx",
+   "line": 8,
+   "column": 5
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-clerk/app/page.tsx",
+   "line": 17,
+   "column": 7
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-clerk/app/page.tsx",
+   "line": 24,
+   "column": 5
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-clerk/app/page.tsx",
+   "line": 33,
+   "column": 7
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-clerk/app/page.tsx",
+   "line": 66,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-clerk/app/page.tsx",
+   "line": 75,
+   "column": 13
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-clerk/app/page.tsx",
+   "line": 109,
+   "column": 7
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-clerk/app/page.tsx",
+   "line": 113,
+   "column": 7
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-couchbase/pages/index.js",
+   "line": 50,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-docker-multi-env/pages/index.js",
+   "line": 63,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-facebook-pixel/_pages/_document.js",
+   "line": 9,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-filbert/pages/index.js",
+   "line": 56,
+   "column": 7
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-formspree/pages/index.js",
+   "line": 38,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-graphql-react/pages/index.js",
+   "line": 24,
+   "column": 5
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-hls-js/pages/index.js",
+   "line": 31,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-hls-js/pages/index.js",
+   "line": 39,
+   "column": 20
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-knex/pages/index.js",
+   "line": 82,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-magic/components/layout.js",
+   "line": 23,
+   "column": 20
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-mdbreact/pages/index.js",
+   "line": 112,
+   "column": 13
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-mongodb-mongoose/pages/[id]/index.tsx",
+   "line": 37,
+   "column": 9
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-mongodb-mongoose/pages/_app.tsx",
+   "line": 20,
+   "column": 9
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-mongodb-mongoose/pages/index.tsx",
+   "line": 16,
+   "column": 13
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-msw/pages/index.tsx",
+   "line": 20,
+   "column": 7
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-neo4j/components/footer.js",
+   "line": 9,
+   "column": 20
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-react-bootstrap/pages/index.jsx",
+   "line": 84,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-reactstrap/pages/index.jsx",
+   "line": 101,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-redis/app/page.tsx",
+   "line": 113,
+   "column": 17
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-rematch/pages/github-users.js",
+   "line": 27,
+   "column": 13
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-rematch/pages/github-users.js",
+   "line": 41,
+   "column": 13
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-sitemap/app/contact/page.tsx",
+   "line": 19,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-sitemap/app/page.tsx",
+   "line": 53,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-stripe-typescript/app/layout.tsx",
+   "line": 38,
+   "column": 17
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-stripe-typescript/app/page.tsx",
+   "line": 18,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-stripe-typescript/app/page.tsx",
+   "line": 27,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-stripe-typescript/app/page.tsx",
+   "line": 36,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-unsplash/components/UIcon/index.tsx",
+   "line": 11,
+   "column": 7
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-unsplash/components/UImage/index.tsx",
+   "line": 7,
+   "column": 7
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-unsplash/components/User/index.tsx",
+   "line": 16,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-urql/app/page.tsx",
+   "line": 19,
+   "column": 13
+  },
+  {
+   "rule": "@next/next/no-img-element",
+   "path": "examples/with-urql/app/pokemon/[name]/page.tsx",
+   "line": 12,
+   "column": 7
+  },
+  {
+   "rule": "@next/next/no-location-assign-relative-destination",
+   "path": "examples/cms-agilitycms/lib/use-preview-redirect.ts",
+   "line": 18,
+   "column": 5
+  },
+  {
+   "rule": "@next/next/no-sync-scripts",
+   "path": "examples/with-eslint/app/page.tsx",
+   "line": 4,
+   "column": 7
+  }
+ ]
+}

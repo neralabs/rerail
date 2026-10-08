@@ -1,0 +1,114 @@
+{
+  "pack": "react-probes",
+  "family": "ecma",
+  "capabilities": [
+    "syntax",
+    "scope"
+  ],
+  "corpora": [],
+  "tools": [
+    {
+      "name": "labels",
+      "version": "1"
+    }
+  ],
+  "oracles": ".",
+  "rules": [
+    {
+      "id": "react-component-function",
+      "upstream": {
+        "tool": "labels",
+        "rule": "react-probe/component-function"
+      },
+      "policy": "rules/react-component-function.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-component-class",
+      "upstream": {
+        "tool": "labels",
+        "rule": "react-probe/component-class"
+      },
+      "policy": "rules/react-component-class.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-component-wrapped",
+      "upstream": {
+        "tool": "labels",
+        "rule": "react-probe/component-wrapped"
+      },
+      "policy": "rules/react-component-wrapped.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-hook-call",
+      "upstream": {
+        "tool": "labels",
+        "rule": "react-probe/hook-call"
+      },
+      "policy": "rules/react-hook-call.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-custom-hook",
+      "upstream": {
+        "tool": "labels",
+        "rule": "react-probe/custom-hook"
+      },
+      "policy": "rules/react-custom-hook.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-runtime-classic-unused-react",
+      "upstream": {
+        "tool": "labels",
+        "rule": "react-probe/runtime-classic-unused-react"
+      },
+      "policy": "rules/react-runtime-classic-unused-react.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-runtime-automatic-unused-react",
+      "upstream": {
+        "tool": "labels",
+        "rule": "react-probe/runtime-automatic-unused-react"
+      },
+      "policy": "rules/react-runtime-automatic-unused-react.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-jsx-pragma-comment",
+      "upstream": {
+        "tool": "labels",
+        "rule": "react-probe/jsx-pragma-comment"
+      },
+      "policy": "rules/react-jsx-pragma-comment.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    }
+  ]
+}

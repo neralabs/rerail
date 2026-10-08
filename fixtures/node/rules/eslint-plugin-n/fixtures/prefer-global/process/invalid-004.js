@@ -1,0 +1,1 @@
+var process_ = require('node:process'); process_.exit(0)

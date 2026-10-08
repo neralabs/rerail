@@ -1,0 +1,1798 @@
+{
+    "php": "8.5.11",
+    "phpParser": "v5.9.0",
+    "files": {
+        "exceptions.php": [
+            {
+                "start": 220,
+                "name": "$c",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 236,
+                "name": "$state",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 272,
+                "name": "$state",
+                "reaching": [
+                    236
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 369,
+                "name": "$state",
+                "reaching": [
+                    272
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 416,
+                "name": "$error",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 434,
+                "name": "$state",
+                "reaching": [
+                    272
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 463,
+                "name": "$state",
+                "reaching": [
+                    369,
+                    434
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 508,
+                "name": "$c",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 517,
+                "name": "$d",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 533,
+                "name": "$step",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 562,
+                "name": "$step",
+                "reaching": [
+                    533
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 652,
+                "name": "$step",
+                "reaching": [
+                    562
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 691,
+                "name": "$error",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 763,
+                "name": "$step",
+                "reaching": [
+                    562
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 798,
+                "name": "$cleanup",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 826,
+                "name": "$step",
+                "reaching": [
+                    652,
+                    763
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 873,
+                "name": "$c",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 889,
+                "name": "$x",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1001,
+                "name": "$x",
+                "reaching": [
+                    889
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1060,
+                "name": "$x",
+                "reaching": [
+                    889,
+                    1001
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1088,
+                "name": "$x",
+                "reaching": [
+                    1060
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1136,
+                "name": "$items",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1175,
+                "name": "$item",
+                "reaching": [
+                    -1,
+                    1175
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1252,
+                "name": "$last",
+                "reaching": [
+                    -1,
+                    1252
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1287,
+                "name": "$last",
+                "reaching": [
+                    -1,
+                    1252
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1335,
+                "name": "$c",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1351,
+                "name": "$r",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1425,
+                "name": "$r",
+                "reaching": [
+                    1351
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1457,
+                "name": "$r",
+                "reaching": [
+                    1351,
+                    1425
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1475,
+                "name": "$r",
+                "reaching": [
+                    1457
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            }
+        ],
+        "outer.php": [
+            {
+                "start": 186,
+                "name": "$g",
+                "reaching": [
+                    -1
+                ],
+                "end": true
+            },
+            {
+                "start": 194,
+                "name": "$h",
+                "reaching": [
+                    -1
+                ],
+                "end": true
+            },
+            {
+                "start": 202,
+                "name": "$k",
+                "reaching": [
+                    -1
+                ],
+                "end": true
+            },
+            {
+                "start": 210,
+                "name": "$m",
+                "reaching": [
+                    -1
+                ],
+                "end": true
+            },
+            {
+                "start": 261,
+                "name": "$g",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 269,
+                "name": "$g",
+                "reaching": [
+                    261
+                ],
+                "end": false,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 281,
+                "name": "$g",
+                "reaching": [
+                    269
+                ],
+                "end": true,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 291,
+                "name": "$local",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 337,
+                "name": "$c",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 378,
+                "name": "$h",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 392,
+                "name": "$h",
+                "reaching": [
+                    -1,
+                    378
+                ],
+                "end": true,
+                "outer": [
+                    false,
+                    true
+                ]
+            },
+            {
+                "start": 445,
+                "name": "$k",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 453,
+                "name": "$other",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 469,
+                "name": "$k",
+                "reaching": [
+                    445
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 487,
+                "name": "$k",
+                "reaching": [
+                    469
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 540,
+                "name": "$m",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 565,
+                "name": "$m",
+                "reaching": [
+                    540
+                ],
+                "end": true,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 577,
+                "name": "$n",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 602,
+                "name": "$n",
+                "reaching": [
+                    577
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 655,
+                "name": "$s",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 667,
+                "name": "$s",
+                "reaching": [
+                    655
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 701,
+                "name": "$c",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 724,
+                "name": "$e",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 846,
+                "name": "$e",
+                "reaching": [
+                    724
+                ],
+                "end": true,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 860,
+                "name": "$seen",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 908,
+                "name": "$items",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 922,
+                "name": "$more",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 948,
+                "name": "$v",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 952,
+                "name": "$w",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 979,
+                "name": "$v",
+                "reaching": [
+                    948,
+                    979
+                ],
+                "end": true,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 993,
+                "name": "$first",
+                "reaching": [
+                    -1,
+                    993
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1035,
+                "name": "$w",
+                "reaching": [
+                    952,
+                    1035
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1049,
+                "name": "$second",
+                "reaching": [
+                    -1,
+                    1049
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1112,
+                "name": "$l",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 1121,
+                "name": "$l",
+                "reaching": [
+                    1112
+                ],
+                "end": false,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 1136,
+                "name": "$l",
+                "reaching": [
+                    1121
+                ],
+                "end": true,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 1193,
+                "name": "$out",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 1226,
+                "name": "$out",
+                "reaching": [
+                    1193
+                ],
+                "end": true,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 1277,
+                "name": "$u",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 1285,
+                "name": "$u",
+                "reaching": [
+                    1277
+                ],
+                "end": false,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 1312,
+                "name": "$u",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1351,
+                "name": "$g",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1367,
+                "name": "$g",
+                "reaching": [
+                    1351
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1378,
+                "name": "$byReference",
+                "reaching": [
+                    -1
+                ],
+                "end": true
+            },
+            {
+                "start": 1411,
+                "name": "$shared",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 1432,
+                "name": "$shared",
+                "reaching": [
+                    1411
+                ],
+                "end": true,
+                "outer": [
+                    true
+                ]
+            },
+            {
+                "start": 1449,
+                "name": "$own",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1478,
+                "name": "$byValue",
+                "reaching": [
+                    -1
+                ],
+                "end": true
+            },
+            {
+                "start": 1506,
+                "name": "$k",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1522,
+                "name": "$k",
+                "reaching": [
+                    1506
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            }
+        ],
+        "paths.php": [
+            {
+                "start": 200,
+                "name": "$a",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 212,
+                "name": "$a",
+                "reaching": [
+                    200
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 224,
+                "name": "$b",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 237,
+                "name": "$a",
+                "reaching": [
+                    212
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 252,
+                "name": "$b",
+                "reaching": [
+                    224
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 277,
+                "name": "$a",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 316,
+                "name": "$c",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 325,
+                "name": "$d",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 334,
+                "name": "$e",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 350,
+                "name": "$x",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 380,
+                "name": "$x",
+                "reaching": [
+                    350
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 416,
+                "name": "$x",
+                "reaching": [
+                    350
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 445,
+                "name": "$y",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 463,
+                "name": "$x",
+                "reaching": [
+                    350,
+                    380,
+                    416
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 493,
+                "name": "$y",
+                "reaching": [
+                    -1,
+                    445
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 511,
+                "name": "$y",
+                "reaching": [
+                    -1,
+                    445,
+                    493
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 559,
+                "name": "$z",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 596,
+                "name": "$items",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 609,
+                "name": "$c",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 625,
+                "name": "$last",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 662,
+                "name": "$item",
+                "reaching": [
+                    -1,
+                    662
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 710,
+                "name": "$skip",
+                "reaching": [
+                    -1,
+                    710
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 764,
+                "name": "$last",
+                "reaching": [
+                    625,
+                    764
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 836,
+                "name": "$last",
+                "reaching": [
+                    625,
+                    764
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 856,
+                "name": "$i",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 905,
+                "name": "$i",
+                "reaching": [
+                    856,
+                    905
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 921,
+                "name": "$total",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 956,
+                "name": "$key",
+                "reaching": [
+                    -1,
+                    956
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 964,
+                "name": "$value",
+                "reaching": [
+                    -1,
+                    964
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 982,
+                "name": "$total",
+                "reaching": [
+                    921,
+                    982
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1008,
+                "name": "$previous",
+                "reaching": [
+                    -1,
+                    1008
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1049,
+                "name": "$round",
+                "reaching": [
+                    -1,
+                    1049
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1069,
+                "name": "$total",
+                "reaching": [
+                    921,
+                    982,
+                    1069
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1141,
+                "name": "$items",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1155,
+                "name": "$more",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1174,
+                "name": "$found",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1212,
+                "name": "$item",
+                "reaching": [
+                    -1,
+                    1212
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1247,
+                "name": "$other",
+                "reaching": [
+                    -1,
+                    1247
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1413,
+                "name": "$found",
+                "reaching": [
+                    1174,
+                    1413,
+                    1448
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1448,
+                "name": "$found",
+                "reaching": [
+                    1174,
+                    1413,
+                    1448
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1498,
+                "name": "$n",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1514,
+                "name": "$label",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1577,
+                "name": "$label",
+                "reaching": [
+                    1514
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1641,
+                "name": "$label",
+                "reaching": [
+                    1514
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1685,
+                "name": "$label",
+                "reaching": [
+                    1514,
+                    1641
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1748,
+                "name": "$other",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1778,
+                "name": "$label",
+                "reaching": [
+                    1514,
+                    1577,
+                    1685
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1837,
+                "name": "$items",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1857,
+                "name": "$list",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1892,
+                "name": "$item",
+                "reaching": [
+                    -1,
+                    1892
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1909,
+                "name": "$list",
+                "reaching": [
+                    1857,
+                    1909
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1936,
+                "name": "$list",
+                "reaching": [
+                    1857,
+                    1909
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1972,
+                "name": "$first",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 1980,
+                "name": "$second",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2033,
+                "name": "$matches",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2095,
+                "name": "$matches",
+                "reaching": [
+                    2033
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2115,
+                "name": "$list",
+                "reaching": [
+                    1936
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2153,
+                "name": "$c",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2169,
+                "name": "$base",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2184,
+                "name": "$add",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2205,
+                "name": "$x",
+                "reaching": [
+                    -1
+                ],
+                "end": true
+            },
+            {
+                "start": 2214,
+                "name": "$base",
+                "reaching": [
+                    -1
+                ],
+                "end": true
+            },
+            {
+                "start": 2236,
+                "name": "$sum",
+                "reaching": [
+                    -1
+                ],
+                "end": false
+            },
+            {
+                "start": 2258,
+                "name": "$sum",
+                "reaching": [
+                    2236
+                ],
+                "end": true
+            },
+            {
+                "start": 2335,
+                "name": "$sum",
+                "reaching": [
+                    2258
+                ],
+                "end": true
+            },
+            {
+                "start": 2399,
+                "name": "$base",
+                "reaching": [
+                    2169
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2467,
+                "name": "$items",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2480,
+                "name": "$reset",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2507,
+                "name": "$n",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2542,
+                "name": "$item",
+                "reaching": [
+                    -1,
+                    2542
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2563,
+                "name": "$n",
+                "reaching": [
+                    2507,
+                    2563
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2613,
+                "name": "$n",
+                "reaching": [
+                    2507,
+                    2563
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2686,
+                "name": "$items",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2699,
+                "name": "$reset",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2719,
+                "name": "$counter",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2785,
+                "name": "$top",
+                "reaching": [
+                    -1
+                ],
+                "end": false
+            },
+            {
+                "start": 2795,
+                "name": "$top",
+                "reaching": [
+                    2785
+                ],
+                "end": true
+            },
+            {
+                "start": 2805,
+                "name": "$after",
+                "reaching": [
+                    -1
+                ],
+                "end": true
+            },
+            {
+                "start": 2856,
+                "name": "$c",
+                "reaching": [
+                    -1
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2890,
+                "name": "$a",
+                "reaching": [
+                    -1
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2923,
+                "name": "$a",
+                "reaching": [
+                    2890
+                ],
+                "end": false,
+                "outer": [
+                    false
+                ]
+            },
+            {
+                "start": 2937,
+                "name": "$a",
+                "reaching": [
+                    -1,
+                    2923
+                ],
+                "end": true,
+                "outer": [
+                    false
+                ]
+            }
+        ]
+    }
+}

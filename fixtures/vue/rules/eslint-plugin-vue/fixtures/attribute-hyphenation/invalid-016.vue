@@ -1,0 +1,1 @@
+<template><div><slot MyProp="Bar"></slot></div></template>

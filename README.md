@@ -636,15 +636,13 @@ Potential overlap is a coordination signal. Humans and deterministic team polici
 
 ## Develop
 
-Clone with the test fixtures, which live in the [`rerail-fixtures`](https://github.com/neralabs/rerail-fixtures) repository and are checked out as the `fixtures/` git submodule:
+One repository holds everything: the core package at the root, rule packs under [`packs/`](packs/), and the engine's language conformance fixtures under [`fixtures/`](fixtures/) (test data, never published).
 
 ```sh
-git clone --recurse-submodules https://github.com/neralabs/rerail.git
-# or, in an existing clone:
-git submodule update --init
+git clone https://github.com/neralabs/rerail.git
 ```
 
-`RERAIL_FIXTURES_DIR` points the build and tests at another fixtures checkout.
+`RERAIL_FIXTURES_DIR` points the build and tests at another fixtures directory.
 
 Prerequisites: Node.js 24+, npm, and Rust through [rustup](https://rustup.rs/). `rust-toolchain.toml` pins the toolchain, so `cargo` installs and selects it on first use.
 

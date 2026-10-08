@@ -1,0 +1,739 @@
+{
+ "tool": "phpcs",
+ "version": "4.0.4",
+ "source": {
+  "kind": "fixtures",
+  "origin": "https://github.com/PHPCSStandards/PHP_CodeSniffer@bbdc3d0532623e21838b7041a4364383a8126f96",
+  "rules": [
+   "Generic.CodeAnalysis.EmptyStatement",
+   "Generic.PHP.BacktickOperator",
+   "Generic.PHP.DeprecatedFunctions",
+   "Generic.PHP.ForbiddenFunctions",
+   "Generic.PHP.LowerCaseConstant",
+   "Generic.PHP.NoSilencedErrors",
+   "Squiz.PHP.DisallowSizeFunctionsInLoops",
+   "Squiz.PHP.Eval"
+  ],
+  "files": [
+   "Generic/CodeAnalysis/EmptyStatementUnitTest.inc.php",
+   "Generic/PHP/BacktickOperatorUnitTest.inc.php",
+   "Generic/PHP/DeprecatedFunctionsUnitTest.inc.php",
+   "Generic/PHP/ForbiddenFunctionsUnitTest.inc.php",
+   "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "Generic/PHP/LowerCaseConstantUnitTest.2.inc.php",
+   "Generic/PHP/NoSilencedErrorsUnitTest.inc.php",
+   "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "Squiz/PHP/EvalUnitTest.inc.php"
+  ]
+ },
+ "findings": [
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/CodeAnalysis/EmptyStatementUnitTest.inc.php",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/CodeAnalysis/EmptyStatementUnitTest.inc.php",
+   "line": 15,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/CodeAnalysis/EmptyStatementUnitTest.inc.php",
+   "line": 17,
+   "column": 3
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/CodeAnalysis/EmptyStatementUnitTest.inc.php",
+   "line": 19,
+   "column": 3
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/CodeAnalysis/EmptyStatementUnitTest.inc.php",
+   "line": 30,
+   "column": 5
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/CodeAnalysis/EmptyStatementUnitTest.inc.php",
+   "line": 35,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/CodeAnalysis/EmptyStatementUnitTest.inc.php",
+   "line": 41,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/CodeAnalysis/EmptyStatementUnitTest.inc.php",
+   "line": 47,
+   "column": 5
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/CodeAnalysis/EmptyStatementUnitTest.inc.php",
+   "line": 52,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/CodeAnalysis/EmptyStatementUnitTest.inc.php",
+   "line": 55,
+   "column": 5
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/CodeAnalysis/EmptyStatementUnitTest.inc.php",
+   "line": 64,
+   "column": 3
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/CodeAnalysis/EmptyStatementUnitTest.inc.php",
+   "line": 68,
+   "column": 3
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/CodeAnalysis/EmptyStatementUnitTest.inc.php",
+   "line": 72,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/CodeAnalysis/EmptyStatementUnitTest.inc.php",
+   "line": 72,
+   "column": 14
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/CodeAnalysis/EmptyStatementUnitTest.inc.php",
+   "line": 74,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 14,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 15,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 30,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 31,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 32,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 46,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 47,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 48,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 18,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 23,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 26,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 29,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 35,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 40,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 43,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 46,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 49,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 57,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 58,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 60,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 61,
+   "column": 1
+  },
+  {
+   "rule": "Generic.CodeAnalysis.EmptyStatement",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 62,
+   "column": 1
+  },
+  {
+   "rule": "Generic.PHP.BacktickOperator",
+   "path": "Generic/PHP/BacktickOperatorUnitTest.inc.php",
+   "line": 2,
+   "column": 11
+  },
+  {
+   "rule": "Generic.PHP.BacktickOperator",
+   "path": "Generic/PHP/BacktickOperatorUnitTest.inc.php",
+   "line": 2,
+   "column": 18
+  },
+  {
+   "rule": "Generic.PHP.DeprecatedFunctions",
+   "path": "Generic/PHP/DeprecatedFunctionsUnitTest.inc.php",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "Generic.PHP.ForbiddenFunctions",
+   "path": "Generic/PHP/ForbiddenFunctionsUnitTest.inc.php",
+   "line": 2,
+   "column": 9
+  },
+  {
+   "rule": "Generic.PHP.ForbiddenFunctions",
+   "path": "Generic/PHP/ForbiddenFunctionsUnitTest.inc.php",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "Generic.PHP.ForbiddenFunctions",
+   "path": "Generic/PHP/ForbiddenFunctionsUnitTest.inc.php",
+   "line": 6,
+   "column": 9
+  },
+  {
+   "rule": "Generic.PHP.ForbiddenFunctions",
+   "path": "Generic/PHP/ForbiddenFunctionsUnitTest.inc.php",
+   "line": 62,
+   "column": 9
+  },
+  {
+   "rule": "Generic.PHP.ForbiddenFunctions",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 18,
+   "column": 19
+  },
+  {
+   "rule": "Generic.PHP.ForbiddenFunctions",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 21,
+   "column": 8
+  },
+  {
+   "rule": "Generic.PHP.ForbiddenFunctions",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 23,
+   "column": 13
+  },
+  {
+   "rule": "Generic.PHP.ForbiddenFunctions",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 27,
+   "column": 15
+  },
+  {
+   "rule": "Generic.PHP.ForbiddenFunctions",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 29,
+   "column": 19
+  },
+  {
+   "rule": "Generic.PHP.ForbiddenFunctions",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 49,
+   "column": 11
+  },
+  {
+   "rule": "Generic.PHP.ForbiddenFunctions",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 60,
+   "column": 19
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 7,
+   "column": 34
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 10,
+   "column": 34
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 15,
+   "column": 19
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 16,
+   "column": 19
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 23,
+   "column": 34
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 26,
+   "column": 34
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 31,
+   "column": 19
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 32,
+   "column": 19
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 39,
+   "column": 34
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 42,
+   "column": 34
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 47,
+   "column": 19
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 48,
+   "column": 19
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 70,
+   "column": 9
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 71,
+   "column": 10
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 87,
+   "column": 21
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 89,
+   "column": 29
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 90,
+   "column": 39
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 92,
+   "column": 47
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 92,
+   "column": 80
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 94,
+   "column": 13
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 94,
+   "column": 22
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 95,
+   "column": 20
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 100,
+   "column": 36
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 100,
+   "column": 69
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 104,
+   "column": 37
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 108,
+   "column": 45
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 118,
+   "column": 20
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 119,
+   "column": 20
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 120,
+   "column": 20
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 121,
+   "column": 21
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 125,
+   "column": 58
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 129,
+   "column": 22
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 149,
+   "column": 45
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 153,
+   "column": 17
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 164,
+   "column": 6
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 165,
+   "column": 6
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 166,
+   "column": 6
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 171,
+   "column": 37
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 173,
+   "column": 40
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 175,
+   "column": 47
+  },
+  {
+   "rule": "Generic.PHP.LowerCaseConstant",
+   "path": "Generic/PHP/LowerCaseConstantUnitTest.1.inc.php",
+   "line": 177,
+   "column": 51
+  },
+  {
+   "rule": "Generic.PHP.NoSilencedErrors",
+   "path": "Generic/PHP/NoSilencedErrorsUnitTest.inc.php",
+   "line": 5,
+   "column": 5
+  },
+  {
+   "rule": "Generic.PHP.NoSilencedErrors",
+   "path": "Generic/PHP/NoSilencedErrorsUnitTest.inc.php",
+   "line": 10,
+   "column": 13
+  },
+  {
+   "rule": "Generic.PHP.NoSilencedErrors",
+   "path": "Generic/PHP/NoSilencedErrorsUnitTest.inc.php",
+   "line": 13,
+   "column": 16
+  },
+  {
+   "rule": "Generic.PHP.NoSilencedErrors",
+   "path": "Generic/PHP/NoSilencedErrorsUnitTest.inc.php",
+   "line": 16,
+   "column": 6
+  },
+  {
+   "rule": "Squiz.PHP.DisallowSizeFunctionsInLoops",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 2,
+   "column": 19
+  },
+  {
+   "rule": "Squiz.PHP.DisallowSizeFunctionsInLoops",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 7,
+   "column": 13
+  },
+  {
+   "rule": "Squiz.PHP.DisallowSizeFunctionsInLoops",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 11,
+   "column": 15
+  },
+  {
+   "rule": "Squiz.PHP.DisallowSizeFunctionsInLoops",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 13,
+   "column": 19
+  },
+  {
+   "rule": "Squiz.PHP.DisallowSizeFunctionsInLoops",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 18,
+   "column": 19
+  },
+  {
+   "rule": "Squiz.PHP.DisallowSizeFunctionsInLoops",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 23,
+   "column": 13
+  },
+  {
+   "rule": "Squiz.PHP.DisallowSizeFunctionsInLoops",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 27,
+   "column": 15
+  },
+  {
+   "rule": "Squiz.PHP.DisallowSizeFunctionsInLoops",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 29,
+   "column": 19
+  },
+  {
+   "rule": "Squiz.PHP.DisallowSizeFunctionsInLoops",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 35,
+   "column": 19
+  },
+  {
+   "rule": "Squiz.PHP.DisallowSizeFunctionsInLoops",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 40,
+   "column": 13
+  },
+  {
+   "rule": "Squiz.PHP.DisallowSizeFunctionsInLoops",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 44,
+   "column": 15
+  },
+  {
+   "rule": "Squiz.PHP.DisallowSizeFunctionsInLoops",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 46,
+   "column": 19
+  },
+  {
+   "rule": "Squiz.PHP.DisallowSizeFunctionsInLoops",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 60,
+   "column": 19
+  },
+  {
+   "rule": "Squiz.PHP.DisallowSizeFunctionsInLoops",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 61,
+   "column": 13
+  },
+  {
+   "rule": "Squiz.PHP.DisallowSizeFunctionsInLoops",
+   "path": "Squiz/PHP/DisallowSizeFunctionsInLoopsUnitTest.inc.php",
+   "line": 63,
+   "column": 15
+  },
+  {
+   "rule": "Squiz.PHP.Eval",
+   "path": "Squiz/PHP/EvalUnitTest.inc.php",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "Squiz.PHP.Eval",
+   "path": "Squiz/PHP/EvalUnitTest.inc.php",
+   "line": 4,
+   "column": 1
+  }
+ ]
+}

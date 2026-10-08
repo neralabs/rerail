@@ -1,0 +1,848 @@
+{
+ "oracle": "@typescript-eslint/parser 8.70.1 scope manager (lib: [])",
+ "builtins": [],
+ "unresolved": [
+  {
+   "start": 1765,
+   "name": "use"
+  }
+ ],
+ "constants": [
+  {
+   "start": 105,
+   "name": "constant",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 123,
+   "name": "neverWritten",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 147,
+   "name": "written",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 160,
+   "name": "written",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 177,
+   "name": "compound",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 191,
+   "name": "compound",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 210,
+   "name": "logical",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 223,
+   "name": "logical",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 242,
+   "name": "incremented",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 259,
+   "name": "incremented",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 278,
+   "name": "decremented",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 297,
+   "name": "decremented",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 314,
+   "name": "redeclared",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 365,
+   "name": "uninitialized",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 390,
+   "name": "destructured",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 420,
+   "name": "property",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 455,
+   "name": "arrayTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 474,
+   "name": "arrayTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 499,
+   "name": "objectTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 521,
+   "name": "objectTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 565,
+   "name": "renamedTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 593,
+   "name": "renamedTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 629,
+   "name": "defaultTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 650,
+   "name": "defaultTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 666,
+   "name": "constant",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 686,
+   "name": "restTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 707,
+   "name": "restTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 729,
+   "name": "loopTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 751,
+   "name": "loopTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 777,
+   "name": "inTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 798,
+   "name": "inTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 822,
+   "name": "parenthesized",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 843,
+   "name": "parenthesized",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 868,
+   "name": "asserted",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 884,
+   "name": "asserted",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 914,
+   "name": "nonNull",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 928,
+   "name": "nonNull",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 949,
+   "name": "pushed",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 972,
+   "name": "pushed",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 994,
+   "name": "sorted",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 1011,
+   "name": "sorted",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 1032,
+   "name": "sliced",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 1049,
+   "name": "sliced",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 1071,
+   "name": "assignedProperty",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 1100,
+   "name": "assignedProperty",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 1130,
+   "name": "deepProperty",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 1162,
+   "name": "deepProperty",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 1190,
+   "name": "indexed",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 1205,
+   "name": "indexed",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 1227,
+   "name": "updatedProperty",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 1255,
+   "name": "updatedProperty",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 1282,
+   "name": "computedCall",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 1302,
+   "name": "computedCall",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 1333,
+   "name": "read",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 1350,
+   "name": "read",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 1438,
+   "name": "withDefault",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1465,
+   "name": "inner",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 1473,
+   "name": "parameter",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1485,
+   "name": "withDefault",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1504,
+   "name": "closureWritten",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 1532,
+   "name": "closure",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 1554,
+   "name": "closureWritten",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 1588,
+   "name": "inner",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 1596,
+   "name": "closureWritten",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 1613,
+   "name": "closure",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 1637,
+   "name": "typeAndValue",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1723,
+   "name": "merged",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1749,
+   "name": "exported",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 1772,
+   "name": "constant",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 1784,
+   "name": "neverWritten",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 1800,
+   "name": "written",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 1811,
+   "name": "compound",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 1823,
+   "name": "logical",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 1834,
+   "name": "incremented",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 1849,
+   "name": "decremented",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 1864,
+   "name": "redeclared",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1878,
+   "name": "uninitialized",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 1895,
+   "name": "destructured",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1911,
+   "name": "property",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1923,
+   "name": "arrayTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1938,
+   "name": "objectTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1954,
+   "name": "renamedTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1971,
+   "name": "defaultTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1988,
+   "name": "restTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 2002,
+   "name": "loopTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 2016,
+   "name": "inTarget",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 2028,
+   "name": "parenthesized",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 2045,
+   "name": "asserted",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 2057,
+   "name": "nonNull",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 2068,
+   "name": "pushed",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 2078,
+   "name": "sorted",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 2088,
+   "name": "sliced",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 2098,
+   "name": "assignedProperty",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 2118,
+   "name": "deepProperty",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 2134,
+   "name": "indexed",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 2145,
+   "name": "updatedProperty",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 2164,
+   "name": "computedCall",
+   "constant": true,
+   "mutated": true
+  },
+  {
+   "start": 2180,
+   "name": "read",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 2188,
+   "name": "declared",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 2200,
+   "name": "Declared",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 2212,
+   "name": "parameters",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 2226,
+   "name": "typeAndValue",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 2242,
+   "name": "merged",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 2252,
+   "name": "exported",
+   "constant": true,
+   "mutated": false
+  }
+ ],
+ "variables": [
+  {
+   "start": 105,
+   "name": "constant",
+   "references": 3
+  },
+  {
+   "start": 123,
+   "name": "neverWritten",
+   "references": 2
+  },
+  {
+   "start": 147,
+   "name": "written",
+   "references": 3
+  },
+  {
+   "start": 177,
+   "name": "compound",
+   "references": 3
+  },
+  {
+   "start": 210,
+   "name": "logical",
+   "references": 3
+  },
+  {
+   "start": 242,
+   "name": "incremented",
+   "references": 3
+  },
+  {
+   "start": 278,
+   "name": "decremented",
+   "references": 3
+  },
+  {
+   "start": 314,
+   "name": "redeclared",
+   "references": 2
+  },
+  {
+   "start": 350,
+   "name": "uninitialized",
+   "references": 2
+  },
+  {
+   "start": 390,
+   "name": "destructured",
+   "references": 2
+  },
+  {
+   "start": 420,
+   "name": "property",
+   "references": 2
+  },
+  {
+   "start": 455,
+   "name": "arrayTarget",
+   "references": 3
+  },
+  {
+   "start": 499,
+   "name": "objectTarget",
+   "references": 3
+  },
+  {
+   "start": 565,
+   "name": "renamedTarget",
+   "references": 3
+  },
+  {
+   "start": 629,
+   "name": "defaultTarget",
+   "references": 4
+  },
+  {
+   "start": 686,
+   "name": "restTarget",
+   "references": 3
+  },
+  {
+   "start": 729,
+   "name": "loopTarget",
+   "references": 3
+  },
+  {
+   "start": 777,
+   "name": "inTarget",
+   "references": 3
+  },
+  {
+   "start": 822,
+   "name": "parenthesized",
+   "references": 3
+  },
+  {
+   "start": 868,
+   "name": "asserted",
+   "references": 3
+  },
+  {
+   "start": 914,
+   "name": "nonNull",
+   "references": 3
+  },
+  {
+   "start": 949,
+   "name": "pushed",
+   "references": 3
+  },
+  {
+   "start": 994,
+   "name": "sorted",
+   "references": 3
+  },
+  {
+   "start": 1032,
+   "name": "sliced",
+   "references": 3
+  },
+  {
+   "start": 1071,
+   "name": "assignedProperty",
+   "references": 3
+  },
+  {
+   "start": 1130,
+   "name": "deepProperty",
+   "references": 3
+  },
+  {
+   "start": 1190,
+   "name": "indexed",
+   "references": 3
+  },
+  {
+   "start": 1227,
+   "name": "updatedProperty",
+   "references": 3
+  },
+  {
+   "start": 1282,
+   "name": "computedCall",
+   "references": 3
+  },
+  {
+   "start": 1333,
+   "name": "read",
+   "references": 3
+  },
+  {
+   "start": 1367,
+   "name": "declared",
+   "references": 1
+  },
+  {
+   "start": 1387,
+   "name": "Declared",
+   "references": 1
+  },
+  {
+   "start": 1387,
+   "name": "Declared",
+   "references": 0
+  },
+  {
+   "start": 1408,
+   "name": "parameters",
+   "references": 1
+  },
+  {
+   "start": 1419,
+   "name": "parameter",
+   "references": 1
+  },
+  {
+   "start": 1438,
+   "name": "withDefault",
+   "references": 2
+  },
+  {
+   "start": 1465,
+   "name": "inner",
+   "references": 2
+  },
+  {
+   "start": 1504,
+   "name": "closureWritten",
+   "references": 3
+  },
+  {
+   "start": 1532,
+   "name": "closure",
+   "references": 2
+  },
+  {
+   "start": 1637,
+   "name": "typeAndValue",
+   "references": 2
+  },
+  {
+   "start": 1693,
+   "name": "merged",
+   "references": 2
+  },
+  {
+   "start": 1749,
+   "name": "exported",
+   "references": 2
+  }
+ ]
+}

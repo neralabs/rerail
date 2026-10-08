@@ -18,6 +18,28 @@ concurrency:
 # missing secret or variable is a configuration error and fails the job.
 
 jobs:
+  licenses:
+    name: Licences (REUSE and copyleft gate)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      # Every file carries licence information and every licence it names has its text in LICENSES/.
+      - name: REUSE lint
+        run: uvx --from 'reuse[charset-normalizer]==6.2.0' reuse lint
+
+      # Only allowlisted (permissive) licences in LICENSES/, and no copyleft production dependency.
+      - name: Licence allowlist and copyleft gate
+        run: node scripts/check-licenses.mjs
+
   build:
     name: Check, build, and test
     runs-on: ubuntu-24.04
@@ -28,11 +50,6 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
-          # fixtures/ is the private rerail-fixtures submodule until launch, and github.token can only read
-          # this repository, so FIXTURES_READ_TOKEN (read access to rerail-fixtures) fetches it. Once the
-          # fixtures repository is public, github.token is enough and the secret can be deleted.
-          submodules: recursive
-          token: ${{ secrets.FIXTURES_READ_TOKEN || github.token }}
 
       - name: Set up Node.js v24
         uses: actions/setup-node@v6

@@ -1,0 +1,81 @@
+<?php
+
+declare(strict_types=1);
+
+/** @param list<int> $xs */
+function calls(int $a, int $b, array $xs, string $k): void
+{
+    echo sprintf('%s %s', $a);
+    echo sprintf('%s', $a, $b);
+    echo sprintf('%s %s', $a, $b);
+    printf('%d', $a, $b);
+    printf('%d %d %d', $a, $b);
+    echo sprintf('%1$s %1$s', $a);
+    echo sprintf('%1$s %1$s', $a, $b);
+    echo sprintf('%2$s', $a);
+    echo sprintf('%2$s', $a, $b);
+    echo sprintf('%2$s %s', $a, $b);
+    echo sprintf('%s %2$s %s', $a, $b);
+    echo sprintf('%*d', $a);
+    echo sprintf('%*d', $a, $b);
+    echo sprintf('%*d', $a, $b, $a);
+    echo sprintf('%.*f %s', 2, 1.5);
+    echo sprintf('%-*.*f|', 8, 2, 1.5);
+    echo sprintf('%*2$d', $a, $b);
+    echo sprintf('%*3$d', $a, $b);
+    echo sprintf('%5%', $a);
+    echo sprintf('%5%');
+    echo sprintf('100%%');
+    echo sprintf('100%%', $a);
+    echo sprintf('%%%s%%', $a);
+    echo sprintf("%s\n%s", $a);
+    echo sprintf("\x25s \x25s", $a, $b);
+    echo sprintf("\x25s", $a, $b);
+    echo sprintf("%'*10s|%-'#8d", $a, $b);
+    echo sprintf("%'*10s|%-'#8d", $a);
+    echo sprintf(('%s %s'), $a);
+    echo sprintf(b'%s', $a, $b);
+    echo sprintf('%ls %lu', $a, $b);
+    echo sprintf('%h %H %e %E %F %g %G %b %c %o %x %X %u', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);
+    echo sprintf('%h %H %e %E %F %g %G %b %c %o %x %X %u', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
+    echo sprintf('%s', ...$xs);
+    echo sprintf('%s %s', $a, ...$xs);
+    echo sprintf("%s $a %s", $b);
+    echo sprintf('%z', $a);
+    echo sprintf('%s %', $a);
+    echo sprintf('%0$s', $a);
+    echo sprintf("%'", $a);
+    echo sprintf('%2147483647d', $a);
+    echo sprintf('abc');
+    echo sprintf('abc', $a);
+    echo sprintf('');
+    echo sprintf('é %s ü', $a, $b);
+    echo vsprintf('%s %s', [$a]);
+    echo vsprintf('%s', [$a, $b]);
+    echo vsprintf('%s', ['x' => $a]);
+    echo vsprintf('%1$s %1$s', [$a]);
+    echo vsprintf('%2$s', [$a]);
+    echo vsprintf('%*d', [$a, $b]);
+    echo vsprintf('abc', [$a]);
+    echo vsprintf('abc', []);
+    echo vsprintf('%s', []);
+    echo vsprintf('%s %s', array($a, $b));
+    echo vsprintf('%s %s', array($a, $b, $a));
+    echo vsprintf('%s', [...$xs]);
+    echo vsprintf('%s', $xs);
+    echo vsprintf('%z', [$a]);
+    vprintf('%s %s', [1, 2]);
+    vprintf('%s %s %s', [1, 2]);
+    vprintf('%s', [1, 2]);
+    echo vsprintf('%s %s', [0 => $a, 0 => $b]);
+    echo vsprintf('%s %s', [0 => $a, '0' => $b]);
+    echo vsprintf('%s %s', [1 => $a, 1.5 => $b]);
+    echo vsprintf('%s %s', [1 => $a, true => $b]);
+    echo vsprintf('%s %s', [0 => $a, false => $b, null => $a, '' => $b]);
+    echo vsprintf('%s', [0 => $a, '00' => $b]);
+    echo vsprintf('%s', [0 => $a, 1 => $b, 1 => $a]);
+    echo vsprintf('%s %s %s', [5 => $a, $b, 6 => $a]);
+    echo vsprintf('%s', ['x' => $a, 'x' => $b]);
+    echo vsprintf('%s', [$k => $a, $b]);
+    echo vsprintf('%s', [$a => $a, $b]);
+}

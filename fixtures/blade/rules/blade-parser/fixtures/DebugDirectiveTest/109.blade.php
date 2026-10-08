@@ -1,0 +1,1 @@
+Lead @lang($arg) Trail

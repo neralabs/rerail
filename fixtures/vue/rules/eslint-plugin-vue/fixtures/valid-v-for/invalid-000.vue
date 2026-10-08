@@ -1,0 +1,1 @@
+<template><div><div v-for:aaa="x in list"></div></div></template>

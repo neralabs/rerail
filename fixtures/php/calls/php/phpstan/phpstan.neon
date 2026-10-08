@@ -1,0 +1,12 @@
+# PHPStan 2.2.16 configuration for the call-target oracle (generate_php.py and generate_corpus.py
+# include it, with `--autoload-file autoload.php`): the collector and the rule that writes its
+# records.
+services:
+    -
+        class: RerailOracle\CallTargetCollector
+        tags:
+            - phpstan.collector
+    -
+        class: RerailOracle\CallTargetDump
+        tags:
+            - phpstan.rules.rule

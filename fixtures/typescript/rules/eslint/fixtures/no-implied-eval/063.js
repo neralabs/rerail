@@ -1,0 +1,1 @@
+function foo(window) { window.setTimeout('foo', 100); }

@@ -1,0 +1,753 @@
+{
+ "about": "Bindings of the laravel and symfony corpora (benchmark_php_usage_corpus, rerail/native/src/policy_dsl/scope/php/tests.rs) where Rerail's usedness and Psalm 6.19.1's unused-variable reports differ for a documented reason. Each item names a class; each class says which side is wrong (upstream-wrong: Psalm; not-comparable: the two answer different questions there) with the evidence. Runtime outputs are PHP 8.5.11; Psalm outputs are Psalm 6.19.1 at errorLevel 1 with --find-unused-variables on the snippet alone.",
+ "classes": {
+  "psalm-type-unreachable": {
+   "kind": "not-comparable",
+   "evidence": "Psalm reads no variable in code its types make unreachable, and Rerail reads no types (a path PHPStan proves infeasible from types is still a path). symfony's ObjectMapperTest: Psalm infers `$mapper->map(...)` returns `never` (NoValue `All possible types for this assignment were invalidated`) and reports every assertion after it UnevaluatedCode, so the assigned variable is 'unused'; the assertions run in symfony's own suite. The other direction: after `$this->markTestSkipped(...)` or `markTestIncomplete(...)` (return type never) Psalm analyses nothing, while Rerail, which does not resolve the callee's return type, reads on."
+  },
+  "psalm-finally-after-return": {
+   "kind": "upstream-wrong",
+   "evidence": "A `finally` runs after a `return` in its `try` and reads what the try assigned. `function f(bool $c) { $done = false; try { if ($c) { $done = true; return; } } finally { echo $done ? 'done' : 'not'; } } f(true);` prints `done`; Psalm reports `$done = true` UnusedVariable."
+  },
+  "psalm-catch-reads": {
+   "kind": "upstream-wrong",
+   "evidence": "A catch reads what its try assigned before something threw: a binding made before the throwing call (`$isTimeout = false; try { $isTimeout = $chunk->isTimeout(); ... } catch (TransportExceptionInterface) { if ($isTimeout) ... }`: isTimeout() throws the transport error the catch handles), or before a `throw` (`$submittedData = null; throw new TransformationFailedException(...)` caught by `catch (TransformationFailedException $e)` that reads `$submittedData`). `function g(callable $f) { $t = 'before'; try { $t = $f(); } catch (RuntimeException $e) { echo $t; } } g(fn () => throw new RuntimeException());` prints `before`. Rerail lets every statement of a try throw, so a foreach value overwritten only inside the try (`$v = $byLifetime[$lifetime][$id]`, which throws under symfony's ErrorHandler, which turns the undefined-key warning into an ErrorException) still reaches the catch's `get_debug_type($v)`."
+  },
+  "psalm-condition-assignment": {
+   "kind": "upstream-wrong",
+   "evidence": "An assignment inside a condition is read where the condition's outcome leads: `function n(bool $has, callable $f) { if (!($has && $d = $f())) { echo $has && null === $d ? '~' : '[]'; } } n(true, fn () => null);` prints `~`; `while (!$s = array_shift($q)) {} echo $s;` prints the first truthy element; `$m = false; if ($on && ($m = f())) { continue; } ... if ($m)` reads the false result. Psalm narrows the condition and reports the assignment unused."
+  },
+  "psalm-transitive": {
+   "kind": "not-comparable",
+   "evidence": "Psalm counts a read as a use only if the value it reads flows on to a use: `function f(array $in) { $opts = []; foreach ($in as $k => $v) { $opts[$k] = $v; } }` gets UnusedForeachValue for `$v` (and UnusedVariable for `$opts`), though PHP reads `$v` on every iteration. Rerail's usage is the language standard's (a binding is used where a read reaches it), and Psalm's chain also stops at writes it does not see as uses: through a reference (`$usageIndexReference = &$session->getUsageIndex(); ... $usageIndexReference = $usageIndexValue;` writes the session's usage index), into a property by reference (`$child->parent = &$parent;` then the collector reads `$child->parent`), into an SplObjectStorage offset (`offsetSet`), or into a variable a closure holds by reference (`$values = $claims;` read by `$runWorkers`)."
+  },
+  "psalm-isset-maybe-undefined": {
+   "kind": "upstream-wrong",
+   "evidence": "`isset()` reads a variable some path leaves undefined: `function f(bool $b) { if ($b) { $x = true; } var_dump(isset($x)); } f(true); f(false);` prints `bool(true)` then `bool(false)`; Psalm reports `$x = true` UnusedVariable (VariableFetchAnalyzer marks no use inside isset of a possibly undefined variable)."
+  },
+  "psalm-argument-binding": {
+   "kind": "upstream-wrong",
+   "evidence": "A binding made inside a call's argument or an array literal's element (`f(++$s)`, `f($i++)`, `[$tick, ++$count]`) that no later read reaches is unused like any other: `function a(): int { $a = 1; return ++$a; }` gets UnusedVariable at `++$a`, but `function b(array $l): int { $s = 0; return count(array_slice($l, ++$s)); }` gets nothing for the identical `++$s` (Psalm treats an argument as a use context, Context::insideUse). PHP reads neither new value through the variable."
+  },
+  "psalm-missed-overwrite": {
+   "kind": "upstream-wrong",
+   "evidence": "Every path overwrites the binding before any read, and Psalm reports nothing: `$p = new X(); try { $p = new X(); ... } catch (...) { /* no $p */ }` (Psalm keeps a pre-try binding alive through the try, the case its own UnusedVariableTest skips as a known bug, SKIPPED-warnAboutVariableUsedInNestedTryNotUsedInOuterTry), `$a = false; do { if ($a = f()) break; } while (...); if (!$a)` (a do-while body always runs), and `$mappingException = null; do { try { ...; $mappingException = null; break; } catch (ParseException $e) { $mappingException = $e; ... } } while (...)`. The value assigned first is never read: PHP 8.5.11 `function d(callable $f) { $a = false; do { if ($a = $f()) { break; } } while (false); var_export($a); } d(fn () => 'got');` prints `'got'`."
+  },
+  "psalm-loop-carried": {
+   "kind": "upstream-wrong",
+   "evidence": "A loop's next iteration reads what this one assigned: `function l(array $r, array $k): bool { $n = 0; $u = true; foreach ($r as $key) { $u = $u && $key === $k[$n++]; } return $u; }` returns true for (['a','b'], ['a','b']) and false for (['a','b'], ['a','c']), so the second iteration reads the `$n++` of the first; Psalm reports `$n++` UnusedVariable."
+  },
+  "psalm-switch-in-branch": {
+   "kind": "upstream-wrong",
+   "evidence": "`function s(mixed $data, ?string $format) { if (is_int($data)) { switch ($format) { case 'U': $data = sprintf('%d', $data); break; } } var_export($data); } s(5, 'U');` prints `'5'`, the string the case assigned; Psalm reports that assignment UnusedVariable."
+  },
+  "psalm-match-arm": {
+   "kind": "upstream-wrong",
+   "evidence": "A `match` arm's assignment is read after the match: symfony's `#[Autowire('@@x')]` sets `$value = substr($value, 1)` in an arm and stores `$value` in `$this->value` (`default => $value`). `function m(string $v) { match (true) { str_starts_with($v, '@@') => $v = substr($v, 1), default => null }; echo $v; } m('@@x');` prints `@x`; Psalm reports the arm's assignment UnusedVariable in Autowire's constructor."
+  },
+  "psalm-cast-statement": {
+   "kind": "upstream-wrong",
+   "evidence": "A cast standing as a statement reads its operand: `(string) $s;` calls `$s->__toString()` (LazyStringTest expects its TypeError). `final class S { function __toString(): string { echo 'runs'; return ''; } } function c() { $s = new S(); (string) $s; } c();` prints `runs`; Psalm reports `$s` UnusedVariable."
+  },
+  "psalm-silent-unread": {
+   "kind": "upstream-wrong",
+   "evidence": "No read of the variable reaches the binding on any path (the function holds no other occurrence that could, checked by hand at each item) and Psalm reports nothing: an unused foreach value whose loop writes the array by key (`foreach ($hosts as $i => $host) { $hosts[$i]['password'] ??= ...; }`), a closure parameter its body overwrites before reading (`function ($v, array $a, Stub $s, $isNested) { ... $a[$k] = $s = new CutStub($v); ... }`), one a closure never reads (`fn (CacheItemInterface $item) => 'computed data'`). Psalm 6.19.1 reports the same shapes on a snippet of its own (`foreach ($hosts as $i => $host) { $hosts[$i]['p'] ??= 1; }` gets UnusedForeachValue), so its silence in the corpus file comes from its analysis of the surrounding file, not from a reading of the binding."
+  },
+  "unreachable-binding": {
+   "kind": "not-comparable",
+   "evidence": "No path reaches the binding, so no read reaches it either and Rerail claims it unused; Psalm does not analyse code it finds unreachable. `for ($a = 1; $a <= $attempts; $a++) { ...; return $result; }` (laravel's SqlServerConnection::transaction) returns or throws in every iteration, so `$a++` never runs."
+  },
+  "psalm-zero-iteration": {
+   "kind": "upstream-wrong",
+   "evidence": "A loop may run zero times, leaving the value assigned before it: symfony's FormPass sets `$extendsTypes = false`, sets it true inside `foreach ($typeExtensionClass::getExtendedTypes() as ...)`, and throws `if (!$extendsTypes)` (its own test FormPassTest::testAddTaggedFormTypeExtensionWithoutExtendingAnyType, which expects that InvalidArgumentException, takes that path). `function z(iterable $t) { $e = false; foreach ($t as $x) { $e = true; } var_export($e); } z([]);` prints `false`; Psalm reports the `false` assignment UnusedVariable in FormPass."
+  }
+ },
+ "items": [
+  {
+   "corpus": "laravel",
+   "path": "src/Illuminate/Console/Application.php",
+   "line": 180,
+   "name": "callingClass",
+   "class": "psalm-isset-maybe-undefined"
+  },
+  {
+   "corpus": "laravel",
+   "path": "src/Illuminate/Database/SqlServerConnection.php",
+   "line": 38,
+   "name": "a",
+   "class": "unreachable-binding"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Bridge/PhpUnit/bin/simple-phpunit.php",
+   "line": 186,
+   "name": "prevCacheDir",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Cache/Adapter/AbstractAdapter.php",
+   "line": 202,
+   "name": "v",
+   "class": "psalm-catch-reads"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Cache/Adapter/AbstractTagAwareAdapter.php",
+   "line": 225,
+   "name": "v",
+   "class": "psalm-catch-reads"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Cache/Adapter/CouchbaseCollectionAdapter.php",
+   "line": 84,
+   "name": "value",
+   "class": "psalm-transitive"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Cache/DependencyInjection/CachePoolPass.php",
+   "line": 138,
+   "name": "i",
+   "class": "psalm-argument-binding"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Cache/LockRegistry.php",
+   "line": 151,
+   "name": "acquired",
+   "class": "psalm-missed-overwrite"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Cache/LockRegistry.php",
+   "line": 167,
+   "name": "lock",
+   "class": "psalm-finally-after-return"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Cache/Traits/RedisTrait.php",
+   "line": 496,
+   "name": "host",
+   "class": "psalm-silent-unread"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Cache/Traits/RedisTrait.php",
+   "line": 506,
+   "name": "host",
+   "class": "psalm-silent-unread"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Config/Definition/Dumper/YamlReferenceDumper.php",
+   "line": 92,
+   "name": "defaultArray",
+   "class": "psalm-condition-assignment"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/DependencyInjection/Attribute/Autowire.php",
+   "line": 61,
+   "name": "value",
+   "class": "psalm-match-arm"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/DependencyInjection/Dumper/YamlDumper.php",
+   "line": 299,
+   "name": "tag",
+   "class": "psalm-condition-assignment"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/DependencyInjection/Tests/Compiler/MergeExtensionConfigurationPassTest.php",
+   "line": 173,
+   "name": "pass",
+   "class": "psalm-missed-overwrite"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ErrorHandler/DebugClassLoader.php",
+   "line": 688,
+   "name": "definedParameters",
+   "class": "psalm-isset-maybe-undefined"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/EventDispatcher/DependencyInjection/RegisterListenersPass.php",
+   "line": 339,
+   "name": "n",
+   "class": "psalm-loop-carried"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Form/DependencyInjection/FormPass.php",
+   "line": 114,
+   "name": "extendsTypes",
+   "class": "psalm-zero-iteration"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Form/Form.php",
+   "line": 494,
+   "name": "submittedData",
+   "class": "psalm-catch-reads"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Form/Form.php",
+   "line": 500,
+   "name": "submittedData",
+   "class": "psalm-catch-reads"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Form/Tests/Extension/Core/DataTransformer/DateTimeToLocalizedStringTransformerTest.php",
+   "line": 213,
+   "name": "transformer",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/HttpClient/EventSourceHttpClient.php",
+   "line": 75,
+   "name": "isTimeout",
+   "class": "psalm-catch-reads"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/HttpClient/Tests/TestSocketServer.php",
+   "line": 55,
+   "name": "socket",
+   "class": "psalm-condition-assignment"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/HttpKernel/DataCollector/DataCollector.php",
+   "line": 61,
+   "name": "s",
+   "class": "psalm-silent-unread"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/HttpKernel/EventListener/ProfilerListener.php",
+   "line": 118,
+   "name": "usageIndexValue",
+   "class": "psalm-finally-after-return"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/HttpKernel/Tests/DataCollector/DataCollectorTest.php",
+   "line": 56,
+   "name": "parent",
+   "class": "psalm-transitive"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/HttpKernel/Tests/DataCollector/DataCollectorTest.php",
+   "line": 82,
+   "name": "parent",
+   "class": "psalm-transitive"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Lock/Store/DoctrineDbalMysqlStore.php",
+   "line": 156,
+   "name": "lockAcquired",
+   "class": "psalm-finally-after-return"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Lock/Store/DoctrineDbalPostgreSqlStore.php",
+   "line": 92,
+   "name": "lockAcquired",
+   "class": "psalm-finally-after-return"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Lock/Store/DoctrineDbalPostgreSqlStore.php",
+   "line": 124,
+   "name": "lockAcquired",
+   "class": "psalm-finally-after-return"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Lock/Store/MysqlStore.php",
+   "line": 159,
+   "name": "lockAcquired",
+   "class": "psalm-finally-after-return"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Lock/Store/PostgreSqlStore.php",
+   "line": 88,
+   "name": "lockAcquired",
+   "class": "psalm-finally-after-return"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Lock/Store/PostgreSqlStore.php",
+   "line": 121,
+   "name": "lockAcquired",
+   "class": "psalm-finally-after-return"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Lock/Tests/Store/SemaphoreStoreTest.php",
+   "line": 95,
+   "name": "start",
+   "class": "psalm-argument-binding"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Messenger/Tests/FailureIntegrationTest.php",
+   "line": 910,
+   "name": "claims",
+   "class": "psalm-transitive"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 336,
+   "name": "mapped",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 367,
+   "name": "mapped",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 426,
+   "name": "b",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 438,
+   "name": "b",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 448,
+   "name": "b",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 464,
+   "name": "b",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 768,
+   "name": "d",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 770,
+   "name": "myNewD",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 790,
+   "name": "b",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 801,
+   "name": "d",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 881,
+   "name": "target",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 926,
+   "name": "result",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 986,
+   "name": "out",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1005,
+   "name": "quoteRequestView",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1023,
+   "name": "costRequestView",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1042,
+   "name": "view",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1060,
+   "name": "costRequestView",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1079,
+   "name": "view",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1097,
+   "name": "view",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1109,
+   "name": "view",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1121,
+   "name": "view",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1132,
+   "name": "view",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1166,
+   "name": "view",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1184,
+   "name": "view",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1197,
+   "name": "view",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1232,
+   "name": "result",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1332,
+   "name": "target",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1461,
+   "name": "target",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1469,
+   "name": "target",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1477,
+   "name": "target",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1485,
+   "name": "target",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1532,
+   "name": "mapped",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1540,
+   "name": "target",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1551,
+   "name": "target",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1560,
+   "name": "target",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1572,
+   "name": "target",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1596,
+   "name": "target",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1712,
+   "name": "dto",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1724,
+   "name": "target",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1736,
+   "name": "target",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1749,
+   "name": "target",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1773,
+   "name": "target",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1797,
+   "name": "mapped",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1819,
+   "name": "mapped",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperWithEnumTest.php",
+   "line": 47,
+   "name": "viaSource",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperWithEnumTest.php",
+   "line": 68,
+   "name": "viaSource",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperWithEnumTest.php",
+   "line": 82,
+   "name": "target",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Scheduler/Tests/Generator/MessageGeneratorTest.php",
+   "line": 549,
+   "name": "count",
+   "class": "psalm-argument-binding"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Security/Csrf/SameOriginCsrfListener.php",
+   "line": 67,
+   "name": "usageIndexValue",
+   "class": "psalm-transitive"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Security/Csrf/SameOriginCsrfTokenManager.php",
+   "line": 152,
+   "name": "usageIndexValue",
+   "class": "psalm-transitive"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Security/Csrf/SameOriginCsrfTokenManager.php",
+   "line": 252,
+   "name": "usageIndexValue",
+   "class": "psalm-transitive"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Security/Http/Firewall/ContextListener.php",
+   "line": 90,
+   "name": "usageIndexValue",
+   "class": "psalm-transitive"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Security/Http/Tests/EventListener/ClearSiteDataLogoutListenerTest.php",
+   "line": 36,
+   "name": "headerCountBefore",
+   "class": "psalm-argument-binding"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Serializer/Normalizer/AbstractObjectNormalizer.php",
+   "line": 207,
+   "name": "maxDepthReached",
+   "class": "psalm-condition-assignment"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Serializer/Normalizer/DateTimeNormalizer.php",
+   "line": 95,
+   "name": "data",
+   "class": "psalm-switch-in-branch"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Serializer/Normalizer/DateTimeNormalizer.php",
+   "line": 98,
+   "name": "data",
+   "class": "psalm-switch-in-branch"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Serializer/Tests/Normalizer/Features/CallbacksTestTrait.php",
+   "line": 107,
+   "name": "normalizer",
+   "class": "psalm-type-unreachable"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/String/Tests/LazyStringTest.php",
+   "line": 35,
+   "name": "s",
+   "class": "psalm-cast-statement"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Translation/Bridge/Lokalise/LokaliseProvider.php",
+   "line": 419,
+   "name": "page",
+   "class": "psalm-argument-binding"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Validator/Constraints/UniqueValidator.php",
+   "line": 54,
+   "name": "element",
+   "class": "psalm-condition-assignment"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Workflow/Tests/WorkflowBuilderTrait.php",
+   "line": 62,
+   "name": "transitionWithMetadataArrowColorPink",
+   "class": "psalm-transitive"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Workflow/Tests/WorkflowBuilderTrait.php",
+   "line": 160,
+   "name": "transitionWithMetadataArrowColorBlue",
+   "class": "psalm-transitive"
+  },
+  {
+   "corpus": "symfony",
+   "path": "src/Symfony/Component/Yaml/Inline.php",
+   "line": 445,
+   "name": "mappingException",
+   "class": "psalm-missed-overwrite"
+  }
+ ]
+}

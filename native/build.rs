@@ -119,10 +119,10 @@ fn build_grammar(grammar: &VendoredGrammar) {
         .compile(&format!("tree-sitter-{name}"));
 }
 
-/// Where the engine's tests read the conformance fixtures (`rerail-fixtures`): `RERAIL_FIXTURES_DIR`
-/// if set (relative to the repository root), else the repository's `fixtures/` submodule. Only
-/// tests read them, so a build without them (a release build) goes on; the tests that need them
-/// then fail to compile, naming the fix.
+/// Where the engine's tests read the conformance fixtures: `RERAIL_FIXTURES_DIR` if set (relative
+/// to the repository root), else the repository's `fixtures/` directory. Only tests read them, so a
+/// build without them (a sparse checkout) goes on; the tests that need them then fail to compile,
+/// naming the fix.
 fn configure_fixtures() {
     println!("cargo:rerun-if-env-changed=RERAIL_FIXTURES_DIR");
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
@@ -132,23 +132,22 @@ fn configure_fixtures() {
             let directory = root.join(directory);
             assert!(
                 is_checkout(&directory),
-                "RERAIL_FIXTURES_DIR={} is not a rerail-fixtures checkout",
+                "RERAIL_FIXTURES_DIR={} is not a fixtures directory",
                 directory.display()
             );
             directory
         }
         None => {
-            let submodule = root.join("fixtures");
-            // Empty until the submodule is checked out; rerun once it is.
-            println!("cargo:rerun-if-changed={}", submodule.display());
-            if !is_checkout(&submodule) {
+            let fixtures = root.join("fixtures");
+            println!("cargo:rerun-if-changed={}", fixtures.display());
+            if !is_checkout(&fixtures) {
                 println!(
-                    "cargo:warning=Rerail fixtures not found in {}: run `git submodule update --init`, or set RERAIL_FIXTURES_DIR; the engine's tests need them",
-                    submodule.display()
+                    "cargo:warning=Rerail fixtures not found in {}: check out the repository's fixtures/ directory, or set RERAIL_FIXTURES_DIR; the engine's tests need them",
+                    fixtures.display()
                 );
                 return;
             }
-            submodule
+            fixtures
         }
     };
     let directory = directory
@@ -161,7 +160,7 @@ fn configure_fixtures() {
     println!("cargo:rerun-if-changed={}", directory.display());
 }
 
-/// A directory with something in it: an uninitialised submodule is an empty directory.
+/// A directory with something in it: a sparse checkout can leave `fixtures/` empty.
 fn is_checkout(directory: &Path) -> bool {
     std::fs::read_dir(directory).is_ok_and(|mut entries| entries.next().is_some())
 }

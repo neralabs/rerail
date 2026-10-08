@@ -1,0 +1,14 @@
+SELECT
+  a,
+  b
+FROM tbl
+UNION DISTINCT
+SELECT
+  c,
+  d
+FROM tbl1
+UNION
+SELECT
+  e,
+  f
+FROM tbl2

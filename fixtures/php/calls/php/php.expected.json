@@ -1,0 +1,2899 @@
+{
+ "phpstanVersion": "PHPStan - PHP Static Analysis Tool 2.2.16",
+ "php": "8.5.11",
+ "phpstan": {
+  "anon.php": [
+   {
+    "start": 114,
+    "end": 385,
+    "line": 8,
+    "kind": "new",
+    "targets": [
+     [
+      "method",
+      "AnonymousClass4463190b0b81a9d70773bc70d85112ad",
+      "__construct",
+      "anon.php",
+      9
+     ]
+    ]
+   },
+   {
+    "start": 203,
+    "end": 217,
+    "line": 11,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "AnonymousClass4463190b0b81a9d70773bc70d85112ad",
+      "setup",
+      "anon.php",
+      14
+     ]
+    ]
+   },
+   {
+    "start": 391,
+    "end": 402,
+    "line": 23,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "AnonymousClass4463190b0b81a9d70773bc70d85112ad",
+      "twice",
+      "anon.php",
+      18
+     ]
+    ]
+   }
+  ],
+  "callables.php": [
+   {
+    "start": 529,
+    "end": 533,
+    "line": 32,
+    "kind": "function",
+    "targets": [
+     [
+      "unresolved",
+      "dynamic function"
+     ]
+    ]
+   },
+   {
+    "start": 573,
+    "end": 577,
+    "line": 34,
+    "kind": "function",
+    "targets": [
+     [
+      "unresolved",
+      "dynamic function"
+     ]
+    ]
+   },
+   {
+    "start": 587,
+    "end": 621,
+    "line": 35,
+    "kind": "function",
+    "targets": [
+     [
+      "builtin",
+      "call_user_func"
+     ]
+    ]
+   },
+   {
+    "start": 631,
+    "end": 669,
+    "line": 36,
+    "kind": "function",
+    "targets": [
+     [
+      "builtin",
+      "call_user_func"
+     ]
+    ]
+   },
+   {
+    "start": 717,
+    "end": 732,
+    "line": 38,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\Callables\\Invokable",
+      "method",
+      "callables.php",
+      19
+     ]
+    ]
+   },
+   {
+    "start": 753,
+    "end": 757,
+    "line": 40,
+    "kind": "function",
+    "targets": [
+     [
+      "unresolved",
+      "dynamic function"
+     ]
+    ]
+   },
+   {
+    "start": 836,
+    "end": 844,
+    "line": 47,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\Callables\\target",
+      "callables.php"
+     ]
+    ]
+   },
+   {
+    "start": 857,
+    "end": 861,
+    "line": 49,
+    "kind": "function",
+    "targets": [
+     [
+      "unresolved",
+      "dynamic function"
+     ]
+    ]
+   },
+   {
+    "start": 881,
+    "end": 889,
+    "line": 50,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\Callables\\target",
+      "callables.php"
+     ]
+    ]
+   },
+   {
+    "start": 895,
+    "end": 899,
+    "line": 51,
+    "kind": "function",
+    "targets": [
+     [
+      "unresolved",
+      "dynamic function"
+     ]
+    ]
+   },
+   {
+    "start": 905,
+    "end": 929,
+    "line": 52,
+    "kind": "function",
+    "targets": [
+     [
+      "unresolved",
+      "dynamic function"
+     ]
+    ]
+   },
+   {
+    "start": 957,
+    "end": 961,
+    "line": 54,
+    "kind": "function",
+    "targets": [
+     [
+      "unresolved",
+      "dynamic function"
+     ]
+    ]
+   },
+   {
+    "start": 1000,
+    "end": 1004,
+    "line": 56,
+    "kind": "function",
+    "targets": [
+     [
+      "unresolved",
+      "dynamic function"
+     ]
+    ]
+   },
+   {
+    "start": 1010,
+    "end": 1049,
+    "line": 57,
+    "kind": "function",
+    "targets": [
+     [
+      "builtin",
+      "call_user_func"
+     ]
+    ]
+   },
+   {
+    "start": 1055,
+    "end": 1108,
+    "line": 58,
+    "kind": "function",
+    "targets": [
+     [
+      "builtin",
+      "call_user_func_array"
+     ]
+    ]
+   },
+   {
+    "start": 1114,
+    "end": 1161,
+    "line": 59,
+    "kind": "function",
+    "targets": [
+     [
+      "builtin",
+      "call_user_func"
+     ]
+    ]
+   },
+   {
+    "start": 1172,
+    "end": 1187,
+    "line": 60,
+    "kind": "new",
+    "targets": [
+     [
+      "none"
+     ]
+    ]
+   },
+   {
+    "start": 1193,
+    "end": 1197,
+    "line": 61,
+    "kind": "function",
+    "targets": [
+     [
+      "unresolved",
+      "dynamic function"
+     ]
+    ]
+   },
+   {
+    "start": 1203,
+    "end": 1215,
+    "line": 62,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\Callables\\Invokable",
+      "method",
+      "callables.php",
+      19
+     ]
+    ]
+   },
+   {
+    "start": 1221,
+    "end": 1234,
+    "line": 63,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\Callables\\Invokable",
+      "viaThis",
+      "callables.php",
+      29
+     ]
+    ]
+   },
+   {
+    "start": 1240,
+    "end": 1251,
+    "line": 64,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\Callables\\dynamic",
+      "callables.php"
+     ]
+    ]
+   },
+   {
+    "start": 1279,
+    "end": 1290,
+    "line": 66,
+    "kind": "method",
+    "targets": [
+     [
+      "unresolved",
+      "dynamic method"
+     ]
+    ]
+   },
+   {
+    "start": 1338,
+    "end": 1343,
+    "line": 71,
+    "kind": "function",
+    "targets": [
+     [
+      "unresolved",
+      "dynamic function"
+     ]
+    ]
+   },
+   {
+    "start": 1349,
+    "end": 1369,
+    "line": 72,
+    "kind": "function",
+    "targets": [
+     [
+      "builtin",
+      "call_user_func"
+     ]
+    ]
+   }
+  ],
+  "global.php": [
+   {
+    "start": 122,
+    "end": 148,
+    "line": 9,
+    "kind": "function",
+    "targets": [
+     [
+      "builtin",
+      "function_exists"
+     ]
+    ]
+   },
+   {
+    "start": 201,
+    "end": 209,
+    "line": 12,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "helper",
+      "global.php"
+     ]
+    ]
+   },
+   {
+    "start": 251,
+    "end": 268,
+    "line": 18,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\Util\\entry",
+      "util.php"
+     ]
+    ]
+   },
+   {
+    "start": 274,
+    "end": 292,
+    "line": 19,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\Model\\entry",
+      "model.php"
+     ]
+    ]
+   },
+   {
+    "start": 298,
+    "end": 320,
+    "line": 20,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\Callables\\entry",
+      "callables.php"
+     ]
+    ]
+   },
+   {
+    "start": 326,
+    "end": 343,
+    "line": 21,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\Anon\\entry",
+      "anon.php"
+     ]
+    ]
+   },
+   {
+    "start": 349,
+    "end": 361,
+    "line": 22,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "more_entry",
+      "more.php"
+     ]
+    ]
+   }
+  ],
+  "main.php": [
+   {
+    "start": 299,
+    "end": 308,
+    "line": 12,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "run_all",
+      "global.php"
+     ]
+    ]
+   }
+  ],
+  "model.php": [
+   {
+    "start": 530,
+    "end": 543,
+    "line": 37,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Base",
+      "init",
+      "model.php",
+      40
+     ]
+    ]
+   },
+   {
+    "start": 666,
+    "end": 678,
+    "line": 46,
+    "kind": "new",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Base",
+      "__construct",
+      "model.php",
+      35
+     ]
+    ]
+   },
+   {
+    "start": 740,
+    "end": 753,
+    "line": 51,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Base",
+      "size",
+      "model.php",
+      54
+     ]
+    ]
+   },
+   {
+    "start": 868,
+    "end": 883,
+    "line": 58,
+    "kind": "static",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Base",
+      "label",
+      "model.php",
+      61
+     ]
+    ]
+   },
+   {
+    "start": 1034,
+    "end": 1050,
+    "line": 68,
+    "kind": "static",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Base",
+      "sealed",
+      "model.php",
+      71
+     ]
+    ]
+   },
+   {
+    "start": 1328,
+    "end": 1349,
+    "line": 86,
+    "kind": "static",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Base",
+      "__construct",
+      "model.php",
+      35
+     ]
+    ]
+   },
+   {
+    "start": 1470,
+    "end": 1484,
+    "line": 96,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Child",
+      "greet",
+      "model.php",
+      14
+     ]
+    ]
+   },
+   {
+    "start": 1494,
+    "end": 1507,
+    "line": 97,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Child",
+      "wave",
+      "model.php",
+      27
+     ]
+    ]
+   },
+   {
+    "start": 1517,
+    "end": 1535,
+    "line": 98,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Child",
+      "greetWave",
+      "model.php",
+      19
+     ]
+    ]
+   },
+   {
+    "start": 1545,
+    "end": 1558,
+    "line": 99,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Base",
+      "area",
+      "model.php",
+      49
+     ]
+    ]
+   },
+   {
+    "start": 1568,
+    "end": 1582,
+    "line": 100,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Child",
+      "size",
+      "model.php",
+      89
+     ]
+    ]
+   },
+   {
+    "start": 1592,
+    "end": 1605,
+    "line": 101,
+    "kind": "static",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Base",
+      "label",
+      "model.php",
+      61
+     ]
+    ]
+   },
+   {
+    "start": 1615,
+    "end": 1629,
+    "line": 102,
+    "kind": "static",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Base",
+      "init",
+      "model.php",
+      40
+     ]
+    ]
+   },
+   {
+    "start": 1639,
+    "end": 1652,
+    "line": 103,
+    "kind": "static",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Base",
+      "label",
+      "model.php",
+      61
+     ]
+    ]
+   },
+   {
+    "start": 1662,
+    "end": 1679,
+    "line": 104,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Base",
+      "describe",
+      "model.php",
+      56
+     ]
+    ]
+   },
+   {
+    "start": 1689,
+    "end": 1703,
+    "line": 105,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Base",
+      "fixed",
+      "model.php",
+      66
+     ]
+    ]
+   },
+   {
+    "start": 1792,
+    "end": 1807,
+    "line": 113,
+    "kind": "static",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Base",
+      "label",
+      "model.php",
+      61
+     ]
+    ]
+   },
+   {
+    "start": 1817,
+    "end": 1829,
+    "line": 114,
+    "kind": "new",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Child",
+      "__construct",
+      "model.php",
+      84
+     ]
+    ]
+   },
+   {
+    "start": 1839,
+    "end": 1849,
+    "line": 115,
+    "kind": "new",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Child",
+      "__construct",
+      "model.php",
+      84
+     ]
+    ]
+   },
+   {
+    "start": 1859,
+    "end": 1871,
+    "line": 116,
+    "kind": "new",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Child",
+      "__construct",
+      "model.php",
+      84
+     ]
+    ]
+   },
+   {
+    "start": 1881,
+    "end": 1893,
+    "line": 117,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Child",
+      "run",
+      "model.php",
+      94
+     ]
+    ]
+   },
+   {
+    "start": 1903,
+    "end": 1925,
+    "line": 118,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Plain",
+      "touch",
+      "model.php",
+      124
+     ]
+    ]
+   },
+   {
+    "start": 1904,
+    "end": 1915,
+    "line": 118,
+    "kind": "new",
+    "targets": [
+     [
+      "none"
+     ]
+    ]
+   },
+   {
+    "start": 2100,
+    "end": 2114,
+    "line": 135,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Suit",
+      "shade",
+      "model.php",
+      138
+     ]
+    ]
+   },
+   {
+    "start": 2181,
+    "end": 2195,
+    "line": 140,
+    "kind": "static",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Suit",
+      "tone",
+      "model.php",
+      143
+     ]
+    ]
+   },
+   {
+    "start": 2318,
+    "end": 2328,
+    "line": 151,
+    "kind": "new",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Child",
+      "__construct",
+      "model.php",
+      84
+     ]
+    ]
+   },
+   {
+    "start": 2370,
+    "end": 2376,
+    "line": 156,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\Model\\make",
+      "model.php"
+     ]
+    ]
+   },
+   {
+    "start": 2382,
+    "end": 2393,
+    "line": 157,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Leaf",
+      "go",
+      "model.php",
+      111
+     ]
+    ]
+   },
+   {
+    "start": 2408,
+    "end": 2419,
+    "line": 158,
+    "kind": "new",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Child",
+      "__construct",
+      "model.php",
+      84
+     ]
+    ]
+   },
+   {
+    "start": 2425,
+    "end": 2438,
+    "line": 159,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Child",
+      "run",
+      "model.php",
+      94
+     ]
+    ]
+   },
+   {
+    "start": 2444,
+    "end": 2455,
+    "line": 160,
+    "kind": "new",
+    "targets": [
+     [
+      "none"
+     ]
+    ]
+   },
+   {
+    "start": 2461,
+    "end": 2482,
+    "line": 161,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Suit",
+      "color",
+      "model.php",
+      133
+     ]
+    ]
+   },
+   {
+    "start": 2488,
+    "end": 2502,
+    "line": 162,
+    "kind": "static",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Base",
+      "create",
+      "model.php",
+      44
+     ]
+    ]
+   },
+   {
+    "start": 2508,
+    "end": 2520,
+    "line": 163,
+    "kind": "static",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Suit",
+      "tone",
+      "model.php",
+      143
+     ]
+    ]
+   }
+  ],
+  "more.php": [
+   {
+    "start": 617,
+    "end": 630,
+    "line": 20,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Named",
+      "name",
+      "more.php",
+      13
+     ]
+    ]
+   },
+   {
+    "start": 873,
+    "end": 886,
+    "line": 36,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Bag",
+      "unit",
+      "more.php",
+      44
+     ]
+    ]
+   },
+   {
+    "start": 1115,
+    "end": 1129,
+    "line": 51,
+    "kind": "method",
+    "targets": [
+     [
+      "builtin-method",
+      "ArrayObject",
+      "count"
+     ]
+    ]
+   },
+   {
+    "start": 1206,
+    "end": 1220,
+    "line": 56,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Bag",
+      "total",
+      "more.php",
+      34
+     ]
+    ]
+   },
+   {
+    "start": 1447,
+    "end": 1460,
+    "line": 69,
+    "kind": "static",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Steps",
+      "first",
+      "more.php",
+      62
+     ]
+    ]
+   },
+   {
+    "start": 1474,
+    "end": 1483,
+    "line": 70,
+    "kind": "function",
+    "targets": [
+     [
+      "unresolved",
+      "dynamic function"
+     ]
+    ]
+   },
+   {
+    "start": 1657,
+    "end": 1664,
+    "line": 77,
+    "kind": "function",
+    "targets": [
+     [
+      "unresolved",
+      "dynamic function"
+     ]
+    ]
+   },
+   {
+    "start": 1734,
+    "end": 1741,
+    "line": 79,
+    "kind": "function",
+    "targets": [
+     [
+      "unresolved",
+      "dynamic function"
+     ]
+    ]
+   },
+   {
+    "start": 1770,
+    "end": 1777,
+    "line": 81,
+    "kind": "function",
+    "targets": [
+     [
+      "unresolved",
+      "dynamic function"
+     ]
+    ]
+   },
+   {
+    "start": 1791,
+    "end": 1828,
+    "line": 82,
+    "kind": "function",
+    "targets": [
+     [
+      "builtin",
+      "call_user_func"
+     ]
+    ]
+   },
+   {
+    "start": 1842,
+    "end": 1881,
+    "line": 83,
+    "kind": "function",
+    "targets": [
+     [
+      "builtin",
+      "call_user_func"
+     ]
+    ]
+   },
+   {
+    "start": 1867,
+    "end": 1880,
+    "line": 83,
+    "kind": "static",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Steps",
+      "first",
+      "more.php",
+      62
+     ]
+    ]
+   },
+   {
+    "start": 1895,
+    "end": 1902,
+    "line": 84,
+    "kind": "function",
+    "targets": [
+     [
+      "unresolved",
+      "dynamic function"
+     ]
+    ]
+   },
+   {
+    "start": 2121,
+    "end": 2133,
+    "line": 98,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\KeyBase",
+      "key",
+      "more.php",
+      104
+     ]
+    ]
+   },
+   {
+    "start": 2389,
+    "end": 2401,
+    "line": 116,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\KeyBase",
+      "key",
+      "more.php",
+      104
+     ]
+    ]
+   },
+   {
+    "start": 2415,
+    "end": 2428,
+    "line": 117,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Keyed",
+      "both",
+      "more.php",
+      96
+     ]
+    ]
+   },
+   {
+    "start": 2641,
+    "end": 2692,
+    "line": 132,
+    "kind": "static",
+    "targets": [
+     [
+      "builtin-method",
+      "Closure",
+      "bind"
+     ]
+    ]
+   },
+   {
+    "start": 2641,
+    "end": 2694,
+    "line": 132,
+    "kind": "function",
+    "targets": [
+     [
+      "unresolved",
+      "dynamic function"
+     ]
+    ]
+   },
+   {
+    "start": 2666,
+    "end": 2677,
+    "line": 132,
+    "kind": "new",
+    "targets": [
+     [
+      "none"
+     ]
+    ]
+   },
+   {
+    "start": 2870,
+    "end": 2924,
+    "line": 144,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Binder",
+      "rebind",
+      "more.php",
+      130
+     ]
+    ]
+   },
+   {
+    "start": 2906,
+    "end": 2920,
+    "line": 144,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Host",
+      "hello",
+      "more.php",
+      138
+     ]
+    ]
+   },
+   {
+    "start": 3026,
+    "end": 3040,
+    "line": 149,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Host",
+      "hello",
+      "more.php",
+      138
+     ]
+    ]
+   },
+   {
+    "start": 3057,
+    "end": 3086,
+    "line": 150,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Binder",
+      "rebind",
+      "more.php",
+      130
+     ]
+    ]
+   },
+   {
+    "start": 3058,
+    "end": 3070,
+    "line": 150,
+    "kind": "new",
+    "targets": [
+     [
+      "none"
+     ]
+    ]
+   },
+   {
+    "start": 3487,
+    "end": 3501,
+    "line": 172,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Hides",
+      "greet",
+      "more.php",
+      156
+     ]
+    ]
+   },
+   {
+    "start": 3515,
+    "end": 3530,
+    "line": 173,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Hides",
+      "hidden",
+      "more.php",
+      156
+     ]
+    ]
+   },
+   {
+    "start": 4159,
+    "end": 4174,
+    "line": 208,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Opens",
+      "reveal",
+      "more.php",
+      192
+     ]
+    ]
+   },
+   {
+    "start": 4188,
+    "end": 4204,
+    "line": 209,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Opens",
+      "uncover",
+      "more.php",
+      192
+     ]
+    ]
+   },
+   {
+    "start": 4521,
+    "end": 4538,
+    "line": 228,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\More\\countdown",
+      "more.php"
+     ]
+    ]
+   },
+   {
+    "start": 4664,
+    "end": 4671,
+    "line": 237,
+    "kind": "function",
+    "targets": [
+     [
+      "unresolved",
+      "unknown function"
+     ]
+    ]
+   },
+   {
+    "start": 4721,
+    "end": 4741,
+    "line": 242,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Labelled",
+      "label",
+      "more.php",
+      18
+     ]
+    ]
+   },
+   {
+    "start": 4722,
+    "end": 4731,
+    "line": 242,
+    "kind": "new",
+    "targets": [
+     [
+      "none"
+     ]
+    ]
+   },
+   {
+    "start": 4758,
+    "end": 4767,
+    "line": 243,
+    "kind": "new",
+    "targets": [
+     [
+      "builtin-method",
+      "ArrayObject",
+      "__construct"
+     ]
+    ]
+   },
+   {
+    "start": 4777,
+    "end": 4789,
+    "line": 244,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Bag",
+      "size",
+      "more.php",
+      49
+     ]
+    ]
+   },
+   {
+    "start": 4799,
+    "end": 4810,
+    "line": 245,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Bag",
+      "sum",
+      "more.php",
+      54
+     ]
+    ]
+   },
+   {
+    "start": 4829,
+    "end": 4840,
+    "line": 246,
+    "kind": "new",
+    "targets": [
+     [
+      "none"
+     ]
+    ]
+   },
+   {
+    "start": 4850,
+    "end": 4867,
+    "line": 247,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Steps",
+      "run",
+      "more.php",
+      67
+     ]
+    ]
+   },
+   {
+    "start": 4877,
+    "end": 4886,
+    "line": 248,
+    "kind": "new",
+    "targets": [
+     [
+      "method",
+      "App\\Model\\Child",
+      "__construct",
+      "model.php",
+      84
+     ]
+    ]
+   },
+   {
+    "start": 4896,
+    "end": 4908,
+    "line": 249,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\More\\countdown",
+      "more.php"
+     ]
+    ]
+   },
+   {
+    "start": 4918,
+    "end": 4925,
+    "line": 250,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\More\\outer",
+      "more.php"
+     ]
+    ]
+   },
+   {
+    "start": 4935,
+    "end": 4955,
+    "line": 251,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Keyed",
+      "run",
+      "more.php",
+      114
+     ]
+    ]
+   },
+   {
+    "start": 4936,
+    "end": 4947,
+    "line": 251,
+    "kind": "new",
+    "targets": [
+     [
+      "none"
+     ]
+    ]
+   },
+   {
+    "start": 4965,
+    "end": 4995,
+    "line": 252,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Host",
+      "go",
+      "more.php",
+      142
+     ]
+    ]
+   },
+   {
+    "start": 4966,
+    "end": 4976,
+    "line": 252,
+    "kind": "new",
+    "targets": [
+     [
+      "none"
+     ]
+    ]
+   },
+   {
+    "start": 4982,
+    "end": 4994,
+    "line": 252,
+    "kind": "new",
+    "targets": [
+     [
+      "none"
+     ]
+    ]
+   },
+   {
+    "start": 5005,
+    "end": 5027,
+    "line": 253,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Host",
+      "goHeld",
+      "more.php",
+      147
+     ]
+    ]
+   },
+   {
+    "start": 5006,
+    "end": 5016,
+    "line": 253,
+    "kind": "new",
+    "targets": [
+     [
+      "none"
+     ]
+    ]
+   },
+   {
+    "start": 5037,
+    "end": 5059,
+    "line": 254,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Hides",
+      "speak",
+      "more.php",
+      170
+     ]
+    ]
+   },
+   {
+    "start": 5038,
+    "end": 5049,
+    "line": 254,
+    "kind": "new",
+    "targets": [
+     [
+      "none"
+     ]
+    ]
+   },
+   {
+    "start": 5069,
+    "end": 5090,
+    "line": 255,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Opens",
+      "show",
+      "more.php",
+      206
+     ]
+    ]
+   },
+   {
+    "start": 5070,
+    "end": 5081,
+    "line": 255,
+    "kind": "new",
+    "targets": [
+     [
+      "none"
+     ]
+    ]
+   },
+   {
+    "start": 5100,
+    "end": 5122,
+    "line": 256,
+    "kind": "method",
+    "targets": [
+     [
+      "method",
+      "App\\More\\Opens",
+      "show",
+      "more.php",
+      206
+     ]
+    ]
+   },
+   {
+    "start": 5101,
+    "end": 5113,
+    "line": 256,
+    "kind": "new",
+    "targets": [
+     [
+      "none"
+     ]
+    ]
+   },
+   {
+    "start": 5192,
+    "end": 5209,
+    "line": 264,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\More\\entry",
+      "more.php"
+     ]
+    ]
+   },
+   {
+    "start": 5219,
+    "end": 5240,
+    "line": 265,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\More\\countdown",
+      "more.php"
+     ]
+    ]
+   }
+  ],
+  "util.php": [
+   {
+    "start": 278,
+    "end": 285,
+    "line": 16,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\Util\\local",
+      "util.php"
+     ]
+    ]
+   },
+   {
+    "start": 291,
+    "end": 299,
+    "line": 17,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "helper",
+      "global.php"
+     ]
+    ]
+   },
+   {
+    "start": 305,
+    "end": 313,
+    "line": 18,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\Util\\shared",
+      "other.php"
+     ]
+    ]
+   },
+   {
+    "start": 319,
+    "end": 330,
+    "line": 19,
+    "kind": "function",
+    "targets": [
+     [
+      "builtin",
+      "strlen"
+     ]
+    ]
+   },
+   {
+    "start": 336,
+    "end": 348,
+    "line": 20,
+    "kind": "function",
+    "targets": [
+     [
+      "builtin",
+      "strlen"
+     ]
+    ]
+   },
+   {
+    "start": 354,
+    "end": 363,
+    "line": 21,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "helper",
+      "global.php"
+     ]
+    ]
+   },
+   {
+    "start": 369,
+    "end": 386,
+    "line": 22,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\Util\\local",
+      "util.php"
+     ]
+    ]
+   },
+   {
+    "start": 392,
+    "end": 409,
+    "line": 23,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\Util\\local",
+      "util.php"
+     ]
+    ]
+   },
+   {
+    "start": 415,
+    "end": 422,
+    "line": 24,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\Model\\make",
+      "model.php"
+     ]
+    ]
+   },
+   {
+    "start": 428,
+    "end": 437,
+    "line": 25,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "guarded",
+      "global.php"
+     ]
+    ]
+   },
+   {
+    "start": 443,
+    "end": 450,
+    "line": 26,
+    "kind": "function",
+    "targets": [
+     [
+      "function",
+      "App\\Util\\local",
+      "util.php"
+     ]
+    ]
+   }
+  ]
+ },
+ "runtime": {
+  "anon.php": [
+   {
+    "line": 8,
+    "callees": [
+     [
+      "anon.php",
+      9
+     ]
+    ]
+   },
+   {
+    "line": 11,
+    "callees": [
+     [
+      "anon.php",
+      14
+     ]
+    ]
+   },
+   {
+    "line": 23,
+    "callees": [
+     [
+      "anon.php",
+      18
+     ]
+    ]
+   }
+  ],
+  "callables.php": [
+   {
+    "line": 32,
+    "callees": [
+     [
+      "callables.php",
+      19
+     ]
+    ]
+   },
+   {
+    "line": 34,
+    "callees": [
+     [
+      "callables.php",
+      24
+     ]
+    ]
+   },
+   {
+    "line": 35,
+    "callees": [
+     [
+      "callables.php",
+      19
+     ]
+    ]
+   },
+   {
+    "line": 36,
+    "callees": [
+     [
+      "callables.php",
+      24
+     ]
+    ]
+   },
+   {
+    "line": 38,
+    "callees": [
+     [
+      "callables.php",
+      19
+     ]
+    ]
+   },
+   {
+    "line": 40,
+    "callees": [
+     [
+      "callables.php",
+      37
+     ]
+    ]
+   },
+   {
+    "line": 47,
+    "callees": [
+     [
+      "callables.php",
+      7
+     ]
+    ]
+   },
+   {
+    "line": 49,
+    "callees": [
+     [
+      "callables.php",
+      46
+     ]
+    ]
+   },
+   {
+    "line": 50,
+    "callees": [
+     [
+      "callables.php",
+      7
+     ]
+    ]
+   },
+   {
+    "line": 51,
+    "callees": [
+     [
+      "callables.php",
+      50
+     ]
+    ]
+   },
+   {
+    "line": 52,
+    "callees": [
+     [
+      "callables.php",
+      52
+     ]
+    ]
+   },
+   {
+    "line": 54,
+    "callees": [
+     [
+      "callables.php",
+      7
+     ]
+    ]
+   },
+   {
+    "line": 56,
+    "callees": [
+     [
+      "callables.php",
+      7
+     ]
+    ]
+   },
+   {
+    "line": 57,
+    "callees": [
+     [
+      "callables.php",
+      7
+     ]
+    ]
+   },
+   {
+    "line": 58,
+    "callees": [
+     [
+      "callables.php",
+      24
+     ]
+    ]
+   },
+   {
+    "line": 59,
+    "callees": [
+     [
+      "callables.php",
+      24
+     ]
+    ]
+   },
+   {
+    "line": 61,
+    "callees": [
+     [
+      "callables.php",
+      14
+     ]
+    ]
+   },
+   {
+    "line": 62,
+    "callees": [
+     [
+      "callables.php",
+      19
+     ]
+    ]
+   },
+   {
+    "line": 63,
+    "callees": [
+     [
+      "callables.php",
+      29
+     ]
+    ]
+   },
+   {
+    "line": 64,
+    "callees": [
+     [
+      "callables.php",
+      69
+     ]
+    ]
+   },
+   {
+    "line": 66,
+    "callees": [
+     [
+      "callables.php",
+      19
+     ]
+    ]
+   },
+   {
+    "line": 71,
+    "callees": [
+     [
+      "callables.php",
+      46
+     ]
+    ]
+   },
+   {
+    "line": 72,
+    "callees": [
+     [
+      "callables.php",
+      46
+     ]
+    ]
+   }
+  ],
+  "global.php": [
+   {
+    "line": 12,
+    "callees": [
+     [
+      "global.php",
+      4
+     ]
+    ]
+   },
+   {
+    "line": 18,
+    "callees": [
+     [
+      "util.php",
+      14
+     ]
+    ]
+   },
+   {
+    "line": 19,
+    "callees": [
+     [
+      "model.php",
+      154
+     ]
+    ]
+   },
+   {
+    "line": 20,
+    "callees": [
+     [
+      "callables.php",
+      44
+     ]
+    ]
+   },
+   {
+    "line": 21,
+    "callees": [
+     [
+      "anon.php",
+      6
+     ]
+    ]
+   },
+   {
+    "line": 22,
+    "callees": [
+     [
+      "more.php",
+      262
+     ]
+    ]
+   }
+  ],
+  "main.php": [
+   {
+    "line": 12,
+    "callees": [
+     [
+      "global.php",
+      16
+     ]
+    ]
+   }
+  ],
+  "model.php": [
+   {
+    "line": 37,
+    "callees": [
+     [
+      "model.php",
+      40
+     ]
+    ]
+   },
+   {
+    "line": 46,
+    "callees": [
+     [
+      "model.php",
+      84
+     ]
+    ]
+   },
+   {
+    "line": 51,
+    "callees": [
+     [
+      "model.php",
+      89
+     ]
+    ]
+   },
+   {
+    "line": 58,
+    "callees": [
+     [
+      "model.php",
+      61
+     ]
+    ]
+   },
+   {
+    "line": 68,
+    "callees": [
+     [
+      "model.php",
+      71
+     ]
+    ]
+   },
+   {
+    "line": 86,
+    "callees": [
+     [
+      "model.php",
+      35
+     ]
+    ]
+   },
+   {
+    "line": 96,
+    "callees": [
+     [
+      "model.php",
+      14
+     ]
+    ]
+   },
+   {
+    "line": 97,
+    "callees": [
+     [
+      "model.php",
+      27
+     ]
+    ]
+   },
+   {
+    "line": 98,
+    "callees": [
+     [
+      "model.php",
+      19
+     ]
+    ]
+   },
+   {
+    "line": 99,
+    "callees": [
+     [
+      "model.php",
+      49
+     ]
+    ]
+   },
+   {
+    "line": 100,
+    "callees": [
+     [
+      "model.php",
+      89
+     ]
+    ]
+   },
+   {
+    "line": 101,
+    "callees": [
+     [
+      "model.php",
+      61
+     ]
+    ]
+   },
+   {
+    "line": 102,
+    "callees": [
+     [
+      "model.php",
+      40
+     ]
+    ]
+   },
+   {
+    "line": 103,
+    "callees": [
+     [
+      "model.php",
+      61
+     ]
+    ]
+   },
+   {
+    "line": 104,
+    "callees": [
+     [
+      "model.php",
+      56
+     ]
+    ]
+   },
+   {
+    "line": 105,
+    "callees": [
+     [
+      "model.php",
+      66
+     ]
+    ]
+   },
+   {
+    "line": 113,
+    "callees": [
+     [
+      "model.php",
+      61
+     ]
+    ]
+   },
+   {
+    "line": 114,
+    "callees": [
+     [
+      "model.php",
+      84
+     ]
+    ]
+   },
+   {
+    "line": 115,
+    "callees": [
+     [
+      "model.php",
+      84
+     ]
+    ]
+   },
+   {
+    "line": 116,
+    "callees": [
+     [
+      "model.php",
+      84
+     ]
+    ]
+   },
+   {
+    "line": 117,
+    "callees": [
+     [
+      "model.php",
+      94
+     ]
+    ]
+   },
+   {
+    "line": 118,
+    "callees": [
+     [
+      "model.php",
+      124
+     ]
+    ]
+   },
+   {
+    "line": 135,
+    "callees": [
+     [
+      "model.php",
+      138
+     ]
+    ]
+   },
+   {
+    "line": 140,
+    "callees": [
+     [
+      "model.php",
+      143
+     ]
+    ]
+   },
+   {
+    "line": 151,
+    "callees": [
+     [
+      "model.php",
+      84
+     ]
+    ]
+   },
+   {
+    "line": 156,
+    "callees": [
+     [
+      "model.php",
+      149
+     ]
+    ]
+   },
+   {
+    "line": 157,
+    "callees": [
+     [
+      "model.php",
+      111
+     ]
+    ]
+   },
+   {
+    "line": 158,
+    "callees": [
+     [
+      "model.php",
+      84
+     ]
+    ]
+   },
+   {
+    "line": 159,
+    "callees": [
+     [
+      "model.php",
+      94
+     ]
+    ]
+   },
+   {
+    "line": 161,
+    "callees": [
+     [
+      "model.php",
+      133
+     ]
+    ]
+   },
+   {
+    "line": 162,
+    "callees": [
+     [
+      "model.php",
+      44
+     ]
+    ]
+   },
+   {
+    "line": 163,
+    "callees": [
+     [
+      "model.php",
+      143
+     ]
+    ]
+   }
+  ],
+  "more.php": [
+   {
+    "line": 20,
+    "callees": [
+     [
+      "more.php",
+      26
+     ]
+    ]
+   },
+   {
+    "line": 36,
+    "callees": [
+     [
+      "more.php",
+      44
+     ]
+    ]
+   },
+   {
+    "line": 56,
+    "callees": [
+     [
+      "more.php",
+      34
+     ]
+    ]
+   },
+   {
+    "line": 69,
+    "callees": [
+     [
+      "more.php",
+      62
+     ]
+    ]
+   },
+   {
+    "line": 70,
+    "callees": [
+     [
+      "more.php",
+      69
+     ]
+    ]
+   },
+   {
+    "line": 77,
+    "callees": [
+     [
+      "more.php",
+      75
+     ]
+    ]
+   },
+   {
+    "line": 79,
+    "callees": [
+     [
+      "more.php",
+      75
+     ]
+    ]
+   },
+   {
+    "line": 81,
+    "callees": [
+     [
+      "more.php",
+      78
+     ]
+    ]
+   },
+   {
+    "line": 82,
+    "callees": [
+     [
+      "more.php",
+      82
+     ]
+    ]
+   },
+   {
+    "line": 83,
+    "callees": [
+     [
+      "more.php",
+      62
+     ],
+     [
+      "more.php",
+      83
+     ]
+    ]
+   },
+   {
+    "line": 84,
+    "callees": [
+     [
+      "more.php",
+      87
+     ]
+    ]
+   },
+   {
+    "line": 98,
+    "callees": [
+     [
+      "more.php",
+      104
+     ]
+    ]
+   },
+   {
+    "line": 116,
+    "callees": [
+     [
+      "more.php",
+      104
+     ]
+    ]
+   },
+   {
+    "line": 117,
+    "callees": [
+     [
+      "more.php",
+      96
+     ]
+    ]
+   },
+   {
+    "line": 132,
+    "callees": [
+     [
+      "more.php",
+      144
+     ],
+     [
+      "more.php",
+      149
+     ]
+    ]
+   },
+   {
+    "line": 144,
+    "callees": [
+     [
+      "more.php",
+      123
+     ],
+     [
+      "more.php",
+      130
+     ]
+    ]
+   },
+   {
+    "line": 149,
+    "callees": [
+     [
+      "more.php",
+      123
+     ]
+    ]
+   },
+   {
+    "line": 150,
+    "callees": [
+     [
+      "more.php",
+      130
+     ]
+    ]
+   },
+   {
+    "line": 172,
+    "callees": [
+     [
+      "more.php",
+      156
+     ]
+    ]
+   },
+   {
+    "line": 173,
+    "callees": [
+     [
+      "more.php",
+      156
+     ]
+    ]
+   },
+   {
+    "line": 208,
+    "callees": [
+     [
+      "more.php",
+      192
+     ],
+     [
+      "more.php",
+      215
+     ]
+    ]
+   },
+   {
+    "line": 209,
+    "callees": [
+     [
+      "more.php",
+      192
+     ],
+     [
+      "more.php",
+      220
+     ]
+    ]
+   },
+   {
+    "line": 228,
+    "callees": [
+     [
+      "more.php",
+      226
+     ]
+    ]
+   },
+   {
+    "line": 237,
+    "callees": [
+     [
+      "more.php",
+      233
+     ]
+    ]
+   },
+   {
+    "line": 242,
+    "callees": [
+     [
+      "more.php",
+      18
+     ]
+    ]
+   },
+   {
+    "line": 244,
+    "callees": [
+     [
+      "more.php",
+      49
+     ]
+    ]
+   },
+   {
+    "line": 245,
+    "callees": [
+     [
+      "more.php",
+      54
+     ]
+    ]
+   },
+   {
+    "line": 247,
+    "callees": [
+     [
+      "more.php",
+      67
+     ]
+    ]
+   },
+   {
+    "line": 248,
+    "callees": [
+     [
+      "model.php",
+      84
+     ]
+    ]
+   },
+   {
+    "line": 249,
+    "callees": [
+     [
+      "more.php",
+      226
+     ]
+    ]
+   },
+   {
+    "line": 250,
+    "callees": [
+     [
+      "more.php",
+      231
+     ]
+    ]
+   },
+   {
+    "line": 251,
+    "callees": [
+     [
+      "more.php",
+      114
+     ]
+    ]
+   },
+   {
+    "line": 252,
+    "callees": [
+     [
+      "more.php",
+      142
+     ]
+    ]
+   },
+   {
+    "line": 253,
+    "callees": [
+     [
+      "more.php",
+      147
+     ]
+    ]
+   },
+   {
+    "line": 254,
+    "callees": [
+     [
+      "more.php",
+      170
+     ]
+    ]
+   },
+   {
+    "line": 255,
+    "callees": [
+     [
+      "more.php",
+      206
+     ]
+    ]
+   },
+   {
+    "line": 256,
+    "callees": [
+     [
+      "more.php",
+      206
+     ]
+    ]
+   },
+   {
+    "line": 264,
+    "callees": [
+     [
+      "more.php",
+      240
+     ]
+    ]
+   },
+   {
+    "line": 265,
+    "callees": [
+     [
+      "more.php",
+      226
+     ]
+    ]
+   }
+  ],
+  "util.php": [
+   {
+    "line": 16,
+    "callees": [
+     [
+      "util.php",
+      9
+     ]
+    ]
+   },
+   {
+    "line": 17,
+    "callees": [
+     [
+      "global.php",
+      4
+     ]
+    ]
+   },
+   {
+    "line": 18,
+    "callees": [
+     [
+      "other.php",
+      6
+     ]
+    ]
+   },
+   {
+    "line": 21,
+    "callees": [
+     [
+      "global.php",
+      4
+     ]
+    ]
+   },
+   {
+    "line": 22,
+    "callees": [
+     [
+      "util.php",
+      9
+     ]
+    ]
+   },
+   {
+    "line": 23,
+    "callees": [
+     [
+      "util.php",
+      9
+     ]
+    ]
+   },
+   {
+    "line": 24,
+    "callees": [
+     [
+      "model.php",
+      149
+     ]
+    ]
+   },
+   {
+    "line": 25,
+    "callees": [
+     [
+      "global.php",
+      10
+     ]
+    ]
+   },
+   {
+    "line": 26,
+    "callees": [
+     [
+      "util.php",
+      9
+     ]
+    ]
+   }
+  ]
+ }
+}

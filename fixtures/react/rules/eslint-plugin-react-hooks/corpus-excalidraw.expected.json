@@ -1,0 +1,16 @@
+{
+ "tool": "eslint-plugin-react-hooks",
+ "version": "7.1.1",
+ "source": {
+  "kind": "corpus",
+  "name": "excalidraw",
+  "repository": "https://github.com/excalidraw/excalidraw",
+  "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+  "rules": [
+   "react-hooks/rules-of-hooks",
+   "react-hooks/exhaustive-deps"
+  ],
+  "skipped": []
+ },
+ "findings": []
+}

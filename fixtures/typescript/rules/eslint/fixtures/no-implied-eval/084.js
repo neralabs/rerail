@@ -1,0 +1,1 @@
+self[`setTimeout${foo}`]('foo', 100);

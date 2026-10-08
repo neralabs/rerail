@@ -1,0 +1,25 @@
+{
+ "tool": "bladestan",
+ "version": "0.11.7",
+ "source": {
+  "kind": "corpus",
+  "name": "bagisto",
+  "repository": "https://github.com/bagisto/bagisto",
+  "commit": "635cab68b3229896f854b1b3b3e2dbffcfb6aba8",
+  "rules": [
+   "argument.sprintf",
+   "argument.type",
+   "array.duplicateKey",
+   "identical.alwaysTrue",
+   "if.alwaysFalse",
+   "if.alwaysTrue",
+   "missingType.return",
+   "variable.undefined"
+  ],
+  "skipped": [
+   "packages/Webkul/Admin/src/Resources/views/components/example.blade.php",
+   "packages/Webkul/Shop/src/Resources/views/components/example.blade.php"
+  ]
+ },
+ "findings": []
+}

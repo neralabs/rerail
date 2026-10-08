@@ -1,0 +1,791 @@
+{
+    "php": "8.5.11",
+    "intSize": 8,
+    "cases": [
+        {
+            "code": "[$a, $b] = [1, 2];",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "int",
+                    "1"
+                ],
+                "b": [
+                    "int",
+                    "2"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "list($a, $b) = ['x', 'y'];",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "string",
+                    "78"
+                ],
+                "b": [
+                    "string",
+                    "79"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "[, $b] = [1, 2];",
+            "read": [
+                "b"
+            ],
+            "values": {
+                "b": [
+                    "int",
+                    "2"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "[$a, , $c] = [1, 2, 3];",
+            "read": [
+                "a",
+                "c"
+            ],
+            "values": {
+                "a": [
+                    "int",
+                    "1"
+                ],
+                "c": [
+                    "int",
+                    "3"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "list(, , $c) = [1, 2, 3];",
+            "read": [
+                "c"
+            ],
+            "values": {
+                "c": [
+                    "int",
+                    "3"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "[$a, $b] = [1, 2, 3];",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "int",
+                    "1"
+                ],
+                "b": [
+                    "int",
+                    "2"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "[$a, $a] = [1, 2];",
+            "read": [
+                "a"
+            ],
+            "values": {
+                "a": [
+                    "int",
+                    "2"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "['k' => $x, 'j' => $y] = ['j' => 1, 'k' => 2];",
+            "read": [
+                "x",
+                "y"
+            ],
+            "values": {
+                "x": [
+                    "int",
+                    "2"
+                ],
+                "y": [
+                    "int",
+                    "1"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "list('k' => $x) = ['k' => 'v'];",
+            "read": [
+                "x"
+            ],
+            "values": {
+                "x": [
+                    "string",
+                    "76"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "[$a, $b] = [1 => 'one', 0 => 'zero'];",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "string",
+                    "7a65726f"
+                ],
+                "b": [
+                    "string",
+                    "6f6e65"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "[1 => $a, 0 => $b] = ['p', 'q'];",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "string",
+                    "71"
+                ],
+                "b": [
+                    "string",
+                    "70"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "['1' => $a] = [1 => 'one'];",
+            "read": [
+                "a"
+            ],
+            "values": {
+                "a": [
+                    "string",
+                    "6f6e65"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "[1 => $a] = ['1' => 'one'];",
+            "read": [
+                "a"
+            ],
+            "values": {
+                "a": [
+                    "string",
+                    "6f6e65"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "['01' => $a, 1 => $b] = ['01' => 'string', 1 => 'int'];",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "string",
+                    "737472696e67"
+                ],
+                "b": [
+                    "string",
+                    "696e74"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "[true => $a] = [1 => 'x'];",
+            "read": [
+                "a"
+            ],
+            "values": {
+                "a": [
+                    "string",
+                    "78"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "[null => $a] = ['' => 'empty'];",
+            "read": [
+                "a"
+            ],
+            "values": {
+                "a": [
+                    "string",
+                    "656d707479"
+                ]
+            },
+            "warnings": [
+                "Deprecated: Using null as an array offset is deprecated, use an empty string instead"
+            ]
+        },
+        {
+            "code": "[1.7 => $a] = [1 => 'x'];",
+            "read": [
+                "a"
+            ],
+            "values": {
+                "a": [
+                    "string",
+                    "78"
+                ]
+            },
+            "warnings": [
+                "Deprecated: Implicit conversion from float 1.7 to int loses precision"
+            ]
+        },
+        {
+            "code": "[$a] = [0 => 'first', 0 => 'second'];",
+            "read": [
+                "a"
+            ],
+            "values": {
+                "a": [
+                    "string",
+                    "7365636f6e64"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "[$a] = ['x' => 1, 0 => 2];",
+            "read": [
+                "a"
+            ],
+            "values": {
+                "a": [
+                    "int",
+                    "2"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "[$a, $b] = [-1 => 'm', 'n'];",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "string",
+                    "6e"
+                ],
+                "b": [
+                    "null"
+                ]
+            },
+            "warnings": [
+                "Warning: Undefined array key 1"
+            ],
+            "unknown": {
+                "b": "PHP gives null with an Undefined array key warning"
+            }
+        },
+        {
+            "code": "[$a, $b] = [5 => 'x', 'y'];",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "null"
+                ],
+                "b": [
+                    "null"
+                ]
+            },
+            "warnings": [
+                "Warning: Undefined array key 0",
+                "Warning: Undefined array key 1"
+            ],
+            "unknown": {
+                "a": "PHP gives null with an Undefined array key warning",
+                "b": "PHP gives null with an Undefined array key warning"
+            }
+        },
+        {
+            "code": "[$a, $b] = [1];",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "int",
+                    "1"
+                ],
+                "b": [
+                    "null"
+                ]
+            },
+            "warnings": [
+                "Warning: Undefined array key 1"
+            ],
+            "unknown": {
+                "b": "PHP gives null with an Undefined array key warning"
+            }
+        },
+        {
+            "code": "[$a, $b] = ['x' => 1, 'y' => 2];",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "null"
+                ],
+                "b": [
+                    "null"
+                ]
+            },
+            "warnings": [
+                "Warning: Undefined array key 0",
+                "Warning: Undefined array key 1"
+            ],
+            "unknown": {
+                "a": "PHP gives null with an Undefined array key warning",
+                "b": "PHP gives null with an Undefined array key warning"
+            }
+        },
+        {
+            "code": "[[$a, $b], $c] = [[1, 2], 3];",
+            "read": [
+                "a",
+                "b",
+                "c"
+            ],
+            "values": {
+                "a": [
+                    "int",
+                    "1"
+                ],
+                "b": [
+                    "int",
+                    "2"
+                ],
+                "c": [
+                    "int",
+                    "3"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "[[$a], [$b]] = [[1], ['two']];",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "int",
+                    "1"
+                ],
+                "b": [
+                    "string",
+                    "74776f"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "['p' => [$x, $y], 'q' => $z] = ['q' => true, 'p' => [1.5, null]];",
+            "read": [
+                "x",
+                "y",
+                "z"
+            ],
+            "values": {
+                "x": [
+                    "float",
+                    "3ff8000000000000"
+                ],
+                "y": [
+                    "null"
+                ],
+                "z": [
+                    "bool",
+                    true
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "list(list($a), $b) = [[7], 8];",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "int",
+                    "7"
+                ],
+                "b": [
+                    "int",
+                    "8"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "[$a, [$b, $c]] = [1, 2];",
+            "read": [
+                "a",
+                "b",
+                "c"
+            ],
+            "values": {
+                "a": [
+                    "int",
+                    "1"
+                ],
+                "b": [
+                    "null"
+                ],
+                "c": [
+                    "null"
+                ]
+            },
+            "warnings": [
+                "Warning: Cannot use int as array",
+                "Warning: Cannot use int as array"
+            ],
+            "unknown": {
+                "b": "the element is no array literal: PHP gives null",
+                "c": "the element is no array literal: PHP gives null"
+            }
+        },
+        {
+            "code": "[$a, $b] = [...[1, 2]];",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "int",
+                    "1"
+                ],
+                "b": [
+                    "int",
+                    "2"
+                ]
+            },
+            "warnings": [],
+            "unknown": {
+                "a": "the array spreads",
+                "b": "the array spreads"
+            }
+        },
+        {
+            "code": "[$a, $b] = ['a', 'b'] + ['c', 'd', 'e'];",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "string",
+                    "61"
+                ],
+                "b": [
+                    "string",
+                    "62"
+                ]
+            },
+            "warnings": [],
+            "unknown": {
+                "a": "the value is no array literal",
+                "b": "the value is no array literal"
+            }
+        },
+        {
+            "code": "$x = 1; $y = 2; [$x, $y] = [$y, $x];",
+            "read": [
+                "x",
+                "y"
+            ],
+            "values": {
+                "x": [
+                    "int",
+                    "2"
+                ],
+                "y": [
+                    "int",
+                    "1"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "$k = 'key'; [$k => $v] = ['key' => 'found'];",
+            "read": [
+                "v"
+            ],
+            "values": {
+                "v": [
+                    "string",
+                    "666f756e64"
+                ]
+            },
+            "warnings": [],
+            "unknown": {
+                "v": "the key is a variable, which a destructuring key does not follow"
+            }
+        },
+        {
+            "code": "$n = 2; [$a, $b] = [$n, $n * 3];",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "int",
+                    "2"
+                ],
+                "b": [
+                    "int",
+                    "6"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "[$a, $b] = [[1, 2], ['k' => 'v']];",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "array",
+                    [
+                        [
+                            [
+                                "int",
+                                "0"
+                            ],
+                            [
+                                "int",
+                                "1"
+                            ]
+                        ],
+                        [
+                            [
+                                "int",
+                                "1"
+                            ],
+                            [
+                                "int",
+                                "2"
+                            ]
+                        ]
+                    ]
+                ],
+                "b": [
+                    "array",
+                    [
+                        [
+                            [
+                                "string",
+                                "6b"
+                            ],
+                            [
+                                "string",
+                                "76"
+                            ]
+                        ]
+                    ]
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "$src = [1, 2]; [$a, $b] = $src;",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "int",
+                    "1"
+                ],
+                "b": [
+                    "int",
+                    "2"
+                ]
+            },
+            "warnings": [],
+            "unknown": {
+                "a": "the value is a variable, not an array literal",
+                "b": "the value is a variable, not an array literal"
+            }
+        },
+        {
+            "code": "foreach ([[1, 2]] as [$a, $b]) {}",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "int",
+                    "1"
+                ],
+                "b": [
+                    "int",
+                    "2"
+                ]
+            },
+            "warnings": [],
+            "unknown": {
+                "a": "a foreach target takes an element of each iteration",
+                "b": "a foreach target takes an element of each iteration"
+            }
+        },
+        {
+            "code": "$arr = [1, 2]; [&$r, $s] = $arr;",
+            "read": [
+                "r",
+                "s"
+            ],
+            "values": {
+                "r": [
+                    "int",
+                    "1"
+                ],
+                "s": [
+                    "int",
+                    "2"
+                ]
+            },
+            "warnings": [],
+            "unknown": {
+                "r": "a reference has no value of its own",
+                "s": "the value is a variable, not an array literal"
+            }
+        },
+        {
+            "code": "['a' => $a, 'b' => $b] = ['b' => 'B', 'a' => 'A', 'b' => 'BB'];",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "string",
+                    "41"
+                ],
+                "b": [
+                    "string",
+                    "4242"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "[\"\\x41\" => $a] = ['A' => 'hex'];",
+            "read": [
+                "a"
+            ],
+            "values": {
+                "a": [
+                    "string",
+                    "686578"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "[PHP_INT_MAX => $a] = [9223372036854775807 => 'max'];",
+            "read": [
+                "a"
+            ],
+            "values": {
+                "a": [
+                    "string",
+                    "6d6178"
+                ]
+            },
+            "warnings": [],
+            "unknown": {
+                "a": "a named constant's value needs PHP name resolution"
+            }
+        },
+        {
+            "code": "[0x10 => $a, 0b11 => $b] = [16 => 'hex', 3 => 'bin'];",
+            "read": [
+                "a",
+                "b"
+            ],
+            "values": {
+                "a": [
+                    "string",
+                    "686578"
+                ],
+                "b": [
+                    "string",
+                    "62696e"
+                ]
+            },
+            "warnings": []
+        },
+        {
+            "code": "list($a, list(, $c)) = ['x', ['y', 'z']];",
+            "read": [
+                "a",
+                "c"
+            ],
+            "values": {
+                "a": [
+                    "string",
+                    "78"
+                ],
+                "c": [
+                    "string",
+                    "7a"
+                ]
+            },
+            "warnings": []
+        }
+    ]
+}

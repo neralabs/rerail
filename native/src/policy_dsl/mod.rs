@@ -25,14 +25,14 @@ mod transducer;
 mod value;
 mod workspace;
 
-/// The conformance fixtures checkout `native/build.rs` found: `RERAIL_FIXTURES_DIR`, or the
-/// repository's `fixtures/` submodule.
+/// The conformance fixtures directory `native/build.rs` found: `RERAIL_FIXTURES_DIR`, or the
+/// repository's `fixtures/`.
 #[cfg(test)]
 macro_rules! fixtures_dir {
     () => {
         env!(
             "RERAIL_FIXTURES_DIR",
-            "Rerail fixtures not found: run `git submodule update --init`, or set RERAIL_FIXTURES_DIR to a rerail-fixtures checkout"
+            "Rerail fixtures not found: check out the repository's fixtures/ directory, or set RERAIL_FIXTURES_DIR"
         )
     };
 }

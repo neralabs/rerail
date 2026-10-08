@@ -1,0 +1,92 @@
+{
+ "oracle": "@typescript-eslint/parser 8.70.1 scope manager (lib: [])",
+ "builtins": [],
+ "unresolved": [
+  {
+   "start": 144,
+   "name": "missingValue"
+  },
+  {
+   "start": 162,
+   "name": "spreadMissing"
+  },
+  {
+   "start": 213,
+   "name": "MissingComponent"
+  },
+  {
+   "start": 232,
+   "name": "MissingComponent"
+  },
+  {
+   "start": 273,
+   "name": "lower"
+  }
+ ],
+ "constants": [
+  {
+   "start": 41,
+   "name": "local",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 65,
+   "name": "View",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 109,
+   "name": "Component",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 131,
+   "name": "prop",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 198,
+   "name": "local",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 255,
+   "name": "Component",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 291,
+   "name": "Component",
+   "constant": false,
+   "mutated": false
+  }
+ ],
+ "variables": [
+  {
+   "start": 7,
+   "name": "Component",
+   "references": 3
+  },
+  {
+   "start": 41,
+   "name": "local",
+   "references": 2
+  },
+  {
+   "start": 65,
+   "name": "View",
+   "references": 1
+  },
+  {
+   "start": 75,
+   "name": "prop",
+   "references": 1
+  }
+ ]
+}

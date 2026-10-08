@@ -1,0 +1,1 @@
+let value: { property: Number };

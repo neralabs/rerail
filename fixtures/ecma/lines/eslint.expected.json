@@ -1,0 +1,123 @@
+{
+ "versions": {
+  "eslint": "10.11.0",
+  "parser": "8.70.1"
+ },
+ "messages": {
+  "max-params@comments.ts": [
+   [
+    0,
+    "Function 'a' has too many parameters (2). Maximum allowed is 1."
+   ],
+   [
+    81,
+    "Function 'd' has too many parameters (3). Maximum allowed is 1."
+   ],
+   [
+    131,
+    "Function 'e' has too many parameters (2). Maximum allowed is 1."
+   ]
+  ],
+  "max-statements@comments.ts": [
+   [
+    0,
+    "Function 'a' has too many statements (3). Maximum allowed is 1."
+   ],
+   [
+    41,
+    "Function 'b' has too many statements (2). Maximum allowed is 1."
+   ],
+   [
+    89,
+    "Function 'c' has too many statements (3). Maximum allowed is 1."
+   ]
+  ]
+ },
+ "fixes": {
+  "capitalized-comments@fix.ts": "// abc\n/* déjà vu */\n//zed\n/**\n * doc\n */\n// already lower\n/* éCOLE */ var a = 1; // trailing\n"
+ },
+ "capitalized-comments@fix.ts": [
+  0,
+  7,
+  23,
+  29,
+  61,
+  85
+ ],
+ "capitalized-comments@inline.ts": [
+  28,
+  60,
+  90,
+  113,
+  157,
+  246,
+  272
+ ],
+ "max-params@comments.ts": [
+  0,
+  81,
+  131
+ ],
+ "max-statements@comments.ts": [
+  0,
+  41,
+  89
+ ],
+ "no-inline-comments.ts": [
+  11,
+  55,
+  72,
+  101,
+  109,
+  128,
+  158,
+  245,
+  267,
+  307,
+  389,
+  427
+ ],
+ "no-irregular-whitespace@code.ts": [
+  26,
+  53,
+  67
+ ],
+ "no-irregular-whitespace@strings.ts": [],
+ "no-redeclare@globals.ts": [
+  9,
+  40,
+  87,
+  126,
+  190
+ ],
+ "no-redeclare@items.ts": [
+  12,
+  36,
+  43,
+  73,
+  111,
+  114,
+  117,
+  132,
+  146
+ ],
+ "no-unexpected-multiline.ts": [
+  12,
+  50,
+  83,
+  118,
+  170,
+  229
+ ],
+ "no-useless-concat.ts": [
+  12,
+  73,
+  125
+ ],
+ "sort-keys@groups.ts": [
+  18,
+  118,
+  280,
+  347
+ ]
+}

@@ -1,0 +1,1 @@
+x === (doStuff(), Number.NaN, 1)

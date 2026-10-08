@@ -1,0 +1,1 @@
+<template><div v-if="foo" v-bind="bar"></div></template>

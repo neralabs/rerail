@@ -1,0 +1,1 @@
+<template><div><custom MyProp="Bar"></custom></div></template>

@@ -1,0 +1,3 @@
+SELECT a
+FROM foo
+WHERE a IS NOT NULL

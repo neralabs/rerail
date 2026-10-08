@@ -1,0 +1,901 @@
+{
+ "oracle": "eslint 10.11.0 (espree) global scope: references to variables without definitions",
+ "files": [
+  {
+   "path": "es2015-globals.js",
+   "cases": [
+    {
+     "languageOptions": {
+      "ecmaVersion": 2015,
+      "sourceType": "module",
+      "globals": {
+       "String": "off",
+       "undeclared": "writable"
+      }
+     },
+     "globals": [
+      {
+       "start": 64,
+       "name": "Math"
+      },
+      {
+       "start": 113,
+       "name": "Reflect"
+      }
+     ]
+    },
+    {
+     "languageOptions": {
+      "ecmaVersion": "latest",
+      "sourceType": "module",
+      "globals": {
+       "Temporal": "off",
+       "jQuery": "off",
+       "Intl": "readonly"
+      }
+     },
+     "globals": [
+      {
+       "start": 64,
+       "name": "Math"
+      },
+      {
+       "start": 70,
+       "name": "Atomics"
+      },
+      {
+       "start": 113,
+       "name": "Reflect"
+      },
+      {
+       "start": 122,
+       "name": "WeakRef"
+      },
+      {
+       "start": 131,
+       "name": "BigInt"
+      },
+      {
+       "start": 139,
+       "name": "FinalizationRegistry"
+      },
+      {
+       "start": 161,
+       "name": "AggregateError"
+      },
+      {
+       "start": 199,
+       "name": "Float16Array"
+      },
+      {
+       "start": 213,
+       "name": "DisposableStack"
+      },
+      {
+       "start": 230,
+       "name": "globalThis"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "path": "es5-blocks.js",
+   "cases": [
+    {
+     "languageOptions": {
+      "ecmaVersion": 5,
+      "sourceType": "script"
+     },
+     "globals": [
+      {
+       "start": 155,
+       "name": "Object"
+      },
+      {
+       "start": 211,
+       "name": "Array"
+      }
+     ]
+    },
+    {
+     "languageOptions": {
+      "ecmaVersion": 3,
+      "sourceType": "script",
+      "globals": {
+       "Number": "off",
+       "window": "readonly"
+      }
+     },
+     "globals": [
+      {
+       "start": 155,
+       "name": "Object"
+      },
+      {
+       "start": 211,
+       "name": "Array"
+      }
+     ]
+    },
+    {
+     "languageOptions": {
+      "ecmaVersion": 2015,
+      "sourceType": "module",
+      "globals": {
+       "String": "off",
+       "undeclared": "writable"
+      }
+     },
+     "globals": [
+      {
+       "start": 65,
+       "name": "Number"
+      },
+      {
+       "start": 115,
+       "name": "Math"
+      },
+      {
+       "start": 155,
+       "name": "Object"
+      },
+      {
+       "start": 202,
+       "name": "Array"
+      },
+      {
+       "start": 211,
+       "name": "Array"
+      }
+     ]
+    },
+    {
+     "languageOptions": {
+      "ecmaVersion": 2020,
+      "sourceType": "commonjs"
+     },
+     "globals": [
+      {
+       "start": 25,
+       "name": "String"
+      },
+      {
+       "start": 65,
+       "name": "Number"
+      },
+      {
+       "start": 115,
+       "name": "Math"
+      },
+      {
+       "start": 155,
+       "name": "Object"
+      },
+      {
+       "start": 202,
+       "name": "Array"
+      },
+      {
+       "start": 211,
+       "name": "Array"
+      }
+     ]
+    },
+    {
+     "languageOptions": {
+      "ecmaVersion": "latest",
+      "sourceType": "module",
+      "globals": {
+       "Temporal": "off",
+       "jQuery": "off",
+       "Intl": "readonly"
+      }
+     },
+     "globals": [
+      {
+       "start": 25,
+       "name": "String"
+      },
+      {
+       "start": 65,
+       "name": "Number"
+      },
+      {
+       "start": 115,
+       "name": "Math"
+      },
+      {
+       "start": 155,
+       "name": "Object"
+      },
+      {
+       "start": 202,
+       "name": "Array"
+      },
+      {
+       "start": 211,
+       "name": "Array"
+      }
+     ]
+    },
+    {
+     "languageOptions": {
+      "ecmaVersion": 2025,
+      "sourceType": "script",
+      "globals": {
+       "custom": "readonly",
+       "Reflect": "writable"
+      }
+     },
+     "globals": [
+      {
+       "start": 25,
+       "name": "String"
+      },
+      {
+       "start": 65,
+       "name": "Number"
+      },
+      {
+       "start": 115,
+       "name": "Math"
+      },
+      {
+       "start": 155,
+       "name": "Object"
+      },
+      {
+       "start": 202,
+       "name": "Array"
+      },
+      {
+       "start": 211,
+       "name": "Array"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "path": "es5-directives.js",
+   "cases": [
+    {
+     "languageOptions": {
+      "ecmaVersion": 5,
+      "sourceType": "script"
+     },
+     "globals": [
+      {
+       "start": 108,
+       "name": "Promise"
+      },
+      {
+       "start": 117,
+       "name": "BigInt"
+      },
+      {
+       "start": 125,
+       "name": "Temporal"
+      },
+      {
+       "start": 141,
+       "name": "JSON"
+      }
+     ]
+    },
+    {
+     "languageOptions": {
+      "ecmaVersion": 3,
+      "sourceType": "script",
+      "globals": {
+       "Number": "off",
+       "window": "readonly"
+      }
+     },
+     "globals": [
+      {
+       "start": 108,
+       "name": "Promise"
+      },
+      {
+       "start": 117,
+       "name": "BigInt"
+      },
+      {
+       "start": 125,
+       "name": "Temporal"
+      }
+     ]
+    },
+    {
+     "languageOptions": {
+      "ecmaVersion": 2015,
+      "sourceType": "module",
+      "globals": {
+       "String": "off",
+       "undeclared": "writable"
+      }
+     },
+     "globals": [
+      {
+       "start": 108,
+       "name": "Promise"
+      },
+      {
+       "start": 117,
+       "name": "BigInt"
+      },
+      {
+       "start": 125,
+       "name": "Temporal"
+      },
+      {
+       "start": 135,
+       "name": "Intl"
+      },
+      {
+       "start": 141,
+       "name": "JSON"
+      }
+     ]
+    },
+    {
+     "languageOptions": {
+      "ecmaVersion": 2020,
+      "sourceType": "commonjs"
+     },
+     "globals": [
+      {
+       "start": 108,
+       "name": "Promise"
+      },
+      {
+       "start": 117,
+       "name": "BigInt"
+      },
+      {
+       "start": 125,
+       "name": "Temporal"
+      },
+      {
+       "start": 135,
+       "name": "Intl"
+      },
+      {
+       "start": 141,
+       "name": "JSON"
+      }
+     ]
+    },
+    {
+     "languageOptions": {
+      "ecmaVersion": "latest",
+      "sourceType": "module",
+      "globals": {
+       "Temporal": "off",
+       "jQuery": "off",
+       "Intl": "readonly"
+      }
+     },
+     "globals": [
+      {
+       "start": 108,
+       "name": "Promise"
+      },
+      {
+       "start": 117,
+       "name": "BigInt"
+      },
+      {
+       "start": 125,
+       "name": "Temporal"
+      },
+      {
+       "start": 135,
+       "name": "Intl"
+      },
+      {
+       "start": 141,
+       "name": "JSON"
+      }
+     ]
+    },
+    {
+     "languageOptions": {
+      "ecmaVersion": 2025,
+      "sourceType": "script",
+      "globals": {
+       "custom": "readonly",
+       "Reflect": "writable"
+      }
+     },
+     "globals": [
+      {
+       "start": 108,
+       "name": "Promise"
+      },
+      {
+       "start": 117,
+       "name": "BigInt"
+      },
+      {
+       "start": 125,
+       "name": "Temporal"
+      },
+      {
+       "start": 135,
+       "name": "Intl"
+      },
+      {
+       "start": 141,
+       "name": "JSON"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "path": "es5-globals.js",
+   "cases": [
+    {
+     "languageOptions": {
+      "ecmaVersion": 5,
+      "sourceType": "script"
+     },
+     "globals": [
+      {
+       "start": 52,
+       "name": "Array"
+      },
+      {
+       "start": 68,
+       "name": "JSON"
+      },
+      {
+       "start": 153,
+       "name": "jQuery"
+      },
+      {
+       "start": 161,
+       "name": "custom"
+      },
+      {
+       "start": 260,
+       "name": "String"
+      },
+      {
+       "start": 268,
+       "name": "Number"
+      },
+      {
+       "start": 276,
+       "name": "Boolean"
+      },
+      {
+       "start": 285,
+       "name": "NaN"
+      },
+      {
+       "start": 290,
+       "name": "Infinity"
+      },
+      {
+       "start": 300,
+       "name": "undefined"
+      },
+      {
+       "start": 311,
+       "name": "eval"
+      },
+      {
+       "start": 317,
+       "name": "escape"
+      }
+     ]
+    },
+    {
+     "languageOptions": {
+      "ecmaVersion": 3,
+      "sourceType": "script",
+      "globals": {
+       "Number": "off",
+       "window": "readonly"
+      }
+     },
+     "globals": [
+      {
+       "start": 52,
+       "name": "Array"
+      },
+      {
+       "start": 145,
+       "name": "window"
+      },
+      {
+       "start": 153,
+       "name": "jQuery"
+      },
+      {
+       "start": 161,
+       "name": "custom"
+      },
+      {
+       "start": 260,
+       "name": "String"
+      },
+      {
+       "start": 276,
+       "name": "Boolean"
+      },
+      {
+       "start": 285,
+       "name": "NaN"
+      },
+      {
+       "start": 290,
+       "name": "Infinity"
+      },
+      {
+       "start": 300,
+       "name": "undefined"
+      },
+      {
+       "start": 311,
+       "name": "eval"
+      },
+      {
+       "start": 317,
+       "name": "escape"
+      }
+     ]
+    },
+    {
+     "languageOptions": {
+      "ecmaVersion": 2015,
+      "sourceType": "module",
+      "globals": {
+       "String": "off",
+       "undeclared": "writable"
+      }
+     },
+     "globals": [
+      {
+       "start": 52,
+       "name": "Array"
+      },
+      {
+       "start": 68,
+       "name": "JSON"
+      },
+      {
+       "start": 74,
+       "name": "Map"
+      },
+      {
+       "start": 153,
+       "name": "jQuery"
+      },
+      {
+       "start": 161,
+       "name": "custom"
+      },
+      {
+       "start": 169,
+       "name": "undeclared"
+      },
+      {
+       "start": 248,
+       "name": "Promise"
+      },
+      {
+       "start": 268,
+       "name": "Number"
+      },
+      {
+       "start": 276,
+       "name": "Boolean"
+      },
+      {
+       "start": 285,
+       "name": "NaN"
+      },
+      {
+       "start": 290,
+       "name": "Infinity"
+      },
+      {
+       "start": 300,
+       "name": "undefined"
+      },
+      {
+       "start": 311,
+       "name": "eval"
+      },
+      {
+       "start": 317,
+       "name": "escape"
+      },
+      {
+       "start": 426,
+       "name": "Intl"
+      }
+     ]
+    },
+    {
+     "languageOptions": {
+      "ecmaVersion": 2020,
+      "sourceType": "commonjs"
+     },
+     "globals": [
+      {
+       "start": 52,
+       "name": "Array"
+      },
+      {
+       "start": 68,
+       "name": "JSON"
+      },
+      {
+       "start": 74,
+       "name": "Map"
+      },
+      {
+       "start": 79,
+       "name": "globalThis"
+      },
+      {
+       "start": 111,
+       "name": "require"
+      },
+      {
+       "start": 120,
+       "name": "module"
+      },
+      {
+       "start": 128,
+       "name": "exports"
+      },
+      {
+       "start": 137,
+       "name": "global"
+      },
+      {
+       "start": 153,
+       "name": "jQuery"
+      },
+      {
+       "start": 161,
+       "name": "custom"
+      },
+      {
+       "start": 248,
+       "name": "Promise"
+      },
+      {
+       "start": 260,
+       "name": "String"
+      },
+      {
+       "start": 268,
+       "name": "Number"
+      },
+      {
+       "start": 276,
+       "name": "Boolean"
+      },
+      {
+       "start": 285,
+       "name": "NaN"
+      },
+      {
+       "start": 290,
+       "name": "Infinity"
+      },
+      {
+       "start": 300,
+       "name": "undefined"
+      },
+      {
+       "start": 311,
+       "name": "eval"
+      },
+      {
+       "start": 317,
+       "name": "escape"
+      },
+      {
+       "start": 379,
+       "name": "Atomics"
+      },
+      {
+       "start": 426,
+       "name": "Intl"
+      },
+      {
+       "start": 435,
+       "name": "SharedArrayBuffer"
+      }
+     ]
+    },
+    {
+     "languageOptions": {
+      "ecmaVersion": "latest",
+      "sourceType": "module",
+      "globals": {
+       "Temporal": "off",
+       "jQuery": "off",
+       "Intl": "readonly"
+      }
+     },
+     "globals": [
+      {
+       "start": 52,
+       "name": "Array"
+      },
+      {
+       "start": 68,
+       "name": "JSON"
+      },
+      {
+       "start": 74,
+       "name": "Map"
+      },
+      {
+       "start": 79,
+       "name": "globalThis"
+      },
+      {
+       "start": 101,
+       "name": "Iterator"
+      },
+      {
+       "start": 153,
+       "name": "jQuery"
+      },
+      {
+       "start": 161,
+       "name": "custom"
+      },
+      {
+       "start": 248,
+       "name": "Promise"
+      },
+      {
+       "start": 260,
+       "name": "String"
+      },
+      {
+       "start": 268,
+       "name": "Number"
+      },
+      {
+       "start": 276,
+       "name": "Boolean"
+      },
+      {
+       "start": 285,
+       "name": "NaN"
+      },
+      {
+       "start": 290,
+       "name": "Infinity"
+      },
+      {
+       "start": 300,
+       "name": "undefined"
+      },
+      {
+       "start": 311,
+       "name": "eval"
+      },
+      {
+       "start": 317,
+       "name": "escape"
+      },
+      {
+       "start": 379,
+       "name": "Atomics"
+      },
+      {
+       "start": 426,
+       "name": "Intl"
+      },
+      {
+       "start": 435,
+       "name": "SharedArrayBuffer"
+      }
+     ]
+    },
+    {
+     "languageOptions": {
+      "ecmaVersion": 2025,
+      "sourceType": "script",
+      "globals": {
+       "custom": "readonly",
+       "Reflect": "writable"
+      }
+     },
+     "globals": [
+      {
+       "start": 52,
+       "name": "Array"
+      },
+      {
+       "start": 68,
+       "name": "JSON"
+      },
+      {
+       "start": 74,
+       "name": "Map"
+      },
+      {
+       "start": 79,
+       "name": "globalThis"
+      },
+      {
+       "start": 101,
+       "name": "Iterator"
+      },
+      {
+       "start": 153,
+       "name": "jQuery"
+      },
+      {
+       "start": 161,
+       "name": "custom"
+      },
+      {
+       "start": 248,
+       "name": "Promise"
+      },
+      {
+       "start": 260,
+       "name": "String"
+      },
+      {
+       "start": 268,
+       "name": "Number"
+      },
+      {
+       "start": 276,
+       "name": "Boolean"
+      },
+      {
+       "start": 285,
+       "name": "NaN"
+      },
+      {
+       "start": 290,
+       "name": "Infinity"
+      },
+      {
+       "start": 300,
+       "name": "undefined"
+      },
+      {
+       "start": 311,
+       "name": "eval"
+      },
+      {
+       "start": 317,
+       "name": "escape"
+      },
+      {
+       "start": 379,
+       "name": "Atomics"
+      },
+      {
+       "start": 426,
+       "name": "Intl"
+      },
+      {
+       "start": 435,
+       "name": "SharedArrayBuffer"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

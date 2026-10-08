@@ -1,0 +1,409 @@
+{
+ "oracle": "@typescript-eslint/parser 8.70.1 scope manager (lib: [])",
+ "builtins": [],
+ "unresolved": [
+  {
+   "start": 0,
+   "name": "undefined"
+  },
+  {
+   "start": 856,
+   "name": "undefined"
+  },
+  {
+   "start": 976,
+   "name": "M"
+  }
+ ],
+ "constants": [
+  {
+   "start": 59,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 107,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 162,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 223,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 304,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 336,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 360,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 410,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 455,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 476,
+   "name": "arrow",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 499,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 519,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 537,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 563,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 587,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 613,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 641,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 660,
+   "name": "undefined",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 675,
+   "name": "undefined",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 717,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 743,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 762,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 785,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 817,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 895,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 929,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 981,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1030,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1049,
+   "name": "fnExpr",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 1088,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1108,
+   "name": "clsExpr",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 1149,
+   "name": "undefined",
+   "constant": false,
+   "mutated": false
+  }
+ ],
+ "variables": [
+  {
+   "start": 20,
+   "name": "plainTyped",
+   "references": 0
+  },
+  {
+   "start": 31,
+   "name": "undefined",
+   "references": 1
+  },
+  {
+   "start": 81,
+   "name": "plain",
+   "references": 0
+  },
+  {
+   "start": 87,
+   "name": "undefined",
+   "references": 1
+  },
+  {
+   "start": 129,
+   "name": "arrayParam",
+   "references": 0
+  },
+  {
+   "start": 141,
+   "name": "undefined",
+   "references": 1
+  },
+  {
+   "start": 184,
+   "name": "objectParam",
+   "references": 0
+  },
+  {
+   "start": 201,
+   "name": "undefined",
+   "references": 1
+  },
+  {
+   "start": 245,
+   "name": "objectParamTyped",
+   "references": 0
+  },
+  {
+   "start": 267,
+   "name": "undefined",
+   "references": 1
+  },
+  {
+   "start": 326,
+   "name": "defaulted",
+   "references": 0
+  },
+  {
+   "start": 336,
+   "name": "undefined",
+   "references": 2
+  },
+  {
+   "start": 382,
+   "name": "rest",
+   "references": 0
+  },
+  {
+   "start": 390,
+   "name": "undefined",
+   "references": 1
+  },
+  {
+   "start": 429,
+   "name": "C",
+   "references": 0
+  },
+  {
+   "start": 429,
+   "name": "C",
+   "references": 0
+  },
+  {
+   "start": 435,
+   "name": "undefined",
+   "references": 1
+  },
+  {
+   "start": 476,
+   "name": "arrow",
+   "references": 1
+  },
+  {
+   "start": 485,
+   "name": "undefined",
+   "references": 1
+  },
+  {
+   "start": 519,
+   "name": "undefined",
+   "references": 2
+  },
+  {
+   "start": 563,
+   "name": "undefined",
+   "references": 2
+  },
+  {
+   "start": 613,
+   "name": "undefined",
+   "references": 3
+  },
+  {
+   "start": 660,
+   "name": "undefined",
+   "references": 2
+  },
+  {
+   "start": 704,
+   "name": "undefined",
+   "references": 1
+  },
+  {
+   "start": 743,
+   "name": "undefined",
+   "references": 2
+  },
+  {
+   "start": 785,
+   "name": "undefined",
+   "references": 2
+  },
+  {
+   "start": 839,
+   "name": "after",
+   "references": 0
+  },
+  {
+   "start": 880,
+   "name": "undefined",
+   "references": 1
+  },
+  {
+   "start": 916,
+   "name": "undefined",
+   "references": 1
+  },
+  {
+   "start": 916,
+   "name": "undefined",
+   "references": 0
+  },
+  {
+   "start": 952,
+   "name": "N1",
+   "references": 0
+  },
+  {
+   "start": 964,
+   "name": "undefined",
+   "references": 1
+  },
+  {
+   "start": 1004,
+   "name": "N2",
+   "references": 0
+  },
+  {
+   "start": 1014,
+   "name": "undefined",
+   "references": 1
+  },
+  {
+   "start": 1026,
+   "name": "A",
+   "references": 0
+  },
+  {
+   "start": 1049,
+   "name": "fnExpr",
+   "references": 1
+  },
+  {
+   "start": 1067,
+   "name": "undefined",
+   "references": 1
+  },
+  {
+   "start": 1108,
+   "name": "clsExpr",
+   "references": 1
+  },
+  {
+   "start": 1124,
+   "name": "undefined",
+   "references": 1
+  }
+ ]
+}
