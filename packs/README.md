@@ -8,21 +8,20 @@ the core package at the repository root.
 
 ## Pack layout
 
-Each pack lives in `packs/<name>/`:
+The full specification (layout, manifest, validation data, `rerail pack check`, versioning, licensing) is
+[docs/pack-format.md](../docs/pack-format.md). In short, each pack lives in `packs/<id>/`:
 
-| Path | Contents |
-| --- | --- |
-| `package.json` | npm package, named `@neralabs/rerail-pack-<name>`; no dependency on the core package |
-| `rerail-pack.json` | Pack manifest: `name`, `coreRange`, `languages`, `license`, `upstream[]` |
-| `LICENSE`, `NOTICE` | The pack's licence and notice, shipped in the package |
-| `licenses/<project>/LICENSE` | Upstream licence, copied verbatim at the pinned version |
-| `licenses/<project>/UPSTREAM.md` | Every file copied from the project, and whether it is verbatim, derived or an excerpt |
-| `rules/*.json` | Rule definitions |
+| Path | Contents | Published |
+| --- | --- | --- |
+| `package.json` | npm package `@neralabs/rerail-pack-<id>`, marked by `"rerail": { "pack": "./rerail-pack.json" }`; no dependencies | yes |
+| `rerail-pack.json` | Manifest: id, match, `coreRange`, `languages`, `license`, `upstream[]`, and each rule's title, group, mode and examples | yes |
+| `rules/*.json` | Rule documents | yes |
+| `LICENSE`, `NOTICE`, `README.md` | The pack's licence, notice and description | yes |
+| `licenses/<project>/` | Upstream licence, verbatim, and `UPSTREAM.md` listing every copied or adapted file | yes |
+| `validation/` | Upstream tools' recorded findings, their copied tests, declared divergences, candidate rules | no |
 
-`coreRange` is the range of Rerail core versions the pack supports. `upstream` lists the projects the pack copies
-or adapts rules from; each one has a `licenses/<project>/` directory.
-
-A pack is data only: it never imports the core engine. Core loads it, and core validates it.
+A pack is data only: it never imports the core engine. Core loads it, and core validates it with
+`rerail pack check`.
 
 ## Third-party material
 
