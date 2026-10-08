@@ -59,7 +59,8 @@
     "CHANGELOG.md",
     "THIRD_PARTY_NOTICES",
     "code-rule-dsl/rules",
-    "policies/rule-packs"
+    "packs/tslint/pack.json",
+    "packs/tslint/rules"
   ],
   "scripts": {
     "build": "npm run build:clean && npm run build:native && npm run build:ts && npm run build:omp && npm run build:events && npm run build:cursor && npm run build:claude && npm run build:codex && npm run build:ui",

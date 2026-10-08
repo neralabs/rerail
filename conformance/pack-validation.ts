@@ -11,10 +11,11 @@ import { languageNotSupportedOf } from "../src/code-rule-language-support.js";
 import { codeRuleSchema } from "../src/code-rule-schema.js";
 import { parseJsonWithoutDuplicateKeys } from "../src/json-duplicate-keys.js";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../src/native.js";
-import { packagedRulePackFileSchema, rulePackPackageName, rulePackPackageSchema, type PackagedRulePackFile } from "../src/rule-packs.js";
+import { rulePackFileSchema, rulePackPackageName, rulePackPackageSchema, type RulePackFile } from "../src/rule-packs.js";
 import { compareDeterministicStrings } from "../src/stable-json.js";
 import { CONFORMANCE_FILE, defaultCorpusRoot, loadPack, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
+import { GOLDEN_FORMAT, goldenRules, membershipProblems, parseGoldenManifest, type GoldenManifest } from "./tslint/golden.js";
 import { capabilitiesJson } from "./tslint/runner.js";
 
 export const PACK_CHECKS = [
@@ -206,12 +207,12 @@ export async function validatePack(directory: string, options: ValidatePackOptio
 
   // Check 1: rules. pack.json parses, every rules/*.json is listed, every listed document exists, carries the listed
   // id and compiles against core's capabilities.
-  let pack: PackagedRulePackFile | undefined;
+  let pack: RulePackFile | undefined;
   const packPath = join(directory, "pack.json");
   if (!existsSync(packPath)) fail("rules", "pack.json is missing");
   else {
     try {
-      const parsed = packagedRulePackFileSchema.safeParse(parseJsonWithoutDuplicateKeys(readFileSync(packPath, "utf8"), "pack.json"));
+      const parsed = rulePackFileSchema.safeParse(parseJsonWithoutDuplicateKeys(readFileSync(packPath, "utf8"), "pack.json"));
       if (parsed.success) pack = parsed.data;
       else fail("rules", `pack.json: ${z.prettifyError(parsed.error)}`);
     } catch (error) {
@@ -248,17 +249,23 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     }
   }
 
-  // The ported rules, by the document they port.
+  // The ported rules, by the document they port. A pack's conformance.json is the conformance runner's pack
+  // (conformance/languages/pack.ts), or, for TSLint, the golden manifest of the TSLint harness (conformance/tslint/golden.ts),
+  // whose upstream tests are fetched at a pinned commit rather than recorded.
   const conformancePath = join(directory, CONFORMANCE_FILE);
   let loaded: LoadedPack | undefined;
+  let golden: GoldenManifest | undefined;
   if (existsSync(conformancePath)) {
     try {
-      loaded = loadPack(directory);
+      const text = readFileSync(conformancePath, "utf8");
+      if (z.looseObject({ format: z.literal(GOLDEN_FORMAT) }).safeParse(JSON.parse(text)).success) golden = parseGoldenManifest(text);
+      else loaded = loadPack(directory);
     } catch (error) {
       fail("ports", `${CONFORMANCE_FILE}: ${message(error).replace(`${directory}${sep}`, "")}`);
     }
   }
   const portByDocument = new Map((loaded?.pack.rules ?? []).map(port => [port.policy.replace(/^\.\//u, ""), port]));
+  const goldenDocuments = new Set(Object.keys(golden?.rules ?? {}).map(rule => `rules/${rule}.json`));
 
   // Check 2: proof. Every rule has examples or a port entry.
   // Check 3: examples. A caught example produces a violation of the rule, a passes example none.
@@ -267,7 +274,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     fail("examples", "pack.json does not parse; see check 1");
   } else {
     for (const rule of pack.rules) {
-      if (rule.examples === undefined && !portByDocument.has(rule.document)) fail("proof", `${rule.id}: no examples and no port entry in ${CONFORMANCE_FILE}`, rule.id);
+      if (rule.examples === undefined && !portByDocument.has(rule.document) && !goldenDocuments.has(rule.document)) fail("proof", `${rule.id}: no examples and no port entry in ${CONFORMANCE_FILE}`, rule.id);
       const result = compiled.get(rule.id);
       if (rule.examples === undefined || result?.kind !== "compiled") continue;
       for (const side of ["caught", "passes"] as const) {
@@ -321,6 +328,9 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     }
     for (const capability of report.coverage.uncovered) fail("ports", `capability ${capability}: no ported rule exercises it and it has no exemption`);
   }
+  // TSLint: the golden manifest lists exactly the pack's rules. Its scoring against TSLint's fetched tests is the
+  // golden gate, conformance/tslint/golden-gate.test.ts.
+  if (golden !== undefined) for (const problem of membershipProblems(golden, goldenRules(join(directory, "rules")))) fail("ports", problem);
 
   // Check 5: package. Named for the pack, no dependencies, no validation material published, licence agreeing with
   // what licenses/ records.

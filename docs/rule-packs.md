@@ -1,6 +1,6 @@
 # Rule packs
 
-A rule pack is a named set of rules that come with Rerail (origin **By Rerail**). Rules you write yourself are **Created by you** and belong to no pack. A pack holds no rules of its own: it lists rules that already ship with Rerail, and adds the metadata the dashboard shows (a title and a group for each rule), a match definition, and whether its rules start on.
+A rule pack is a named set of rules that come with Rerail (origin **By Rerail**). Rules you write yourself are **Created by you** and belong to no pack. A pack is a `packs/<id>/` directory: its rule documents in `rules/`, and a `pack.json` that lists them with the metadata the dashboard shows (a title and a group for each rule), a match definition, and whether its rules start on.
 
 **Packs are not attached to repositories yet.** This release defines packs, validates them and recommends the ones that fit a repository. Choosing packs for a repository, and seeding their rules in place of the bundled rules, waits on deciding how rules attach to repositories, clones, worktrees and projects. Until then a repository gets the bundled rules as before.
 
@@ -12,11 +12,11 @@ Only rules that already exist ship as packs. Rerail ships one:
 
 | Pack | Category | Rules | Where it applies | What it is |
 |---|---|--:|---|---|
-| TSLint | language | 74 | the `typescript` dependency, `*.ts` or `*.tsx` files | The golden TSLint ports in `code-rule-dsl/rules/opt-in/tslint/`: each passed TSLint's own test suite in the conformance harness, with TSLint's default options. Group: TSLint. |
+| TSLint | language | 74 | the `typescript` dependency, `*.ts` or `*.tsx` files | The golden TSLint ports in `packs/tslint/rules/`: each passed TSLint's own test suite in the conformance harness, with TSLint's default options. Group: TSLint. |
 
-The rule list is the pack file itself: `policies/rule-packs/tslint.json`. A rule's title comes from its document's description.
+The rule list is the pack file itself: `packs/tslint/pack.json`. A rule's title comes from its document's description. Core ships the pack inside its own package (`CORE_RULE_PACKS` in `src/rule-bootstrap.ts`, and `package.json` `files`) and seeds its rules disabled; the other packs under `packs/` are not shipped yet.
 
-A pack for a project's own conventions is added the same way: its rule documents under `code-rule-dsl/rules/` and a `repository` pack file in `policies/rule-packs/` that lists them, with a match definition naming the files or dependencies that identify the project. Linter packs for other languages and frameworks wait until their rule ports exist.
+A pack for a project's own conventions is added the same way: a `repository` pack directory with its rule documents in `rules/` and a `pack.json` that lists them, with a match definition naming the files or dependencies that identify the project. Linter packs for other languages and frameworks wait until core loads installed packs.
 
 Every rule is listed in the mode its own document has (all `steer` today), and the pack lists its rules as on.
 
@@ -26,10 +26,10 @@ A rule honours its linter's suppression comments only where its document says so
 
 ## Format
 
-This is the pack format, `rerail.rule-pack/v1`. Today packs ship inside core; where they move to in this repository
-and what each must prove is specified in [pack-format.md](pack-format.md).
+This is the pack format, `rerail.rule-pack/v1`. Where packs live in this repository and what each must prove is
+specified in [pack-format.md](pack-format.md).
 
-A pack is one file, `policies/rule-packs/<id>.json`, kept apart from the rule documents it lists:
+A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<id>/rules/`:
 
 ```json
 {
@@ -47,7 +47,7 @@ A pack is one file, `policies/rule-packs/<id>.json`, kept apart from the rule do
     ]
   },
   "rules": [
-    { "id": "tslint:triple-equals", "title": "Requires === and !== in place of == and !=", "group": "TSLint" }
+    { "id": "tslint:triple-equals", "document": "rules/triple-equals.json", "title": "Requires === and !== in place of == and !=", "group": "TSLint" }
   ]
 }
 ```
@@ -58,14 +58,13 @@ A pack is one file, `policies/rule-packs/<id>.json`, kept apart from the rule do
   - `{ "npmDependencies": [...] }`: any `package.json` in the repository that lists one of the packages under `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`.
 - `reason` is the pack's own summary. The reason shown for a repository is built from what matched: `matches the typescript dependency in package.json and *.ts files in src`. It names at most two signals. A file signal names the folder its files share, which lets a person see when a pack was picked only because of a stray folder.
 - `honourSuppressionComments` (optional, default `true`): whether the pack's rules honour their linters' suppression comments. Takes effect once packs are attached.
-- `rules` lists bundled rules by id; each rule belongs to exactly one pack, and a pack adds no rule documents.
+- `rules` lists the pack's rules; each rule belongs to exactly one pack.
   - `title` and `group` are what the dashboard shows.
   - `mode` (optional) is the rule mode the pack starts the rule in; without it the rule keeps its document's mode. The shipped pack sets none. Takes effect once packs are attached.
   - `on` (optional, default `true`) is whether the pack starts the rule on. Takes effect once packs are attached.
-  - `examples` (optional) is one caught and one passing example, `{ "caught": { "path"?, "text" }, "passes": { … } }`, with a path for a file rule and none for a conversation rule. The shipped pack has none: the TSLint ports are proved by the conformance harness (`golden.json`).
-  - `document` (optional here) is the rule's code-rule document, `rules/<name>.json`, relative to the pack. A pack in
-    its own package under `packs/<id>/` must give it for every rule ([pack format](pack-format.md#packjson)); a pack
-    shipped inside core finds its rules among the bundled rules by id.
+  - `examples` (optional) is one caught and one passing example, `{ "caught": { "path"?, "text" }, "passes": { … } }`, with a path for a file rule and none for a conversation rule. The shipped pack has none: the TSLint ports are proved by the conformance harness (the golden manifest, `packs/tslint/conformance.json`).
+  - `document` is the rule's document, `rules/<name>.json`, relative to the pack; it must carry the rule's id
+    ([pack format](pack-format.md#packjson)).
 
 `test/rule-packs.test.ts` holds the packs to this: TSLint lists exactly the golden ports, and every rule starts in its document's mode.
 

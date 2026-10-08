@@ -26,7 +26,7 @@ SOFTWARE.
 ----------------------------------------------------------------------
 
 Bundled rule documents: palantir/tslint core rules
-Files: code-rule-dsl/rules/opt-in/tslint/*.json
+Files: packs/tslint/rules/*.json
 Revision: 285fc1db18d1fd24680d6a2282c6445abf1566ee
 Source: https://github.com/palantir/tslint
 License: Apache-2.0

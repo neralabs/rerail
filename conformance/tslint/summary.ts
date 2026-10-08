@@ -5,7 +5,7 @@ import { compareDeterministicStrings } from "../../src/stable-json.js";
 /** One scalar row per rule: the committed, diffable record of a run. The full per-fixture detail stays in tmp/. */
 const rowSchema = z.object({
   rule: z.string(),
-  /** In the opt-in pack; absent in summaries written before the golden set. */
+  /** In the TSLint pack; absent in summaries written before the golden set. */
   golden: z.boolean().default(false),
   raw: z.string(),
   effective: z.string(),

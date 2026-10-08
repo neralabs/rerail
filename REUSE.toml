@@ -18,10 +18,10 @@ precedence = "override"
 SPDX-FileCopyrightText = "Minish Lab contributors"
 SPDX-License-Identifier = "MIT"
 
-# palantir/tslint core rules, re-implemented as policy documents: the opt-in pack and the
-# conformance harness's option variants.
+# palantir/tslint core rules, re-implemented as policy documents: the TSLint pack's shipped rules and its
+# candidates (ports not shipped and option variants); see packs/tslint/licenses/tslint/UPSTREAM.md.
 [[annotations]]
-path = ["code-rule-dsl/rules/opt-in/tslint/**", "conformance/tslint/rules/**"]
+path = ["packs/tslint/rules/**", "packs/tslint/candidates/**"]
 precedence = "override"
 SPDX-FileCopyrightText = ["2013 Palantir Technologies, Inc.", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0"

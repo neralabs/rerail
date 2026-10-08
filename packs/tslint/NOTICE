@@ -1,0 +1,7 @@
+Rerail rule pack: TSLint
+Copyright 2026 Nera Software Inc.
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Its rules are ports of TSLint's core rules (Copyright 2013 Palantir Technologies, Inc., Apache-2.0). TSLint's licence
+and the record of what is adapted from it are in licenses/tslint/. TSLint ships no NOTICE file.

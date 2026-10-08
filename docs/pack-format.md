@@ -1,10 +1,15 @@
 # Rule pack structure and validation contract
 
 Status: the layout and the validation contract (checks 1 to 6) are implemented. `test/packs.test.ts` validates every
-`packs/*` directory: `python`, `php`, `blade`, `typescript`, `react`, `node` and `next`. Core does not load installed packs yet: the
-TSLint pack still ships inside core (`policies/rule-packs/tslint.json` and `code-rule-dsl/rules/opt-in/tslint/`, see
-[rule packs](rule-packs.md)), and no pack is published. A pack introduces no new file format: it combines the two
-schemas the repository already has. To start one, see [language packs](language-packs.md#start-a-pack).
+`packs/*` directory: `python`, `php`, `blade`, `typescript`, `react`, `node`, `next` and `tslint`. Core does not load
+installed packs yet: it ships the TSLint pack inside its own package (`packs/tslint/pack.json` and `packs/tslint/rules/`
+in its `files`, read from `CORE_RULE_PACKS` in `src/rule-bootstrap.ts`; see [rule packs](rule-packs.md)), and no pack
+is published. A pack introduces no new file format: it combines the two schemas the repository already has. To start
+one, see [language packs](language-packs.md#start-a-pack).
+
+Core's own built-in rules are not a pack: they would live in `code-rule-dsl/rules/` beside the engine's
+`capabilities.json` and be seeded enabled. None ship today. Packs hold every other rule document; their rules are
+seeded disabled.
 
 ## Principles
 
@@ -68,8 +73,8 @@ packs/<id>/
 Today's `rerail.rule-pack/v1` ([format](rule-packs.md#format)): `id`, `name`, `category`, `covers`, `reason`,
 `match`, `honourSuppressionComments`, and per rule `id`, `title`, `group`, optional `mode`, `on` and
 `examples: { caught, passes }`. One change: a rule now names its document, `rules/<name>.json`, so a pack is
-self-contained. `document` is required in `packs/<id>/pack.json` (`packagedRulePackFileSchema`) and optional in a pack
-shipped inside core (`rulePackFileSchema`), whose rules are bundled rules found by id:
+self-contained. `document` is required (`rulePackFileSchema` in `src/rule-packs.ts`); core reads each rule's document
+from the pack:
 
 ```json
 { "id": "tslint:triple-equals", "document": "rules/triple-equals.json", "title": "Requires === and !==", "group": "TSLint" }
@@ -90,6 +95,16 @@ recordings from `upstream/` unless `conformance.json` sets `oracles`:
   pinned tool versions; tools and corpus checkouts live under `.rerail/{tools,corpora}/<id>/` (gitignored).
 - `divergences.json`: each place Rerail and the tool disagree, with its kind (`upstream-wrong`, `not-comparable`,
   `rerail-unknown`) and the evidence checked.
+
+**TSLint** is scored by its own harness, `conformance/tslint/` ([README](../conformance/tslint/README.md)), because
+TSLint's tests are `.lint` files with option variants that the harness fetches at a pinned commit instead of
+recordings. Its files carry a `format` that names them: `conformance.json` is the golden manifest
+(`rerail-tslint-golden/v1`: per shipped rule, the verdict and true positives the golden gate holds it to), and
+`divergences.json` is the PASS audit (`rerail-tslint-audit/v1`: per port that passes, whether it is genuine or where
+it differs from TSLint on real code). `candidates/` holds the ports not shipped, their verdict sidecars and every
+rule's option-variant overrides (`candidates/<rule>/<variant>.json`). Check 2 counts a golden manifest entry as a
+port entry; check 4 checks that the manifest lists exactly the pack's rules, and the golden gate
+(`conformance/tslint/golden-gate.test.ts`, run by `npm run test:conformance`) scores them against TSLint's tests.
 
 ## The validation contract
 
@@ -121,7 +136,7 @@ negative of one ported rule: `node --import tsx conformance/languages/cli.ts --p
 
 Precisely:
 
-1. `pack.json` must parse (`packagedRulePackFileSchema`) and its `id` must be the directory name. Each document must
+1. `pack.json` must parse (`rulePackFileSchema`) and its `id` must be the directory name. Each document must
    be a valid code rule (`rerail.policy/v1`, the host's schema) and compile in the engine with core's
    `code-rule-dsl/capabilities.json`, as the catalog compiles it.
 2. A port entry is a `conformance.json` rule whose `policy` is the rule's `document`.
@@ -188,12 +203,12 @@ repository allowlist are accepted.
 
 | Today | Becomes |
 |---|---|
-| `policies/rule-packs/tslint.json`, `code-rule-dsl/rules/opt-in/tslint/` (shipped in core) | `packs/tslint/pack.json` and `rules/`, once core loads installed packs |
+| `policies/rule-packs/tslint.json`, `code-rule-dsl/rules/opt-in/tslint/` (shipped in core) | `packs/tslint/pack.json` and `rules/`, still shipped in core's package until core loads installed packs |
 | `conformance/tslint/rules/**` (option variants, ports not shipped) | `packs/tslint/candidates/` |
-| `conformance/tslint/` golden manifest and audit | The `tslint` pack's rule list and its `divergences.json` |
-| TSLint's upstream tests, fetched at a pinned commit by `conformance/tslint/fixtures.ts` | A recording under `packs/tslint/upstream/tslint/` |
+| `conformance/tslint/golden.json` and the audit in `conformance/tslint/audit.ts` | `packs/tslint/conformance.json` (golden manifest) and `divergences.json` (PASS audit) |
+| TSLint's upstream tests, fetched at a pinned commit by `conformance/tslint/fixtures.ts` | Not moved: still fetched into `tmp/tslint-fixtures/`; a recording under `packs/tslint/upstream/tslint/` would let the language runner score TSLint |
 | `conformance/languages/<lang>/pack.json`, `rules/`, `divergences.json` | `packs/<lang>/conformance.json`, `rules/` or `candidates/`, `divergences.json`, plus a `pack.json` |
-| `fixtures/<family>/rules/<tool>/` recordings, copied tests and recorders | `packs/<lang>/upstream/<tool>/` |
+| `fixtures/<family>/rules/<tool>/` recordings, copied tests and recorders | `packs/<lang>/upstream/<tool>/`; for a language without rules yet, `fixtures/<family>/upstream/<tool>/` |
 | `fixtures/<family>/{candidates,probes,policies}/` | `packs/<lang>/candidates/` |
 | `fixtures/<family>/licenses/<project>/` for rule tools | `packs/<lang>/licenses/<project>/`, keeping only the rule tests' rows; rows for engine oracles stay in `fixtures/` |
 | `conformance/languages/` runner and scorer | Test support in core that the pack tests call: `conformance/pack-validation.ts` |
@@ -202,7 +217,8 @@ repository allowlist are accepted.
 Moved: `python`, `php`, `blade`, `typescript`, `react`, `node` and `next`, each from `conformance/languages/<id>/`,
 `fixtures/<id>/rules/`, its candidates and probes, and the rule rows of its licence records. The ESLint recorder they
 share is `conformance/recorders/eslint-record.mjs`, and the TypeScript grammar census is `conformance/t1/typescript-syntax.ts`.
-Not moved yet: TSLint (in core until core loads installed packs); `rust`, `sql` and `vue`, which have upstream
+TSLint moved to `packs/tslint/` and still ships inside core's package; its harness stays in `conformance/tslint/` as
+test support. Not moved yet: `rust`, `sql` and `vue`, which have upstream
 recordings but no rules: they stay in `fixtures/<id>/upstream/` beside each language's draft manifest
 (`fixtures/rust/upstream/conformance.draft.json`, `fixtures/sql/upstream/conformance.draft.json`,
 `fixtures/vue/upstream/rules.json`) until their packs gain rules, when the draft becomes `packs/<id>/conformance.json`

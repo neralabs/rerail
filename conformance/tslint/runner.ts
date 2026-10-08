@@ -7,17 +7,20 @@ import type { ExpectedFailure } from "./lint-format.js";
 import { checkFix, type EmittedFix, type FixCheck } from "./fix-check.js";
 import { portSize, type PortSize } from "./port-size.js";
 import { applyRepairs, FIXTURE_REPAIRS, type FixtureRepair } from "./repairs.js";
-import { FIXTURE_RULES, HARNESS_DIRECTORY, loadVariants, type FixtureFile, type RuleConfig, type RuleInfo, type Variant } from "./fixtures.js";
+import { FIXTURE_RULES, loadVariants, TSLINT_PACK, type FixtureFile, type RuleConfig, type RuleInfo, type Variant } from "./fixtures.js";
 import { evidenceSchema, goldenDocumentPath, goldenRules, isGoldenRule, loadGoldenManifest, type GoldenEntry } from "./golden.js";
 import { protectionFor, renameIdentifiers, syntaxDiagnostics } from "./rename.js";
 import { compareDeterministicStrings } from "../../src/stable-json.js";
 
-/** The committed ports: non-golden default docs, every rule's option-variant overrides, and non-golden verdict sidecars. */
-export const COMMITTED_PORTS_DIRECTORY = join(HARNESS_DIRECTORY, "rules");
+/**
+ * The TSLint pack's candidates: non-golden default docs, every rule's option-variant overrides, and non-golden verdict
+ * sidecars. Scored, never shipped.
+ */
+export const COMMITTED_PORTS_DIRECTORY = join(TSLINT_PACK, "candidates");
 /**
  * `RERAIL_TSLINT_PORTS` scores a scratch copy of the ports (e.g. drafts using unreleased primitives) without editing
- * `rules/`. It replaces the non-golden default docs, the overrides and the sidecars; golden default docs always come
- * from the pack (`golden.ts`).
+ * `candidates/`. It replaces the non-golden default docs, the overrides and the sidecars; golden default docs always
+ * come from the pack's `rules/` (`golden.ts`).
  */
 export const PORTS_DIRECTORY = process.env.RERAIL_TSLINT_PORTS === undefined ? COMMITTED_PORTS_DIRECTORY : resolve(process.env.RERAIL_TSLINT_PORTS);
 
@@ -146,7 +149,7 @@ export interface RuleResult {
   sidecar: VerdictSidecar | undefined;
   /** The default doc is the pack's (`golden.ts`). */
   golden: boolean;
-  /** The rule's golden.json entry; undefined for a golden rule the manifest does not list yet. */
+  /** The rule's conformance.json entry; undefined for a golden rule the manifest does not list yet. */
   goldenEntry: GoldenEntry | undefined;
   compileError: string | undefined;
   notes: string[];
@@ -176,12 +179,12 @@ export interface RuleResult {
 }
 
 export interface RulePort {
-  /** The pack doc for a golden rule, else `rules/<rule>.json`. */
+  /** The pack doc for a golden rule, else `candidates/<rule>.json`. */
   document: string | undefined;
   golden: boolean;
   /** Variant id (e.g. `single`, `tags/content`) to the override document for that variant. */
   overrides: Map<string, string>;
-  /** Never set for a golden rule: golden.json replaces its sidecar. */
+  /** Never set for a golden rule: conformance.json replaces its sidecar. */
   sidecar: string | undefined;
 }
 
@@ -423,7 +426,7 @@ export async function evaluateRule(info: RuleInfo, runs: number, options: Evalua
     try {
       compiled.set(path, compileDocument(path));
     } catch (error) {
-      compileErrors.push(`${toPosix(relative(HARNESS_DIRECTORY, path))}: ${error instanceof Error ? error.message : String(error)}`);
+      compileErrors.push(`${toPosix(relative(TSLINT_PACK, path))}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   if (compileErrors.length > 0) return finish("COMPILE_ERROR", { compileError: compileErrors.join("; ") });
@@ -437,7 +440,7 @@ export async function evaluateRule(info: RuleInfo, runs: number, options: Evalua
   const repairErrors: string[] = [];
   for (const variant of variants) {
     const documentPath = port.overrides.get(variant.id) ?? port.document;
-    const document = documentPath === undefined ? undefined : toPosix(relative(HARNESS_DIRECTORY, documentPath));
+    const document = documentPath === undefined ? undefined : toPosix(relative(TSLINT_PACK, documentPath));
     for (const file of variant.files) {
       const common = {
         variant: variant.id,

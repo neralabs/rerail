@@ -33,7 +33,8 @@
 //     the search behind the reference's examples. `features` lists every feature with its count;
 //     `show SUITE:PATH[#PTR]` prints a document's clauses, or the value at a pointer.
 //
-// The TSLint ports, bundled code rules and the engine's worked examples are read from this checkout.
+// The TSLint pack's candidates and shipped rules (the bundled code rules) and the engine's worked examples are read
+// from this checkout.
 // Ruff and ESLint conformance ports are not part of this repository; `--ruff` and `--eslint` add
 // them as a directory of ports, or as a git ref of this repository that has them under
 // `conformance/<suite>/rules`. Regenerate in this order: fill, figures, coverage --write; then
@@ -133,8 +134,8 @@ function suites(options) {
   const list = [
     source("ruff", "Ruff", options.ruff),
     source("eslint", "ESLint", options.eslint),
-    { id: "tslint", label: "TSLint", dir: join(RERAIL, "conformance/tslint/rules") },
-    { id: "bundled", label: "Bundled", dir: join(RERAIL, "code-rule-dsl/rules") },
+    { id: "tslint", label: "TSLint", dir: join(RERAIL, "packs/tslint/candidates") },
+    { id: "bundled", label: "Bundled", dir: join(RERAIL, "packs/tslint/rules") },
     { id: "worked", label: "Worked", dir: join(RERAIL, "native/src/code_rule_dsl/compile/examples") },
   ].filter(suite => suite !== undefined);
   for (const suite of list) {

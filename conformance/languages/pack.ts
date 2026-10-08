@@ -212,11 +212,18 @@ export function listPacks(): string[] {
     .sort(compareDeterministicStrings);
 }
 
-/** Every pack under packs/ that ports rules: a directory holding a conformance.json. Its tests are test/packs.test.ts. */
+/**
+ * Every pack under packs/ whose rules this runner scores: a directory holding a conformance.json in this runner's
+ * schema. A conformance.json with a `format` is another harness's (the TSLint pack's golden manifest,
+ * conformance/tslint/golden.ts). Their tests are test/packs.test.ts.
+ */
 export function listPortedPacks(): string[] {
   if (!existsSync(PACKS_ROOT)) return [];
   return readdirSync(PACKS_ROOT, { withFileTypes: true })
-    .filter(entry => entry.isDirectory() && existsSync(join(PACKS_ROOT, entry.name, CONFORMANCE_FILE)))
+    .filter(entry => {
+      const path = join(PACKS_ROOT, entry.name, CONFORMANCE_FILE);
+      return entry.isDirectory() && existsSync(path) && !z.looseObject({ format: z.string() }).safeParse(JSON.parse(readFileSync(path, "utf8"))).success;
+    })
     .map(entry => entry.name)
     .sort(compareDeterministicStrings);
 }

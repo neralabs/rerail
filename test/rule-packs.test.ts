@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, cpSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRerailApi } from "../src/api/http.js";
@@ -15,10 +16,9 @@ import {
   RECOMMENDATION_CACHE_MS,
   readRulePacks,
   recommendRulePacks,
-  rulePacksDirectory,
   type RulePack,
 } from "../src/rule-packs.js";
-import { bundledRulesDirectory, loadBundledRules } from "../src/rule-bootstrap.js";
+import { corePackDirectories, loadBundledRules } from "../src/rule-bootstrap.js";
 import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
 import { MOCK_CONVERSATION_RULES } from "../src/seed.js";
 
@@ -48,25 +48,31 @@ const tslint = pack("tslint");
 const optInIds = bundled.filter(document => document.enabledByDefault === false).map(document => document.rule.id).sort();
 
 /**
- * The shipped rules and packs plus a neutral repository pack, `acme-api`, of one example rule: core ships no
- * repository pack, so the repository-pack tests bring their own.
+ * A pack directory (`<root>/<id>/pack.json`, documents in `<id>/rules/`) written from a definition and its documents.
+ */
+function writePack(root: string, definition: { readonly id: string } & Readonly<Record<string, unknown>>, documents: Record<string, object>): string {
+  const directory = join(root, definition.id);
+  writeFiles(directory, {
+    "pack.json": JSON.stringify(definition),
+    ...Object.fromEntries(Object.entries(documents).map(([path, document]) => [path, JSON.stringify(document)])),
+  });
+  return directory;
+}
+
+/**
+ * The shipped packs plus a neutral repository pack, `acme-api`, of one example rule: core ships no repository pack, so
+ * the repository-pack tests bring their own.
  */
 async function withRepositoryPack(): Promise<readonly RulePack[]> {
   const root = await temporaryDirectory("rerail-repository-pack-");
-  const rules = join(root, "rules");
-  const packFolder = join(root, "packs");
-  cpSync(bundledRulesDirectory(), rules, { recursive: true });
   const debuggerRule = bundled.find(document => document.rule.id === "tslint:no-debugger")!;
-  writeFileSync(join(rules, "acme-no-debugger.json"), JSON.stringify({ ...debuggerRule.rule, id: "acme-api:no-debugger" }));
-  mkdirSync(packFolder);
-  copyFileSync(join(rulePacksDirectory(), "tslint.json"), join(packFolder, "tslint.json"));
-  writeFileSync(join(packFolder, "acme-api.json"), JSON.stringify({
+  const acme = writePack(root, {
     format: "rerail.rule-pack/v1", id: "acme-api", name: "acme-api", category: "repository",
     covers: "The conventions of the acme API.", reason: "matches acme-api",
     match: { any: [{ files: ["api/acme_api/**"], label: "the acme_api package" }] },
-    rules: [{ id: "acme-api:no-debugger", title: "No debugger statements", group: "api" }],
-  }));
-  return readRulePacks(packFolder, rules);
+    rules: [{ id: "acme-api:no-debugger", document: "rules/no-debugger.json", title: "No debugger statements", group: "api" }],
+  }, { "rules/no-debugger.json": { ...debuggerRule.rule, id: "acme-api:no-debugger" } });
+  return readRulePacks([...corePackDirectories(), acme]);
 }
 
 describe("shipped rule packs", () => {
@@ -83,8 +89,8 @@ describe("shipped rule packs", () => {
     }
   });
 
-  it("are read from the shipped folder, apart from the bundled rule documents, and add no rule documents of their own", () => {
-    expect(rulePacksDirectory()).not.toBe(bundledRulesDirectory());
+  it("are the packs core ships, whose rules are exactly the documents seeded disabled", () => {
+    expect(corePackDirectories()).toEqual([fileURLToPath(new URL("../packs/tslint", import.meta.url))]);
     expect(packs.flatMap(found => found.rules).every(rule => bundled.some(document => document.rule.id === rule.id))).toBe(true);
   });
 });
@@ -93,45 +99,47 @@ describe("rule pack definitions", () => {
   const conversation = { ...MOCK_CONVERSATION_RULES[0]!, id: "test:talk" };
   const debuggerRule = bundled.find(document => document.rule.id === "tslint:no-debugger")!;
   const fileRule = { ...debuggerRule.rule, id: "test:no-debugger" };
-  async function packFolder(definitions: readonly { id: string }[]): Promise<{ directory: string; bundledDirectory: string }> {
+  async function packFolder(definitions: readonly { id: string; rules: readonly { id: string; document: string }[] }[]): Promise<string[]> {
     const directory = await temporaryDirectory("rerail-rule-pack-def-");
-    const bundledDirectory = join(directory, "bundled");
-    mkdirSync(bundledDirectory);
-    writeFileSync(join(bundledDirectory, "a.json"), JSON.stringify(fileRule));
-    writeFileSync(join(bundledDirectory, "b.json"), JSON.stringify(conversation));
-    for (const definition of definitions) writeFileSync(join(directory, `${definition.id}.json`), JSON.stringify(definition));
-    return { directory, bundledDirectory };
+    const documents: Record<string, object> = { "test:no-debugger": fileRule, "test:talk": conversation };
+    return definitions.map(definition =>
+      writePack(directory, definition, Object.fromEntries(definition.rules.flatMap(rule => (documents[rule.id] === undefined ? [] : [[rule.document, documents[rule.id]!]])))),
+    );
   }
   const definition = (id: string, ruleId: string, rule: object = {}) => ({
     format: "rerail.rule-pack/v1", id, name: id, category: "language", covers: "c", reason: "r", match: { any: [{ files: ["**/*.ts"], label: "*.ts files" }] },
-    rules: [{ id: ruleId, title: "t", group: "g", ...rule }],
+    rules: [{ id: ruleId, document: `rules/${ruleId.replace(/^test:/u, "")}.json`, title: "t", group: "g", ...rule }],
   });
 
   it("reject a rule listed by two packs", async () => {
-    const { directory, bundledDirectory } = await packFolder([definition("one", "test:no-debugger"), definition("two", "test:no-debugger")]);
-    expect(() => readRulePacks(directory, bundledDirectory)).toThrow("Rule test:no-debugger is in both rule packs one and two");
+    const directories = await packFolder([definition("one", "test:no-debugger"), definition("two", "test:no-debugger")]);
+    expect(() => readRulePacks(directories)).toThrow("Rule test:no-debugger is in both rule packs one and two");
   });
 
-  it("reject a rule id that resolves to no bundled rule", async () => {
-    const { directory, bundledDirectory } = await packFolder([definition("one", "test:missing")]);
-    expect(() => readRulePacks(directory, bundledDirectory)).toThrow("Rule pack one lists test:missing, which is not a bundled rule");
+  it("reject a rule whose document does not exist, or carries another id", async () => {
+    const missing = await packFolder([definition("one", "test:missing")]);
+    expect(() => readRulePacks(missing)).toThrow("Rule pack one lists test:missing, whose document rules/missing.json does not exist");
+    const debuggerPack = definition("one", "test:no-debugger");
+    const misnamed = await packFolder([{ ...debuggerPack, rules: [{ ...debuggerPack.rules[0]!, document: "rules/talk.json" }] }]);
+    writeFileSync(join(misnamed[0]!, "rules", "talk.json"), JSON.stringify(conversation));
+    expect(() => readRulePacks(misnamed)).toThrow("Rule pack one lists test:no-debugger, but rules/talk.json has id test:talk");
   });
 
   it("reject a conversation rule example that names a file", async () => {
     const examples = { caught: { path: "a.ts", text: "a" }, passes: { path: "a.ts", text: "b" } };
-    const { directory, bundledDirectory } = await packFolder([definition("one", "test:talk", { examples })]);
-    expect(() => readRulePacks(directory, bundledDirectory)).toThrow("Conversation rule test:talk in rule pack one takes no example path");
+    const directories = await packFolder([definition("one", "test:talk", { examples })]);
+    expect(() => readRulePacks(directories)).toThrow("Conversation rule test:talk in rule pack one takes no example path");
   });
 
   it("reject a pack whose globs do not compile, naming the pack, when the packs are read", async () => {
     const nested = { ...definition("one", "test:no-debugger"), match: { any: [{ files: ["**/*.{ts,{js,jsx}}"], label: "code" }] } };
-    const { directory, bundledDirectory } = await packFolder([nested]);
-    expect(() => readRulePacks(directory, bundledDirectory)).toThrow("Rule pack one: Nested { in glob **/*.{ts,{js,jsx}}: braces do not nest");
+    const directories = await packFolder([nested]);
+    expect(() => readRulePacks(directories)).toThrow("Rule pack one: Nested { in glob **/*.{ts,{js,jsx}}: braces do not nest");
   });
 
   it("list a rule in the mode its pack gives it, and otherwise in its document's mode", async () => {
-    const { directory, bundledDirectory } = await packFolder([definition("one", "test:talk", { mode: "log", on: false }), definition("two", "test:no-debugger")]);
-    const loaded = readRulePacks(directory, bundledDirectory);
+    const directories = await packFolder([definition("one", "test:talk", { mode: "log", on: false }), definition("two", "test:no-debugger")]);
+    const loaded = readRulePacks(directories);
     expect(loaded.find(found => found.id === "one")!.rules[0]).toMatchObject({ kind: "conversation", mode: "log", on: false });
     expect(loaded.find(found => found.id === "two")!.rules[0]).toMatchObject({ kind: "file", mode: debuggerRule.rule.mode, on: true });
   });
