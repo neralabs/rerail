@@ -78,19 +78,23 @@ describe("live harness evidence", () => {
     const directory = join(root, ".rerail", "sessions", "s");
     const event = { sequence: 1, sessionId: "s", eventId: "write", kind: "result", observedAt: 1, payload: { toolName: "write", input: { path: "api/probe.py" } } };
     const sample = { type: "sample", item: { metadata: { fields: { eventId: "write", sampleSource: "tool:write", boundary: "tool-call" } } } };
-    const delivery = { type: "delivery", delivery: { requested: "steer", mechanism: "native-queue", content: "SQL_EXECUTE_FSTRING" } };
+    const steer = "▲ Rerail · rerail-lifecycle:sql-execute-fstring  Steered.";
+    const delivery = { type: "delivery", delivery: { requested: "steer", mechanism: "native-queue", content: steer, ruleIds: ["rerail-lifecycle:sql-execute-fstring"] } };
+    const unattributed = { type: "delivery", delivery: { requested: "steer", mechanism: "native-queue", content: steer } };
     const ledger = [sample, { type: "hud-tracking-start" }, { type: "future-bookkeeping" }, delivery];
     try {
       await mkdir(directory, { recursive: true });
       const persist = (entries: unknown[]) => writeFile(join(directory, "events.jsonl"), entries.map(entry => JSON.stringify(entry)).join("\n"));
       await persist(ledger);
       expect(await readLedger(root, [event])).toEqual({
-        deliveries: 1, steers: 1, content: "SQL_EXECUTE_FSTRING",
+        deliveries: 1, steers: 1, content: steer,
         sample: { source: "tool:write", boundary: "tool-call" }, event: { kind: "result", toolName: "write", mentionsProbe: true },
       });
       await persist([delivery, sample]);
       expect((await readLedger(root, [event])).steers).toBe(0);
-      for (const malformed of [{ type: "sample", item: {} }, { type: "delivery", delivery: { content: "SQL_EXECUTE_FSTRING" } }, {}]) {
+      await persist([sample, unattributed]);
+      expect((await readLedger(root, [event])).steers).toBe(0);
+      for (const malformed of [{ type: "sample", item: {} }, { type: "delivery", delivery: { content: steer } }, {}]) {
         await persist([...ledger, malformed]);
         await expect(readLedger(root, [event])).rejects.toThrow();
       }

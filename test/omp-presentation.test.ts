@@ -25,7 +25,7 @@ it("never repaints a previous session or a closed widget after an outstanding re
     setInterval: (callback: () => void) => { tick = callback; return 1; },
     clearTimer: () => { tick = undefined; },
   }) as unknown as ExtensionContext;
-  const status = (text: string): SessionPresentation => ({ text, parts: [], url: null, presence: "compact", repositoryState: "started" });
+  const status = (text: string): SessionPresentation => ({ status: "on", text, parts: [], url: null, presence: "compact", repositoryState: "started", counts: null });
   const hud = createOmpPresentation();
   hud.start(context("old"));
   hud.start(context("current"));

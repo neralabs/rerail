@@ -250,7 +250,8 @@ fn leaves_witness(matcher: &AstMatcher, memo: &mut UtilitySummary<usize, bool>) 
         AstMatcher::All(items) | AstMatcher::Any(items) => {
             items.iter().any(|item| leaves_witness(item, memo))
         }
-        // A negation or a count binds nothing, so nothing it reaches can become a capture.
+        // A negation binds nothing and a count only its value's text (`as`), so nothing either
+        // reaches can become a capture.
         AstMatcher::Not(_) | AstMatcher::Count(_) => false,
         AstMatcher::Has(item, _) => leaves_witness(item, memo),
         AstMatcher::Inside(..) | AstMatcher::Precedes(..) | AstMatcher::Follows(..) => true,

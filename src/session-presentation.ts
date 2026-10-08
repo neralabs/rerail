@@ -1,7 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { ADAPTER_CAPABILITIES, type RerailHost } from "./adapter-contract.js";
+import { ADAPTER_CAPABILITIES, type AdapterDelivery, type RerailHost } from "./adapter-contract.js";
 import { presentationDaemonSchema, presentationResponseSchema, type sessionResponseSchema } from "./api/session-contracts.js";
 import { withinCheckout } from "./checkout-control.js";
 import { DAEMON_STATE_FILE, processAlive, readDaemonState } from "./daemon-control.js";
@@ -9,18 +9,38 @@ import type { DaemonState } from "./daemon.js";
 import { readRepositoryId } from "./repository-identity.js";
 import type { RepositoryStartState } from "./repository-start.js";
 import type { PresentationPresence } from "./schema.js";
+import { linkSteers, sessionPageUrl } from "./rerail-steer.js";
 import { RERAIL_BRAND_FOREGROUND } from "./terminal-brand.generated.js";
 import { defaultRerailHome } from "./rerail-home.js";
 
 export type { PresentationPresence } from "./schema.js";
 
+/**
+ * The footer's state (design A1f): on here, not on here (never started or stopped in this repo), not
+ * running (no live daemon), or on but missing what it needs to count (an unknown session).
+ */
+export type PresentationStatus = "on" | "not-on-here" | "not-running" | "unavailable";
+
+export interface PresentationCounts {
+  /** Rules on for this session; null when coverage is unknown. */
+  rules: number | null;
+  /** Steers delivered in this session; null when the history cannot establish a total. */
+  steered: number | null;
+}
+
 export interface SessionPresentation {
+  status: PresentationStatus;
+  /** The footer as plain text, e.g. `Rerail ● 26 rules  ·  steered 3×`. */
   text: string;
+  /** This session's dashboard page; null without a verified session. */
   url: string | null;
+  /** The brand, then the footer's items in order, each with its own link. */
   parts: { text: string; url: string | null }[];
   presence: PresentationPresence;
   /** Whether Rerail runs in the session's repository, as the daemon reports it; null when no daemon answered. */
   repositoryState: RepositoryStartState | null;
+  /** Counts behind an `on` footer; null in every other state. */
+  counts: PresentationCounts | null;
 }
 
 export interface PresentationRequest {
@@ -28,6 +48,12 @@ export interface PresentationRequest {
   host: RerailHost;
   cwd: string;
   onDemand?: boolean;
+  /**
+   * The checkout's start state as the caller reads it locally, consulted only when no daemon answers
+   * (this module never opens SQLite); undefined when the caller cannot say without writing. Without it,
+   * or when it cannot say, a missing daemon reads as "not running".
+   */
+  startState?: () => RepositoryStartState | undefined | Promise<RepositoryStartState | undefined>;
 }
 
 export interface RulesDashboardRequest {
@@ -47,29 +73,52 @@ const READ_TIMEOUT_MS = 2_000;
 const MAX_RESPONSE_BYTES = 1_048_576;
 const terminalText = (value: string): string => value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
 
-function presentation(
-  parts: SessionPresentation["parts"],
-  presence: PresentationPresence,
-  repositoryState: RepositoryStartState | null = null,
-): SessionPresentation {
-  return { text: parts.map(part => part.text).join(" | "), url: parts[0]?.url ?? null, parts, presence, repositoryState };
+const STATUS_MARKS: Record<PresentationStatus, string> = { on: "●", unavailable: "●", "not-on-here": "○", "not-running": "✕" };
+/** Between the footer's items; the brand and its mark lead with single spaces. */
+const ITEM_SEPARATOR = "  ·  ";
+
+interface PresentationInput {
+  status: PresentationStatus;
+  brandUrl?: string | null;
+  items: SessionPresentation["parts"];
+  presence: PresentationPresence;
+  repositoryState?: RepositoryStartState | null;
+  counts?: PresentationCounts | null;
+}
+
+function presentation({ status, brandUrl = null, items, presence, repositoryState = null, counts = null }: PresentationInput): SessionPresentation {
+  const parts = [{ text: "Rerail", url: brandUrl }, ...items];
+  const text = `Rerail ${STATUS_MARKS[status]} ${items.map(item => item.text).join(ITEM_SEPARATOR)}`;
+  return { status, text, url: brandUrl, parts, presence, repositoryState, counts };
+}
+
+/** A silent footer: nothing to draw, while the state stays known to explicit reads. */
+function silent(presence: PresentationPresence, repositoryState: RepositoryStartState | null): SessionPresentation {
+  return { status: "on", text: "", url: null, parts: [], presence, repositoryState, counts: null };
 }
 
 /**
  * Only the brand receives color; each label owns its own immutable OSC 8 target.
  * BEL-terminated to match the host TUI, which frames every line with `ESC ] 8 ; ; BEL`.
  */
-export function formatTerminalStatus({ parts }: SessionPresentation): string {
-  return parts.map((part, index) => {
-    const text = terminalText(part.text);
-    const label = index === 0 ? `${RERAIL_BRAND_FOREGROUND}${text}\u001b[39m` : text;
+export function formatTerminalStatus({ status, parts }: SessionPresentation): string {
+  const link = (part: SessionPresentation["parts"][number], label: string): string => {
     const target = part.url === null ? null : terminalText(part.url);
     return target ? `\u001b]8;;${target}\u0007${label}\u001b]8;;\u0007` : label;
-  }).join(" | ");
+  };
+  const [brand, ...items] = parts;
+  if (brand === undefined) return "";
+  const name = link(brand, `${RERAIL_BRAND_FOREGROUND}${terminalText(brand.text)}\u001b[39m`);
+  return `${name} ${STATUS_MARKS[status]} ${items.map(item => link(item, terminalText(item.text))).join(ITEM_SEPARATOR)}`;
 }
 
-function unavailable(reason: string, presence: PresentationPresence, repositoryState: RepositoryStartState | null = null): SessionPresentation {
-  return presentation([{ text: "Rerail", url: null }, { text: reason, url: null }], presence, repositoryState);
+function unavailable(
+  status: Exclude<PresentationStatus, "on">,
+  reason: string,
+  presence: PresentationPresence,
+  repositoryState: RepositoryStartState | null = null,
+): SessionPresentation {
+  return presentation({ status, items: [{ text: reason, url: null }], presence, repositoryState });
 }
 
 /** Validate responses with the same contracts used by the daemon, without opening a database. */
@@ -96,38 +145,60 @@ async function get<Schema extends z.ZodType>(origin: URL, path: string, schema: 
   return schema.parse(JSON.parse(Buffer.concat(chunks, size).toString("utf8")));
 }
 
-function sessionParts(origin: URL, { session, hud }: z.infer<typeof sessionResponseSchema>): SessionPresentation["parts"] {
-  const sessionLink = new URL(origin);
-  sessionLink.searchParams.set("sessionId", session.sessionId);
-  sessionLink.searchParams.set("host", session.host);
-  sessionLink.hash = "sessions";
-  const rulesUrl = rulesDashboardUrl(origin);
+/** `Rerail ● 26 rules`, with `steered N×` only once Rerail has steered in this session (A1f). */
+function onPresentation(
+  origin: URL, { session, hud }: z.infer<typeof sessionResponseSchema>, presence: PresentationPresence, health: string[],
+): SessionPresentation {
+  const sessionUrl = sessionPageUrl(origin.href, session.host, session.sessionId);
   const ruleNoun = hud.activeRuleCount === 1 ? "rule" : "rules";
-  return [
-    { text: "Rerail", url: sessionLink.href },
-    { text: hud.activeRuleCount === null ? "rules unavailable" : `${hud.activeRuleCount} ${ruleNoun}`, url: rulesUrl },
-    { text: hud.steeringCount === null ? "steering unavailable" : `steered ${hud.steeringCount}×`, url: sessionLink.href },
+  const items: SessionPresentation["parts"] = [
+    { text: hud.activeRuleCount === null ? "rules unavailable" : `${hud.activeRuleCount} ${ruleNoun}`, url: rulesDashboardUrl(origin) },
   ];
+  if (hud.steeringCount === null) items.push({ text: "steering unavailable", url: sessionUrl });
+  else if (hud.steeringCount > 0) items.push({ text: `steered ${hud.steeringCount}×`, url: sessionUrl });
+  items.push(...health.map(text => ({ text, url: null })));
+  return presentation({
+    status: "on", brandUrl: sessionUrl, items, presence, repositoryState: "started",
+    counts: { rules: hud.activeRuleCount, steered: hud.steeringCount },
+  });
 }
 
-async function appendAudit(
-  parts: SessionPresentation["parts"], { audit: audit }: z.infer<typeof sessionResponseSchema>,
-  nativeOk: boolean, workspace: string, onDemand: boolean,
-): Promise<void> {
+/**
+ * The dashboard origin people can open for `cwd`'s checkout, resolved as the footer resolves it: the
+ * Rerail home daemon's recorded URL when it is loopback. Undefined when there is none, or the daemon is
+ * bound somewhere a browser should not be sent (`0.0.0.0`).
+ * Passive: reads locator files only and never probes or starts anything, so hooks can afford it per steer.
+ */
+export async function dashboardOrigin(cwd: string): Promise<string | undefined> {
   try {
-    if (audit !== null && await realpath(audit.workspaceRoot) !== workspace) throw new Error("Mismatched evaluation identity");
-    if (onDemand) {
-      const evaluation = audit === null ? "not evaluated"
-        : `${audit.scope}: ${audit.status} | ${audit.violationCount} findings | ${audit.failureCount} failures`;
-      parts.push({ text: `${nativeOk ? "healthy" : "kernel unavailable"} | ${evaluation}`, url: null });
-      return;
-    }
-    if (!nativeOk) parts.push({ text: "kernel unavailable", url: null });
-    if (audit?.status === "running") parts.push({ text: "checking…", url: null });
-    else if (audit?.status === "failed" || (audit !== null && audit.failureCount > 0)) parts.push({ text: "evaluation failed", url: null });
+    const daemon = await verifyDaemon(cwd);
+    return typeof daemon === "string" ? undefined : daemon.origin.href;
   } catch {
-    parts.push({ text: "evaluation unavailable", url: null });
+    return undefined;
   }
+}
+
+/**
+ * Deliveries with their steers' `Why?` links made absolute for `cwd`'s dashboard. The runtime keeps
+ * links relative; each coding agent's adapter links them as it hands them over.
+ */
+export async function linkDeliveries(deliveries: readonly AdapterDelivery[], cwd: string | undefined): Promise<AdapterDelivery[]> {
+  const origin = cwd === undefined ? undefined : await dashboardOrigin(cwd);
+  return deliveries.map(delivery => ({ ...delivery, content: linkSteers(delivery.content, origin) }));
+}
+
+/** What is wrong with the Engine or the latest audit of this checkout; nothing when both are fine. */
+async function healthItems(
+  { audit: run }: z.infer<typeof sessionResponseSchema>, nativeOk: boolean, workspace: string,
+): Promise<string[]> {
+  const items = nativeOk ? [] : ["engine unavailable"];
+  try {
+    if (run !== null && await realpath(run.workspaceRoot) !== workspace) throw new Error("Mismatched audit identity");
+    if (run?.status === "failed" || (run !== null && run.failureCount > 0)) items.push("audit failed");
+  } catch {
+    items.push("audit unavailable");
+  }
+  return items;
 }
 
 interface VerifiedDaemon {
@@ -144,7 +215,7 @@ const NOT_ON_HERE = "not on here";
 
 /** The footer for a session whose host already knows Rerail is off here; no daemon is asked. */
 export function notOnHerePresentation(): SessionPresentation {
-  return unavailable(NOT_ON_HERE, "compact");
+  return unavailable("not-on-here", NOT_ON_HERE, "compact", "stopped");
 }
 
 /**
@@ -216,39 +287,75 @@ export async function readRepositoryState(cwd: string, host: RerailHost): Promis
   }
 }
 
+const NOT_RUNNING = "not running";
+
+/**
+ * No daemon answered. Nothing autostarts where Rerail is off, so that is only "not running" in a started
+ * checkout; elsewhere the caller's own reading of the start state says "not on here".
+ */
+async function withoutDaemon(startState: PresentationRequest["startState"], presence: PresentationPresence): Promise<SessionPresentation> {
+  let state: RepositoryStartState | undefined;
+  try {
+    state = await startState?.();
+  } catch {
+    state = undefined;
+  }
+  return state === undefined || state === "started"
+    ? unavailable("not-running", NOT_RUNNING, presence)
+    : unavailable("not-on-here", NOT_ON_HERE, presence, state);
+}
+
+/**
+ * The repository state `/rerail` shows without a session: the live daemon's answer, else the caller's local
+ * reading. A started checkout with no daemon answering stays null, which `/rerail` reports as not running.
+ */
+export async function readSummaryState(
+  cwd: string, host: RerailHost, startState: NonNullable<PresentationRequest["startState"]>,
+): Promise<RepositoryStartState | null> {
+  const answered = await readRepositoryState(cwd, host);
+  if (answered !== null) return answered;
+  try {
+    const local = await startState();
+    return local === undefined || local === "started" ? null : local;
+  } catch {
+    return null;
+  }
+}
+
 /** Passive session reads: never start a daemon, mutate discovery, or open a writable database. */
-export async function readPresentation({ sessionId, host, cwd, onDemand = false }: PresentationRequest): Promise<SessionPresentation> {
+export async function readPresentation({ sessionId, host, cwd, onDemand = false, startState }: PresentationRequest): Promise<SessionPresentation> {
   let presence: PresentationPresence = "compact";
   if (!Object.hasOwn(ADAPTER_CAPABILITIES, host) || typeof sessionId !== "string" || !sessionId.trim()
       || typeof cwd !== "string" || !isAbsolute(cwd)) {
-    return unavailable("session unavailable", presence);
+    return unavailable("unavailable", "session unavailable", presence);
   }
+  let answered = false;
   try {
     // The `/api/presentation` response proves liveness; it must not pay for a second probe.
     const daemon = await verifyDaemon(cwd);
-    if (typeof daemon === "string") return unavailable(daemon, presence);
+    if (typeof daemon === "string" || !processAlive(daemon.state.pid)) return await withoutDaemon(startState, presence);
     const { workspace, state, origin } = daemon;
     const response = await get(origin, `/api/presentation?${new URLSearchParams({
       repository: workspace, host, sessionId, onDemand: String(onDemand),
     })}`, presentationResponseSchema);
     const context = response.context;
-    if (context === undefined || context.daemon.pid !== state.pid) return unavailable("daemon unavailable", presence);
+    if (context === undefined || context.daemon.pid !== state.pid) return await withoutDaemon(startState, presence);
+    answered = true;
     presence = response.presence;
-    if (presence === "silent" && !onDemand) return presentation([], presence, response.repositoryState);
+    if (presence === "silent" && !onDemand) return silent(presence, response.repositoryState);
     // A session in a repository where Rerail is not started is never recorded, so this comes first.
-    if (response.repositoryState !== "started") return unavailable(NOT_ON_HERE, presence, response.repositoryState);
-    if (context.session === null) return unavailable("session unavailable", presence, "started");
+    if (response.repositoryState !== "started") return unavailable("not-on-here", NOT_ON_HERE, presence, response.repositoryState);
+    if (context.session === null) return unavailable("unavailable", "session unavailable", presence, "started");
     const { session } = context.session;
     // The host may sit below its launch root; the session's canonical cwd stays the identity.
     const root = await realpath(session.cwd);
     if (session.sessionId !== sessionId || session.host !== host || !withinCheckout(root, workspace)) {
-      return unavailable("session unavailable", presence, "started");
+      return unavailable("unavailable", "session unavailable", presence, "started");
     }
-    const parts = sessionParts(origin, context.session);
     // History failure must not discard already verified session counters.
-    await appendAudit(parts, context.session, context.daemon.native.ok, root, onDemand);
-    return presentation(parts, presence, "started");
+    return onPresentation(origin, context.session, presence, await healthItems(context.session, context.daemon.native.ok, root));
   } catch {
-    return unavailable("unavailable", presence);
+    // The locator named a live process, but nothing answered as the daemon.
+    return answered ? unavailable("not-running", NOT_RUNNING, presence) : await withoutDaemon(startState, presence);
   }
 }

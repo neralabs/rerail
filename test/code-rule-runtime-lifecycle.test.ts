@@ -120,7 +120,7 @@ describe("source-scoped steers", () => {
         expect.objectContaining({ scope: "touched-files", status: "completed" }),
         expect.objectContaining({ scope: "repository", status: "running" }),
       ])));
-      expect(editDeliveries).toEqual([expect.objectContaining({ content: expect.stringContaining("NEEDLE") })]);
+      expect(editDeliveries).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle (edited.py:") })]);
       expect(await runtime.ingest({
         kind: "user-prompt", eventId: "poll", sessionId: session.sessionId, text: "continue",
       })).toEqual([]);

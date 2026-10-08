@@ -10,9 +10,15 @@ import { createPiConversationRulesExtension } from "../src/pi-extension.js";
 import { CodeRuleBridge } from "../src/code-rule-bridge.js";
 import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../src/session-state.js";
 import type { ConversationRule } from "../src/rule-schema.js";
-
+import { linkSteers, steerBlock } from "../src/rerail-steer.js";
+import { dashboardOrigin } from "../src/session-presentation.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "./native-daemon-fixture.js";
 import { startTestRepository } from "./support/started-repository.js";
+
+async function checkoutSteer(cwd: string): Promise<string> {
+  return linkSteers(steerBlock("checkout", "Check checkout requirements."), await dashboardOrigin(cwd));
+}
+
 type Context = OmpContext & PiContext;
 type Handler = (event: unknown, context: Context) => unknown;
 const directories: string[] = [];
@@ -96,7 +102,7 @@ describe.each(["omp", "pi"] as const)("%s transactional attachment", host => {
       await extension.emit("session_start", {});
       await extension.emit("message_update", delta("Guest checkout remains available. Next"));
       expect(extension.messages).toEqual([
-        expect.objectContaining({ content: "Check checkout requirements.", details: expect.objectContaining({ sessionId: "original" }) }),
+        expect.objectContaining({ content: await checkoutSteer(extension.context.cwd), details: expect.objectContaining({ sessionId: "original" }) }),
       ]);
     } finally {
       await extension.emit("session_shutdown", {});
@@ -115,7 +121,7 @@ describe.each(["omp", "pi"] as const)("%s transactional attachment", host => {
 
       await extension.emit("message_update", delta("remains available. Next"));
       expect(extension.messages).toEqual([
-        expect.objectContaining({ content: "Check checkout requirements.", details: expect.objectContaining({ sessionId: "original" }) }),
+        expect.objectContaining({ content: await checkoutSteer(extension.context.cwd), details: expect.objectContaining({ sessionId: "original" }) }),
       ]);
       expect(extension.entries.filter(entry => entry.customType === MATCH_ENTRY_TYPE)).toEqual([
         expect.objectContaining({ data: expect.objectContaining({ ruleId: "checkout", turn: 0 }) }),
@@ -152,7 +158,7 @@ describe.each(["omp", "pi"] as const)("%s transactional attachment", host => {
       release.reject(failure);
       await Promise.all([failedStart, switching, streaming]);
       expect(extension.messages).toEqual([
-        expect.objectContaining({ content: "Check checkout requirements.", details: expect.objectContaining({ sessionId: "replacement" }) }),
+        expect.objectContaining({ content: await checkoutSteer(extension.context.cwd), details: expect.objectContaining({ sessionId: "replacement" }) }),
       ]);
     } finally {
       await extension.emit("session_shutdown", {});

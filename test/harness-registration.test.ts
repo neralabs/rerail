@@ -21,6 +21,8 @@ import {
   readClaudeStatusRegistration,
   writeClaudeStatusRegistration,
 } from "../src/claude-status-store.js";
+import { MANAGED_SKILL_MARKER } from "../src/rerail-command-files.js";
+import { RERAIL_COMMANDS } from "../src/rerail-commands.js";
 import { runInstallCommand } from "../src/setup-cli.js";
 import { ManagedUpdater } from "../src/updater.js";
 
@@ -44,8 +46,6 @@ async function fixture(): Promise<Fixture> {
   const root = join(base, "node_modules", "@neralabs", "rerail");
   await mkdir(join(root, "dist"), { recursive: true });
   await writeFile(join(root, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
-  await mkdir(join(root, "skills", "rerail"), { recursive: true });
-  await writeFile(join(root, "skills", "rerail", "SKILL.md"), await readFile(new URL("../skills/rerail/SKILL.md", import.meta.url)));
   const home = join(base, "home");
   await mkdir(home);
   return { home, root, nodePath: "/opt/node/bin/node" };
@@ -126,7 +126,7 @@ describe("detectHarnesses", () => {
       ["pi", "skipped"],
       ["claude-code", "skipped"],
       ["codex", "created"],
-      ["codex", "created"],
+      ...RERAIL_COMMANDS.map(() => ["codex", "created"]),
       ["cursor", "skipped"],
     ]);
     expect(report.notes.some((note) => note.includes("/hooks"))).toBe(true);
@@ -571,72 +571,68 @@ describe("Claude Code status-line ownership", () => {
   });
 });
 
-describe("Claude Code commands/rerail.md", () => {
+describe("Claude Code commands", () => {
   const options = ["claude-code"] as const;
+  const commandFiles = RERAIL_COMMANDS.map(({ name }) => `${name}.md`).sort();
 
-  it("writes the launcher command, is idempotent, and unregister deletes it", async () => {
+  it("writes every Rerail command with exact grants, is idempotent, and unregister deletes them", async () => {
     const { home, root, nodePath } = await fixture();
-    const path = join(home, ".claude", "commands", "rerail.md");
+    const directory = join(home, ".claude", "commands");
     const command = `${nodePath} ${join(root, "dist", "cli.js")}`;
+    const read = (name: string): Promise<string> => readFile(join(directory, `${name}.md`), "utf8");
 
     const first = await registerHarnesses({ root, home, nodePath, harnesses: options });
-    expect(change(first.changes, "claude-code", "rerail.md").action).toBe("created");
-    const text = await readFile(path, "utf8");
-    // Enumerated per subcommand: the body must never be able to run `daemon` or `mcp-bridge`.
-    expect(text).toContain(
-      `allowed-tools: Bash(${command} status), Bash(${command} session *), Bash(${command} start), Bash(${command} stop), Bash(${command} update *), Bash(${command} reset), Bash(${command} scan *), Bash(${command} settings *)`,
-    );
-    expect(text).not.toContain(`Bash(${command} *)`);
-    expect(text).toContain(`\n${command} $ARGUMENTS\n`);
-    expect(text).toContain(`${command} session claude-code '\${CLAUDE_SESSION_ID}'`);
-    for (const action of ["start", "stop"]) {
-      const commandPath = join(home, ".claude", "commands", `rerail-${action}.md`);
-      expect(change(first.changes, "claude-code", `rerail-${action}.md`).action).toBe("created");
-      const body = await readFile(commandPath, "utf8");
+    for (const file of commandFiles) expect(change(first.changes, "claude-code", file).action).toBe("created");
+    expect((await readdir(directory)).sort()).toEqual(commandFiles);
+    for (const file of commandFiles) {
+      // Enumerated per invocation: no command may run `daemon`, `mcp-bridge` or anything else the launcher offers.
+      expect(await readFile(join(directory, file), "utf8")).not.toContain(`Bash(${command} *)`);
+    }
+
+    const overview = await read("rerail");
+    expect(overview).toContain(`allowed-tools: Bash(${command} session claude-code *)\n`);
+    expect(overview).toContain(`\n${command} session claude-code '\${CLAUDE_SESSION_ID}'\n`);
+    for (const action of ["start", "stop", "update"]) {
+      const body = await read(`rerail-${action}`);
       expect(body).toContain(`allowed-tools: Bash(${command} ${action})\n`);
       expect(body).toContain(`\n${command} ${action}\n`);
     }
-    expect(change(first.changes, "claude-code", "rerail-ui.md").action).toBe("created");
-    const ui = await readFile(join(home, ".claude", "commands", "rerail-ui.md"), "utf8");
+    const ui = await read("rerail-ui");
     expect(ui).toContain(`allowed-tools: Bash(${command} ui --print), Bash(${command} ui)\n`);
-    expect(ui).toContain(`\n${command} ui --print\n`);
     expect(ui).toContain(`Under Orca (\`ORCA_TAB_ID\` set): run \`${command} ui\`.`);
-    expect(ui).toContain(`desktop browser: \`${command} ui\`.`);
-    expect(ui).not.toContain("orca tab create");
-    expect(change(first.changes, "claude-code", "rerail-session.md").action).toBe("created");
-    const session = await readFile(join(home, ".claude", "commands", "rerail-session.md"), "utf8");
-    expect(session).toContain(`allowed-tools: Bash(${command} session claude-code *)\n`);
-    expect(session).toContain(`\n${command} session claude-code '\${CLAUDE_SESSION_ID}'\n`);
-    expect(session).toContain(`Under Orca (\`ORCA_TAB_ID\` set): run \`${command} session claude-code '\${CLAUDE_SESSION_ID}' --open\`.`);
-    expect(session).toContain(`desktop browser: \`${command} session claude-code '\${CLAUDE_SESSION_ID}' --open\`.`);
-    expect(session).not.toContain("orca tab create");
+    const create = await read("rerail-create");
+    expect(create).toContain(`allowed-tools: Bash(${command} rules test *), Bash(${command} rules add *)\n`);
+    expect(create).toContain("\"$ARGUMENTS\"");
+    // The removal is never pre-approved: Claude Code asks the person before it runs.
+    const rageQuit = await read("rerail-rage-quit");
+    expect(rageQuit).toContain(`allowed-tools: Bash(${command} install --remove --dry-run), Bash(${command} stop)\n`);
+    expect(rageQuit).toContain(`\n${command} install --remove\n`);
 
     const second = await registerHarnesses({ root, home, nodePath, harnesses: options });
-    expect(change(second.changes, "claude-code", "rerail.md").action).toBe("unchanged");
-    expect(await readdir(dirname(path))).toEqual(["rerail-session.md", "rerail-start.md", "rerail-stop.md", "rerail-ui.md", "rerail.md"]);
+    for (const file of commandFiles) expect(change(second.changes, "claude-code", file).action).toBe("unchanged");
 
     const removed = await unregisterHarnesses({ root, home, nodePath, harnesses: options });
-    expect(change(removed.changes, "claude-code", "rerail.md").action).toBe("updated");
-    await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
-    for (const name of ["rerail-start", "rerail-stop", "rerail-ui", "rerail-session"]) {
-      await expect(lstat(join(home, ".claude", "commands", `${name}.md`))).rejects.toMatchObject({ code: "ENOENT" });
-    }
+    for (const file of commandFiles) expect(change(removed.changes, "claude-code", file).action).toBe("updated");
+    expect(await readdir(directory)).toEqual([]);
 
     const again = await unregisterHarnesses({ root, home, nodePath, harnesses: options });
     expect(change(again.changes, "claude-code", "rerail.md").action).toBe("unchanged");
   });
 
-  it("removes this package's retired enable/disable commands and leaves anyone else's", async () => {
+  it("removes this package's retired commands and leaves anyone else's", async () => {
     const { home, root, nodePath } = await fixture();
     const directory = join(home, ".claude", "commands");
     await mkdir(directory, { recursive: true });
-    await writeFile(join(directory, "rerail-disable.md"), `Run:\n${nodePath} ${join(root, "dist", "cli.js")} disable\n`);
+    const ours = `Run:\n${nodePath} ${join(root, "dist", "cli.js")} session\n`;
+    for (const name of ["rerail-session", "rerail-disable"]) await writeFile(join(directory, `${name}.md`), ours);
     await writeFile(join(directory, "rerail-enable.md"), "A user's own command.\n");
 
     const report = await registerHarnesses({ root, home, nodePath, harnesses: options });
-    expect(change(report.changes, "claude-code", "rerail-disable.md").action).toBe("updated");
+    for (const name of ["rerail-session", "rerail-disable"]) {
+      expect(change(report.changes, "claude-code", `${name}.md`).action).toBe("updated");
+    }
     expect(report.changes.some(entry => entry.path.endsWith("rerail-enable.md"))).toBe(false);
-    expect(await readdir(directory)).toEqual(["rerail-enable.md", "rerail-session.md", "rerail-start.md", "rerail-stop.md", "rerail-ui.md", "rerail.md"]);
+    expect((await readdir(directory)).sort()).toEqual([...commandFiles, "rerail-enable.md"].sort());
   });
 
   it("rewrites a stale command that names another node, backing the old one up", async () => {
@@ -646,7 +642,7 @@ describe("Claude Code commands/rerail.md", () => {
     const newNode = "/opt/node-22/bin/node";
     const report = await registerHarnesses({ root, home, nodePath: newNode, harnesses: options });
     expect(change(report.changes, "claude-code", "rerail.md").action).toBe("updated");
-    expect(await readFile(path, "utf8")).toContain(`${newNode} ${join(root, "dist", "cli.js")} $ARGUMENTS`);
+    expect(await readFile(path, "utf8")).toContain(`${newNode} ${join(root, "dist", "cli.js")} session claude-code`);
     expect(await backups(path)).toHaveLength(1);
   });
 
@@ -745,13 +741,19 @@ describe("legacy package-root cutover", () => {
   });
 });
 
-describe("Codex Rerail skill", () => {
-  it("installs the canonical skill, upgrades its launcher, and removes only the current installation", async () => {
+describe("Codex Rerail skills", () => {
+  const skillPath = (home: string, name: string): string => join(home, ".codex", "skills", name, "SKILL.md");
+
+  it("installs one skill per command, upgrades its launcher, and removes only the current installation", async () => {
     const options = await fixture();
-    const path = join(options.home, ".codex", "skills", "rerail", "SKILL.md");
+    const path = skillPath(options.home, "rerail");
     await registerHarnesses({ ...options, harnesses: ["codex"] });
-    const first = await readFile(path, "utf8");
-    expect(first).toContain(`${options.nodePath} ${join(options.root, "dist", "cli.js")} session`);
+    for (const { name, description } of RERAIL_COMMANDS) {
+      const text = await readFile(skillPath(options.home, name), "utf8");
+      expect(text).toContain(`---\nname: ${name}\ndescription: ${description}.\n---\n`);
+      expect(text).toContain("require_escalated");
+    }
+    expect(await readFile(path, "utf8")).toContain(`\n${options.nodePath} ${join(options.root, "dist", "cli.js")} session\n`);
     await registerHarnesses({ ...options, harnesses: ["codex"] });
     expect(await backups(path)).toEqual([]);
     const replacement = await fixture();
@@ -760,13 +762,13 @@ describe("Codex Rerail skill", () => {
     await unregisterHarnesses({ ...options, harnesses: ["codex"] });
     expect(await readFile(path, "utf8")).toContain(replacement.root);
     await unregisterHarnesses({ ...options, root: replacement.root, harnesses: ["codex"] });
-    await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
+    for (const { name } of RERAIL_COMMANDS) await expect(lstat(skillPath(options.home, name))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("keeps a user's own same-name skill on installation and removal", async () => {
     const options = await fixture();
-    const path = join(options.home, ".codex", "skills", "rerail", "SKILL.md");
-    const original = "---\nname: rerail\ndescription: Personal music workflow\n---\nPlay music.\n";
+    const path = skillPath(options.home, "rerail-ui");
+    const original = "---\nname: rerail-ui\ndescription: Personal dashboard\n---\nOpen it.\n";
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, original);
     await registerHarnesses({ ...options, harnesses: ["codex"] });
@@ -774,24 +776,24 @@ describe("Codex Rerail skill", () => {
     expect(await readFile(path, "utf8")).toBe(original);
   });
 
-  it("does not write hooks when the packaged skill cannot be read", async () => {
-    const options = await fixture();
-    await rm(join(options.root, "skills"), { recursive: true });
-    await expect(registerHarnesses({ ...options, harnesses: ["codex"] })).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(lstat(join(options.home, ".codex"))).rejects.toMatchObject({ code: "ENOENT" });
-  });
+  it("replaces the earlier $rerail skill it installed and keeps anyone else's", async () => {
+    const ours = await fixture();
+    const path = skillPath(ours.home, "rerail");
+    const earlier = `---\nname: rerail\n---\n${ours.nodePath} ${join(ours.root, "dist", "cli.js")} session\n\n${MANAGED_SKILL_MARKER}\n`;
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, earlier);
+    const report = await registerHarnesses({ ...ours, harnesses: ["codex"] });
+    expect(change(report.changes, "codex", "skills/rerail/SKILL.md").action).toBe("updated");
+    const replaced = await readFile(path, "utf8");
+    expect(replaced).not.toBe(earlier);
+    expect(replaced).toContain(MANAGED_SKILL_MARKER);
 
-  it("reads the packaged skill from templateRoot while naming root, so a dry run can plan against a link not yet created", async () => {
-    const options = await fixture();
-    const current = join(options.home, ".rerail", "current");
-    const path = join(options.home, ".codex", "skills", "rerail", "SKILL.md");
-    const planned = await registerHarnesses({ ...options, root: current, templateRoot: options.root, harnesses: ["codex"], dryRun: true });
-    expect(change(planned.changes, "codex", "SKILL.md")).toMatchObject({ action: "created", detail: expect.stringContaining("dry run") });
-    await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
-    await registerHarnesses({ ...options, root: current, templateRoot: options.root, harnesses: ["codex"] });
-    const installed = await readFile(path, "utf8");
-    expect(installed).toContain(`${options.nodePath} ${join(current, "dist", "cli.js")} session`);
-    expect(installed).not.toContain(options.root);
+    const foreign = await fixture();
+    const userSkill = skillPath(foreign.home, "rerail");
+    await mkdir(dirname(userSkill), { recursive: true });
+    await writeFile(userSkill, "---\nname: rerail\ndescription: Personal music workflow\n---\nPlay music.\n");
+    await registerHarnesses({ ...foreign, harnesses: ["codex"] });
+    expect(await readFile(userSkill, "utf8")).toContain("Play music.");
   });
 });
 
@@ -833,27 +835,23 @@ describe("Cursor hooks.json", () => {
     expect(await readFile(path, "utf8")).toBe(original);
   });
 
-  it("installs exact start, stop, and rules page slash commands", async () => {
+  it("installs every Rerail command as a plain prompt file", async () => {
     const { home, root, nodePath } = await fixture();
     const directory = join(home, ".cursor", "commands");
     const command = `${nodePath} ${join(root, "dist", "cli.js")}`;
 
     const first = await registerHarnesses({ root, home, nodePath, harnesses: ["cursor"] });
-    for (const action of ["start", "stop"]) {
-      const path = join(directory, `rerail-${action}.md`);
-      expect(change(first.changes, "cursor", `rerail-${action}.md`).action).toBe("created");
-      const body = await readFile(path, "utf8");
+    for (const { name, description } of RERAIL_COMMANDS) {
+      expect(change(first.changes, "cursor", `${name}.md`).action).toBe("created");
+      const body = await readFile(join(directory, `${name}.md`), "utf8");
+      // Cursor shows a command's first line as its description, and has no front matter or grants.
+      expect(body.split("\n")[0]).toBe(`${description}.`);
       expect(body).not.toContain("allowed-tools");
-      expect(body).toContain(`\n${command} ${action}\n`);
     }
-    expect(change(first.changes, "cursor", "rerail-ui.md").action).toBe("created");
+    expect(await readFile(join(directory, "rerail.md"), "utf8")).toContain(`\n${command} session cursor\n`);
     const ui = await readFile(join(directory, "rerail-ui.md"), "utf8");
-    expect(ui).not.toContain("allowed-tools");
-    expect(ui).toContain(`\n${command} ui --print\n`);
     expect(ui).toContain("Cursor with a built-in browser tool");
-    expect(ui).toContain(`desktop browser: \`${command} ui\`.`);
     expect(ui).not.toContain("Orca");
-    expect(await readdir(directory)).toEqual(["rerail-start.md", "rerail-stop.md", "rerail-ui.md"]);
 
     await unregisterHarnesses({ root, home, nodePath, harnesses: ["cursor"] });
     expect(await readdir(directory)).toEqual([]);
@@ -1078,6 +1076,9 @@ describe("dry run", () => {
     const actions = Object.fromEntries(
       report.changes.map((entry) => [`${entry.harness}:${entry.path.slice(home.length)}`, entry.action]),
     );
+    const commands = (harness: "claude-code" | "cursor", directory: string) => Object.fromEntries(
+      RERAIL_COMMANDS.map(({ name }) => [`${harness}:/${directory}/commands/${name}.md`, "created"]),
+    );
     expect(actions).toEqual({
       "omp:/.omp/agent/extensions/rerail": "updated",
       "omp:/.omp/agent/mcp.json": "created",
@@ -1085,19 +1086,13 @@ describe("dry run", () => {
       "pi:/.pi/agent/settings.json": "created",
       "pi:/project/.pi/conversation-rules.json": "created",
       "claude-code:/.claude/settings.json": "updated",
-      "claude-code:/.claude/commands/rerail.md": "created",
-      "claude-code:/.claude/commands/rerail-start.md": "created",
-      "claude-code:/.claude/commands/rerail-stop.md": "created",
-      "claude-code:/.claude/commands/rerail-ui.md": "created",
-      "claude-code:/.claude/commands/rerail-session.md": "created",
+      ...commands("claude-code", ".claude"),
       "claude-code:/project/.claude/conversation-rules.json": "created",
       "codex:/.codex/hooks.json": "created",
-      "codex:/.codex/skills/rerail/SKILL.md": "created",
+      ...Object.fromEntries(RERAIL_COMMANDS.map(({ name }) => [`codex:/.codex/skills/${name}/SKILL.md`, "created"])),
       "codex:/project/.codex/conversation-rules.json": "created",
       "cursor:/.cursor/hooks.json": "created",
-      "cursor:/.cursor/commands/rerail-start.md": "created",
-      "cursor:/.cursor/commands/rerail-stop.md": "created",
-      "cursor:/.cursor/commands/rerail-ui.md": "created",
+      ...commands("cursor", ".cursor"),
       "cursor:/project/.cursor/conversation-rules.json": "created",
     });
     expect(report.changes.every((entry) => entry.detail.endsWith("(dry run)"))).toBe(true);

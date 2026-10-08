@@ -11,10 +11,11 @@ import { RULE_MODES, type RuleMode } from "./rule-mode.js";
 export type { RulePackMatch, RulePackSignal } from "./rule-pack-matcher.js";
 
 /**
- * Rule packs: named sets of rules that come with Rerail, each with a match definition that says which
- * repositories it fits and why. Pack definitions live apart from rule documents
- * (`policies/rule-packs/<id>.json`); a pack lists bundled rules by id and adds no rules of its own. Attaching packs to
- * repositories, and so seeding their rules, is not built yet; this module defines, validates and recommends.
+ * Rule packs: named sets of rules that come with Rerail. A pack's optional match definition says which repositories
+ * it fits and why; a pack without one is never recommended and is chosen by hand. Pack definitions live apart from
+ * rule documents (`policies/rule-packs/<id>.json`); a pack lists bundled rules by id and adds no rules of its own.
+ * Attaching packs to repositories, and so seeding their rules, is not built yet; this module defines, validates and
+ * recommends.
  */
 export const RULE_PACK_FORMAT = "rerail.rule-pack/v1" as const;
 export const RULE_PACK_CATEGORIES = ["language", "framework", "repository"] as const;
@@ -60,7 +61,8 @@ const packFileSchema = z
     category: z.enum(RULE_PACK_CATEGORIES),
     covers: nonEmpty,
     reason: nonEmpty,
-    match: matchSchema,
+    /** Which repositories the pack fits; without it the pack is never recommended. */
+    match: matchSchema.optional(),
     /** Whether the pack's rules honour their linters' suppression comments (`# noqa`, `eslint-disable`); default yes. */
     honourSuppressionComments: z.boolean().optional(),
     rules: z.array(packRuleSchema).min(1),
@@ -96,7 +98,8 @@ export interface RulePack {
   readonly covers: string;
   /** What makes the pack fit, in general terms; the reason shown for a repository is built from what matched. */
   readonly reason: string;
-  readonly match: RulePackMatch;
+  /** Which repositories the pack fits; a pack without one is never recommended. */
+  readonly match?: RulePackMatch;
   /** Whether the pack's rules honour their linters' suppression comments. When false, a comment silences nothing. */
   readonly honourSuppressionComments: boolean;
   readonly rules: readonly RulePackRule[];
@@ -129,7 +132,7 @@ export function readRulePacks(directory = rulePacksDirectory(), bundledDirectory
       const path = join(directory, entry.name);
       const file = packFileSchema.parse(parseJsonWithoutDuplicateKeys(readFileSync(path, "utf8"), path));
       if (`${file.id}.json` !== entry.name) throw new Error(`Rule pack ${file.id} must be stored as ${file.id}.json, not ${entry.name}`);
-      for (const signal of file.match.any) {
+      for (const signal of file.match?.any ?? []) {
         if (!("files" in signal)) continue;
         try {
           globPattern([...signal.files, ...(signal.exclude ?? [])]);
@@ -155,7 +158,7 @@ export function readRulePacks(directory = rulePacksDirectory(), bundledDirectory
         // The mode and on state a pack gives its rules take effect only once packs are attached.
         return { id: rule.id, kind: document.kind, title: rule.title, group: rule.group, mode: rule.mode ?? document.rule.mode, on: rule.on ?? true, ...(examples === undefined ? {} : { examples }) };
       });
-      return { id: file.id, name: file.name, category: file.category, covers: file.covers, reason: file.reason, match: file.match, honourSuppressionComments, rules };
+      return { id: file.id, name: file.name, category: file.category, covers: file.covers, reason: file.reason, ...(file.match === undefined ? {} : { match: file.match }), honourSuppressionComments, rules };
     })
     .sort((left, right) => CATEGORY_ORDER[left.category] - CATEGORY_ORDER[right.category] || left.name.localeCompare(right.name));
 }
@@ -175,12 +178,13 @@ export function rulePackIdOf(ruleId: string, packs: readonly RulePack[] = loadRu
 
 /**
  * The packs that fit the repository at `repositoryRoot`, from its files and `package.json` dependencies alone:
- * no model, no network, and no list of what does not fit. Languages come first, then frameworks, then repository packs.
+ * no model, no network, and no list of what does not fit. A pack without a match definition never fits.
+ * Languages come first, then frameworks, then repository packs.
  */
 export function recommendRulePacks(repositoryRoot: string, packs: readonly RulePack[] = loadRulePacks()): RulePackRecommendation[] {
   const scan = scanRepository(repositoryRoot);
   return packs.flatMap(pack => {
-    const reason = matchReason(pack.match, scan);
+    const reason = pack.match === undefined ? undefined : matchReason(pack.match, scan);
     return reason === undefined ? [] : [{ pack, ruleCount: pack.rules.length, reason }];
   });
 }

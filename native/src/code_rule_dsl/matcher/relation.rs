@@ -47,10 +47,10 @@ fn stops_at_inner<D: Doc>(stop: &AstMatcher, node: &Node<'_, D>, three: bool) ->
 }
 
 /// Whether a rule can bind a capture: a pattern with a named metavariable, through the composites,
-/// relations and utilities that share the caller's environment. `not`, `count` and stop rules bind
-/// nothing the caller keeps.
+/// relations and utilities that share the caller's environment, or a count's value (`as`).
+/// `not`, a count's own rule and stop rules bind nothing the caller keeps.
 pub(super) fn may_bind(matcher: &AstMatcher) -> bool {
-    !super::captures::binds(matcher).is_empty()
+    !super::captures::binds(matcher).is_empty() || !super::captures::counts(matcher).is_empty()
 }
 
 /// A relation's search for its first matching node, three-valued. A candidate whose verdict is

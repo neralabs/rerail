@@ -105,6 +105,40 @@ describe("ScopedRuleCatalog", () => {
     global.close();
   });
 
+  it("reads a repository's rules read-only while a writer holds the lock, and records nothing", async () => {
+    const path = await catalogPath();
+    const repository = { repositoryId: "repo-a", workspaceRoot: "/repo/a" };
+    openRerailDatabase(path).$client.close();
+    expect(ScopedRuleCatalog.openReadOnly(path, repository)).toBeUndefined();
+    const repositories = (): unknown[] => {
+      const database = new Database(path, { readonly: true });
+      try {
+        return database.prepare("SELECT repository_id FROM rule_repositories").all();
+      } finally {
+        database.close();
+      }
+    };
+    expect(repositories()).toEqual([]);
+
+    const writer = ScopedRuleCatalog.open(path, repository);
+    writer.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "on" }, { now: 1_000 });
+    writer.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "off" }, { now: 1_000, enabled: false });
+    writer.close();
+    const lock = new Database(path);
+    lock.prepare("BEGIN IMMEDIATE").run();
+    try {
+      const reader = ScopedRuleCatalog.openReadOnly(path, repository)!;
+      expect(reader.list({ enabled: true }).map(stored => stored.rule.id)).toEqual(["on"]);
+      expect(() => reader.setEnabled({ ids: ["off"] }, true)).toThrow();
+      reader.close();
+    } finally {
+      lock.prepare("ROLLBACK").run();
+      lock.close();
+    }
+    expect(ScopedRuleCatalog.openReadOnly(path, { repositoryId: "repo-b", workspaceRoot: "/repo/b" })).toBeUndefined();
+    expect(repositories()).toEqual([{ repository_id: "repo-a" }]);
+  });
+
   it("shares one project rule across member repositories without leaking to another", async () => {
     const path = await catalogPath();
     const first = ScopedRuleCatalog.open(path, { repositoryId: "repo-a", workspaceRoot: "/repo/a" });

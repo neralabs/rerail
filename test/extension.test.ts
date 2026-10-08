@@ -24,6 +24,13 @@ import { openScopedRuleCatalog, resolveRepositoryContext } from "../src/scoped-r
 import { SqliteSessionReader } from "../src/session-store.js";
 import { isRerailStarted } from "../src/repository-start.js";
 import { startTestRepository } from "./support/started-repository.js";
+import { linkSteers, steerBlock } from "../src/rerail-steer.js";
+import { dashboardOrigin } from "../src/session-presentation.js";
+
+/** The steer block a rule delivers, with its `Why?` link made absolute the way the OMP adapter does for `cwd`. */
+async function deliveredSteer(cwd: string, ruleId: string, guidance: string): Promise<string> {
+  return linkSteers(steerBlock(ruleId, guidance), await dashboardOrigin(cwd));
+}
 
 // Every test here builds real sessions (native model, engine, rule catalog); on a loaded CI runner a
 // build alone can pass the 5 s default, whichever test happens to pay the cold start.
@@ -148,7 +155,7 @@ describe("OMP conversation-rules extension", () => {
       {
         message: {
           customType: RULE_MESSAGE_TYPE,
-          content: "Check checkout requirements.",
+          content: await deliveredSteer(harness.context.cwd, "checkout", "Check checkout requirements."),
           display: true,
           details: { requested: mode, mechanism: "native-queue", sessionId: "omp-test-session" },
         },
@@ -241,7 +248,10 @@ describe("OMP conversation-rules extension", () => {
       harness.context,
     );
 
-    expect(harness.messages.map(sent => sent.message.content)).toEqual(["From the database.", "File-only rule."]);
+    expect(harness.messages.map(sent => sent.message.content)).toEqual([
+      await deliveredSteer(harness.context.cwd, "checkout", "From the database."),
+      await deliveredSteer(harness.context.cwd, "file-only", "File-only rule."),
+    ]);
     expect(harness.entries.map(entry => (entry.data as { ruleId: string }).ruleId)).toEqual(["checkout", "file-only"]);
   });
 
@@ -502,7 +512,8 @@ describe("OMP conversation-rules extension", () => {
     await emit("after-reset");
 
     expect(harness.messages.map(sent => sent.message.content)).toEqual([
-      "Check checkout requirements.", "Check checkout requirements.",
+      await deliveredSteer(harness.context.cwd, "checkout", "Check checkout requirements."),
+      await deliveredSteer(harness.context.cwd, "checkout", "Check checkout requirements."),
     ]);
     const reader = new SqliteSessionReader(databasePath);
     try {

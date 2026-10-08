@@ -1,11 +1,13 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { AdapterDelivery } from "../src/adapter-contract.js";
 import { claudeHookOutput, handleClaudeEvent, runClaudeHook } from "../src/claude-hook.js";
 import type { HookOptions } from "../src/hook-host.js";
 import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "./hook-fixtures.js";
+import { sessionStartNote, steerBlock } from "../src/rerail-steer.js";
+import { dashboardOrigin } from "../src/session-presentation.js";
 import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-claude-hook-");
@@ -20,7 +22,10 @@ describe("Claude Code one-shot hook", () => {
     const options = hookOptions(root);
     const common = { session_id: "claude-session", cwd: root, transcript_path: "/tmp/transcript.jsonl", permission_mode: "default" };
 
-    expect(await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, options)).toEqual({});
+    const note = sessionStartNote(await dashboardOrigin(root), "claude-code", "claude-session");
+    expect(await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, options)).toEqual({
+      hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: note },
+    });
     expect(await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "Refactor auth" }, options)).toEqual({});
     expect(await runClaudeHook({
       ...common,
@@ -99,6 +104,34 @@ describe("Claude Code one-shot hook", () => {
     expect(runtimeFailure.stderr).toMatch(/^rerail hook: /);
   });
 
+  it("links the session note and a steer's Why? to the checkout's dashboard when the daemon is on loopback", async () => {
+    const root = await temporaryDirectory();
+    const home = join(root, "home");
+    await mkdir(home);
+    await writeFile(join(home, "daemon.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 4791, url: "http://127.0.0.1:4791/",
+      version: "test", databasePath: join(home, "rerail.sqlite"), kernelSocketPath: join(home, "kernel.sock"), ui: "bundled", startedAt: 1, packageRoot: home }));
+    vi.stubEnv("RERAIL_HOME", home);
+    try {
+      const common = { session_id: "claude-session", cwd: root };
+      const start = await handleClaudeEvent({ ...common, hook_event_name: "SessionStart", source: "startup" }, scriptedLoop({}), join(root, "sessions"));
+      expect(JSON.stringify(start)).toContain("http://127.0.0.1:4791/?sessionId=claude-session&host=claude-code#sessions");
+
+      const steer = scriptedLoop({ result: [delivery("steer", steerBlock("acme:no-print", "Remove print."), ["acme:no-print"])] });
+      const output = await handleClaudeEvent({
+        ...common, hook_event_name: "PostToolUse", tool_name: "Write", tool_use_id: "tool-1", tool_input: {}, tool_response: "ok",
+      }, steer, join(root, "sessions"));
+      expect(output).toMatchObject({
+        systemMessage: "▲ Rerail · acme:no-print  Steered. Why? → http://127.0.0.1:4791/#rule/acme%3Ano-print",
+        hookSpecificOutput: {
+          hookEventName: "PostToolUse",
+          additionalContext: expect.stringContaining("Remove print.\nWhy? → http://127.0.0.1:4791/#rule/acme%3Ano-print"),
+        },
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("routes steer and block deliveries through additionalContext or the pending file", async () => {
     const root = await temporaryDirectory();
     const storageRoot = join(root, "sessions");
@@ -109,7 +142,10 @@ describe("Claude Code one-shot hook", () => {
 
     const startLoop = scriptedLoop({ "session-start": [delivery("steer", "Read the conventions."), delivery("log", "hidden")] });
     expect(await handleClaudeEvent({ ...common, hook_event_name: "SessionStart", source: "startup" }, startLoop, storageRoot)).toEqual({
-      hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: "Read the conventions." },
+      hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        additionalContext: `${sessionStartNote(await dashboardOrigin(root), "claude-code", "claude-session")}\n\nRead the conventions.`,
+      },
     });
 
     const toolLoop = scriptedLoop({

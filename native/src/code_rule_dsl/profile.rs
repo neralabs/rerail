@@ -50,6 +50,8 @@ fn describe_matcher(matcher: &AstMatcher, language: GrammarDialect) -> Value {
             "relation": describe_matcher(&count.relation, language),
             "min": count.min,
             "max": count.max,
+            "as": count.binding.as_ref().map(|binding| &binding.name),
+            "offset": count.binding.as_ref().map(|binding| binding.offset),
         } }),
         AstMatcher::Util(util) => json!({ "matches": util.name() }),
         AstMatcher::Call(call) => {

@@ -1,9 +1,11 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { readPresentation, readRulesDashboard } from "./session-presentation.js";
+import { readPresentation, readRulesDashboard, readSummaryState } from "./session-presentation.js";
+import type { RepositoryStartState } from "./repository-start.js";
 import { nodeExecutable, openDashboard, type PageOpening } from "./daemon-control.js";
-import { auditControlsSchema } from "./audit-control-schema.js";
-import type { AuditControls, AuditSettings } from "./audit-control-schema.js";
+import { createRuleInstructions, RERAIL_COMMANDS, type RerailCommandName } from "./rerail-commands.js";
+import { renderRerailSummary } from "./rerail-summary.js";
+import { repositoryName } from "./repository-identity.js";
 
 /** Minimal command-host surface shared by OMP and Pi. */
 export interface RerailCommandHost {
@@ -11,6 +13,8 @@ export interface RerailCommandHost {
     description: string;
     handler(args: string, context: RerailCommandContext): Promise<void>;
   }): void;
+  /** Hands a prompt to the coding agent as if the person had typed it; `/rerail-create` runs through it. */
+  sendUserMessage(content: string): void;
 }
 
 export interface RerailCommandContext {
@@ -28,11 +32,11 @@ export interface RerailCommandOptions {
   packageRoot: string;
   host?: "omp" | "pi";
   cwd(): string;
-  /** Current host session, injected for audit controls so the launcher never guesses. */
+  /** Current host session, so `/rerail` reads this exact session and never guesses. */
   sessionId?(): string | undefined;
-  /** Release the in-process runtime's database handles before a destructive launcher action. */
+  /** Release the in-process runtime's database handles before Rerail is removed from this computer. */
   detach?(): Promise<void>;
-  /** Rebuild the runtime afterwards; runs whether or not the action succeeded. */
+  /** Rebuild the runtime after start or stop, or after a removal that failed, so it runs only where Rerail is started. */
   reattach?(): Promise<void>;
   /** A database configured in place of the Rerail home's; start and stop change it, as the extension's gate reads it. */
   databasePath?(): string | undefined;
@@ -41,59 +45,20 @@ export interface RerailCommandOptions {
 /** Bytes of combined stdout+stderr kept for the notification; the rest is dropped. */
 const OUTPUT_CAP = 10 * 1024 * 1024;
 
-const LAUNCHER_COMMANDS = [
-  { name: "rerail-status", description: "Show whether Rerail is on in this repo, and the daemon and installed version", argv: ["status"] },
-  { name: "rerail-check", description: "Check for a Rerail update without installing it", argv: ["update", "check"] },
-  { name: "rerail-update", description: "Install the latest Rerail version", argv: ["update"] },
-  { name: "rerail-rollback", description: "Restore the previously installed Rerail version", argv: ["update", "rollback"] },
-  { name: "rerail-reset", description: "Reset this repository's Rerail session history, across all worktrees, after confirmation", argv: ["reset"] },
-];
-
-interface AuditChoice<Value extends string = AuditSettings[keyof AuditSettings]> {
-  value: Value;
-  label: string;
-}
-
-const MODES: readonly AuditChoice<AuditSettings["mode"]>[] = [
-  { value: "log", label: "log — Record diagnostics without steering the agent" },
-  { value: "steer", label: "steer — Record diagnostics and send findings to the agent" },
-];
-const SCOPES: readonly AuditChoice<AuditSettings["scope"]>[] = [
-  { value: "repository", label: "repository — All eligible files in this workspace" },
-  { value: "touched-files", label: "touched-files — Only selected or changed files" },
-  { value: "ai-output", label: "ai-output — Only captured AI-generated edits (automatic scans)" },
-];
-const EXPLICIT_SCOPES: readonly AuditChoice<"repository" | "git-diff">[] = [
-  { value: "repository", label: "repository — All eligible files in this workspace" },
-  { value: "git-diff", label: "git-diff — Tracked and untracked files changed in Git" },
-];
-const SETTINGS_FIELDS: ReadonlyArray<{
-  key: keyof AuditSettings;
-  label: string;
-  flag: string;
-  choices: readonly AuditChoice[];
-}> = [
-  { key: "scope", label: "Ongoing scope", flag: "--scope", choices: SCOPES },
-  { key: "mode", label: "Ongoing mode", flag: "--mode", choices: MODES },
-];
-
-async function selectAuditChoice<Value extends string>(
-  ctx: RerailCommandContext,
-  title: string,
-  choices: readonly AuditChoice<Value>[],
-): Promise<Value | undefined> {
-  const selected = await ctx.ui.select(title, choices.map(choice => choice.label));
-  return choices.find(choice => choice.label === selected)?.value;
-}
-
 interface LauncherResult {
   code: number;
   stdout: string;
   stderr: string;
 }
 
-async function runLauncher(options: RerailCommandOptions, args: readonly string[]): Promise<LauncherResult> {
-  const child = spawn(nodeExecutable(), [join(options.packageRoot, "dist", "cli.js"), ...args], {
+/** Start, stop and state change or read the database the extension's gate reads, when one was configured. */
+function databaseArgs(options: RerailCommandOptions): string[] {
+  const database = options.databasePath?.();
+  return database === undefined ? [] : ["--database", database];
+}
+
+async function runLauncher(options: RerailCommandOptions, args: readonly string[], hostArgs: readonly string[] = []): Promise<LauncherResult> {
+  const child = spawn(nodeExecutable(), [join(options.packageRoot, "dist", "cli.js"), ...args, ...hostArgs], {
     cwd: options.cwd(),
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -113,10 +78,19 @@ async function runLauncher(options: RerailCommandOptions, args: readonly string[
   return promise;
 }
 
-async function runSettings(options: RerailCommandOptions, target: readonly string[], patch: readonly string[] = []): Promise<AuditControls> {
-  const result = await runLauncher(options, ["settings", ...target, ...patch, "--json"]);
-  if (result.code !== 0) throw new Error((result.stdout + result.stderr).trim() || `Settings exited with code ${result.code}`);
-  return auditControlsSchema.strip().parse(JSON.parse(result.stdout));
+const START_STATES: readonly RepositoryStartState[] = ["started", "stopped", "never"];
+
+/** `rerail state` for this checkout, as `/rerail-start` reads it; OMP runs on Bun, which cannot open the database itself. */
+async function launcherStartState(options: RerailCommandOptions): Promise<RepositoryStartState> {
+  const result = await runLauncher(options, ["state"], databaseArgs(options));
+  const state = result.stdout.trim();
+  const known = START_STATES.find(candidate => candidate === state);
+  if (result.code !== 0 || known === undefined) throw new Error(`rerail state failed: ${(result.stdout + result.stderr).trim()}`);
+  return known;
+}
+
+function notifyResult(ctx: RerailCommandContext, name: string, result: LauncherResult): void {
+  ctx.ui.notify((result.stdout + result.stderr).trim() || `/${name} exited with code ${result.code}.`, result.code === 0 ? "info" : "error");
 }
 
 /** The notice for a page that was just opened; an Orca tab says so, the desktop browser needs no qualifier. */
@@ -124,17 +98,35 @@ function openingNotice(url: string, opening: PageOpening): string {
   return opening === "orca-tab" ? `Opening ${url} in the Orca window` : `Opening ${url}`;
 }
 
+/**
+ * First-time set-up of a repository where Rerail was never started, from OMP or Pi. Today it runs
+ * `rerail start`, whose set-up text the person reads in the notice. A native set-up picker is to replace
+ * this body: its questions asked through `ctx.ui.select` / `ctx.ui.input` and answered
+ * back to the launcher. It returns what the person should see, as the launcher's result.
+ */
+async function setUpRepository(options: RerailCommandOptions, _ctx: RerailCommandContext): Promise<LauncherResult> {
+  return runLauncher(options, ["start"], databaseArgs(options));
+}
+
+/** A POSIX single-quoted shell word, for the launcher command the coding agent runs from `/rerail-create`. */
+const shellWord = (value: string): string => "'" + value.replaceAll("'", String.raw`'\''`) + "'";
+
+const REMOVE = "Yes, remove Rerail";
+const STOP_HERE = "Just stop it in this repo (/rerail-stop)";
+
+type CommandAction = (ctx: RerailCommandContext, args: string) => Promise<void>;
+
 export function registerRerailCommands(pi: RerailCommandHost, options: RerailCommandOptions): void {
-  function register(name: string, description: string, action: (ctx: RerailCommandContext) => Promise<void>): void {
+  function register(name: RerailCommandName, action: CommandAction, acceptsArguments = false): void {
     pi.registerCommand(name, {
-      description,
+      description: RERAIL_COMMANDS.find(command => command.name === name)?.description ?? name,
       async handler(args, ctx) {
-        if (args.trim() !== "") {
-          ctx.ui.notify(`/${name} takes no arguments. Run it on its own to use its controls.`, "error");
+        if (!acceptsArguments && args.trim() !== "") {
+          ctx.ui.notify(`/${name} takes no arguments.`, "error");
           return;
         }
         try {
-          await action(ctx);
+          await action(ctx, args.trim());
         } catch (error) {
           ctx.ui.notify(`/${name}: ${error instanceof Error ? error.message : String(error)}`, "error");
         }
@@ -142,110 +134,87 @@ export function registerRerailCommands(pi: RerailCommandHost, options: RerailCom
     });
   }
 
-  /** The session's presentation: text for the status line and the page that shows it. */
-  const sessionPresentation = async () => {
+  register("rerail", async ctx => {
+    const cwd = options.cwd();
+    const host = options.host ?? "omp";
     const sessionId = options.sessionId?.();
-    if (sessionId === undefined) throw new Error("No active session.");
-    return readPresentation({ sessionId, host: options.host ?? "omp", cwd: options.cwd(), onDemand: true });
-  };
-  const unavailable = (error: unknown): Error => new Error(`Rerail unavailable: ${String(error instanceof Error ? error.message : error)
-    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "")}`);
-
-  register("rerail", "Show Rerail details for this session", async ctx => {
-    let presentation;
-    try {
-      presentation = await sessionPresentation();
-    } catch (error) {
-      throw unavailable(error);
-    }
-    const link = presentation.url === null ? "" : `\n${presentation.url}`;
-    ctx.ui.notify(`${presentation.text}${link}`, "info");
+    // Nothing autostarts where Rerail is off, so with no daemon answering the launcher says whether it is on here.
+    const startState = (): Promise<RepositoryStartState> => launcherStartState(options);
+    const presentation = sessionId === undefined
+      ? null
+      : await readPresentation({ sessionId, host, cwd, onDemand: true, startState });
+    // No session is attached where Rerail is stopped or never started.
+    const repositoryState = presentation === null ? await readSummaryState(cwd, host, startState) : presentation.repositoryState;
+    ctx.ui.notify(renderRerailSummary({
+      presentation,
+      repositoryState,
+      ruleCount: null,
+      rulesUrl: (await readRulesDashboard({ cwd })).url,
+      repositoryName: repositoryName(cwd),
+      sigil: "/",
+    }), "info");
   });
 
-  register("rerail-ui", "Open the Rerail rules page in the browser", async ctx => {
+  register("rerail-ui", async ctx => {
     const page = await readRulesDashboard({ cwd: options.cwd() });
     // The page needs a reachable daemon; the reason says why there is none.
-    if (page.url === null) throw new Error(`no Rerail page to open: ${page.reason}`);
+    if (page.url === null) throw new Error(`no dashboard to open: ${page.reason}`);
     ctx.ui.notify(openingNotice(page.url, await openDashboard(page.url)), "info");
   });
 
-  register("rerail-session", "Open this session's Rerail page in the browser", async ctx => {
-    let presentation;
-    try {
-      presentation = await sessionPresentation();
-    } catch (error) {
-      throw unavailable(error);
-    }
-    // The page needs a reachable daemon; the presentation text says why there is none.
-    if (presentation.url === null) throw new Error(`no Rerail page to open: ${presentation.text}`);
-    ctx.ui.notify(openingNotice(presentation.url, await openDashboard(presentation.url)), "info");
-  });
+  register("rerail-create", async (_ctx, request) => {
+    const cli = `${shellWord(nodeExecutable())} ${shellWord(join(options.packageRoot, "dist", "cli.js"))}`;
+    pi.sendUserMessage(createRuleInstructions({ cli, packageRoot: options.packageRoot, request: request === "" ? "(none given)" : `"${request}"` }));
+  }, true);
 
   // Start and stop run the launcher, so the CLI owns the wording; without a terminal it addresses the coding agent's user.
-  const repositoryCommands = [
-    { name: "rerail-start", description: "Start Rerail in this checkout, setting the repo up the first time", argv: ["start"] },
-    { name: "rerail-stop", description: "Stop Rerail in this checkout; rules and history are kept", argv: ["stop"] },
-  ];
-  for (const command of repositoryCommands) {
-    register(command.name, command.description, async ctx => {
-      const database = options.databasePath?.();
-      const result = await runLauncher(options, database === undefined ? command.argv : [...command.argv, "--database", database]);
-      // Re-attaching attaches the runtime where Rerail is started, and leaves only the "not on here" footer where it is not.
+  // Re-attaching attaches the runtime where Rerail is started, and leaves only the "not on here" footer where it is not.
+  register("rerail-start", async ctx => {
+    const state = await runLauncher(options, ["state"], databaseArgs(options));
+    const result = state.code === 0 && state.stdout.trim() === "never"
+      ? await setUpRepository(options, ctx)
+      : await runLauncher(options, ["start"], databaseArgs(options));
+    if (result.code === 0) await options.reattach?.();
+    notifyResult(ctx, "rerail-start", result);
+  });
+  register("rerail-stop", async ctx => {
+    const result = await runLauncher(options, ["stop"], databaseArgs(options));
+    if (result.code === 0) await options.reattach?.();
+    notifyResult(ctx, "rerail-stop", result);
+  });
+
+  register("rerail-update", async ctx => {
+    const result = await runLauncher(options, ["update"]);
+    notifyResult(ctx, "rerail-update", result.code === 0
+      ? { ...result, stdout: `${result.stdout.trimEnd()}\nNew sessions use the new version.\n` }
+      : result);
+  });
+
+  // Design A9/A10: say what goes and what stays, ask once, and remove only on an explicit yes.
+  register("rerail-rage-quit", async ctx => {
+    const choice = await ctx.ui.select([
+      "This removes Rerail from this computer, from every coding agent, in every repo.",
+      "Your rules and history are kept in a backup folder.",
+      "",
+      "Remove Rerail from this computer? You can install it again later and get your rules back.",
+    ].join("\n"), [REMOVE, STOP_HERE, "Cancel"]);
+    if (choice === STOP_HERE) {
+      const result = await runLauncher(options, ["stop"], databaseArgs(options));
       if (result.code === 0) await options.reattach?.();
-      ctx.ui.notify((result.stdout + result.stderr).trim() || `/${command.name} exited with code ${result.code}.`, result.code === 0 ? "info" : "error");
-    });
-  }
-
-  for (const command of LAUNCHER_COMMANDS) {
-    register(command.name, command.description, async ctx => {
-      const resetting = command.name === "rerail-reset";
-      if (resetting && !await ctx.ui.confirm("Reset Rerail history?", "Delete this repository's Rerail session history, across all its worktrees? Rules are kept. This cannot be undone.")) return;
-      let result: LauncherResult;
-      try {
-        if (resetting) await options.detach?.();
-        result = await runLauncher(options, command.argv);
-      } finally {
-        if (resetting) await options.reattach?.();
-      }
-      ctx.ui.notify((result.stdout + result.stderr).trim() || `/${command.name} exited with code ${result.code}.`, result.code === 0 ? "info" : "error");
-    });
-  }
-
-  const controls = [
-    { name: "rerail-settings", description: "View and change ongoing scan scope and mode" },
-    { name: "rerail-scan", description: "Run a one-shot scan: choose scope, mode, and file paths" },
-  ];
-  for (const command of controls) {
-    register(command.name, command.description, async ctx => {
-      if (ctx.hasUI === false) throw new Error("Interactive controls require a terminal UI. Use the rerail CLI outside the harness.");
-      const sessionId = options.sessionId?.();
-      if (sessionId === undefined) {
-        throw new Error("Scan controls are unavailable before this host has an active session.");
-      }
-      // Keep the dialog bound to the session and checkout in which it was opened.
-      const cwd = options.cwd();
-      const launcher = { ...options, cwd: () => cwd };
-      const target = ["--session", sessionId];
-      let current = await runSettings(launcher, target);
-      if (command.name === "rerail-settings") {
-        for (;;) {
-          const labels = SETTINGS_FIELDS.map(field => `${field.label}: ${current.settings[field.key]}`);
-          const selected = await ctx.ui.select(`Rerail settings — ${current.workspaceRoot}\nChanges save immediately; running scans keep their settings.`, [...labels, "Done"]);
-          const field = SETTINGS_FIELDS.find((_field, index) => labels[index] === selected);
-          if (field === undefined) return;
-          const value = await selectAuditChoice(ctx, `${field.label} (current: ${current.settings[field.key]})`, field.choices);
-          if (value === undefined) continue;
-          current = await runSettings(launcher, target, [field.flag, value]);
-          ctx.ui.notify(`Saved ${field.label.toLowerCase()}: ${current.settings[field.key]}`, "info");
-        }
-      }
-
-      const scope = await selectAuditChoice(ctx, "One-shot diagnostic scope", EXPLICIT_SCOPES);
-      if (scope === undefined) return;
-      const argv = ["scan", ...target, "--scope", scope, "--wait"];
-      ctx.ui.notify(`Scanning ${scope} in log-only mode; saved defaults are unchanged.`, "info");
-      const result = await runLauncher(launcher, argv);
-      ctx.ui.notify((result.stdout + result.stderr).trim() || `Scan exited with code ${result.code}.`, result.code === 0 || result.code === 2 ? "info" : "error");
-    });
-  }
+      notifyResult(ctx, "rerail-stop", result);
+      return;
+    }
+    if (choice !== REMOVE) return;
+    await options.detach?.();
+    // A removal that fails leaves Rerail installed and on, so the session gets its rule checks back.
+    let result: LauncherResult;
+    try {
+      result = await runLauncher(options, ["install", "--remove"]);
+    } catch (error) {
+      await options.reattach?.();
+      throw error;
+    }
+    if (result.code !== 0) await options.reattach?.();
+    notifyResult(ctx, "rerail-rage-quit", result);
+  });
 }

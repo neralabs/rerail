@@ -11,12 +11,13 @@ vi.mock("../src/daemon-control.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../src/daemon-control.js"),
   daemonEngineSocket: routing.daemonEngineSocket,
 }));
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
-import type { AdapterEvent, RerailEventLoop } from "../src/adapter-contract.js";
+import type { AdapterDelivery, AdapterEvent, RerailEventLoop } from "../src/adapter-contract.js";
+import { steerBlock } from "../src/rerail-steer.js";
 import { encodeRerailEventResult, RERAIL_EVENT_PROTOCOL_PREFACE } from "../src/event-protocol.js";
 import { runRerailEventStream, serveRerailEventStream } from "../src/event-stream.js";
 import { startTestRepository } from "./support/started-repository.js";
@@ -29,7 +30,7 @@ afterEach(async () => {
   routing.daemonEngineSocket.mockReset();
 });
 
-async function runStream(lines: readonly string[], eventLoop: RerailEventLoop): Promise<readonly Record<string, unknown>[]> {
+async function runStream(lines: readonly string[], eventLoop: RerailEventLoop, workspaceRoot?: string): Promise<readonly Record<string, unknown>[]> {
   const output = new PassThrough();
   const chunks: Buffer[] = [];
   output.on("data", chunk => chunks.push(Buffer.from(chunk)));
@@ -37,6 +38,7 @@ async function runStream(lines: readonly string[], eventLoop: RerailEventLoop): 
     eventLoop,
     input: Readable.from(lines.map(line => `${line}\n`)),
     output,
+    workspaceRoot,
   });
   return Buffer.concat(chunks).toString("utf8").trim().split("\n").filter(Boolean)
     .map(line => JSON.parse(line) as Record<string, unknown>);
@@ -80,6 +82,31 @@ describe("Rerail event stream", () => {
       expect.objectContaining({ eventId: null, error: expect.objectContaining({ code: "unsupported-version" }) }),
     ]);
     expect(ingest).not.toHaveBeenCalled();
+  });
+
+  it("links a steer's Why? to the session checkout's dashboard, recorded in the Rerail home's daemon.json", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-event-stream-home-"));
+    cleanups.push(() => rm(home, { recursive: true, force: true }));
+    const checkout = join(home, "checkout");
+    await mkdir(checkout);
+    await writeFile(join(home, "daemon.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 4791, url: "http://127.0.0.1:4791/",
+      version: "test", databasePath: join(home, "rerail.sqlite"), kernelSocketPath: join(home, "kernel.sock"), ui: "bundled", startedAt: 1, packageRoot: home }));
+    vi.stubEnv("RERAIL_HOME", home);
+    cleanups.push(async () => { vi.unstubAllEnvs(); });
+    const steer: AdapterDelivery = { sessionId: "s1", requested: "steer", mechanism: "additional-context", content: steerBlock("acme:no-print", "Remove print."), ruleIds: ["acme:no-print"] };
+    const ingest = vi.fn<(event: AdapterEvent) => Promise<readonly AdapterDelivery[]>>()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([steer]);
+
+    const frames = await runStream([
+      RERAIL_EVENT_PROTOCOL_PREFACE,
+      JSON.stringify({ event: { kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId: "s1", cwd: checkout } } }),
+      JSON.stringify({ event: { kind: "result", eventId: "result", sessionId: "s1", toolCallId: "t1", toolName: "Write", output: "ok" } }),
+    ], { ingest }, "/elsewhere");
+    expect(frames[1]).toEqual({ eventId: "result", deliveries: [{
+      ...steer,
+      content: "▲ Rerail · acme:no-print  Steered.\nRemove print.\nWhy? → http://127.0.0.1:4791/#rule/acme%3Ano-print",
+    }] });
   });
 });
 
