@@ -353,20 +353,6 @@ precedence = "override"
 SPDX-FileCopyrightText = "2018-2026 Alan Cruickshank"
 SPDX-License-Identifier = "MIT"
 
-# ESLint 10.11.0 (typescript/licenses/eslint/UPSTREAM.md): derived or excerpted
-[[annotations]]
-path = "fixtures/typescript/rules/eslint/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = ["OpenJS Foundation and other contributors, <www.openjsf.org>", "2026 Nera Software Inc."]
-SPDX-License-Identifier = "MIT AND Apache-2.0"
-
-# typescript-eslint 8.70.1 (typescript/licenses/typescript-eslint/UPSTREAM.md): derived or excerpted
-[[annotations]]
-path = "fixtures/typescript/rules/typescript-eslint/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
-SPDX-License-Identifier = "MIT AND Apache-2.0"
-
 # eslint-plugin-vue 10.11.1 (vue/licenses/eslint-plugin-vue/UPSTREAM.md): verbatim
 [[annotations]]
 path = [
@@ -748,3 +734,19 @@ path = [
 precedence = "override"
 SPDX-FileCopyrightText = "2022 Charles Marsh"
 SPDX-License-Identifier = "MIT"
+
+# packs/typescript
+
+# ESLint 10.11.0 (packs/typescript/licenses/eslint/UPSTREAM.md): derived or excerpted
+[[annotations]]
+path = "packs/typescript/upstream/eslint/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["OpenJS Foundation and other contributors, <www.openjsf.org>", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# typescript-eslint 8.70.1 (packs/typescript/licenses/typescript-eslint/UPSTREAM.md): derived or excerpted
+[[annotations]]
+path = "packs/typescript/upstream/typescript-eslint/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"

@@ -3,18 +3,18 @@
 // sites where tree-sitter-typescript reads a postfix non-null assertion `!` over a whole binary (or other non-member)
 // expression, which TypeScript never does (tree-sitter/tree-sitter-typescript#299). Run offline, from the repository
 // root, with the addon built:
-//   node --import tsx conformance/languages/typescript/t1-syntax.ts <corpus checkout> <path>[,<path>...] <out.json> [<unparsed.json>]
-// <unparsed.json> is a corpus recording (`fixtures/typescript/rules/eslint/corpus-<name>.expected.json`): its `source.skipped` are
+//   node --import tsx conformance/t1/typescript-syntax.ts <corpus checkout> <path>[,<path>...] <out.json> [<unparsed.json>]
+// <unparsed.json> is a corpus recording (`packs/typescript/upstream/eslint/corpus-<name>.expected.json`): its `source.skipped` are
 // the files ESLint 10.11.0 (espree, or typescript-eslint 8.70.1's parser for TypeScript files) cannot parse.
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { capabilitiesJson } from "../../tslint/runner.js";
-import type { CodeRuleSourceLanguage } from "../../../src/code-rule.js";
-import { IGNORED_DIRECTORIES, languageFor } from "../../../src/code-rule-enforcer.js";
-import { encodeCodeRuleWorkspaceRequest, loadNativeBinding } from "../../../src/native.js";
+import { capabilitiesJson } from "../tslint/runner.js";
+import type { CodeRuleSourceLanguage } from "../../src/code-rule.js";
+import { IGNORED_DIRECTORIES, languageFor } from "../../src/code-rule-enforcer.js";
+import { encodeCodeRuleWorkspaceRequest, loadNativeBinding } from "../../src/native.js";
 
 const [root, pathList, output, unparsedRecording] = process.argv.slice(2);
-if (root === undefined || pathList === undefined || output === undefined) throw new Error("usage: classify.ts <corpus> <paths> <out.json> [<recording>]");
+if (root === undefined || pathList === undefined || output === undefined) throw new Error("usage: typescript-syntax.ts <corpus> <paths> <out.json> [<recording>]");
 const ECMA = new Set(["typescript", "tsx", "javascript"]);
 const unparsed = new Set<string>(unparsedRecording === undefined ? [] : JSON.parse(readFileSync(unparsedRecording, "utf8")).source.skipped);
 

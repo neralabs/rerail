@@ -1,5 +1,5 @@
 // Records where ESLint 10.11.0 and typescript-eslint 8.70.1 report the TypeScript pack's T4 rules
-// (rerail/conformance/languages/typescript/pack.json), in the format rerail/conformance/languages/pack.ts reads:
+// (rerail/packs/typescript/conformance.json), in the format rerail/conformance/languages/pack.ts reads:
 //   eslint/fixtures.expected.json, typescript-eslint/fixtures.expected.json  (the rules' own RuleTester cases)
 //   <tool>/corpus-<name>.expected.json                                       (the pack's pinned corpora)
 // Run offline by a maintainer, never in CI:
@@ -28,8 +28,7 @@ import { dirname, join, matchesGlob, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const REPOSITORY = resolve(HERE, "..", "..", "..");
-const PACK = JSON.parse(readFileSync(join(REPOSITORY, "conformance", "languages", "typescript", "pack.json"), "utf8"));
+const PACK = JSON.parse(readFileSync(join(HERE, "..", "conformance.json"), "utf8"));
 const VERSIONS = { eslint: "10.11.0", "@typescript-eslint/parser": "8.70.1", "@typescript-eslint/eslint-plugin": "8.70.1", typescript: "5.9.3" };
 const CHECKOUTS = {
   eslint: { repository: "https://github.com/eslint/eslint", commit: "3c0b7c6e1fe2dec778b97a996018126f22d437ae" },
