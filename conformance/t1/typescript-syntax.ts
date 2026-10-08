@@ -8,7 +8,7 @@
 // the files ESLint 10.11.0 (espree, or typescript-eslint 8.70.1's parser for TypeScript files) cannot parse.
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { capabilitiesJson } from "../tslint/runner.js";
+import { capabilitiesJson } from "../engine.js";
 import type { CodeRuleSourceLanguage } from "../../src/code-rule.js";
 import { IGNORED_DIRECTORIES, languageFor } from "../../src/code-rule-enforcer.js";
 import { encodeCodeRuleWorkspaceRequest, loadNativeBinding } from "../../src/native.js";

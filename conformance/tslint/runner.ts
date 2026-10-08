@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl, type NativeCodeRuleDslWorkspace } from "../../src/native.js";
-import { bundledCodeRuleDslDirectory } from "../../src/code-rule-dsl-catalog.js";
+import { capabilitiesJson, INFORMATIONAL_FAILURE_CODES } from "../engine.js";
 import type { ExpectedFailure } from "./lint-format.js";
 import { checkFix, type EmittedFix, type FixCheck } from "./fix-check.js";
 import { portSize, type PortSize } from "./port-size.js";
@@ -236,12 +236,6 @@ export function listPortedRules(): string[] {
   return [...new Set([...goldenRules(), ...ports])].sort();
 }
 
-let capabilities: string | undefined;
-export function capabilitiesJson(): string {
-  capabilities ??= readFileSync(join(bundledCodeRuleDslDirectory(), "capabilities.json"), "utf8");
-  return capabilities;
-}
-
 export function compileDocument(path: string): NativeCompiledCodeRuleDsl {
   return loadNativeBinding().CodeRuleDslRuntime.compile(readFileSync(path, "utf8"), "json", capabilitiesJson());
 }
@@ -266,13 +260,6 @@ interface FileEvaluation {
   partial: string | undefined;
   ms: number;
 }
-
-/**
- * `source-partial` says the file has syntax errors and AST witnesses were reported only outside them. That is
- * the engine working as designed, so it is not an engine failure: missed violations inside the error region already
- * show up as FNs. `source-incomplete` (a rule unsound under errors skipped the file) stays an engine failure.
- */
-export const INFORMATIONAL_FAILURE_CODES: ReadonlySet<string> = new Set(["source-partial"]);
 
 /** Failure codes meaning the grammar could not parse the whole file, whatever the engine then did with it. */
 export const PARSE_FAILURE_CODES: ReadonlySet<string> = new Set(["source-incomplete", "source-partial"]);

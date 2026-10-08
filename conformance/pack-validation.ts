@@ -16,7 +16,7 @@ import { compareDeterministicStrings } from "../src/stable-json.js";
 import { CONFORMANCE_FILE, defaultCorpusRoot, loadPack, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
 import { GOLDEN_FORMAT, goldenRules, membershipProblems, parseGoldenManifest, type GoldenManifest } from "./tslint/golden.js";
-import { capabilitiesJson } from "./tslint/runner.js";
+import { capabilitiesJson } from "./engine.js";
 
 export const PACK_CHECKS = [
   { number: 1, name: "rules" },
