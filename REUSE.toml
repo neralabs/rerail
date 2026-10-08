@@ -148,16 +148,6 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
-# Next.js 16.3.8 (next/licenses/next.js/UPSTREAM.md): verbatim
-[[annotations]]
-path = [
-  "fixtures/next/rules/eslint-plugin-next/fixtures/**",
-  "fixtures/next/rules/eslint-plugin-next/tests/**",
-]
-precedence = "override"
-SPDX-FileCopyrightText = "2025 Vercel, Inc."
-SPDX-License-Identifier = "MIT"
-
 # eslint-plugin-n 18.4.1 (node/licenses/eslint-plugin-n/UPSTREAM.md): verbatim
 [[annotations]]
 path = [
@@ -747,4 +737,15 @@ path = [
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2022 Charles Marsh"
+SPDX-License-Identifier = "MIT"
+
+# packs/next
+# Next.js 16.3.8 (packs/next/licenses/next.js/UPSTREAM.md): verbatim
+[[annotations]]
+path = [
+  "packs/next/upstream/eslint-plugin-next/fixtures/**",
+  "packs/next/upstream/eslint-plugin-next/tests/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2025 Vercel, Inc."
 SPDX-License-Identifier = "MIT"

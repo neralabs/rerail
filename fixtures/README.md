@@ -22,7 +22,6 @@ Rerail's `native/src/code_rule_dsl/` and `conformance/languages/`.
 | `php/` | PHP 8.5.11, PHPStan 2.2.16, Psalm 6.19.1, PHP_CodeSniffer 4.0.4 and 3.13.6, nikic/php-parser 5.9.0, phpstan/phpdoc-parser 2.3.5 | `arguments`, `calls`, `compare`, `format_args`, `literal`, `rules`, `scope`, `suppress`, `value` |
 | `blade/` | illuminate/view 13.34.0, PHP 8.5.11, PHPStan 2.2.16, stillat/blade-parser 2.1.0, Bladestan 0.11.7, tlint 9.7.0 | `rules`, `view` |
 | `typescript/` | ESLint 10.11.0, typescript-eslint 8.70.1, TypeScript 5.9.3 | `rules` |
-| `next/` | @next/eslint-plugin-next 16.3.8, ESLint 10.11.0, typescript-eslint 8.70.1 | `candidates`, `policies`, `probes`, `rules` |
 | `node/` | eslint-plugin-n 18.4.1, ESLint 10.11.0, globals 17.13.0 | `candidates`, `policies`, `probes`, `rules` |
 | `react/` | eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1, ESLint 9.39.5 | `candidates`, `policies`, `probes`, `rules` |
 | `vue/` | @vue/compiler-sfc 3.5.43, vue-eslint-parser 10.4.1, eslint-plugin-vue 10.11.1, ESLint 10.11.0 | `grammar`, `rules`, `view` |
@@ -66,7 +65,6 @@ upstream path and whether the copy is verbatim, derived or an excerpt. Those fil
 | `blade/licenses/bagisto/`, `bookstack/`, `filament/`, `livewire/` | directive closures excerpted into `blade/view/directives.php` | MIT |
 | `typescript/licenses/eslint/` | ESLint 10.11.0 | MIT |
 | `typescript/licenses/typescript-eslint/` | typescript-eslint 8.70.1 | MIT |
-| `next/licenses/next.js/` | Next.js 16.3.8 (@next/eslint-plugin-next) | MIT |
 | `node/licenses/eslint-plugin-n/` | eslint-plugin-n 18.4.1 | MIT |
 | `react/licenses/eslint-plugin-react/` | eslint-plugin-react 7.37.5 | MIT |
 | `react/licenses/react/` | facebook/react (eslint-plugin-react-hooks 7.1.1) | MIT |

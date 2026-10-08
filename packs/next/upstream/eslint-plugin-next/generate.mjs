@@ -1,4 +1,4 @@
-// Records @next/eslint-plugin-next for the Next pack's T4 tier (rerail/conformance/languages/next/pack.json).
+// Records @next/eslint-plugin-next for the Next pack's T4 tier (packs/next/conformance.json).
 //
 // Pins: eslint 10.11.0, @next/eslint-plugin-next 16.3.8, @typescript-eslint/parser 8.70.1, typescript 5.9.3,
 // globals 17.13.0 (installed under `.rerail/tools/next`); upstream vercel/next.js v16.3.8 =
@@ -8,8 +8,8 @@
 // (`.rerail/corpora/next/<name>`). Any other version or commit is refused.
 //
 // Usage (offline, maintainer only; Node >= 23.6 for type stripping and module.registerHooks):
-//   node rerail-fixtures/next/rules/eslint-plugin-next/generate.mjs [--tools <dir>] [--corpora <dir>] [--upstream <dir>]
-//                                                                  [--only fixtures|corpora|tests|licenses]
+//   node packs/next/upstream/eslint-plugin-next/generate.mjs [--tools <dir>] [--corpora <dir>] [--upstream <dir>]
+//                                                            [--only fixtures|corpora|tests|licenses]
 //
 // 1. tests: copies the chosen rules' upstream test files verbatim into tests/.
 // 2. fixtures: executes each copied test with a stub `RuleTester` (ours, below) that captures run(name, rule,
@@ -17,17 +17,20 @@
 //    `filename`, fixtures/<rule>/<valid|invalid>-NNN/<filename> (a leading `/` or `./` dropped, a Windows drive
 //    `C:\` turned into `C/`, backslashes into `/`). Then runs the pinned plugin (PACK_CONFIG, default options, every
 //    chosen rule) over every fixture file: fixtures.expected.json.
-// 3. corpora: the same config over each pinned corpus's files (pack.json paths and excludes): corpus-<name>.expected.json.
-// 4. licenses: rerail-fixtures/next/licenses/next.js/{LICENSE,UPSTREAM.md}.
+// 3. corpora: the same config over each pinned corpus's files (conformance.json paths and excludes):
+//    corpus-<name>.expected.json.
+// 4. licenses: packs/next/licenses/next.js/{LICENSE,UPSTREAM.md}.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertCommit, corpusFiles, lint, pack, pinnedRequire, REPOSITORY, writeRecording } from "../../../frameworks/eslint_record.mjs";
+import { assertCommit, corpusFiles, lint, pinnedRequire, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const NEXT_ORACLES = dirname(dirname(HERE));
+/** The pack directory, packs/next/. */
+const PACK = dirname(dirname(HERE));
+const REPOSITORY = dirname(dirname(PACK));
 
 /** `.rerail/<kind>/next` in the nearest ancestor of this repository holding it (gitignored there). */
 function rerailDirectory(kind) {
@@ -217,9 +220,9 @@ async function recordFixtures() {
 }
 
 async function recordCorpora() {
-  const manifest = pack("next");
+  const manifest = JSON.parse(readFileSync(join(PACK, "conformance.json"), "utf8"));
   for (const corpus of manifest.corpora) {
-    if (CORPUS_COMMITS[corpus.name] !== corpus.commit) throw new Error(`pack.json pins ${corpus.name} at ${corpus.commit}; this recorder pins ${CORPUS_COMMITS[corpus.name]}`);
+    if (CORPUS_COMMITS[corpus.name] !== corpus.commit) throw new Error(`conformance.json pins ${corpus.name} at ${corpus.commit}; this recorder pins ${CORPUS_COMMITS[corpus.name]}`);
     const root = join(options.corpora ?? rerailDirectory("corpora"), corpus.name);
     const files = corpusFiles(root, corpus);
     const { findings, skipped } = await lint(ESLint, root, packConfig(), files, RULE_IDS);
@@ -237,23 +240,23 @@ async function recordCorpora() {
 
 function writeLicenses() {
   assertCommit(upstream, UPSTREAM_COMMIT);
-  const directory = join(NEXT_ORACLES, "licenses", "next.js");
+  const directory = join(PACK, "licenses", "next.js");
   mkdirSync(directory, { recursive: true });
   copyFileSync(join(upstream, "license.md"), join(directory, "LICENSE"));
   const { cases } = JSON.parse(readFileSync(join(HERE, "fixtures.cases.json"), "utf8"));
   const rows = [
-    ...RULES.map(rule => `| \`rules/${TOOL}/tests/${rule}.test.ts\` | \`${UPSTREAM_TESTS}/${rule}.test.ts\` | verbatim |`),
+    ...RULES.map(rule => `| \`upstream/${TOOL}/tests/${rule}.test.ts\` | \`${UPSTREAM_TESTS}/${rule}.test.ts\` | verbatim |`),
     ...cases
       .filter(entry => !entry.dropped)
-      .map(entry => `| \`rules/${TOOL}/fixtures/${entry.path}\` | \`${UPSTREAM_TESTS}/${entry.rule}.test.ts\` | extracted from ${entry.kind}[${entry.index}] (its \`code\`, verbatim) |`),
+      .map(entry => `| \`upstream/${TOOL}/fixtures/${entry.path}\` | \`${UPSTREAM_TESTS}/${entry.rule}.test.ts\` | extracted from ${entry.kind}[${entry.index}] (its \`code\`, verbatim) |`),
   ];
   const text = `# Next.js ${PLUGIN_VERSION} (@next/eslint-plugin-next)
 
 Upstream: [vercel/next.js](${UPSTREAM_REPOSITORY}/tree/${UPSTREAM_COMMIT}) at tag \`v${PLUGIN_VERSION}\` (commit \`${UPSTREAM_COMMIT}\`), the source of \`@next/eslint-plugin-next\` ${PLUGIN_VERSION}. License: MIT (Copyright (c) 2025 Vercel, Inc.); [\`LICENSE\`](LICENSE) is the upstream \`license.md\`, copied verbatim at that tag.
 
-The files listed below are the plugin's rule tests and the test cases extracted from them, and remain under Next.js's license. Every other file under \`rules/${TOOL}/\` is Rerail's, under the Apache License 2.0 (this repository's \`LICENSE\`): \`generate.mjs\` (with its stub \`RuleTester\` and stub plugin module), \`fixtures.cases.json\`, and the recordings it writes by running the pinned plugin.
+The files listed below are the plugin's rule tests and the test cases extracted from them, and remain under Next.js's license. Every other file in this pack is Rerail's, under the Apache License 2.0 (the pack's \`LICENSE\`): the rule documents in \`rules/\`, the recorder \`upstream/${TOOL}/generate.mjs\` (with its stub \`RuleTester\` and stub plugin module), \`upstream/${TOOL}/fixtures.cases.json\`, and the \`*.expected.json\` outputs recorded by running the pinned plugin.
 
-Paths are relative to \`next/\`.
+Paths are relative to the pack directory, \`packs/next/\`.
 
 | File | Upstream path | Copy |
 |---|---|---|

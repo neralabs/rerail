@@ -76,5 +76,5 @@
       "match": "line+column"
     }
   ],
-  "oracles": "../rules"
+  "oracles": "../upstream"
 }

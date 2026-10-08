@@ -1,16 +1,16 @@
-// Builds rerail-fixtures/next/probes, a runnable pack of the Next fact model's probes: probes/pack.json,
+// Builds packs/next/candidates/probes, a runnable pack of the Next fact model's probes: probes/pack.json,
 // probes/rules/<probe>.json, probes/labels/fixtures/** and probes/labels/fixtures.expected.json. The fixtures are a
 // small Next.js project (both routers) at the workspace root; every label below is chosen by hand from Next.js 16's
 // documented semantics, located by a unique substring of its fixture. Run offline by a maintainer, never in CI; the
 // output is deterministic.
 //
-// Usage (from the repository root): node rerail-fixtures/next/policies/build-probes.mjs
-// Then: cd rerail && node --import tsx conformance/languages/cli.ts --pack-dir ../rerail-fixtures/next/probes --fixtures
+// Usage (from the repository root): node packs/next/candidates/build-probes.mjs
+// Then: node --import tsx conformance/languages/cli.ts --pack-dir packs/next/candidates/probes --fixtures
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "probes");
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "probes");
 const SCOPE = { include: ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"], exclude: [] };
 
 // ---- fixtures: a Next.js project ------------------------------------------------------------------------------------

@@ -1,20 +1,19 @@
-// Builds the Next pack's policies: rerail/conformance/languages/next/rules/next-<rule>.json (ported rules)
-// and the `rules` list of rerail/conformance/languages/next/pack.json; rerail-fixtures/next/candidates/rules/next-<rule>.json
-// (rules that cannot pass their fixtures today) and rerail-fixtures/next/candidates/pack.json, a runnable pack scoring the
+// Builds the Next pack's policies: packs/next/rules/next-<rule>.json (ported rules) and the `rules` lists of
+// packs/next/conformance.json and packs/next/pack.json; packs/next/candidates/rules/next-<rule>.json (rules that cannot
+// pass their fixtures today) and packs/next/candidates/pack.json, a runnable pack scoring the
 // candidates against the main pack's recordings and corpora. The JSON files are the committed artifacts; this script is
 // their source: it spells the shared JSX/import/path pieces once (notably the plugin's `split('pages')` filename tests as
 // regexes) and keeps the documents consistent. Run offline by a maintainer, never in CI; the output is deterministic.
 //
-// Usage (from the repository root): node rerail-fixtures/next/policies/build-policies.mjs
+// Usage (from the repository root): node packs/next/candidates/build-policies.mjs
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const REPOSITORY = join(HERE, "..", "..", "..");
-const PACK = join(REPOSITORY, "conformance/languages/next");
+const PACK = join(HERE, "..");
 const PACK_RULES = join(PACK, "rules");
-const CANDIDATE_PACK = join(HERE, "..", "candidates");
+const CANDIDATE_PACK = HERE;
 const CANDIDATES = join(CANDIDATE_PACK, "rules");
 const SCOPE = { include: ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"], exclude: [] };
 const DOCS = "https://nextjs.org/docs/messages";
@@ -590,10 +589,24 @@ policy(
 );
 
 const ported = WRITTEN.filter(entry => !entry.candidate);
-const manifestPath = join(PACK, "pack.json");
+const manifestPath = join(PACK, "conformance.json");
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 manifest.rules = ported.map(({ rule, capabilities }) => ({ id: `next-${rule}`, upstream: { tool: "eslint-plugin-next", rule: `@next/next/${rule}` }, policy: `rules/next-${rule}.json`, capabilities, match: "line+column" }));
 writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+// The shipped pack lists the ported rules in the same order; a rule's hand-written fields (examples, mode, on) are kept.
+const rulePackPath = join(PACK, "pack.json");
+const rulePack = JSON.parse(readFileSync(rulePackPath, "utf8"));
+const listed = new Map(rulePack.rules.map(entry => [entry.id, entry]));
+const title = rule => `${rule[0].toUpperCase()}${rule.slice(1).replaceAll("-", " ")}`;
+const generated = new Set(["id", "document", "title", "group"]);
+rulePack.rules = ported.map(({ rule }) => ({
+  id: `next-${rule}`,
+  document: `rules/next-${rule}.json`,
+  title: title(rule),
+  group: "Next.js",
+  ...Object.fromEntries(Object.entries(listed.get(`next-${rule}`) ?? {}).filter(([key]) => !generated.has(key))),
+}));
+writeFileSync(rulePackPath, `${JSON.stringify(rulePack, null, 2)}\n`);
 const candidates = WRITTEN.filter(entry => entry.candidate);
 writeFileSync(
   join(CANDIDATE_PACK, "pack.json"),
@@ -601,7 +614,7 @@ writeFileSync(
     {
       ...manifest,
       pack: "next-candidates",
-      oracles: "../rules",
+      oracles: "../upstream",
       rules: candidates.map(({ rule, capabilities }) => ({ id: `next-${rule}`, upstream: { tool: "eslint-plugin-next", rule: `@next/next/${rule}` }, policy: `rules/next-${rule}.json`, capabilities, match: "line+column" })),
     },
     null,
