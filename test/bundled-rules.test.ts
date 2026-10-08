@@ -20,7 +20,7 @@ import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { languageFor } from "../src/code-rule-enforcer.js";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../src/native.js";
-import { bundledRulesDirectory, loadBundledRules } from "../src/rule-bootstrap.js";
+import { bundledRulesDirectory, loadBundledRules, OPT_IN_RULES_DIRECTORY } from "../src/bundled-rule-documents.js";
 import { PASS_AUDIT } from "../conformance/tslint/audit.js";
 import { emptyGoldenManifest, goldenRules, loadGoldenManifest, PACK_DIRECTORY } from "../conformance/tslint/golden.js";
 import { checkGolden, REQUIRES_CONFIGURATION } from "../conformance/tslint/promote.js";
@@ -44,14 +44,15 @@ function violations(compiled: NativeCompiledCodeRuleDsl, path: string, source: s
 }
 
 const bundled = loadBundledRules(bundledRulesDirectory());
-const documents = bundled.filter(document => document.enabledByDefault !== false);
-const optIn = bundled.filter(document => document.enabledByDefault === false && document.rule.id.startsWith("tslint:"));
+const optIn = loadBundledRules(join(bundledRulesDirectory(), OPT_IN_RULES_DIRECTORY, "tslint"));
 /** Rule id -> rule file stem; the fixture file shares the stem. */
 const stemByRuleId: Record<string, string> = Object.fromEntries(
   readdirSync(bundledRulesDirectory())
     .filter(name => name.endsWith(".json"))
     .map(name => [ruleFileSchema.parse(JSON.parse(readFileSync(join(bundledRulesDirectory(), name), "utf8"))).id, name.slice(0, -5)]),
 );
+/** The rules at the top of the bundled folder; rules in opt-in packs (`opt-in/<pack>/`) are proven by their own tests. */
+const documents = bundled.filter(document => document.rule.id in stemByRuleId);
 
 describe("bundled rules", () => {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");

@@ -54,8 +54,8 @@ function walOnlyDatabase(directory, name, rows) {
   mkdirSync(directory, { recursive: true });
   const path = join(directory, name);
   const writer = new DatabaseSync(path);
-  writer.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; CREATE TABLE catalog_rules (id text PRIMARY KEY)");
-  const insert = writer.prepare("INSERT INTO catalog_rules VALUES (?)");
+  writer.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; CREATE TABLE library_rules (id text PRIMARY KEY)");
+  const insert = writer.prepare("INSERT INTO library_rules VALUES (?)");
   for (const id of rows) insert.run(id);
   const copy = join(directory, ".copy");
   mkdirSync(copy, { recursive: true });
@@ -72,7 +72,7 @@ function walOnlyDatabase(directory, name, rows) {
 function ruleIds(path) {
   const database = new DatabaseSync(path, { readOnly: true });
   try {
-    return database.prepare("SELECT id FROM catalog_rules ORDER BY id").all().map(row => row.id);
+    return database.prepare("SELECT id FROM library_rules ORDER BY id").all().map(row => row.id);
   } finally {
     database.close();
   }
@@ -152,7 +152,7 @@ test("restoreBackup into a dev home restores the database only; a dry run change
     const result = await restoreBackup({ home: devHome, userHome: home, env: envFor(home) });
     assert.equal(result.backupDir, backup);
     assert.deepEqual(result.restored.map(entry => entry.target), [join(devHome, "rerail.sqlite")]);
-    assert.deepEqual(result.rules, { table: "catalog_rules", count: 2 });
+    assert.deepEqual(result.rules, { table: "library_rules", count: 2 });
     assert.deepEqual(ruleIds(join(devHome, "rerail.sqlite")), ["a", "b"]);
     assert.ok(!existsSync(join(devHome, "repository-id")), "the home workspace's identity belongs to ~/.rerail");
   });
@@ -216,7 +216,7 @@ test("restoreInstalled stops the launcher's daemon, restores, restarts it on its
       const lines = [];
       const result = await restoreInstalled({ backupDir: backup, env: envFor(home), log: line => lines.push(line) });
       assert.deepEqual(readFileSync(calls, "utf8").trim().split("\n"), [`${rerailHome} daemon stop`, `${rerailHome} daemon start --port ${port}`]);
-      assert.deepEqual(result.rules, { table: "catalog_rules", count: 2 });
+      assert.deepEqual(result.rules, { table: "library_rules", count: 2 });
       assert.deepEqual(ruleIds(join(rerailHome, "rerail.sqlite")), ["r1", "r2"]);
       assert.ok(lines.some(line => line.includes(`Daemon healthy at http://127.0.0.1:${port}`)));
     } finally {

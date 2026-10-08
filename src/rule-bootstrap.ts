@@ -1,117 +1,25 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
-import { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
+import { parseRuleDocument } from "./bundled-rule-documents.js";
 import { assertCodeRuleCompiles, CodeRuleCompileError } from "./code-rule-compile.js";
-import { codeRuleSchema, CODE_RULE_FORMAT } from "./code-rule-schema.js";
-import { conversationRuleSchema } from "./rule-schema.js";
-import { RULE_APPLICABILITIES, RULE_KINDS, RULE_ORIGINS } from "./schema.js";
-import type { BundledRuleDocument, RuleDocument } from "./rule-store.js";
-import { ScopedRuleCatalog } from "./scoped-rule-catalog.js";
+import {
+  repositories,
+  RULE_KINDS,
+  ruleAttachments,
+  ruleSettings,
+} from "./schema.js";
+import type { RerailDatabase } from "./database.js";
+import { normalizeFolder, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS, type BundledCatalog } from "./repository-model.js";
+import { listLibraryRules, quarantinedLibraryRules, validateLibraryDocument, writeLibraryRule } from "./rule-library.js";
+import { RULE_MODES } from "./rule-mode.js";
+import type { RuleDocument } from "./rule-store.js";
 
-export const RULES_DUMP_VERSION = 1 as const;
 export const RULES_DUMP_FILE = "rules.json";
 
-/** `<package>/code-rule-dsl/rules`: the documents every project database is seeded with. */
-export function bundledRulesDirectory(): string {
-  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "code-rule-dsl", "rules");
-}
-
-/** `rerail rules export` writes beside the database it describes: `$RERAIL_HOME/rules.json`. */
+/** The dump sits beside the database it describes: `<home>/rules.json`. */
 export function defaultRulesDumpPath(databasePath: string): string {
   return join(dirname(resolve(databasePath)), RULES_DUMP_FILE);
-}
-
-function parseRuleDocument(value: unknown, label: string): RuleDocument {
-  const isCodeRule = typeof value === "object" && value !== null && "format" in value && value.format === CODE_RULE_FORMAT;
-  if (isCodeRule) return { kind: "file", rule: codeRuleSchema.parse(value) };
-  const conversationRule = conversationRuleSchema.safeParse(value);
-  if (conversationRule.success) return { kind: "conversation", rule: conversationRule.data };
-  throw new Error(`${label} is neither a ${CODE_RULE_FORMAT} document nor a conversation rule: ${conversationRule.error.issues[0]?.message ?? "invalid"}`);
-}
-
-/**
- * Subdirectory of the bundled rules holding opt-in packs, one folder per pack (`opt-in/<pack>/*.json`, e.g. the TSLint
- * ports in `opt-in/tslint/`), whose documents are seeded disabled.
- */
-export const OPT_IN_RULES_DIRECTORY = "opt-in";
-
-function readRuleDirectory(directory: string): { path: string; document: RuleDocument }[] {
-  return readdirSync(directory, { withFileTypes: true })
-    .filter(entry => entry.isFile() && entry.name.endsWith(".json"))
-    .map(entry => entry.name)
-    .sort()
-    .map(name => {
-      const path = join(directory, name);
-      return { path, document: parseRuleDocument(parseJsonWithoutDuplicateKeys(readFileSync(path, "utf8"), path), path) };
-    });
-}
-
-/**
- * Every opt-in pack's documents, by pack name then file name. Hidden entries (`.DS_Store`, `.hidden-pack/`) and non-JSON
- * files directly in `opt-in/` (a README) are ignored; a `*.json` file there belongs to no pack and is an error.
- */
-function readOptInPacks(directory: string): { path: string; document: RuleDocument }[] {
-  if (!existsSync(directory)) return [];
-  const entries = readdirSync(directory, { withFileTypes: true }).filter(entry => !entry.name.startsWith("."));
-  const loose = entries
-    .filter(entry => !entry.isDirectory() && entry.name.endsWith(".json"))
-    .map(entry => join(directory, entry.name));
-  if (loose.length > 0) throw new Error(`Opt-in rules must live in a pack folder (${OPT_IN_RULES_DIRECTORY}/<pack>/*.json): ${loose.join(", ")}`);
-  return entries
-    .filter(entry => entry.isDirectory())
-    .map(entry => entry.name)
-    .sort()
-    .flatMap(pack => readRuleDirectory(join(directory, pack)));
-}
-
-/**
- * Every `*.json` rule document in a directory, sorted by file name, then those in each `opt-in/<pack>/` folder
- * (by pack, then file name) marked `enabledByDefault: false`; ids must be unique across all of them.
- */
-export function loadBundledRules(directory = bundledRulesDirectory()): BundledRuleDocument[] {
-  const entries: { path: string; document: BundledRuleDocument }[] = [
-    ...readRuleDirectory(directory),
-    ...readOptInPacks(join(directory, OPT_IN_RULES_DIRECTORY))
-      .map(({ path, document }) => ({ path, document: { ...document, enabledByDefault: false } })),
-  ];
-  const seen = new Set<string>();
-  return entries.map(({ path, document }) => {
-    if (seen.has(document.rule.id)) throw new Error(`Duplicate bundled rule id: ${document.rule.id} (${path})`);
-    seen.add(document.rule.id);
-    return document;
-  });
-}
-
-const dumpEntrySchema = z.object({
-  kind: z.enum(RULE_KINDS),
-  rule: z.unknown(),
-  enabled: z.boolean(),
-  applicability: z.enum(RULE_APPLICABILITIES),
-  revision: z.number().int().positive(),
-  createdAt: z.number().int(),
-  updatedAt: z.number().int(),
-  sourceDigest: z.string().nullable(),
-  catalogOrigin: z.enum(RULE_ORIGINS),
-}).strict();
-
-const rulesDumpSchema = z.object({
-  version: z.literal(RULES_DUMP_VERSION),
-  exportedAt: z.string(),
-  rules: z.array(dumpEntrySchema),
-}).strict();
-
-/** Export global and current-project definitions without flattening project overrides. */
-export function exportScopedRules(store: ScopedRuleCatalog, path: string, now = new Date()): number {
-  const rules = store.listOwned().map(({ origin: _origin, payloadHash: _payloadHash, ...rule }) => rule);
-  const dump = { version: RULES_DUMP_VERSION, exportedAt: now.toISOString(), rules };
-  const target = resolve(path);
-  mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
-  const staging = `${target}.${process.pid}.tmp`;
-  writeFileSync(staging, `${JSON.stringify(dump, null, 2)}\n`, { mode: 0o600 });
-  renameSync(staging, target);
-  return rules.length;
 }
 
 /**
@@ -134,26 +42,137 @@ function assertDumpCompiles(path: string, documents: readonly RuleDocument[]): v
   }
 }
 
-/** Import a dump without flattening applicability. All or nothing. */
-export function importScopedRules(store: ScopedRuleCatalog, path: string): number {
-  const parsed = rulesDumpSchema.parse(parseJsonWithoutDuplicateKeys(readFileSync(resolve(path), "utf8"), path));
-  const entries = parsed.rules.map((entry, index) => {
-    const document = parseRuleDocument(entry.rule, `${path} rules[${index}]`);
-    if (document.kind !== entry.kind) throw new Error(`${path} rules[${index}] body does not match kind ${entry.kind}`);
-    return {
-      document,
-      options: {
-        applicability: entry.applicability,
-        enabled: entry.enabled,
-        revision: entry.revision,
-        createdAt: entry.createdAt,
-        now: entry.updatedAt,
-        sourceDigest: entry.sourceDigest,
-        origin: entry.catalogOrigin,
-      },
-    };
-  });
-  assertDumpCompiles(path, entries.map(entry => entry.document));
-  return store.restore(entries);
+/** The machine rules dump: the library and each repository's configuration. */
+export const RULES_DUMP_VERSION = 1 as const;
+
+const libraryEntrySchema = z.object({
+  kind: z.enum(RULE_KINDS),
+  rule: z.unknown(),
+  revision: z.number().int().positive(),
+  copiedFromRuleId: z.string().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+}).strict();
+
+const repositoryEntrySchema = z.object({
+  repositoryKey: z.string().min(1),
+  displayName: z.string(),
+  aliases: z.array(z.string()),
+  configuredAt: z.number().int().nullable(),
+  attachments: z.array(z.object({
+    folder: z.string(),
+    sourceKind: z.enum(RULE_SOURCE_KINDS),
+    sourceId: z.string().min(1),
+  }).strict()),
+  settings: z.array(z.object({
+    folder: z.string(),
+    targetKind: z.enum(RULE_SETTING_TARGET_KINDS),
+    targetId: z.string().min(1),
+    on: z.boolean().nullable(),
+    mode: z.enum(RULE_MODES).nullable(),
+  }).strict().refine(setting => setting.on !== null || setting.mode !== null, "a setting sets on or mode")),
+}).strict();
+
+const rulesDumpSchema = z.object({
+  version: z.literal(RULES_DUMP_VERSION),
+  exportedAt: z.string(),
+  library: z.array(libraryEntrySchema),
+  repositories: z.array(repositoryEntrySchema),
+}).strict();
+
+export type RulesDump = z.infer<typeof rulesDumpSchema>;
+
+export interface RulesDumpImportReport {
+  readonly library: number;
+  readonly repositories: number;
 }
 
+/** Export the library and every repository's configuration; checkout settings and start state stay on this machine. */
+export function exportRulesDump(db: RerailDatabase, now = new Date()): RulesDump {
+  const quarantined = quarantinedLibraryRules(db);
+  if (quarantined.length > 0) throw new Error(`cannot export ${quarantined.length} quarantined library rule(s)`);
+  const library = listLibraryRules(db).map(rule => ({
+    kind: rule.document.kind,
+    rule: rule.document.rule as unknown,
+    revision: rule.revision,
+    copiedFromRuleId: rule.copiedFromRuleId,
+    createdAt: rule.createdAt,
+    updatedAt: rule.updatedAt,
+  }));
+  const attachments = db.select().from(ruleAttachments)
+    .orderBy(asc(ruleAttachments.repositoryKey), asc(ruleAttachments.folder), asc(ruleAttachments.sourceKind), asc(ruleAttachments.sourceId)).all();
+  const settings = db.select().from(ruleSettings).where(eq(ruleSettings.ownerKind, "repository"))
+    .orderBy(asc(ruleSettings.ownerId), asc(ruleSettings.folder), asc(ruleSettings.targetKind), asc(ruleSettings.targetId)).all();
+  const repositoryRows = db.select().from(repositories).orderBy(asc(repositories.repositoryKey)).all();
+  return {
+    version: RULES_DUMP_VERSION,
+    exportedAt: now.toISOString(),
+    library,
+    repositories: repositoryRows.map(row => ({
+      repositoryKey: row.repositoryKey,
+      displayName: row.displayName,
+      aliases: row.aliases,
+      configuredAt: row.configuredAt,
+      attachments: attachments.filter(attachment => attachment.repositoryKey === row.repositoryKey)
+        .map(({ folder, sourceKind, sourceId }) => ({ folder, sourceKind, sourceId })),
+      settings: settings.filter(setting => setting.ownerId === row.repositoryKey)
+        .map(({ folder, targetKind, targetId, on, mode }) => ({ folder, targetKind, targetId, on, mode })),
+    })),
+  };
+}
+
+/**
+ * Import a rules dump, all or nothing: every file rule must compile first. Library rules are upserted; each
+ * listed repository's attachments and repository settings are replaced and its set-up time kept, while this
+ * machine's start state is left alone.
+ */
+export function importRulesDump(db: RerailDatabase, bundle: BundledCatalog, value: unknown, now = Date.now()): RulesDumpImportReport {
+  const version = typeof value === "object" && value !== null ? (value as { version?: unknown }).version : undefined;
+  if (version !== RULES_DUMP_VERSION) {
+    throw new Error(`a v${String(version)} rules dump can't be imported; export it again with this Rerail (v${RULES_DUMP_VERSION})`);
+  }
+  const dump = rulesDumpSchema.parse(value);
+  const documents = dump.library.map((entry, index) => {
+    const document = parseRuleDocument(entry.rule, `rules dump library[${index}]`);
+    if (document.kind !== entry.kind) throw new Error(`rules dump library[${index}] body does not match kind ${entry.kind}`);
+    if (bundle.documents.has(document.rule.id)) throw new Error(`rules dump library[${index}] (${document.rule.id}) takes a By Rerail rule id`);
+    if (document.kind === "conversation") validateLibraryDocument(document.rule, document.kind);
+    return { document, entry };
+  });
+  assertDumpCompiles("rules dump", documents.map(({ document }) => document));
+  db.transaction(tx => {
+    for (const { document, entry } of documents) {
+      writeLibraryRule(tx, bundle, document, {
+        revision: entry.revision,
+        copiedFromRuleId: entry.copiedFromRuleId,
+        createdAt: entry.createdAt,
+        now: entry.updatedAt,
+      });
+    }
+    for (const repository of dump.repositories) {
+      const key = repository.repositoryKey;
+      tx.insert(repositories).values({
+        repositoryKey: key,
+        displayName: repository.displayName,
+        aliases: repository.aliases,
+        configuredAt: repository.configuredAt,
+        createdAt: now,
+        updatedAt: now,
+      }).onConflictDoUpdate({
+        target: repositories.repositoryKey,
+        set: { displayName: repository.displayName, aliases: repository.aliases, configuredAt: repository.configuredAt, updatedAt: now },
+      }).run();
+      tx.delete(ruleAttachments).where(eq(ruleAttachments.repositoryKey, key)).run();
+      tx.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "repository"), eq(ruleSettings.ownerId, key))).run();
+      for (const attachment of repository.attachments) {
+        tx.insert(ruleAttachments).values({ repositoryKey: key, ...attachment, folder: normalizeFolder(attachment.folder), createdAt: now })
+          .onConflictDoNothing().run();
+      }
+      for (const setting of repository.settings) {
+        tx.insert(ruleSettings).values({ ownerKind: "repository", ownerId: key, ...setting, folder: normalizeFolder(setting.folder), updatedAt: now })
+          .onConflictDoNothing().run();
+      }
+    }
+  }, { behavior: "immediate" });
+  return { library: documents.length, repositories: dump.repositories.length };
+}
