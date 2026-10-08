@@ -21,11 +21,12 @@ import {
 } from "./activation-cli.js";
 import { CustomerActivationManager, CustomerProfileStore } from "./customer-profile.js";
 import {
-  readOnlyStartState, startRerail, stopRerail, workspaceStartState, type RepositorySetupIo, type RepositoryStartState,
+  readOnlyStartState, startRerail, stopRerail, workspaceStartState, type RepositorySetupIo,
 } from "./repository-start.js";
-import { readRepositoryIdAt, repositoryIdentityLocation, repositoryName } from "./repository-identity.js";
+import type { RepositoryStartState } from "./repository-model.js";
+import { repositoryName } from "./repository-identity.js";
 import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "./daemon.js";
-import { defaultRerailDatabasePath, RERAIL_DATABASE_FILE } from "./database.js";
+import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "./database.js";
 import {
   lookupDaemon,
   openInBrowser,
@@ -38,10 +39,12 @@ import {
 import { deviceSecretStore } from "./device-keystore.js";
 import { runRerailMcpBridge } from "./mcp-bridge.js";
 import { runResetCommand, runRulesCommand, snapshotDatabaseBeforeUpdate } from "./project-cli.js";
+import { lookupCheckout, parentCheckouts, recordCheckout } from "./repository-registry.js";
+import { listRepositoryRules, setUpRepository } from "./rule-configuration.js";
+import { loadBundledCatalog } from "./bundled-rules.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
-import { openScopedRuleCatalog, ScopedRuleCatalog } from "./scoped-rule-catalog.js";
 import { parseHostNames, runInstallCommand, runSetupCommand } from "./setup-cli.js";
 import { defaultRerailHome } from "./rerail-home.js";
 import {
@@ -107,8 +110,8 @@ function usage(): string {
     "Usage:",
     "  rerail setup [--project <dir>] [--harness omp,pi,claude-code,codex,cursor] [--port <n>] [--skip-start] [--skip-register] [--dry-run]",
     "  rerail install [--root <package>] [--project <dir>] [--harness <list>] [--remove] [--dry-run]",
-    "  rerail start [--repo <dir>] [--agents <list>] [--database <file>]",
-    "  rerail stop [--repo <dir>] [--database <file>]",
+    "  rerail start [--repo <dir>] [--repository] [--no-packs] [--agents <list>] [--database <file>]",
+    "  rerail stop [--repo <dir>] [--repository] [--database <file>]",
     "  rerail state [--repo <dir>] [--database <file>]",
     "  rerail status",
     "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--open]",
@@ -173,9 +176,9 @@ async function runStatusCommand(home: string): Promise<number> {
   const workspace = process.cwd();
   const state = workspaceStartState(workspace);
   const name = repositoryName(workspace);
-  if (state === "started") process.stdout.write(`Rerail is on in ${name}.\n`);
-  else if (state === "stopped") process.stdout.write(`Rerail is stopped in ${name}. Start it again with rerail start.\n`);
-  else process.stdout.write(`Rerail has not been started in ${name}. Start it with rerail start.\n`);
+  if (state === "stopped") process.stdout.write(`Rerail is stopped in ${name}. Start it with rerail start.\n`);
+  else if (state === "not-set-up") process.stdout.write(`Rerail is on in ${name}, which is not set up yet. Set it up with rerail start.\n`);
+  else process.stdout.write(`Rerail is on in ${name}.\n`);
   const lookup = await lookupDaemon(home);
   if (lookup.status === "absent") {
     process.stdout.write("The Rerail daemon is not running. Start it with rerail daemon start.\n");
@@ -189,22 +192,31 @@ async function runStatusCommand(home: string): Promise<number> {
   return 0;
 }
 
-/** Populate the Rerail database with throwaway mock rules, and a session and work links for this repository. */
+/**
+ * Store throwaway mock rules in the library, add them to this checkout's repository (only the first conversation
+ * rule on) and set it up; then a session and work links for it.
+ */
 function runSeedCommand(args: readonly string[]): number {
   parseArguments(args, { flags: [], options: [] }, argument => `Unknown seed option: ${argument}\n\n${usage()}`);
-  const database = defaultRerailDatabasePath();
-  const catalog = openScopedRuleCatalog(process.cwd(), database);
+  const databasePath = defaultRerailDatabasePath();
+  const database = openRerailDatabase(databasePath);
   let result;
   try {
-    for (const rule of MOCK_CODE_RULES) catalog.upsertCodeRule(rule);
-    for (const [index, rule] of MOCK_CONVERSATION_RULES.entries()) catalog.upsertConversationRule(rule, { enabled: index === 0 });
-    result = seedRerailDatabase(database, { repositoryId: catalog.context().repositoryId });
+    const { repositoryKey } = recordCheckout(database, process.cwd());
+    result = seedRerailDatabase(databasePath, { repositoryId: repositoryKey });
+    setUpRepository(database, repositoryKey, {
+      packs: [],
+      rules: [...MOCK_CODE_RULES, ...MOCK_CONVERSATION_RULES].map(rule => ({ sourceKind: "library_rule" as const, sourceId: rule.id, folder: "" })),
+      settings: MOCK_CONVERSATION_RULES.slice(1).map(rule => ({
+        owner: { kind: "repository" as const, repositoryKey }, folder: "", targetKind: "rule" as const, targetId: rule.id, on: false, mode: null,
+      })),
+    });
   } finally {
-    catalog.close();
+    database.$client.close();
   }
   process.stdout.write(
-    `Seeded ${database}: ${result.codeRules} file rules, `
-    + `${result.conversationRules} conversation rules, ${result.sessions} session, ${result.events} events, `
+    `Seeded ${databasePath}: ${result.codeRules} code rules, `
+    + `${result.conversationRules} conversation rules added to this repository, ${result.sessions} session, ${result.events} events, `
     + `${result.workLinks} work links.\n`,
   );
   return 0;
@@ -270,23 +282,26 @@ async function runUpdateCommand(
 }
 
 /**
- * Rules on in `workspace`'s repository, for `/rerail` where the coding agent cannot name its session.
- * A status read: it never writes, and where the catalog cannot be read (busy, or not yet set up) the
- * summary drops the count line rather than failing.
+ * Rules on in `workspace`'s checkout, from its repository's configuration, for `/rerail` where the coding agent
+ * cannot name its session. A status read: it never writes, and where the configuration cannot be read (busy, or
+ * the checkout not recorded) the summary drops the count line rather than failing.
  */
 function enabledRuleCount(workspace: string): number | null {
-  const location = repositoryIdentityLocation(workspace);
-  const repositoryId = readRepositoryIdAt(location.identityPath);
-  if (repositoryId === undefined) return null;
-  let catalog: ScopedRuleCatalog | undefined;
+  const databasePath = defaultRerailDatabasePath();
+  if (!existsSync(databasePath)) return null;
+  let database;
   try {
-    catalog = ScopedRuleCatalog.openReadOnly(defaultRerailDatabasePath(), { repositoryId, workspaceRoot: location.workspaceRoot });
-    return catalog?.list({ enabled: true }).length ?? null;
+    database = openRerailDatabase(databasePath, { readonly: true });
+    const checkout = lookupCheckout(database, workspace);
+    if (checkout === undefined) return null;
+    const parentCheckoutPaths = parentCheckouts(database, checkout).map(row => row.checkoutPath);
+    return listRepositoryRules(database, loadBundledCatalog(), checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths })
+      .rules.filter(rule => rule.on).length;
   } catch (error) {
     process.stderr.write(`rerail: could not count this repo's rules: ${error instanceof Error ? error.message : String(error)}\n`);
     return null;
   } finally {
-    catalog?.close();
+    database?.$client.close();
   }
 }
 
@@ -345,30 +360,38 @@ async function runDaemonCommand(command: string, args: readonly string[], home: 
 }
 
 /**
- * `rerail start` / `rerail stop` act on the checkout of `--repo` or the current directory. Without a
+ * `rerail start` / `rerail stop` act on the checkout of `--repo` or the current directory and the worktrees inside
+ * it, or with `--repository` on every checkout of its repository. A start that sets the repository up adds its
+ * recommended rule packs, or none with `--no-packs`. Without a
  * terminal the caller is a coding agent relaying the output, so the text names its slash commands.
  * `--database` names the database an extension was configured with, as `rerail state` takes it.
  */
 async function runRepositoryCommand(command: "start" | "stop", args: readonly string[]): Promise<number> {
-  const { options } = parseArguments(
+  const { flags, options } = parseArguments(
     args,
-    { flags: [], options: command === "start" ? ["--repo", "--agents", "--database"] : ["--repo", "--database"] },
+    {
+      flags: command === "start" ? ["--repository", "--no-packs"] : ["--repository"],
+      options: command === "start" ? ["--repo", "--agents", "--database"] : ["--repo", "--database"],
+    },
     argument => `Unknown ${command} option: ${argument}\n\n${usage()}`,
   );
   const workspace = resolve(options.get("--repo") ?? process.cwd());
   const database = options.get("--database");
   const databasePath = database === undefined ? undefined : resolve(database);
+  const repository = flags.has("--repository");
   const io: RepositorySetupIo = {
     lane: process.stdout.isTTY ? "terminal" : "agent",
     say: text => { process.stdout.write(`${text}\n`); },
   };
   if (command === "stop") {
-    stopRerail(workspace, io, databasePath);
+    stopRerail(workspace, io, { ...(databasePath === undefined ? {} : { databasePath }), repository });
     return 0;
   }
   const agents = options.get("--agents");
   await startRerail(workspace, io, {
     ...(databasePath === undefined ? {} : { databasePath }),
+    rulePacks: flags.has("--no-packs") ? "none" : "recommended",
+    repository,
     ...(agents === undefined ? {} : { agents: parseHostNames(agents.split(",").map(name => name.trim()).filter(Boolean)) }),
   });
   const page = await readRulesDashboard({ cwd: workspace });
@@ -377,7 +400,7 @@ async function runRepositoryCommand(command: "start" | "stop", args: readonly st
 }
 
 /**
- * `rerail state`: started, stopped or never for the repository, for callers that cannot open SQLite (OMP runs on
+ * `rerail state`: started, stopped or not-set-up for the checkout, for callers that cannot open SQLite (OMP runs on
  * Bun). `--database` names the database file when a caller configured one other than the home's default.
  */
 function runStateCommand(args: readonly string[]): number {

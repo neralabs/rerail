@@ -40,7 +40,7 @@ function experiment(): PlaygroundExperiment {
         definition: "{}",
         digest: "edited-rule",
         updatedAt: "2",
-        enabled: false,
+        source: "library",
       },
       outcome: { observed: "cannot-exercise", detail: "Rule kind changed; scenario needs revision" },
       completedAt: 3,

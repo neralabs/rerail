@@ -1,10 +1,12 @@
-import { existsSync, renameSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import Database from "better-sqlite3";
+import { loadBundledCatalog } from "./bundled-rules.js";
 import { parseArguments } from "./daemon.js";
-import { defaultRerailDatabasePath, resetRepositoryHistory } from "./database.js";
-import { defaultRulesDumpPath, exportScopedRules, importScopedRules } from "./rule-bootstrap.js";
-import { openScopedRuleCatalog, resolveRepositoryContext } from "./scoped-rule-catalog.js";
+import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistory } from "./database.js";
+import { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
+import { listRepositories, lookupCheckout } from "./repository-registry.js";
+import { defaultRulesDumpPath, exportRulesDump, importRulesDump } from "./rule-bootstrap.js";
 
 /** Where `rerail update` leaves a consistent copy of the Rerail database before it switches versions. */
 export function preUpdateSnapshotPath(databasePath: string): string {
@@ -38,6 +40,7 @@ export function snapshotDatabaseBeforeUpdate(databasePath = defaultRerailDatabas
   }
 }
 
+/** `rerail rules export|import`: the library and every repository's configuration, as a rules dump. */
 export function runRulesCommand(args: readonly string[], usage: () => string): number {
   const action = args[0];
   const database = defaultRerailDatabasePath();
@@ -49,26 +52,35 @@ export function runRulesCommand(args: readonly string[], usage: () => string): n
     );
     const rawOutput = options.get("--output");
     const output = rawOutput === undefined ? defaultRulesDumpPath(database) : resolve(rawOutput);
-    const store = openScopedRuleCatalog(process.cwd(), database);
-    let count: number;
+    const db = openRerailDatabase(database);
+    let dump;
     try {
-      count = exportScopedRules(store, output);
+      dump = exportRulesDump(db);
     } finally {
-      store.close();
+      db.$client.close();
     }
-    process.stdout.write(`Exported ${count} rules from ${database} to ${output}\n`);
+    const staging = `${output}.${process.pid}.tmp`;
+    try {
+      writeFileSync(staging, `${JSON.stringify(dump, null, 2)}\n`, { mode: 0o600 });
+      renameSync(staging, output);
+    } finally {
+      rmSync(staging, { force: true });
+    }
+    process.stdout.write(`Exported ${dump.library.length} rules created by you and ${dump.repositories.length} repositories from ${database} to ${output}\n`);
     return 0;
   }
   if (action === "import") {
     const file = args[1];
     if (file === undefined || file.startsWith("--")) throw new Error(`rules import needs a dump file\n\n${usage()}`);
     parseArguments(args.slice(2), { flags: [], options: [] }, argument => `Unknown rules import option: ${argument}\n\n${usage()}`);
-    const store = openScopedRuleCatalog(process.cwd(), database);
+    const source = resolve(file);
+    const value = parseJsonWithoutDuplicateKeys(readFileSync(source, "utf8"), source);
+    const db = openRerailDatabase(database);
     try {
-      const count = importScopedRules(store, resolve(file));
-      process.stdout.write(`Imported ${count} rules from ${resolve(file)} into ${database}\n`);
+      const report = importRulesDump(db, loadBundledCatalog(), value);
+      process.stdout.write(`Imported ${report.library} rules created by you and ${report.repositories} repositories from ${source} into ${database}\n`);
     } finally {
-      store.close();
+      db.$client.close();
     }
     return 0;
   }
@@ -80,21 +92,42 @@ function plural(count: number, noun: string): string {
 }
 
 /**
- * Delete this repository's execution history, across all its worktrees, from the Rerail database. Rules, other
- * repositories, and settings stay; live sessions never observe a rule reset.
+ * Delete this repository's execution history, across all its checkouts, from the Rerail database: sessions recorded
+ * under its key or aliases, and older ones under its checkouts' clone ids. Rules, other repositories, and settings
+ * stay; live sessions never observe a rule reset.
  */
 export function runResetCommand(args: readonly string[], usage: () => string): number {
   parseArguments(args, { flags: [], options: [] }, argument => `Unknown reset option: ${argument}\n\n${usage()}`);
   const database = defaultRerailDatabasePath();
-  const repository = resolveRepositoryContext(process.cwd());
   if (!existsSync(database)) {
     process.stdout.write(`No Rerail database at ${database}; nothing to reset.\n`);
     return 0;
   }
-  const { sessions, openSessions } = resetRepositoryHistory(database, repository.repositoryId);
+  const db = openRerailDatabase(database);
+  let ids: string[];
+  let repositoryKey: string;
+  try {
+    const checkout = lookupCheckout(db, process.cwd());
+    if (checkout === undefined) {
+      process.stdout.write("Rerail has not seen this repository; nothing to reset.\n");
+      return 0;
+    }
+    repositoryKey = checkout.repositoryKey;
+    const repository = listRepositories(db).find(candidate => candidate.repositoryKey === repositoryKey);
+    ids = [...new Set([repositoryKey, ...(repository?.aliases ?? []), ...(repository?.checkouts ?? []).map(row => row.cloneId)])];
+  } finally {
+    db.$client.close();
+  }
+  let sessions = 0;
+  let openSessions = 0;
+  for (const id of ids) {
+    const report = resetRepositoryHistory(database, id);
+    sessions += report.sessions;
+    openSessions += report.openSessions;
+  }
   const kept = openSessions > 0 ? `, ${openSessions} running ${plural(openSessions, "session")} kept (history dropped)` : "";
   process.stdout.write(
-    `Removed the history of this repository (${repository.repositoryId}, across all its worktrees) from ${database}: `
+    `Removed the history of this repository (${repositoryKey}, across all its checkouts) from ${database}: `
     + `${sessions} ended ${plural(sessions, "session")} deleted`
     + kept
     + ". Rules and other repositories are unchanged.\n",

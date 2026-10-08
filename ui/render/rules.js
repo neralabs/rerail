@@ -1,9 +1,9 @@
 import { h, setAttr, setText, setClass, setStyle, chevron, syncChildren, clearKeyed } from "../dom.js";
 import { fmt, plural, whenLabel, clock, dayLabel, daysAgo, shortSessionId } from "../format.js";
-import { originOf, ruleTitle, isNew } from "../derive.js";
+import { originOf, ruleTitle } from "../derive.js";
 import { data, ui, rangeLabel, fires, allFires, rerails, isMeasured, activityOf, activityAllOf, ruleFindings, originGroups, prefixGroups } from "../state.js";
 
-const SORTS = [["triggered", "Most triggered"], ["recent", "Most recently triggered"], ["newest", "Newest first"], ["az", "A to Z"]];
+const SORTS = [["triggered", "Most triggered"], ["recent", "Most recently triggered"], ["az", "A to Z"]];
 
 function sortControl() {
   return h("label.sortctl", null, h("span", null, "Sort"),
@@ -18,19 +18,19 @@ function createRow(stored, compact) {
   const row = h("div.row", { "data-id": id, "data-open": "false" });
   const caret = compact ? h("span") : h("button.caret", { "data-act": "rtoggle", "data-i": id, "aria-expanded": "false", "aria-label": "Show findings" }, chevron());
   const title = h("button.t", { "data-act": "detail", "data-i": id });
-  const badgeNew = h("span.badge.new", { hidden: true }, "new");
+  const folder = h("span.mono");
   const count = h("span.count.num");
   const bar = h("span.bar", null, h("i"));
   const sw = h("button.sw", { role: "switch", "aria-checked": "false", "data-act": "toggle", "data-i": id });
   const origin = h("span.badge");
   const last = h("span");
-  const main = h("div.rmain.exp", null, caret, h("div.rtitle", null, title, badgeNew),
+  const main = h("div.rmain.exp", null, caret, h("div.rtitle", null, title),
     h("div.rside", null, count, bar, sw),
-    h("div.rmeta", null, origin, h("span.mono", null, id), last));
+    h("div.rmeta", null, origin, h("span.mono", null, id), folder, last));
   row.append(main);
   const children = compact ? null : h("div.children");
   if (children) row.append(children);
-  row._r = { caret, title, badgeNew, count, bar: bar.firstChild, barWrap: bar, sw, origin, last, children };
+  row._r = { caret, title, folder, count, bar: bar.firstChild, barWrap: bar, sw, origin, last, children };
   return row;
 }
 
@@ -50,7 +50,8 @@ function updateRow(row, stored) {
   setAttr(row, "data-open", String(open));
   if (r.caret.tagName === "BUTTON") setAttr(r.caret, "aria-expanded", String(open));
   setText(r.title, title);
-  setAttr(r.badgeNew, "hidden", !isNew(stored));
+  setText(r.folder, stored.folders.filter(f => f !== "").join(", "));
+  setAttr(r.folder, "hidden", stored.folders.every(f => f === ""));
   const sig = `${isMeasured(id)}|${f}|${all}|${ui.range}`;
   if (r.count.dataset.sig !== sig) { r.count.dataset.sig = sig; r.count.replaceChildren(...countContent(id, f, all)); }
   setAttr(r.barWrap, "hidden", !isMeasured(id));
@@ -161,8 +162,8 @@ function groupSection(title, lead, act) {
 }
 
 function buildOriginPane() {
-  const mine = groupSection("Your rules", "Compiled from your files or added through your agent. On from the start.", sortControl());
-  const presets = groupSection("Nera presets", "Bundled with Nera. Off until you turn them on.", h("button.btn.sm", { "data-act": "presets-on" }, "Turn on all shown"));
+  const mine = groupSection("Created by you", "Rules you created and added to this repository.", sortControl());
+  const presets = groupSection("By Rerail", "Rules that come with Rerail, from the rule packs added to this repository.", h("button.btn.sm", { "data-act": "presets-on" }, "Turn on all shown"));
   originPane = h("div", null, mine, presets);
   originPane._mine = mine; originPane._presets = presets;
   return originPane;
@@ -230,7 +231,7 @@ function renderOriginPane() {
   const empty = originPane._mine._empty;
   setAttr(empty, "hidden", mine.length > 0);
   setText(empty.querySelector("h3"), filtered ? "No matches" : "Nothing of yours yet");
-  setText(empty.querySelector("p"), filtered ? "Try a different search or filter." : "Rules compiled from your instruction files or added through your agent show here.");
+  setText(empty.querySelector("p"), filtered ? "Try a different search or filter." : "Rules you create, or your agent creates for you, show here once they are added to this repository.");
   setAttr(originPane._mine.querySelector(".lhead"), "hidden", mine.length === 0);
   syncRows(originPane._presets._rows, presets, false);
   setAttr(originPane._presets, "hidden", presets.length === 0);

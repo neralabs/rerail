@@ -131,9 +131,7 @@ export {
   type AuditRequest,
 } from "./audit-control-schema.js";
 export {
-  bootstrapCodeRuleDslCatalog,
   bundledCodeRuleDslDirectory,
-  type BootstrapCodeRuleDslCatalogOptions,
   type CompiledCodeRuleDslEntry,
   type CodeRuleDslCatalog,
   type CodeRuleDslCatalogStatus,
@@ -156,18 +154,13 @@ export {
   type AuditQuery,
 } from "./audit-store.js";
 export {
-  RULE_APPLICABILITIES,
   RULE_KINDS,
   RULE_ORIGINS,
   RULE_SCOPES,
   RERAIL_SCHEMA_VERSION,
-  catalogRules,
   events,
   audits,
   ruleCatalogIdentities,
-  ruleProjectRepositories,
-  ruleProjects,
-  ruleRepositories,
   rules,
   repositoryAudits,
   policySessionOwners,
@@ -179,12 +172,8 @@ export {
   type EventRow,
   type NewRuleRow,
   type RuleCatalogIdentityRow,
-  type RuleApplicability,
   type RuleKind,
   type RuleOrigin,
-  type RuleProjectRepositoryRow,
-  type RuleProjectRow,
-  type RuleRepositoryRow,
   type RuleRow,
   type RuleScope,
   type SessionRow,
@@ -201,37 +190,70 @@ export {
   type StoredRule,
 } from "./rule-store.js";
 export {
-  openScopedRuleCatalog,
-  resolveRepositoryContext,
-  ScopedRuleCatalog,
-  type RepositoryContext,
-  type RuleCatalogContext,
-  type ScopedRuleQuery,
-  type ScopedRuleSelection,
-  type ScopedRuleRestore,
-  type ScopedRuleWriteOptions,
-  type ScopedStoredRule,
-} from "./scoped-rule-catalog.js";
-export { conversationRuleLoader, type ConversationRuleSourceOptions, type DatabaseConversationRules } from "./rule-sources.js";
+  createCheckoutResolver,
+  linkAlias,
+  listRepositories,
+  lookupCheckout,
+  recordCheckout,
+  type RepositoryListing,
+} from "./repository-registry.js";
+export { addAttachment, listRepositoryRules, removeAttachment, setRuleSetting, setUpRepository } from "./rule-configuration.js";
+export { copyRerailRuleToLibrary, getLibraryRule, listLibraryRules, removeLibraryRule, upsertLibraryRule } from "./rule-library.js";
+export {
+  CALLER_CWD_HEADER,
+  folderContains,
+  normalizeFolder,
+  type ApiCaller,
+  type BundledCatalog,
+  type CheckoutContext,
+  type CheckoutRecord,
+  type CheckoutRuleSet,
+  type EffectiveRule,
+  type LibraryRule,
+  type RepositoryKey,
+  type RepositoryRecord,
+  type RepositoryStartState,
+  type RuleAttachment,
+  type RuleSetting,
+} from "./repository-model.js";
+export {
+  normalizeRemoteAddress,
+  readCloneId,
+  readRemoteAddress,
+  repositoryKeyOf,
+  resolveCloneId,
+  type RemoteAddress,
+  type RepositoryIdentityLocation,
+} from "./repository-identity.js";
+export { loadBundledCatalog } from "./bundled-rules.js";
+export { GitUnavailableError } from "./git.js";
+export {
+  conversationRuleLoader,
+  type ConversationRuleLoader,
+  type ConversationRuleSourceOptions,
+  type DatabaseConversationRules,
+} from "./rule-sources.js";
 export {
   ApiError,
-  eventRecordSchema,
-  operationInputShape,
-  operations,
-  ruleUpsertSchema,
-  storedRuleSchema,
-  workLinkInputSchema,
-  workLinkRecordSchema,
-  auditRecordSchema,
-  auditQuerySchema,
+  invokeOperation,
   type Operation,
   type OperationDefinition,
   type OperationMethod,
   type RerailApiStores,
+} from "./api/operation.js";
+export {
+  eventRecordSchema,
+  operationInputShape,
+  operations,
+  workLinkInputSchema,
+  workLinkRecordSchema,
+  auditRecordSchema,
+  auditQuerySchema,
 } from "./api/operations.js";
-export { sessionSummarySchema } from "./api/session-contracts.js";
+export { DatabaseApiStores, type DatabaseApiStoresOptions } from "./api/stores.js";
+export { rulesDashboardUrl, sessionSummarySchema, type RulesDashboardScope } from "./api/session-contracts.js";
 export { createRerailApi } from "./api/http.js";
-export { createRerailMcpHandler, createRerailMcpServer } from "./api/mcp.js";
+export { callerFromHeader, createRerailMcpHandler, createRerailMcpServer } from "./api/mcp.js";
 export {
   MOCK_CONVERSATION_RULES,
   MOCK_CODE_RULES,

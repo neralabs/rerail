@@ -9,7 +9,8 @@ export const ruleSnapshotSchema = z
     definition: z.string().max(262_144),
     digest: z.string(),
     updatedAt: z.string(),
-    enabled: z.boolean(),
+    /** By Rerail (bundled) or created by you (the rule library). */
+    source: z.enum(["rerail", "library"]),
   })
   .strict();
 export const scenarioSchema = z

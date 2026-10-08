@@ -282,8 +282,8 @@ rule_count() {
   sandbox "$NODE" --no-warnings -e '
     const { DatabaseSync } = require("node:sqlite");
     const database = new DatabaseSync(process.argv[1], { readOnly: true });
-    const all = database.prepare("SELECT count(*) AS n FROM catalog_rules").get().n;
-    const mock = database.prepare("SELECT count(*) AS n FROM catalog_rules WHERE rule_id = ?").get(process.argv[2]).n;
+    const all = database.prepare("SELECT count(*) AS n FROM library_rules").get().n;
+    const mock = database.prepare("SELECT count(*) AS n FROM library_rules WHERE rule_id = ?").get(process.argv[2]).n;
     console.log(`${all} ${mock}`);
   ' "$DATABASE" "$MOCK_RULE"
 }
