@@ -1,16 +1,24 @@
+import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { createRerailApi } from "../src/api/http.js";
-import { operations, type RerailApiStores } from "../src/api/operations.js";
+import { operations } from "../src/api/operations.js";
+import { DatabaseApiStores } from "../src/api/stores.js";
+import { loadBundledCatalog } from "../src/bundled-rules.js";
+import { openRerailDatabase } from "../src/database.js";
+import { upsertLibraryRule } from "../src/rule-library.js";
 import { NativeCodeRuleEnforcer } from "../src/code-rule-enforcer.js";
 import type { AuditRecorder, AuditInput, AuditResult } from "../src/audit.js";
-import { bootstrapCodeRuleDslCatalog } from "../src/code-rule-dsl-catalog.js";
+import { CheckoutCatalogs } from "../src/code-rule-dsl-catalog.js";
 import { codeRuleSchema, type CodeRule } from "../src/code-rule-schema.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
-import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
+import type { RuleDocument } from "../src/rule-store.js";
+import { libraryRules } from "../src/schema.js";
+import { setUpTestRepository } from "./support/repository-rules.js";
 
 function codeRule(id: string): CodeRule {
   return codeRuleSchema.parse({
@@ -52,17 +60,20 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-/** A per-project store holding `test:kept` and `test:broken`, whose row no longer validates. */
-function storeWithBrokenRow(): string {
-  const databasePath = join(root, ".rerail", "code-rules.sqlite");
-  const store = new SqliteRuleStore(databasePath);
-  store.upsertCodeRule(codeRule("test:kept"));
-  store.upsertCodeRule(codeRule("test:broken"));
-  store.close();
-  const raw = new Database(databasePath);
-  raw.prepare("UPDATE rules SET clauses_json = ? WHERE id = ?").run(JSON.stringify([{ id: "x" }]), "test:broken");
-  raw.close();
-  return databasePath;
+/** A set-up repository whose library holds `test:kept` and `test:broken`, whose row no longer validates. */
+function repositoryWithBrokenRow(): { checkout: string; databasePath: string } {
+  const checkout = realpathSync(root);
+  execFileSync("git", ["init", "--quiet"], { cwd: checkout });
+  const databasePath = join(checkout, ".rerail", "rerail.sqlite");
+  setUpTestRepository(checkout, { library: [{ kind: "file", rule: codeRule("test:kept") }, { kind: "file", rule: codeRule("test:broken") }] }, databasePath);
+  const database = openRerailDatabase(databasePath);
+  try {
+    const broken = { kind: "file", rule: { ...codeRule("test:broken"), clauses: [{ id: "x" }] } } as unknown as RuleDocument;
+    database.update(libraryRules).set({ document: broken }).where(eq(libraryRules.ruleId, "test:broken")).run();
+  } finally {
+    database.$client.close();
+  }
+  return { checkout, databasePath };
 }
 
 const quarantineFailure = {
@@ -70,29 +81,31 @@ const quarantineFailure = {
   clauseId: "catalog",
   code: "adapter-error",
   stage: "parse",
-  message: expect.stringMatching(/^policy rule test:broken \(repository\) is skipped: clauses\/0/u),
+  message: expect.stringMatching(/^policy rule test:broken \(library\) is skipped: clauses\/0/u),
 };
 
 describe("quarantined code rule rows", () => {
   it("are listed by the compiled catalog for the load that skipped them", () => {
-    const catalog = bootstrapCodeRuleDslCatalog({ databasePath: storeWithBrokenRow() });
+    const { checkout, databasePath } = repositoryWithBrokenRow();
+    const catalogs = new CheckoutCatalogs(databasePath);
     try {
-      expect(catalog.codeRules().map(entry => entry.id)).toEqual(["test:kept"]);
+      const catalog = catalogs.catalog(checkout);
+      expect(catalog.snapshot().codeRules.map(entry => entry.id)).toEqual(["test:kept"]);
       expect(catalog.quarantined()).toEqual([
-        { ruleId: "test:broken", kind: "file", owner: "repository", reason: expect.stringMatching(/clauses/u) },
+        { ruleId: "test:broken", kind: "file", owner: "library", reason: expect.stringMatching(/clauses/u) },
       ]);
     } finally {
-      catalog.close();
+      catalogs.close();
     }
   });
 
   it("surface as one adapter-error per rule per catalog load, and clear once the row is fixed", async () => {
-    const databasePath = storeWithBrokenRow();
-    await mkdir(join(root, "api"));
-    const catalog = bootstrapCodeRuleDslCatalog({ databasePath });
+    const { checkout, databasePath } = repositoryWithBrokenRow();
+    await mkdir(join(checkout, "api"));
+    const catalogs = new CheckoutCatalogs(databasePath);
     const { recorder, audits } = recordingAudits();
-    const enforcer = new NativeCodeRuleEnforcer(catalog, {
-      workspaceRoot: root,
+    const enforcer = new NativeCodeRuleEnforcer(catalogs.catalog(checkout), {
+      workspaceRoot: checkout,
       steerDelivery: { requestSteer: async () => undefined },
       audits: recorder,
       mode: "log",
@@ -112,9 +125,8 @@ describe("quarantined code rule rows", () => {
       expect(reports()).toHaveLength(1);
       expect(enforcer.snapshotStatus().failures).toEqual([quarantineFailure]);
 
-      const store = new SqliteRuleStore(databasePath);
-      store.upsertCodeRule(codeRule("test:broken"));
-      store.close();
+      // Fixing a library rule writes a new revision, which the catalog sees as a configuration change.
+      upsertLibraryRule(catalogs.database, loadBundledCatalog(), { ...codeRule("test:broken"), revision: 2 }, "file");
       await enforcer.auditGeneratedEdits("session", {
         revision: 3, checkpoints: ["edit"], edits: [{ path: "api/a.py", language: "python", generatedText: "NEEDLE = 3\n" }],
       });
@@ -123,33 +135,32 @@ describe("quarantined code rule rows", () => {
       expect(reports()).toHaveLength(1);
     } finally {
       await enforcer.close();
-      catalog.close();
+      catalogs.close();
     }
   });
 
-  it("are listed beside the rules by rules_list", async () => {
-    const catalog = ScopedRuleCatalog.open(join(root, "catalog.sqlite"), { repositoryId: "repo", workspaceRoot: root });
+  it("are listed beside the library rules by library_rules_list", async () => {
+    const databasePath = join(root, "rerail.sqlite");
+    const stores = new DatabaseApiStores(databasePath, {
+      health: () => ({ pid: process.pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
+      origin: () => "http://127.0.0.1:4737",
+    });
     try {
-      catalog.upsertCodeRule(codeRule("test:kept"));
-      catalog.upsertCodeRule(codeRule("test:broken"));
-      const raw = new Database(join(root, "catalog.sqlite"));
-      raw.prepare("UPDATE catalog_rules SET document_json = json_set(document_json, '$.rule.clauses', json(?)) WHERE rule_id = ?")
+      upsertLibraryRule(stores.database(), loadBundledCatalog(), codeRule("test:kept"), "file");
+      upsertLibraryRule(stores.database(), loadBundledCatalog(), codeRule("test:broken"), "file");
+      const raw = new Database(databasePath);
+      raw.prepare("UPDATE library_rules SET document_json = json_set(document_json, '$.rule.clauses', json(?)) WHERE rule_id = ?")
         .run(JSON.stringify([{ id: "x" }]), "test:broken");
       raw.close();
-      const app = createRerailApi({ rules: () => catalog } as unknown as RerailApiStores, operations, { version: "0.0.0-test" });
+      const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
 
-      const listed = await (await app.request("/api/rules")).json() as { rules: { rule: { id: string } }[]; quarantined: unknown[] };
+      const listed = await (await app.request("/api/library-rules")).json() as { rules: { rule: { id: string } }[]; quarantined: unknown[] };
       expect(listed.rules.map(stored => stored.rule.id)).toEqual(["test:kept"]);
-      expect(listed.quarantined).toEqual([{
-        ruleId: "test:broken",
-        kind: "file",
-        owner: `project:${catalog.context().projectId}`,
-        reason: expect.stringMatching(/clauses/u),
-      }]);
-      const conversationOnly = await (await app.request("/api/rules?kind=conversation")).json() as { quarantined: unknown[] };
+      expect(listed.quarantined).toEqual([{ ruleId: "test:broken", kind: "file", owner: "library", reason: expect.stringMatching(/clauses/u) }]);
+      const conversationOnly = await (await app.request("/api/library-rules?kind=conversation")).json() as { quarantined: unknown[] };
       expect(conversationOnly.quarantined).toEqual([]);
     } finally {
-      catalog.close();
+      stores.close();
     }
   });
 });

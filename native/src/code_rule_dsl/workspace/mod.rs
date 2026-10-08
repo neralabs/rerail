@@ -221,6 +221,8 @@ mod context_tests;
 #[cfg(test)]
 mod crossfile_tests;
 #[cfg(test)]
+mod placement_tests;
+#[cfg(test)]
 mod storage_tests;
 #[cfg(test)]
 mod tests;

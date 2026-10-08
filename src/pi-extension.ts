@@ -8,7 +8,7 @@ import {
   type AdapterSession,
 } from "./adapter-contract.js";
 import { LiveConversationRules } from "./conversation-rule-sync.js";
-import { isRerailStarted } from "./repository-start.js";
+import { isRerailStarted, sessionNoteRules } from "./repository-start.js";
 import { bundledModelPath, PACKAGE_ROOT } from "./extension.js";
 import type { SessionDatabaseOptions } from "./session-database-options.js";
 import type { ModelFingerprint } from "./native.js";
@@ -21,8 +21,7 @@ import { PiNativeSession } from "./pi-native-session.js";
 import { registerPiHostAdapter } from "./pi-host-adapter.js";
 import { ConversationRuleRegistry, type RuleMatch } from "./registry.js";
 import { conversationRuleLoader, type ConversationRuleSourceOptions } from "./rule-sources.js";
-import { loadBundledRules } from "./rule-bootstrap.js";
-import { openScopedRuleCatalog } from "./scoped-rule-catalog.js";
+import { openCheckoutConversationRules } from "./code-rule-dsl-catalog.js";
 import { defaultRerailDatabasePath } from "./database.js";
 import { RerailRuntime } from "./runtime.js";
 import { MATCH_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE } from "./session-state.js";
@@ -264,11 +263,11 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
         ...(options.maxInputTokens === undefined ? {} : { maxInputTokens: options.maxInputTokens }),
         ...(options.maxRules === undefined ? {} : { maxRules: options.maxRules }),
       });
-      const loadRules = conversationRuleLoader(options, ctx.cwd, ".pi/conversation-rules.json");
-      const ruleStore = openScopedRuleCatalog(ctx.cwd, databasePath);
-      const sync = new LiveConversationRules(ruleStore, next, loadRules);
+      const sync = new LiveConversationRules(
+        openCheckoutConversationRules(databasePath, ctx.cwd, conversationRuleLoader(options, ctx.cwd, ".pi/conversation-rules.json")),
+        next,
+      );
       try {
-        ruleStore.seed(loadBundledRules());
         sync.prime();
         const nextTurn = replaySessionState(next, ctx.sessionManager.getBranch());
         const nextRuntime = new RerailRuntime({
@@ -278,7 +277,6 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
           modelPath: options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath(),
           databasePath,
           workspaceRoot: ctx.cwd,
-          repositoryContext: ruleStore.context(),
           startGate: true,
           beforeSessionPublish: async nextSession => {
             if (activeSession?.host === nextSession.host && activeSession.sessionId === nextSession.sessionId) {
@@ -345,6 +343,7 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
       packageRoot: PACKAGE_ROOT,
       started: cwd => isRerailStarted(cwd, configuredDatabasePath(options, cwd)),
       configuredDatabase: cwd => options.databasePath === undefined ? undefined : resolve(cwd, options.databasePath),
+      sessionNoteRules: async session => sessionNoteRules(session.cwd, configuredDatabasePath(options, session.cwd)),
     });
   };
 }
