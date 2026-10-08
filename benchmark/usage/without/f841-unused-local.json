@@ -1,0 +1,45 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bench:text:f841-unused-local",
+  "revision": 1,
+  "mode": "log",
+  "description": "Ruff F841's shape, structural twin: a function body's assignment target, no resolution.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "f841-unused-local",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "inside": {
+              "kind": "assignment",
+              "stopBy": "neighbor",
+              "inside": {
+                "kind": "expression_statement",
+                "inside": {
+                  "kind": "block",
+                  "inside": {
+                    "kind": "function_definition"
+                  }
+                }
+              }
+            },
+            "regex": "^__twin_never__$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F841_UNUSED_LOCAL",
+        "message": "f841-unused-local"
+      }
+    }
+  ]
+}

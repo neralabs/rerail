@@ -1,0 +1,41 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bench:usage-index:f841-unused-local",
+  "revision": 1,
+  "mode": "log",
+  "description": "F841's rule shape narrowed to class bodies, which it never reports: builds the usage index of every file.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "f841-unused-local",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "binds": {
+              "form": [
+                "assignment",
+                "named"
+              ],
+              "scope": "class",
+              "latest": true,
+              "used": false,
+              "nestedUse": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F841_UNUSED_LOCAL",
+        "message": "f841-unused-local"
+      }
+    }
+  ]
+}

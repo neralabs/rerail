@@ -1,0 +1,13 @@
+/*
+ * The whole theme — tokens, dark mode variant, fonts, shadcn layers — comes
+ * from nera-landing. Nothing is defined here.
+ */
+@import "@/index.css";
+
+/*
+ * Tailwind v4 detects utility usage starting from the Vite root (playground/ui), so the
+ * nera-landing sources reached through the `@` alias are invisible to it and every class the
+ * borrowed components use would be tree-shaken out. Declare that tree explicitly; this package's
+ * own classes are found from the root.
+ */
+@source "../../../web/src";

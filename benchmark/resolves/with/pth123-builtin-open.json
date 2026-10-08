@@ -1,0 +1,40 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bench:resolves:pth123-builtin-open",
+  "revision": 1,
+  "mode": "log",
+  "description": "Tier 1 (Ruff PTH123): the builtin open().",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "pth123-builtin-open",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "global": [
+                  "open"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PTH123_BUILTIN_OPEN",
+        "message": "pth123-builtin-open"
+      }
+    }
+  ]
+}

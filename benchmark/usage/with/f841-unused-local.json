@@ -1,0 +1,51 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bench:usage:f841-unused-local",
+  "revision": 1,
+  "mode": "log",
+  "description": "Ruff F841's shape: the latest assignment, walrus or with name of a function that nothing reads.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "f841-unused-local",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "binds": {
+              "form": [
+                "assignment",
+                "annotated",
+                "augmented",
+                "named",
+                "with",
+                "match"
+              ],
+              "scope": [
+                "function",
+                "lambda"
+              ],
+              "latest": true,
+              "outer": false,
+              "used": false
+            },
+            "not": {
+              "regex": "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F841_UNUSED_LOCAL",
+        "message": "f841-unused-local"
+      }
+    }
+  ]
+}

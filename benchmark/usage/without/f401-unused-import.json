@@ -1,0 +1,50 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bench:text:f401-unused-import",
+  "revision": 1,
+  "mode": "log",
+  "description": "Ruff F401's shape, structural twin: an import item, no resolution.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "f401-unused-import",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "dotted_name"
+              },
+              {
+                "kind": "identifier"
+              }
+            ],
+            "inside": {
+              "any": [
+                {
+                  "kind": "import_statement"
+                },
+                {
+                  "kind": "import_from_statement"
+                }
+              ],
+              "stopBy": "neighbor"
+            },
+            "regex": "^__twin_never__$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F401_UNUSED_IMPORT",
+        "message": "f401-unused-import"
+      }
+    }
+  ]
+}

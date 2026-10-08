@@ -1,0 +1,44 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bench:usage-index:f401-unused-import",
+  "revision": 1,
+  "mode": "log",
+  "description": "F401's rule shape narrowed to class bodies: builds the usage index of every file.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "f401-unused-import",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "dotted_name"
+              },
+              {
+                "kind": "identifier"
+              }
+            ],
+            "binds": {
+              "form": "import",
+              "scope": "class",
+              "used": false,
+              "nestedUse": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F401_UNUSED_IMPORT",
+        "message": "f401-unused-import"
+      }
+    }
+  ]
+}

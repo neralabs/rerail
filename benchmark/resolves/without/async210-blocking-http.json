@@ -1,0 +1,41 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bench:text:async210-blocking-http",
+  "revision": 1,
+  "mode": "log",
+  "description": "Tier 2 (Ruff ASYNC210): blocking HTTP calls in async functions, through the file's imports. Text-only twin: the callee's source text, no resolution.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "async210-blocking-http",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$)",
+            "inside": {
+              "stopBy": "end",
+              "kind": "function_definition",
+              "regex": "^async\\s"
+            }
+          },
+          "constraints": {
+            "F": {
+              "regex": "^(requests\\.get|requests\\.post|requests\\.put|requests\\.delete|requests\\.request|urllib\\.request\\.urlopen|httpx\\.get|httpx\\.post)$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "ASYNC210_BLOCKING_HTTP",
+        "message": "async210-blocking-http"
+      }
+    }
+  ]
+}

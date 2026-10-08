@@ -1,0 +1,32 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bench:text:f821-undefined-name",
+  "revision": 1,
+  "mode": "log",
+  "description": "Ruff F821's shape, structural twin: every name, no resolution.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "f821-undefined-name",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "regex": "^__twin_never__$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F821_UNDEFINED_NAME",
+        "message": "f821-undefined-name"
+      }
+    }
+  ]
+}

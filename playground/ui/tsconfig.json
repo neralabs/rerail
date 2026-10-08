@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["vite/client", "node"],
+    "paths": {
+      "@protocol": ["../src/protocol.ts"],
+      "@rerail/rule-schema": ["../../rerail/src/rule-schema.ts"],
+      "@rerail/code-rule-schema": ["../../rerail/src/code-rule-schema.ts"],
+      "@/*": ["../../web/src/*"],
+      "@shared/*": ["../../web/shared/*"]
+    }
+  },
+  "include": ["src", "vite.config.ts"]
+}
