@@ -49,6 +49,5 @@
       ],
       "match": "line+column"
     }
-  ],
-  "oracles": "oracles"
+  ]
 }
