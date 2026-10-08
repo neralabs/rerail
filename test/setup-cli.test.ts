@@ -16,7 +16,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runInstallCommand, type SetupContext } from "../src/setup-cli.js";
+import { runInstallCommand, runSetupCommand, type SetupContext } from "../src/setup-cli.js";
 import { ManagedUpdater } from "../src/updater.js";
 
 const temporaryDirectories: string[] = [];
@@ -162,5 +162,20 @@ describe("rerail install --root", () => {
 
     expect(await readFile(join(context.home, "rerail.sqlite"), "utf8")).toBe("live database");
     expect((await readdir(hostConfigHome)).filter(name => name.startsWith(".rerail-clean-"))).toEqual([]);
+  });
+});
+
+describe("rerail setup --dry-run", () => {
+  it("plans the coding-agent registration from the running package before anything is installed", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    await mkdir(join(hostConfigHome, ".codex"), { recursive: true });
+    await mkdir(join(packageRoot, "skills", "rerail"), { recursive: true });
+    await writeFile(join(packageRoot, "skills", "rerail", "SKILL.md"), "Run RERAIL_COMMAND.\n");
+
+    expect(await runSetupCommand(["--dry-run"], context)).toBe(0);
+
+    expect(existsSync(context.home)).toBe(false);
+    expect(existsSync(join(hostConfigHome, ".codex", "skills"))).toBe(false);
+    expect(existsSync(join(hostConfigHome, ".claude", "settings.json"))).toBe(false);
   });
 });

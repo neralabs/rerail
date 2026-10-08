@@ -230,7 +230,9 @@ export async function runSetupCommand(args: readonly string[], context: SetupCon
     process.stdout.write("Skipping harness registration (--skip-register).\n");
   } else {
     process.stdout.write(`${parsed.dryRun ? "Would register" : "Registering"} harnesses against ${updater.currentLink}:\n`);
-    const report = await registerHarnesses(registrationOptions(updater.currentLink, hostConfigHome(), parsed));
+    // A dry run never creates `current`, so packaged templates come from the package that is running.
+    const templateRoot = parsed.dryRun ? context.packageRoot : undefined;
+    const report = await registerHarnesses(registrationOptions(updater.currentLink, hostConfigHome(), parsed, templateRoot));
     printReport(report, parsed.dryRun);
   }
 
