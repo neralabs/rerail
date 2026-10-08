@@ -49,10 +49,12 @@ function stubTools(dir, { view, whoami }) {
     "exit 1",
     "",
   ].join("\n"), { mode: 0o755 });
+  // A Node stub, not sh: dash (Linux /bin/sh) drops `npm_config_@neralabs:registry` because the name is not a
+  // valid shell identifier, while npm and npx (Node) receive it.
   writeFileSync(join(bin, "npx"), [
-    "#!/bin/sh",
-    `printf '%s\\n' "$*" >> '${npxLog}'`,
-    `printf 'registry=%s\\n' "$(printenv 'npm_config_@neralabs:registry')" >> '${npxLog}'`,
+    `#!${process.execPath}`,
+    'const { appendFileSync } = require("node:fs");',
+    `appendFileSync(${JSON.stringify(npxLog)}, \`\${process.argv.slice(2).join(" ")}\\nregistry=\${process.env["npm_config_@neralabs:registry"] ?? ""}\\n\`);`,
     "",
   ].join("\n"), { mode: 0o755 });
   const env = { PATH: `${bin}:${process.env.PATH}`, HOME: dir, NPM_CONFIG_USERCONFIG: join(dir, "npmrc") };
