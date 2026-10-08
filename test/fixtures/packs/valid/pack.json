@@ -1,0 +1,42 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "valid",
+  "name": "Valid",
+  "category": "language",
+  "covers": "A fixture pack that passes every check of the pack contract.",
+  "reason": "matches Python",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "**/*.py"
+        ],
+        "label": "*.py files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "valid:assert-used",
+      "document": "rules/assert-used.json",
+      "title": "examplelint EX101: Assert used",
+      "group": "examplelint"
+    },
+    {
+      "id": "valid:pass-statement",
+      "document": "rules/pass-statement.json",
+      "title": "No pass statements",
+      "group": "Valid",
+      "examples": {
+        "caught": {
+          "path": "src/a.py",
+          "text": "def f():\n    pass\n"
+        },
+        "passes": {
+          "path": "src/a.py",
+          "text": "def f():\n    return 1\n"
+        }
+      }
+    }
+  ]
+}

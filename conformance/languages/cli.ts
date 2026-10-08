@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { REPORTS_DIRECTORY, listPacks, loadPack, packDirectory, RERAIL_ROOT } from "./pack.js";
+import { REPORTS_DIRECTORY, listPacks, listPortedPacks, loadPack, packDirectory, RERAIL_ROOT } from "./pack.js";
 import { reportJson, type T4Report } from "./report.js";
 import { reportFailures, runPack } from "./runner.js";
 
@@ -10,7 +10,7 @@ const USAGE = `Language-pack rule conformance (T4).
   node --import tsx conformance/languages/cli.ts --pack <name> [options]
   node --import tsx conformance/languages/cli.ts --check [--pack <name>]
 
-  --pack <name>         pack under conformance/languages/<name>/ (or --pack-dir <dir>)
+  --pack <name>         pack under packs/<name>/ once moved, else conformance/languages/<name>/ (or --pack-dir <dir>)
   --fixtures            score the upstream rule fixtures only
   --corpus <name>       score one pinned corpus (repeatable); with neither, fixtures and every corpus
   --corpus-root <dir>   corpora checkouts, <dir>/<corpus name>; default the nearest .rerail/corpora/<pack>
@@ -78,7 +78,7 @@ async function main(): Promise<void> {
       : values.pack !== undefined
         ? [packDirectory(values.pack)]
         : values.check
-          ? listPacks().map(packDirectory)
+          ? [...listPacks(), ...listPortedPacks()].map(packDirectory)
           : [];
   if (directories.length === 0) throw new Error(`--pack, --pack-dir or --check is required\n\n${USAGE}`);
   if (values.check && (values.corpus.length > 0 || values.write)) throw new Error("--check runs the fixture tier only; it takes neither --corpus nor --write");

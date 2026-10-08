@@ -31,19 +31,20 @@ const exampleSchema = z
   })
   .strict();
 
-const packRuleSchema = z
-  .object({
-    id: nonEmpty,
-    title: nonEmpty,
-    group: nonEmpty,
-    /** The rule mode the pack starts the rule in; default: the mode its document has. */
-    mode: z.enum(RULE_MODES).optional(),
-    /** Whether the rule is on when its pack is added; default on. */
-    on: z.boolean().optional(),
-    /** One example the rule catches and one it lets pass, for the rule panel; tests prove both. */
-    examples: z.object({ caught: exampleSchema, passes: exampleSchema }).strict().optional(),
-  })
-  .strict();
+/** A rule's code-rule document, relative to the pack directory: `rules/<name>.json`. */
+const documentPathSchema = z.string().regex(/^rules\/[^/]+\.json$/u, "must be rules/<name>.json");
+
+const packRuleFields = {
+  id: nonEmpty,
+  title: nonEmpty,
+  group: nonEmpty,
+  /** The rule mode the pack starts the rule in; default: the mode its document has. */
+  mode: z.enum(RULE_MODES).optional(),
+  /** Whether the rule is on when its pack is added; default on. */
+  on: z.boolean().optional(),
+  /** One example the rule catches and one it lets pass, for the rule panel; tests prove both. */
+  examples: z.object({ caught: exampleSchema, passes: exampleSchema }).strict().optional(),
+};
 
 const signalSchema: z.ZodType<RulePackSignal> = z.union([
   z.object({ files: z.array(nonEmpty).min(1), exclude: z.array(nonEmpty).optional(), label: nonEmpty }).strict(),
@@ -52,20 +53,49 @@ const signalSchema: z.ZodType<RulePackSignal> = z.union([
 
 const matchSchema: z.ZodType<RulePackMatch> = z.object({ any: z.array(signalSchema).min(1) }).strict();
 
-const packFileSchema = z
-  .object({
-    format: z.literal(RULE_PACK_FORMAT),
-    id: z.string().regex(/^[a-z][a-z0-9-]*$/u, "must be lowercase letters, digits and dashes"),
-    name: nonEmpty,
-    category: z.enum(RULE_PACK_CATEGORIES),
-    covers: nonEmpty,
-    reason: nonEmpty,
-    match: matchSchema,
-    /** Whether the pack's rules honour their linters' suppression comments (`# noqa`, `eslint-disable`); default yes. */
-    honourSuppressionComments: z.boolean().optional(),
-    rules: z.array(packRuleSchema).min(1),
-  })
-  .strict();
+function packFileSchema<Rule extends z.ZodType>(rule: Rule) {
+  return z
+    .object({
+      format: z.literal(RULE_PACK_FORMAT),
+      id: z.string().regex(/^[a-z][a-z0-9-]*$/u, "must be lowercase letters, digits and dashes"),
+      name: nonEmpty,
+      category: z.enum(RULE_PACK_CATEGORIES),
+      covers: nonEmpty,
+      reason: nonEmpty,
+      match: matchSchema,
+      /** Whether the pack's rules honour their linters' suppression comments (`# noqa`, `eslint-disable`); default yes. */
+      honourSuppressionComments: z.boolean().optional(),
+      rules: z.array(rule).min(1),
+    })
+    .strict();
+}
+
+/** A pack shipped inside core (`policies/rule-packs/<id>.json`): its rules are bundled rules, so `document` is optional. */
+export const rulePackFileSchema = packFileSchema(z.object({ ...packRuleFields, document: documentPathSchema.optional() }).strict());
+
+/** A pack in its own package (`packs/<id>/pack.json`): every rule names its document, so the pack is self-contained. */
+export const packagedRulePackFileSchema = packFileSchema(z.object({ ...packRuleFields, document: documentPathSchema }).strict());
+export type PackagedRulePackFile = z.infer<typeof packagedRulePackFileSchema>;
+
+/** The npm package name of pack `<id>`. */
+export const rulePackPackageName = (id: string): string => `@neralabs/rerail-pack-${id}`;
+
+/**
+ * `packs/<id>/package.json`: the pack's npm package. Core's version range is a peer dependency, a declaration and not
+ * an import; the pack contract (`docs/pack-format.md`) adds that the name matches the pack, that there are no
+ * `dependencies`, that `files` publishes no validation material, and that `license` agrees with `licenses/`.
+ */
+export const rulePackPackageSchema = z.looseObject({
+  name: z.string().regex(/^@neralabs\/rerail-pack-[a-z][a-z0-9-]*$/u, "must be @neralabs/rerail-pack-<id>"),
+  version: z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u, "must be a semver version"),
+  description: nonEmpty.optional(),
+  /** An SPDX expression naming every licence the published files carry. */
+  license: nonEmpty,
+  files: z.array(nonEmpty).min(1),
+  peerDependencies: z.looseObject({ "@neralabs/rerail": nonEmpty }),
+  publishConfig: z.looseObject({ access: z.enum(["restricted", "public"]) }).optional(),
+});
+export type RulePackPackage = z.infer<typeof rulePackPackageSchema>;
 
 export interface RuleExample {
   readonly path?: string | undefined;
@@ -127,7 +157,7 @@ export function readRulePacks(directory = rulePacksDirectory(), bundledDirectory
     .filter(entry => entry.isFile() && entry.name.endsWith(".json"))
     .map(entry => {
       const path = join(directory, entry.name);
-      const file = packFileSchema.parse(parseJsonWithoutDuplicateKeys(readFileSync(path, "utf8"), path));
+      const file = rulePackFileSchema.parse(parseJsonWithoutDuplicateKeys(readFileSync(path, "utf8"), path));
       if (`${file.id}.json` !== entry.name) throw new Error(`Rule pack ${file.id} must be stored as ${file.id}.json, not ${entry.name}`);
       for (const signal of file.match.any) {
         if (!("files" in signal)) continue;

@@ -7,6 +7,10 @@ import { compareDeterministicStrings } from "../../src/stable-json.js";
 
 export const HARNESS_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 export const RERAIL_ROOT = resolve(HARNESS_DIRECTORY, "..", "..");
+/** Rule packs in their own packages (docs/pack-format.md); a ported pack holds its conformance pack as conformance.json. */
+export const PACKS_ROOT = join(RERAIL_ROOT, "packs");
+/** A pack moved to `packs/<id>/` names its conformance pack this; one still under conformance/languages/, `pack.json`. */
+export const CONFORMANCE_FILE = "conformance.json";
 /** The conformance fixtures: `RERAIL_FIXTURES_DIR` (relative to the repository root) or the repository's `fixtures/`. */
 export const ORACLES_ROOT = resolve(RERAIL_ROOT, process.env.RERAIL_FIXTURES_DIR || "fixtures");
 /** Where `--write` puts reports: `.rerail/` is gitignored, so reports are never committed. */
@@ -172,30 +176,47 @@ function parseJson<T>(path: string, schema: z.ZodType<T>): T {
   return parsed.data;
 }
 
+/** `packs/<name>/` once the pack has moved there (it holds conformance.json), else `conformance/languages/<name>/`. */
 export function packDirectory(name: string): string {
-  return join(HARNESS_DIRECTORY, name);
+  const moved = join(PACKS_ROOT, name);
+  return existsSync(join(moved, CONFORMANCE_FILE)) ? moved : join(HARNESS_DIRECTORY, name);
 }
 
+/**
+ * The conformance pack in `directory`: `packs/<id>/` (conformance.json, recordings under `upstream/` by default) or
+ * `conformance/languages/<name>/` (pack.json, recordings under `<fixtures>/<pack>/rules` by default).
+ */
 export function loadPack(directory: string): LoadedPack {
-  const pack = parseJson(join(directory, "pack.json"), packSchema);
+  const moved = existsSync(join(directory, CONFORMANCE_FILE));
+  const pack = parseJson(join(directory, moved ? CONFORMANCE_FILE : "pack.json"), packSchema);
   const divergencesPath = join(directory, "divergences.json");
   const divergences = existsSync(divergencesPath) ? parseJson(divergencesPath, divergencesSchema) : [];
   const ids = new Set(pack.rules.map(rule => rule.id));
   for (const divergence of divergences) {
     if (!ids.has(divergence.rule)) throw new Error(`${divergencesPath}: divergence names unknown rule ${divergence.rule}`);
   }
+  const defaultOracles = moved ? join(directory, "upstream") : join(ORACLES_ROOT, pack.pack, "rules");
   return {
     pack,
     directory,
-    oraclesDirectory: pack.oracles === undefined ? join(ORACLES_ROOT, pack.pack, "rules") : resolve(directory, pack.oracles),
+    oraclesDirectory: pack.oracles === undefined ? defaultOracles : resolve(directory, pack.oracles),
     divergences,
   };
 }
 
-/** Every pack under conformance/languages/: a directory holding a pack.json. */
+/** Every pack still under conformance/languages/: a directory holding a pack.json. */
 export function listPacks(): string[] {
   return readdirSync(HARNESS_DIRECTORY, { withFileTypes: true })
     .filter(entry => entry.isDirectory() && existsSync(join(HARNESS_DIRECTORY, entry.name, "pack.json")))
+    .map(entry => entry.name)
+    .sort(compareDeterministicStrings);
+}
+
+/** Every pack under packs/ that ports rules: a directory holding a conformance.json. Its tests are test/packs.test.ts. */
+export function listPortedPacks(): string[] {
+  if (!existsSync(PACKS_ROOT)) return [];
+  return readdirSync(PACKS_ROOT, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && existsSync(join(PACKS_ROOT, entry.name, CONFORMANCE_FILE)))
     .map(entry => entry.name)
     .sort(compareDeterministicStrings);
 }

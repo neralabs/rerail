@@ -1,0 +1,10 @@
+[
+  {
+    "rule": "assert-used",
+    "source": "fixtures",
+    "path": "asserts.py",
+    "line": 5,
+    "kind": "upstream-wrong",
+    "evidence": "examplelint skips an assert nested in an if block; line 5 is one"
+  }
+]

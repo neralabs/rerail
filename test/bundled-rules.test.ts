@@ -18,9 +18,9 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
-import { languageFor } from "../src/code-rule-enforcer.js";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../src/native.js";
 import { bundledRulesDirectory, loadBundledRules } from "../src/rule-bootstrap.js";
+import { evaluateExample } from "../conformance/pack-validation.js";
 import { PASS_AUDIT } from "../conformance/tslint/audit.js";
 import { emptyGoldenManifest, goldenRules, loadGoldenManifest, PACK_DIRECTORY } from "../conformance/tslint/golden.js";
 import { checkGolden, REQUIRES_CONFIGURATION } from "../conformance/tslint/promote.js";
@@ -30,17 +30,14 @@ const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../code-rule-dsl/", import.me
 const FIXTURES = fileURLToPath(new URL("./fixtures/bundled-rules/", import.meta.url));
 const capabilities = readFileSync(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
-const evaluationSchema = z.object({ violations: z.array(z.object({ code: z.string() })).default([]), failures: z.array(z.unknown()).default([]) });
 const ruleFileSchema = z.object({ id: z.string() });
 const fixtureSideSchema = z.object({ path: z.string().min(1), content: z.string() });
 const fixtureSchema = z.object({ flag: fixtureSideSchema, pass: fixtureSideSchema });
 
 function violations(compiled: NativeCompiledCodeRuleDsl, path: string, source: string): string[] {
-  const language = languageFor(path) ?? "text";
-  const input = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files: [{ language, path, source }] });
-  const result = evaluationSchema.parse(JSON.parse(compiled.evaluate(input, "report")));
-  expect(result.failures).toEqual([]);
-  return result.violations.map(violation => violation.code);
+  const { codes, failures } = evaluateExample(compiled, path, source);
+  expect(failures).toEqual([]);
+  return codes;
 }
 
 const bundled = loadBundledRules(bundledRulesDirectory());
