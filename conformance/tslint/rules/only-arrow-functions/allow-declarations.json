@@ -1,0 +1,131 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:only-arrow-functions",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Option allow-declarations. A function is exempt when it is a generator, its first parameter is `this`, or `this` occurs in its body outside nested scopes with their own `this` (tsutils hasOwnThisReference: classes, function declarations and expressions, object-literal methods), found by a has walk that stops at those scopes. Overload and ambient signatures are function declarations too.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "non-arrow-function",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "pattern": "function"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "function_expression"
+                        }
+                      ]
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "formal_parameters",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "required_parameter",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "this"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": {
+                            "matches": "own-this"
+                          },
+                          "kind": "this"
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "expression_statement"
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "call_expression"
+                                    },
+                                    {
+                                      "kind": "member_expression"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "regex": "^(?:async\\s+)?function\\b"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": {
+            "own-this": {
+              "any": [
+                {
+                  "kind": "class_declaration"
+                },
+                {
+                  "kind": "class"
+                },
+                {
+                  "kind": "abstract_class_declaration"
+                },
+                {
+                  "kind": "function_expression"
+                },
+                {
+                  "kind": "function_declaration"
+                },
+                {
+                  "kind": "method_definition",
+                  "inside": {
+                    "kind": "object"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "ONLY_ARROW_FUNCTIONS",
+        "message": "non-arrow functions are forbidden"
+      }
+    }
+  ]
+}

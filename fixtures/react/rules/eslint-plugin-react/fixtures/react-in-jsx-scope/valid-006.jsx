@@ -1,0 +1,1 @@
+/** @jsx Foo */ var Foo, App; <App />;

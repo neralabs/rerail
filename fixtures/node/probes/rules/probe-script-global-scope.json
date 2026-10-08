@@ -1,0 +1,44 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "probe-script-global-scope",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Contrast to probe-cjs-wrapper-scope: in a classic script a top-level `var process` is the global variable itself (scriptDeclarations), so its reads are global reads.",
+  "scope": {
+    "include": [
+      "wrapper/**"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "reference",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "sourceType": "script",
+            "globals": {
+              "process": "readonly"
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "regex": "^process$",
+            "resolves": {
+              "global": [
+                "process"
+              ],
+              "scriptDeclarations": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "probe-script-global-scope",
+        "message": "global process"
+      }
+    }
+  ]
+}

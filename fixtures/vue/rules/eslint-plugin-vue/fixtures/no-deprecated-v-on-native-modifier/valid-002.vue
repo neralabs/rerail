@@ -1,0 +1,1 @@
+<template><input v-native:foo.native.foo.bar='fire'></template>

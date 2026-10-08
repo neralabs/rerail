@@ -1,0 +1,43 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-probe-app-route-file",
+  "revision": 1,
+  "mode": "log",
+  "description": "Next pack probe. File role: an app-router special file (page, layout, template, loading, error, global-error, not-found, default, route) under app/ or src/app/ at the workspace root.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "path": {
+              "regex": "^(?:src/)?app/(?:.*/)?(?:page|layout|template|loading|error|global-error|not-found|default|route)\\.(?:js|jsx|ts|tsx)$"
+            }
+          },
+          "rule": {
+            "kind": "program"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "file.start",
+        "code": "next/app-route-file",
+        "message": "File role: an app-router special file (page, layout, template, loading, error, global-error, not-found, default, route) under app/ or src/app/ at the workspace root."
+      }
+    }
+  ]
+}

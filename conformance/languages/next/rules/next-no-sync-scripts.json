@@ -1,0 +1,106 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-no-sync-scripts",
+  "revision": 1,
+  "mode": "steer",
+  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-sync-scripts: a <script> opening element with a src attribute and neither async nor defer.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "jsx_opening_element"
+                  },
+                  {
+                    "kind": "jsx_self_closing_element"
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^script$"
+                }
+              },
+              {
+                "has": {
+                  "kind": "jsx_attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "kind": "property_identifier",
+                        "regex": "^src$"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "jsx_attribute",
+                    "all": [
+                      {
+                        "has": {
+                          "kind": "property_identifier",
+                          "regex": "^async$"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "jsx_attribute",
+                    "all": [
+                      {
+                        "has": {
+                          "kind": "property_identifier",
+                          "regex": "^defer$"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/no-sync-scripts",
+        "message": "Synchronous scripts should not be used. See: https://nextjs.org/docs/messages/no-sync-scripts",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/no-sync-scripts"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

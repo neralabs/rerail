@@ -1,0 +1,285 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-no-dupe-keys",
+  "revision": 4,
+  "mode": "steer",
+  "description": "ESLint 10.11.0 no-dupe-keys, default options. Port of ESLint's `no-dupe-keys` rule (https://eslint.org/docs/latest/rules/no-dupe-keys). Flags an object-literal property whose static key (ESLint's getStaticPropertyName, via `compare` text `key`) repeats an earlier property of the same object; a getter may pair with a setter, and a non-computed `__proto__: value` is not a key.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "duplicate-key",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "cand"
+              },
+              {
+                "pattern": "$P"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "shorthand_property_identifier",
+                    "pattern": "$K"
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "key",
+                      "not": {
+                        "kind": "computed_property_name"
+                      },
+                      "pattern": "$K"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "key",
+                      "kind": "computed_property_name",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "not": {
+                          "regex": "^[\\[\\]]$"
+                        },
+                        "pattern": "$K"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "matches": "getter"
+                      },
+                      {
+                        "count": {
+                          "follows": {
+                            "stopBy": "end",
+                            "all": [
+                              {
+                                "matches": "cand"
+                              },
+                              {
+                                "not": {
+                                  "matches": "setter"
+                                }
+                              }
+                            ],
+                            "pattern": "$Q",
+                            "compare": {
+                              "left": "Q",
+                              "op": "eq",
+                              "right": "P",
+                              "text": "key"
+                            }
+                          },
+                          "min": 1
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "matches": "setter"
+                      },
+                      {
+                        "count": {
+                          "follows": {
+                            "stopBy": "end",
+                            "all": [
+                              {
+                                "matches": "cand"
+                              },
+                              {
+                                "not": {
+                                  "matches": "getter"
+                                }
+                              }
+                            ],
+                            "pattern": "$Q",
+                            "compare": {
+                              "left": "Q",
+                              "op": "eq",
+                              "right": "P",
+                              "text": "key"
+                            }
+                          },
+                          "min": 1
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "not": {
+                          "matches": "getter"
+                        }
+                      },
+                      {
+                        "not": {
+                          "matches": "setter"
+                        }
+                      },
+                      {
+                        "count": {
+                          "follows": {
+                            "stopBy": "end",
+                            "all": [
+                              {
+                                "matches": "cand"
+                              }
+                            ],
+                            "pattern": "$Q",
+                            "compare": {
+                              "left": "Q",
+                              "op": "eq",
+                              "right": "P",
+                              "text": "key"
+                            }
+                          },
+                          "min": 1
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "utils": {
+            "cand": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "pair"
+                    },
+                    {
+                      "kind": "method_definition"
+                    },
+                    {
+                      "kind": "shorthand_property_identifier"
+                    }
+                  ]
+                },
+                {
+                  "inside": {
+                    "kind": "object",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "not": {
+                    "matches": "proto"
+                  }
+                }
+              ]
+            },
+            "getter": {
+              "kind": "method_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "^get$",
+                "not": {
+                  "kind": "property_identifier"
+                }
+              }
+            },
+            "setter": {
+              "kind": "method_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "^set$",
+                "not": {
+                  "kind": "property_identifier"
+                }
+              }
+            },
+            "key": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "number"
+                },
+                {
+                  "kind": "computed_property_name"
+                }
+              ],
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "regex": "^:$"
+                }
+              }
+            },
+            "proto": {
+              "kind": "pair",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "key",
+                "any": [
+                  {
+                    "kind": "property_identifier",
+                    "regex": "^__proto__$"
+                  },
+                  {
+                    "kind": "string",
+                    "value": {
+                      "eq": "__proto__"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "transform": {
+            "KT": {
+              "substring": {
+                "source": "$K",
+                "value": true
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.K",
+        "code": "no-dupe-keys",
+        "message": "Duplicate key '$KT'.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-dupe-keys"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

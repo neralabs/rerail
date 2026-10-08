@@ -1,0 +1,106 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:strict-comparisons",
+  "revision": 1,
+  "mode": "steer",
+  "description": "strict-comparisons with allow-object-equal-comparison (literal operands only).",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "literal-comparison",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "binary_expression",
+            "any": [
+              {
+                "has": { "regex": "^(?:===|!==|==|!=)$" },
+                "not": {
+                  "any": [
+                    { "matches": "both-number" },
+                    { "matches": "both-string" },
+                    { "matches": "both-boolean" },
+                    { "matches": "both-object" }
+                  ]
+                },
+                "matches": "eq-literal-operands"
+              },
+              {
+                "has": { "regex": "^(?:<=|>=|<|>)$" },
+                "not": { "matches": "both-number" },
+                "matches": "literal-operands"
+              }
+            ]
+          },
+          "utils": {
+            "cmp": { "regex": "^(?:<=|>=|===|!==|==|!=|<|>)$" },
+            "eq-literal": {
+              "any": [
+                { "kind": "number" },
+                { "kind": "string" },
+                { "kind": "template_string" },
+                { "kind": "true" },
+                { "kind": "false" },
+                { "kind": "object" },
+                { "kind": "array" }
+              ]
+            },
+            "literal": { "any": [{ "matches": "eq-literal" }, { "kind": "null" }, { "kind": "undefined" }] },
+            "eq-literal-operands": {
+              "all": [
+                { "has": { "precedes": { "matches": "cmp" }, "matches": "eq-literal" } },
+                { "has": { "follows": { "matches": "cmp" }, "matches": "eq-literal" } }
+              ]
+            },
+            "literal-operands": {
+              "all": [
+                { "has": { "precedes": { "matches": "cmp" }, "matches": "literal" } },
+                { "has": { "follows": { "matches": "cmp" }, "matches": "literal" } }
+              ]
+            },
+            "both-number": {
+              "all": [
+                { "has": { "precedes": { "matches": "cmp" }, "kind": "number" } },
+                { "has": { "follows": { "matches": "cmp" }, "kind": "number" } }
+              ]
+            },
+            "both-string": {
+              "all": [
+                {
+                  "has": {
+                    "precedes": { "matches": "cmp" },
+                    "any": [{ "kind": "string" }, { "kind": "template_string" }]
+                  }
+                },
+                {
+                  "has": {
+                    "follows": { "matches": "cmp" },
+                    "any": [{ "kind": "string" }, { "kind": "template_string" }]
+                  }
+                }
+              ]
+            },
+            "both-boolean": {
+              "all": [
+                { "has": { "precedes": { "matches": "cmp" }, "any": [{ "kind": "true" }, { "kind": "false" }] } },
+                { "has": { "follows": { "matches": "cmp" }, "any": [{ "kind": "true" }, { "kind": "false" }] } }
+              ]
+            },
+            "both-object": {
+              "all": [
+                { "has": { "precedes": { "matches": "cmp" }, "any": [{ "kind": "object" }, { "kind": "array" }] } },
+                { "has": { "follows": { "matches": "cmp" }, "any": [{ "kind": "object" }, { "kind": "array" }] } }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "STRICT_COMPARISONS",
+        "message": "Cannot compare these operand types with this comparator."
+      }
+    }
+  ]
+}

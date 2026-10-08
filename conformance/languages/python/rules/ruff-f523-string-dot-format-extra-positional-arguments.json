@@ -1,0 +1,48 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "python-conformance:ruff-f523-string-dot-format-extra-positional-arguments",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F523 (string-dot-format-extra-positional-arguments): a `.format` call on a valid format string with a positional argument (not starred; counted by syntactic index, past a starred one too) that no automatic or numbered field reads. `formatArgs` reads the format string receiving `.format` (a str literal with no f/t/b prefix, implicit concatenations joined, escapes decoded, parentheses transparent) with the `braceFormat` grammar (a port of ruff_python_literal's format parser as pyflakes' FormatSummary reads it), and the call's arguments as Ruff's strings.rs does. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F523.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "string-dot-format-extra-positional-arguments",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$S.format($$$A)",
+            "formatArgs": {
+              "style": "brace",
+              "string": "S",
+              "args": "A",
+              "unused": {
+                "not": {
+                  "kind": "keyword_argument"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F523",
+        "message": "`.format` call has unused arguments",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F523"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

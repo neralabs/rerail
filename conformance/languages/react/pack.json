@@ -1,0 +1,41 @@
+{
+  "pack": "react",
+  "family": "ecma",
+  "capabilities": ["syntax", "scope", "value", "compare", "arguments", "suppression"],
+  "corpora": [
+    {
+      "name": "excalidraw",
+      "repository": "https://github.com/excalidraw/excalidraw",
+      "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+      "paths": [
+        "packages/excalidraw",
+        "excalidraw-app"
+      ],
+      "exclude": []
+    }
+  ],
+  "tools": [
+    { "name": "eslint-plugin-react", "version": "7.37.5" },
+    { "name": "eslint-plugin-react-hooks", "version": "7.1.1" }
+  ],
+  "rules": [
+    {"id":"react-no-danger","upstream":{"tool":"eslint-plugin-react","rule":"react/no-danger"},"policy":"rules/react-no-danger.json","capabilities":["syntax","suppression"],"match":"line+column"},
+    {"id":"react-no-find-dom-node","upstream":{"tool":"eslint-plugin-react","rule":"react/no-find-dom-node"},"policy":"rules/react-no-find-dom-node.json","capabilities":["syntax","suppression"],"match":"line+column"},
+    {"id":"react-no-is-mounted","upstream":{"tool":"eslint-plugin-react","rule":"react/no-is-mounted"},"policy":"rules/react-no-is-mounted.json","capabilities":["syntax","suppression"],"match":"line+column"},
+    {"id":"react-no-render-return-value","upstream":{"tool":"eslint-plugin-react","rule":"react/no-render-return-value"},"policy":"rules/react-no-render-return-value.json","capabilities":["syntax","suppression"],"match":"line+column"},
+    {"id":"react-jsx-no-duplicate-props","upstream":{"tool":"eslint-plugin-react","rule":"react/jsx-no-duplicate-props"},"policy":"rules/react-jsx-no-duplicate-props.json","capabilities":["syntax","compare","suppression"],"match":"line+column"},
+    {"id":"react-no-children-prop","upstream":{"tool":"eslint-plugin-react","rule":"react/no-children-prop"},"policy":"rules/react-no-children-prop.json","capabilities":["syntax","scope","value","arguments","suppression"],"match":"line+column"},
+    {"id":"react-jsx-no-comment-textnodes","upstream":{"tool":"eslint-plugin-react","rule":"react/jsx-no-comment-textnodes"},"policy":"rules/react-jsx-no-comment-textnodes.json","capabilities":["syntax","suppression"],"match":"line+column"},
+    {"id":"react-void-dom-elements-no-children","upstream":{"tool":"eslint-plugin-react","rule":"react/void-dom-elements-no-children"},"policy":"rules/react-void-dom-elements-no-children.json","capabilities":["syntax","scope","value","arguments","suppression"],"match":"line+column"},
+    {"id":"react-self-closing-comp","upstream":{"tool":"eslint-plugin-react","rule":"react/self-closing-comp"},"policy":"rules/react-self-closing-comp.json","capabilities":["syntax","suppression"],"match":"line+column"},
+    {"id":"react-no-string-refs","upstream":{"tool":"eslint-plugin-react","rule":"react/no-string-refs"},"policy":"rules/react-no-string-refs.json","capabilities":["syntax","suppression"],"match":"line+column"},
+    {"id":"react-no-direct-mutation-state","upstream":{"tool":"eslint-plugin-react","rule":"react/no-direct-mutation-state"},"policy":"rules/react-no-direct-mutation-state.json","capabilities":["syntax","suppression"],"match":"line+column"},
+    {"id":"react-no-danger-with-children","upstream":{"tool":"eslint-plugin-react","rule":"react/no-danger-with-children"},"policy":"rules/react-no-danger-with-children.json","capabilities":["syntax","scope","arguments","suppression"],"match":"line+column"},
+    {"id":"react-button-has-type","upstream":{"tool":"eslint-plugin-react","rule":"react/button-has-type"},"policy":"rules/react-button-has-type.json","capabilities":["syntax","scope","value","suppression"],"match":"line+column"},
+    {"id":"react-jsx-key","upstream":{"tool":"eslint-plugin-react","rule":"react/jsx-key"},"policy":"rules/react-jsx-key.json","capabilities":["syntax","suppression"],"match":"line+column"},
+    {"id":"react-jsx-no-undef","upstream":{"tool":"eslint-plugin-react","rule":"react/jsx-no-undef"},"policy":"rules/react-jsx-no-undef.json","capabilities":["syntax","scope","suppression"],"match":"line+column"},
+    {"id":"react-no-unescaped-entities","upstream":{"tool":"eslint-plugin-react","rule":"react/no-unescaped-entities"},"policy":"rules/react-no-unescaped-entities.json","capabilities":["syntax","suppression"],"match":"line"},
+    {"id":"react-jsx-no-target-blank","upstream":{"tool":"eslint-plugin-react","rule":"react/jsx-no-target-blank"},"policy":"rules/react-jsx-no-target-blank.json","capabilities":["syntax","value","compare","suppression"],"match":"line+column"},
+    {"id":"react-hooks-rules-of-hooks","upstream":{"tool":"eslint-plugin-react-hooks","rule":"react-hooks/rules-of-hooks"},"policy":"rules/react-hooks-rules-of-hooks.json","capabilities":["syntax","suppression"],"match":"line+column"}
+  ]
+}

@@ -1,0 +1,15 @@
+x.startswith("a") or x.startswith("b")
+x.startswith("a") or x.startswith("b") or y.endswith("c") or y.endswith("d")
+x.startswith("a") or y.startswith("b")
+x.startswith("a") or x.endswith("b")
+x.startswith("a") or x.startswith("b") or x.startswith("c")
+x.startswith("a") and x.startswith("b")
+x.startswith("a") or (x.startswith("b") or x.startswith("c"))
+z or x.startswith("a") or w or x.startswith("b") or y.endswith("c") or y.endswith("d") or y.endswith("e")
+x.startswith(prefix="a") or x.startswith("b")
+x.startswith(*a) or x.startswith("b")
+a.b.startswith("x") or a.b.startswith("y")
+y.endswith("a") or x.startswith("b") or y.endswith("c") or x.startswith("d") or x.endswith("e")
+if x.startswith("a") or x.startswith("b"):
+    pass
+x.startswith("a") and y or x.startswith("b") or x.startswith("c")

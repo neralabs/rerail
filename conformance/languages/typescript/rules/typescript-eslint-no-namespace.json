@@ -1,0 +1,157 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-no-namespace",
+  "revision": 3,
+  "mode": "steer",
+  "description": "typescript-eslint 8.70.1 @typescript-eslint/no-namespace, default options. allowDefinitionFiles is fixed at its default (true): a file whose name typescript-eslint's isDefinitionFile matches (`\\.d\\.(ts|cts|mts|.*\\.ts)$`) is not checked. Port of typescript-eslint's `no-namespace` rule (https://typescript-eslint.io/rules/no-namespace). Flags `namespace X {}` and `module X {}` (not `declare global` or `declare module 'name'`) with its defaults: declared namespaces are flagged, and definition files (*.d.ts, *.d.cts, *.d.mts, *.d.*.ts) are exempt through the document scope. Options are declared in the `options` define (the rule's defaults); a variant is a config patch.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "allowDeclarations": {
+            "type": "boolean",
+            "nullable": true,
+            "default": null
+          }
+        }
+      }
+    },
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "r1": {
+            "any": [
+              {
+                "kind": "internal_module"
+              },
+              {
+                "kind": "module",
+                "not": {
+                  "has": {
+                    "kind": "string",
+                    "stopBy": "neighbor"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "namespace",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "r1"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "ambient_declaration",
+                    "stopBy": "neighbor"
+                  }
+                }
+              },
+              {
+                "$option": "allowDeclarations",
+                "cases": {
+                  "true": [
+                    {
+                      "not": {
+                        "inside": {
+                          "kind": "ambient_declaration",
+                          "stopBy": "end"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "default": [],
+                "spread": true
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "notRegex": "\\.d\\.(ts|cts|mts|.*\\.ts)$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-namespace",
+        "message": "ES2015 module syntax is preferred over namespaces.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-namespace"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "declared-namespace",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "ambient_declaration",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "r1"
+            }
+          },
+          "when": {
+            "option": {
+              "allowDeclarations": {
+                "in": [
+                  null,
+                  false
+                ]
+              }
+            }
+          },
+          "file": {
+            "path": {
+              "notRegex": "\\.d\\.(ts|cts|mts|.*\\.ts)$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-namespace",
+        "message": "ES2015 module syntax is preferred over namespaces.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-namespace"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

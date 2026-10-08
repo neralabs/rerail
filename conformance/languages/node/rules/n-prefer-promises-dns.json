@@ -1,0 +1,1102 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-prefer-promises-dns",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-n 18.4.1 n/prefer-promises/dns: calls of the dns module's callback API (lookup, lookupService, getServers, resolve, resolve4, resolve6, resolveAny, resolveCname, resolveMx, resolveNaptr, resolveNs, resolvePtr, resolveSoa, resolveSrv, resolveTxt, reverse, setServers; construction of Resolver) as ReferenceTracker (legacy mode) finds them: members of `require('dns')`/`require('node:dns')` (global require), `process.getBuiltinModule(\u2026)` (global process), ESM default/namespace imports and constant aliases, destructured properties and import specifiers.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "call",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "sourceType": "commonjs",
+            "globals": {
+              "process": "readonly"
+            }
+          },
+          "utils": {
+            "require-callee": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^require$",
+                  "resolves": {
+                    "global": [
+                      "require"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "require-callee"
+                  }
+                }
+              ]
+            },
+            "builtin-callee": {
+              "any": [
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^process$",
+                        "resolves": {
+                          "global": [
+                            "process"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "kind": "property_identifier",
+                        "regex": "^getBuiltinModule$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "builtin-callee"
+                  }
+                }
+              ]
+            },
+            "module-call": {
+              "kind": "call_expression",
+              "not": {
+                "has": {
+                  "field": "arguments",
+                  "kind": "template_string"
+                }
+              },
+              "all": [
+                {
+                  "has": {
+                    "field": "arguments",
+                    "kind": "arguments",
+                    "has": {
+                      "nthChild": {
+                        "position": 1,
+                        "ofRule": {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      },
+                      "any": [
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "kind": "template_string",
+                          "not": {
+                            "has": {
+                              "kind": "template_substitution"
+                            }
+                          }
+                        }
+                      ],
+                      "value": {
+                        "regex": "^(?:node:)?dns$"
+                      }
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "field": "function",
+                    "any": [
+                      {
+                        "matches": "require-callee"
+                      },
+                      {
+                        "matches": "builtin-callee"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "module-value": {
+              "any": [
+                {
+                  "matches": "module-call"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "module-value"
+                  }
+                },
+                {
+                  "kind": "assignment_expression",
+                  "has": {
+                    "field": "right",
+                    "matches": "module-value"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "destructuredValue": false,
+                      "value": {
+                        "matches": "module-value"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "occurrence": {
+                        "inside": {
+                          "kind": "assignment_expression",
+                          "field": "left",
+                          "has": {
+                            "field": "right",
+                            "matches": "module-value"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "matches": "esm-ref"
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "matches": "esm-ref"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "kind": "property_identifier",
+                        "regex": "^default$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "esm-source": {
+              "kind": "string",
+              "has": {
+                "kind": "string_fragment",
+                "regex": "^(?:node:)?dns$"
+              }
+            },
+            "esm-whole-module": {
+              "any": [
+                {
+                  "kind": "namespace_import"
+                },
+                {
+                  "kind": "import_clause"
+                },
+                {
+                  "kind": "identifier",
+                  "inside": {
+                    "kind": "import_clause"
+                  }
+                }
+              ],
+              "inside": {
+                "stopBy": "end",
+                "kind": "import_statement",
+                "has": {
+                  "field": "source",
+                  "matches": "esm-source"
+                }
+              }
+            },
+            "esm-ref": {
+              "kind": "identifier",
+              "resolves": {
+                "binding": {
+                  "site": {
+                    "matches": "esm-whole-module"
+                  }
+                }
+              }
+            },
+            "fn-value": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "object",
+                            "matches": "module-value"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "property",
+                            "kind": "property_identifier",
+                            "regex": "^(?:lookup|lookupService|getServers|resolve|resolve4|resolve6|resolveAny|resolveCname|resolveMx|resolveNaptr|resolveNs|resolvePtr|resolveSoa|resolveSrv|resolveTxt|reverse|setServers)$"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "subscript_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "object",
+                            "matches": "module-value"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "index",
+                            "any": [
+                              {
+                                "kind": "string"
+                              },
+                              {
+                                "kind": "template_string",
+                                "not": {
+                                  "has": {
+                                    "kind": "template_substitution"
+                                  }
+                                }
+                              }
+                            ],
+                            "value": {
+                              "regex": "^(?:lookup|lookupService|getServers|resolve|resolve4|resolve6|resolveAny|resolveCname|resolveMx|resolveNaptr|resolveNs|resolvePtr|resolveSoa|resolveSrv|resolveTxt|reverse|setServers)$"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "fn-value"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "destructuredValue": false,
+                      "value": {
+                        "matches": "fn-value"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "occurrence": {
+                        "any": [
+                          {
+                            "kind": "shorthand_property_identifier_pattern",
+                            "regex": "^(?:lookup|lookupService|getServers|resolve|resolve4|resolve6|resolveAny|resolveCname|resolveMx|resolveNaptr|resolveNs|resolvePtr|resolveSoa|resolveSrv|resolveTxt|reverse|setServers)$",
+                            "inside": {
+                              "kind": "object_pattern",
+                              "any": [
+                                {
+                                  "inside": {
+                                    "kind": "variable_declarator",
+                                    "field": "name",
+                                    "has": {
+                                      "field": "value",
+                                      "matches": "module-value"
+                                    }
+                                  }
+                                },
+                                {
+                                  "inside": {
+                                    "kind": "assignment_expression",
+                                    "field": "left",
+                                    "has": {
+                                      "field": "right",
+                                      "matches": "module-value"
+                                    }
+                                  }
+                                },
+                                {
+                                  "inside": {
+                                    "kind": "assignment_pattern",
+                                    "field": "left",
+                                    "has": {
+                                      "field": "right",
+                                      "matches": "module-value"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "kind": "identifier",
+                            "inside": {
+                              "kind": "pair_pattern",
+                              "field": "value",
+                              "has": {
+                                "field": "key",
+                                "any": [
+                                  {
+                                    "kind": "property_identifier",
+                                    "regex": "^(?:lookup|lookupService|getServers|resolve|resolve4|resolve6|resolveAny|resolveCname|resolveMx|resolveNaptr|resolveNs|resolvePtr|resolveSoa|resolveSrv|resolveTxt|reverse|setServers)$"
+                                  },
+                                  {
+                                    "any": [
+                                      {
+                                        "kind": "string"
+                                      },
+                                      {
+                                        "kind": "template_string",
+                                        "not": {
+                                          "has": {
+                                            "kind": "template_substitution"
+                                          }
+                                        }
+                                      }
+                                    ],
+                                    "value": {
+                                      "regex": "^(?:lookup|lookupService|getServers|resolve|resolve4|resolve6|resolveAny|resolveCname|resolveMx|resolveNaptr|resolveNs|resolvePtr|resolveSoa|resolveSrv|resolveTxt|reverse|setServers)$"
+                                    }
+                                  },
+                                  {
+                                    "kind": "computed_property_name",
+                                    "has": {
+                                      "any": [
+                                        {
+                                          "kind": "string"
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "not": {
+                                            "has": {
+                                              "kind": "template_substitution"
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      "value": {
+                                        "regex": "^(?:lookup|lookupService|getServers|resolve|resolve4|resolve6|resolveAny|resolveCname|resolveMx|resolveNaptr|resolveNs|resolvePtr|resolveSoa|resolveSrv|resolveTxt|reverse|setServers)$"
+                                      }
+                                    }
+                                  }
+                                ]
+                              },
+                              "inside": {
+                                "kind": "object_pattern",
+                                "any": [
+                                  {
+                                    "inside": {
+                                      "kind": "variable_declarator",
+                                      "field": "name",
+                                      "has": {
+                                        "field": "value",
+                                        "matches": "module-value"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "inside": {
+                                      "kind": "assignment_expression",
+                                      "field": "left",
+                                      "has": {
+                                        "field": "right",
+                                        "matches": "module-value"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "inside": {
+                                      "kind": "assignment_pattern",
+                                      "field": "left",
+                                      "has": {
+                                        "field": "right",
+                                        "matches": "module-value"
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "kind": "identifier",
+                            "inside": {
+                              "kind": "object_assignment_pattern",
+                              "has": {
+                                "field": "left",
+                                "kind": "shorthand_property_identifier_pattern",
+                                "regex": "^(?:lookup|lookupService|getServers|resolve|resolve4|resolve6|resolveAny|resolveCname|resolveMx|resolveNaptr|resolveNs|resolvePtr|resolveSoa|resolveSrv|resolveTxt|reverse|setServers)$"
+                              },
+                              "inside": {
+                                "kind": "object_pattern",
+                                "any": [
+                                  {
+                                    "inside": {
+                                      "kind": "variable_declarator",
+                                      "field": "name",
+                                      "has": {
+                                        "field": "value",
+                                        "matches": "module-value"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "inside": {
+                                      "kind": "assignment_expression",
+                                      "field": "left",
+                                      "has": {
+                                        "field": "right",
+                                        "matches": "module-value"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "inside": {
+                                      "kind": "assignment_pattern",
+                                      "field": "left",
+                                      "has": {
+                                        "field": "right",
+                                        "matches": "module-value"
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "import_specifier",
+                        "has": {
+                          "field": "name",
+                          "regex": "^(?:lookup|lookupService|getServers|resolve|resolve4|resolve6|resolveAny|resolveCname|resolveMx|resolveNaptr|resolveNs|resolvePtr|resolveSoa|resolveSrv|resolveTxt|reverse|setServers)$"
+                        },
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "import_statement",
+                          "has": {
+                            "field": "source",
+                            "matches": "esm-source"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call_expression",
+            "not": {
+              "has": {
+                "field": "arguments",
+                "kind": "template_string"
+              }
+            },
+            "has": {
+              "field": "function",
+              "matches": "fn-value"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/prefer-promises/dns",
+        "message": "Use 'dns.promises.<name>()' instead.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/prefer-promises/dns"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "construct",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "sourceType": "commonjs",
+            "globals": {
+              "process": "readonly"
+            }
+          },
+          "utils": {
+            "require-callee": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^require$",
+                  "resolves": {
+                    "global": [
+                      "require"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "require-callee"
+                  }
+                }
+              ]
+            },
+            "builtin-callee": {
+              "any": [
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^process$",
+                        "resolves": {
+                          "global": [
+                            "process"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "kind": "property_identifier",
+                        "regex": "^getBuiltinModule$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "builtin-callee"
+                  }
+                }
+              ]
+            },
+            "module-call": {
+              "kind": "call_expression",
+              "not": {
+                "has": {
+                  "field": "arguments",
+                  "kind": "template_string"
+                }
+              },
+              "all": [
+                {
+                  "has": {
+                    "field": "arguments",
+                    "kind": "arguments",
+                    "has": {
+                      "nthChild": {
+                        "position": 1,
+                        "ofRule": {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      },
+                      "any": [
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "kind": "template_string",
+                          "not": {
+                            "has": {
+                              "kind": "template_substitution"
+                            }
+                          }
+                        }
+                      ],
+                      "value": {
+                        "regex": "^(?:node:)?dns$"
+                      }
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "field": "function",
+                    "any": [
+                      {
+                        "matches": "require-callee"
+                      },
+                      {
+                        "matches": "builtin-callee"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "module-value": {
+              "any": [
+                {
+                  "matches": "module-call"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "module-value"
+                  }
+                },
+                {
+                  "kind": "assignment_expression",
+                  "has": {
+                    "field": "right",
+                    "matches": "module-value"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "destructuredValue": false,
+                      "value": {
+                        "matches": "module-value"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "occurrence": {
+                        "inside": {
+                          "kind": "assignment_expression",
+                          "field": "left",
+                          "has": {
+                            "field": "right",
+                            "matches": "module-value"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "matches": "esm-ref"
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "matches": "esm-ref"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "kind": "property_identifier",
+                        "regex": "^default$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "esm-source": {
+              "kind": "string",
+              "has": {
+                "kind": "string_fragment",
+                "regex": "^(?:node:)?dns$"
+              }
+            },
+            "esm-whole-module": {
+              "any": [
+                {
+                  "kind": "namespace_import"
+                },
+                {
+                  "kind": "import_clause"
+                },
+                {
+                  "kind": "identifier",
+                  "inside": {
+                    "kind": "import_clause"
+                  }
+                }
+              ],
+              "inside": {
+                "stopBy": "end",
+                "kind": "import_statement",
+                "has": {
+                  "field": "source",
+                  "matches": "esm-source"
+                }
+              }
+            },
+            "esm-ref": {
+              "kind": "identifier",
+              "resolves": {
+                "binding": {
+                  "site": {
+                    "matches": "esm-whole-module"
+                  }
+                }
+              }
+            },
+            "fn-value": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "object",
+                            "matches": "module-value"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "property",
+                            "kind": "property_identifier",
+                            "regex": "^(?:Resolver)$"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "subscript_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "object",
+                            "matches": "module-value"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "index",
+                            "any": [
+                              {
+                                "kind": "string"
+                              },
+                              {
+                                "kind": "template_string",
+                                "not": {
+                                  "has": {
+                                    "kind": "template_substitution"
+                                  }
+                                }
+                              }
+                            ],
+                            "value": {
+                              "regex": "^(?:Resolver)$"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "fn-value"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "destructuredValue": false,
+                      "value": {
+                        "matches": "fn-value"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "occurrence": {
+                        "any": [
+                          {
+                            "kind": "shorthand_property_identifier_pattern",
+                            "regex": "^(?:Resolver)$",
+                            "inside": {
+                              "kind": "object_pattern",
+                              "any": [
+                                {
+                                  "inside": {
+                                    "kind": "variable_declarator",
+                                    "field": "name",
+                                    "has": {
+                                      "field": "value",
+                                      "matches": "module-value"
+                                    }
+                                  }
+                                },
+                                {
+                                  "inside": {
+                                    "kind": "assignment_expression",
+                                    "field": "left",
+                                    "has": {
+                                      "field": "right",
+                                      "matches": "module-value"
+                                    }
+                                  }
+                                },
+                                {
+                                  "inside": {
+                                    "kind": "assignment_pattern",
+                                    "field": "left",
+                                    "has": {
+                                      "field": "right",
+                                      "matches": "module-value"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "kind": "identifier",
+                            "inside": {
+                              "kind": "pair_pattern",
+                              "field": "value",
+                              "has": {
+                                "field": "key",
+                                "any": [
+                                  {
+                                    "kind": "property_identifier",
+                                    "regex": "^(?:Resolver)$"
+                                  },
+                                  {
+                                    "any": [
+                                      {
+                                        "kind": "string"
+                                      },
+                                      {
+                                        "kind": "template_string",
+                                        "not": {
+                                          "has": {
+                                            "kind": "template_substitution"
+                                          }
+                                        }
+                                      }
+                                    ],
+                                    "value": {
+                                      "regex": "^(?:Resolver)$"
+                                    }
+                                  },
+                                  {
+                                    "kind": "computed_property_name",
+                                    "has": {
+                                      "any": [
+                                        {
+                                          "kind": "string"
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "not": {
+                                            "has": {
+                                              "kind": "template_substitution"
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      "value": {
+                                        "regex": "^(?:Resolver)$"
+                                      }
+                                    }
+                                  }
+                                ]
+                              },
+                              "inside": {
+                                "kind": "object_pattern",
+                                "any": [
+                                  {
+                                    "inside": {
+                                      "kind": "variable_declarator",
+                                      "field": "name",
+                                      "has": {
+                                        "field": "value",
+                                        "matches": "module-value"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "inside": {
+                                      "kind": "assignment_expression",
+                                      "field": "left",
+                                      "has": {
+                                        "field": "right",
+                                        "matches": "module-value"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "inside": {
+                                      "kind": "assignment_pattern",
+                                      "field": "left",
+                                      "has": {
+                                        "field": "right",
+                                        "matches": "module-value"
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "kind": "identifier",
+                            "inside": {
+                              "kind": "object_assignment_pattern",
+                              "has": {
+                                "field": "left",
+                                "kind": "shorthand_property_identifier_pattern",
+                                "regex": "^(?:Resolver)$"
+                              },
+                              "inside": {
+                                "kind": "object_pattern",
+                                "any": [
+                                  {
+                                    "inside": {
+                                      "kind": "variable_declarator",
+                                      "field": "name",
+                                      "has": {
+                                        "field": "value",
+                                        "matches": "module-value"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "inside": {
+                                      "kind": "assignment_expression",
+                                      "field": "left",
+                                      "has": {
+                                        "field": "right",
+                                        "matches": "module-value"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "inside": {
+                                      "kind": "assignment_pattern",
+                                      "field": "left",
+                                      "has": {
+                                        "field": "right",
+                                        "matches": "module-value"
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "import_specifier",
+                        "has": {
+                          "field": "name",
+                          "regex": "^(?:Resolver)$"
+                        },
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "import_statement",
+                          "has": {
+                            "field": "source",
+                            "matches": "esm-source"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "new_expression",
+            "has": {
+              "field": "constructor",
+              "matches": "fn-value"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/prefer-promises/dns",
+        "message": "Use 'new dns.promises.<name>()' instead.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/prefer-promises/dns"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,142 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-async-without-await",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of TSLint's `no-async-without-await` rule with its default options (https://palantir.github.io/tslint/rules/no-async-without-await/). Flags async functions whose block body has no await or return, searching the body to any depth (nested arrows and function declarations are barriers, as in TSLint).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "async-without-await",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "regex": "^async$",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "function_declaration"
+                    },
+                    {
+                      "kind": "function_expression"
+                    },
+                    {
+                      "kind": "arrow_function"
+                    },
+                    {
+                      "kind": "method_definition"
+                    },
+                    {
+                      "kind": "generator_function_declaration"
+                    },
+                    {
+                      "kind": "generator_function"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "statement_block",
+                    "not": {
+                      "matches": "has-await-or-return"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "function_signature"
+                        },
+                        {
+                          "kind": "method_signature"
+                        },
+                        {
+                          "kind": "abstract_method_signature"
+                        }
+                      ]
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type_annotation"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": {
+            "has-await-or-return": {
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "await_expression"
+                  },
+                  {
+                    "kind": "return_statement"
+                  },
+                  {
+                    "not": {
+                      "matches": "barrier"
+                    },
+                    "matches": "has-await-or-return"
+                  }
+                ]
+              }
+            },
+            "barrier": {
+              "any": [
+                {
+                  "kind": "arrow_function"
+                },
+                {
+                  "kind": "function_declaration"
+                },
+                {
+                  "kind": "generator_function_declaration"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_ASYNC_WITHOUT_AWAIT",
+        "message": "Functions marked async must contain an await or return statement."
+      }
+    }
+  ]
+}

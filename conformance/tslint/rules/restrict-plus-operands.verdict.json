@@ -1,0 +1,44 @@
+{
+  "verdict": "INFEASIBLE",
+  "primitive": "type-checker",
+  "secondary": [
+    "fixture-artifact"
+  ],
+  "needs": [
+    "expression-type",
+    "symbol-resolution"
+  ],
+  "reason": "The checker question is 'what is the base type (string / number / bigint / other) of each `+` operand, with literal types widened and unions required to agree?'. The port classifies operands only when they are literals (number, string or template, `123n` / `BigInt()`, array, object). Secondary: error-tolerant-parse. Both fixtures contain a syntax error TypeScript recovers from, so the harness sees 0 findings. On copies with only those errors fixed (probed off-harness), the port finds 14/25 with 0 FP. Every remaining miss has an identifier or property-access operand whose type comes from a declaration. Checker APIs: getTypeAtLocation of each operand, typeToString, string/number/bigint/enum flags (:76-107). Line 27 needs initializer inference, line 31 an alias's member type.",
+  "evidence": [
+    {
+      "variant": "default",
+      "file": "test.ts.lint",
+      "line": 27,
+      "why": "`x + y` is number + string only because `var x = 5; var y = \"10\";`; `x + z` (line 41) has the same shape and is valid"
+    },
+    {
+      "variant": "default",
+      "file": "test.ts.lint",
+      "line": 31,
+      "why": "`pair.first + \"10\"` needs the declared type of pair.first (MyNumber alias of number); `\"5.5\" + pair.second` (line 46) is the same shape and valid"
+    },
+    {
+      "variant": "default",
+      "file": "test.ts.lint",
+      "line": 35,
+      "why": "`anyTyped + 12` is flagged because anyTyped is declared `any`"
+    },
+    {
+      "variant": "default",
+      "file": "test.ts.lint",
+      "line": 40,
+      "why": "`var good3 = parseFloat(\"5.5\", 10), + 10;` is a syntax error (declarator `+ 10`); kernel reports source-incomplete for the whole file"
+    },
+    {
+      "variant": "esnext-bigint",
+      "file": "test.ts.lint",
+      "line": 15,
+      "why": "`first: 5,\t    first: 5,` then a missing comma on the next line; syntax error, whole file source-incomplete"
+    }
+  ]
+}

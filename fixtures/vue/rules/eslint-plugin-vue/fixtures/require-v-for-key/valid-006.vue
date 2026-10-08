@@ -1,0 +1,1 @@
+<template><div><slot v-for="x in list" :name="x"><div :key="x"></div></slot></div></template>

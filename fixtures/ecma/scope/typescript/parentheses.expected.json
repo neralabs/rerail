@@ -1,0 +1,75 @@
+{
+ "oracle": "@typescript-eslint/parser 8.70.1 scope manager (lib: [])",
+ "builtins": [],
+ "unresolved": [
+  {
+   "start": 1,
+   "name": "alert"
+  },
+  {
+   "start": 14,
+   "name": "alert"
+  },
+  {
+   "start": 27,
+   "name": "console"
+  },
+  {
+   "start": 206,
+   "name": "undeclared"
+  }
+ ],
+ "constants": [
+  {
+   "start": 125,
+   "name": "alert",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 139,
+   "name": "console",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 164,
+   "name": "local",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 189,
+   "name": "local",
+   "constant": true,
+   "mutated": false
+  }
+ ],
+ "variables": [
+  {
+   "start": 53,
+   "name": "shadowed",
+   "references": 0
+  },
+  {
+   "start": 62,
+   "name": "alert",
+   "references": 1
+  },
+  {
+   "start": 81,
+   "name": "console",
+   "references": 1
+  },
+  {
+   "start": 96,
+   "name": "value",
+   "references": 0
+  },
+  {
+   "start": 164,
+   "name": "local",
+   "references": 2
+  }
+ ]
+}

@@ -1,0 +1,281 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Real-session jobs call hosted models with repository secrets. GitHub withholds secrets from fork and
+# Dependabot pull requests, so those jobs run on pushes and same-repository pull requests only; there a
+# missing secret or variable is a configuration error and fails the job.
+
+jobs:
+  licenses:
+    name: Licences (REUSE and copyleft gate)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      # Every file carries licence information and every licence it names has its text in LICENSES/.
+      - name: REUSE lint
+        run: uvx --from 'reuse[charset-normalizer]==6.2.0' reuse lint
+
+      # Only allowlisted (permissive) licences in LICENSES/, and no copyleft production dependency.
+      - name: Licence allowlist and copyleft gate
+        run: node scripts/check-licenses.mjs
+
+  build:
+    name: Check, build, and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: |
+            package-lock.json
+            playground/package-lock.json
+
+      - name: Set up just
+        uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
+        with:
+          just-version: "1.57.0"
+
+      - name: Check the Justfile
+        run: just --fmt --check --unstable
+
+      # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
+      # so the toolchain installed here must be the same channel.
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          components: rustfmt, clippy
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rerail-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rerail-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-
+            rerail-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
+
+      - name: Provision pinned standalone OMP host
+        run: |
+          host="$(node scripts/install-omp-host.mjs)"
+          printf 'RERAIL_OMP_EXECUTABLE=%s\n' "$host" >> "$GITHUB_ENV"
+
+      # check:all covers type checking, rustfmt and clippy, the UI token reference check
+      # (check:ui-tokens), and the policy DSL reference grammar check.
+      - name: Check
+        run: npm run check:all
+
+      - name: Build and test
+        run: npm run test:all
+
+      # The rule playground is a development tool with its own lockfile; it type-checks against dist/.
+      - name: Check, build, and test the rule playground
+        run: |
+          npm ci --prefix playground # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
+          npm --prefix playground run check
+          npm --prefix playground run build
+          npm --prefix playground test
+          npm --prefix playground run test:ui
+          npm --prefix playground run test:integration
+
+      - name: Exercise host parity and command-hook runtimes
+        run: >-
+          npm exec --
+          vitest run
+          test/parity-harness.test.ts
+          test/claude-hook.test.ts
+          test/codex-hook.test.ts
+          integration/cursor-plugin.test.ts
+          integration/event-adapter-parity.test.ts
+
+      - name: Exercise OMP and Pi real-session runtime paths
+        if: >-
+          ${{
+            github.event_name != 'pull_request' ||
+            (
+              github.event.pull_request.head.repo.full_name == github.repository &&
+              github.actor != 'dependabot[bot]'
+            )
+          }}
+        env:
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_BASE_URL: ${{ vars.AZURE_OPENAI_BASE_URL }}
+          RERAIL_SMOKE_OMP_MODEL: ${{ vars.RERAIL_SMOKE_OMP_MODEL }}
+          RERAIL_SMOKE_PI_MODEL: ${{ vars.RERAIL_SMOKE_PI_MODEL }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in AZURE_OPENAI_API_KEY AZURE_OPENAI_BASE_URL RERAIL_SMOKE_OMP_MODEL RERAIL_SMOKE_PI_MODEL; do
+            if [ -z "${!name:-}" ]; then missing+=("$name"); fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Real-session smoke needs repository secret/variable(s): ${missing[*]}"
+            exit 1
+          fi
+          export PATH="$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
+          results="$RUNNER_TEMP/rerail-harness-smoke"
+          mkdir -p "$results"
+          node --import tsx scripts/host-lifecycle.ts omp -- \
+            --provider azure --model "$RERAIL_SMOKE_OMP_MODEL" > "$results/omp.log" 2>&1 &
+          omp_pid=$!
+          node --import tsx scripts/host-lifecycle.ts pi -- \
+            --provider azure-openai-responses --model "$RERAIL_SMOKE_PI_MODEL" > "$results/pi.log" 2>&1 &
+          pi_pid=$!
+          status=0
+          if ! wait "$omp_pid"; then status=1; fi
+          if ! wait "$pi_pid"; then status=1; fi
+          cat "$results/omp.log"
+          cat "$results/pi.log"
+          exit "$status"
+
+  provider-smoke:
+    name: Real Claude Code, Codex, and Cursor sessions
+    if: >-
+      ${{
+        github.event_name != 'pull_request' ||
+        (
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.actor != 'dependabot[bot]'
+        )
+      }}
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      # One Azure AI key serves both the Foundry Anthropic endpoint and the Azure OpenAI endpoint.
+      ANTHROPIC_FOUNDRY_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+      ANTHROPIC_FOUNDRY_BASE_URL: ${{ vars.ANTHROPIC_FOUNDRY_BASE_URL }}
+      AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+      AZURE_OPENAI_BASE_URL: ${{ vars.AZURE_OPENAI_BASE_URL }}
+      CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+      RERAIL_CODEX_MODEL: ${{ vars.RERAIL_CODEX_MODEL }}
+      RERAIL_CLAUDE_MODEL: ${{ vars.RERAIL_CLAUDE_MODEL }}
+    steps:
+      - name: Require provider credentials and endpoints
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in ANTHROPIC_FOUNDRY_API_KEY ANTHROPIC_FOUNDRY_BASE_URL AZURE_OPENAI_API_KEY AZURE_OPENAI_BASE_URL CURSOR_API_KEY RERAIL_CODEX_MODEL; do
+            if [ -z "${!name:-}" ]; then missing+=("$name"); fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Provider smoke needs repository secret/variable(s): ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rerail-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rerail-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-
+            rerail-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
+
+      - name: Install real provider CLIs
+        run: |
+          npm install --global --ignore-scripts @anthropic-ai/claude-code-darwin-arm64@2.1.266 @openai/codex@0.153.4
+          curl --fail --location --proto '=https' --proto-redir '=https' --silent --show-error \
+            https://downloads.cursor.com/lab/2026.09.08-6caf4ff/darwin/arm64/agent-cli-package.tar.gz \
+            --output "$RUNNER_TEMP/cursor-agent.tar.gz"
+          echo "9c456cc432adc476202a2b09c21a10944fdf484b3ca55dcbf939bbc8ce30dcbe  $RUNNER_TEMP/cursor-agent.tar.gz" \
+            | shasum -a 256 --check
+          mkdir -p "$HOME/.local/bin" "$HOME/.local/share/cursor-agent"
+          ln -s "$(npm root --global)/@anthropic-ai/claude-code-darwin-arm64/claude" "$HOME/.local/bin/claude"
+          tar --strip-components=1 -xzf "$RUNNER_TEMP/cursor-agent.tar.gz" -C "$HOME/.local/share/cursor-agent"
+          ln -s "$HOME/.local/share/cursor-agent/cursor-agent" "$HOME/.local/bin/agent"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build host assets
+        run: |
+          npm run build:native
+          npm run build:ts
+          npm run build:claude
+          npm run build:codex
+          npm run build:cursor
+
+      - name: Exercise real Claude Code, Codex, and Cursor sessions
+        run: |
+          set -euo pipefail
+          results="$RUNNER_TEMP/rerail-provider-smoke"
+          mkdir -p "$results"
+          node --import tsx scripts/host-smoke.ts --host claude-code > "$results/claude-code.log" 2>&1 &
+          claude_pid=$!
+          RERAIL_SMOKE_ACCEPTANCE=transport RERAIL_SMOKE_TIMEOUT_MS=300000 node --import tsx scripts/host-smoke.ts --host codex > "$results/codex.log" 2>&1 &
+          codex_pid=$!
+          RERAIL_SMOKE_ACCEPTANCE=transport node --import tsx scripts/host-smoke.ts --host cursor > "$results/cursor.log" 2>&1 &
+          cursor_pid=$!
+          status=0
+          if ! wait "$claude_pid"; then status=1; fi
+          if ! wait "$codex_pid"; then status=1; fi
+          if ! wait "$cursor_pid"; then status=1; fi
+          cat "$results/claude-code.log"
+          cat "$results/codex.log"
+          cat "$results/cursor.log"
+          exit "$status"

@@ -1,0 +1,3 @@
+SELECT *
+FROM foo
+LIMIT 10;

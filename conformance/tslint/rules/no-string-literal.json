@@ -1,0 +1,50 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-string-literal",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Disallows object access via string literals when the key is a valid identifier (use dot access).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "element-access-string",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "string"
+              },
+              {
+                "regex": "^[\"'](?:[A-Za-z_$]|\\\\u00(?:4[1-9A-Fa-f]|5[0-9Aa]|6[1-9A-Fa-f]|7[0-9Aa]|5[Ff]|24))(?:[A-Za-z0-9_$]|\\\\u00(?:3[0-9]|4[1-9A-Fa-f]|5[0-9Aa]|6[1-9A-Fa-f]|7[0-9Aa]|5[Ff]|24))*[\"']$"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "subscript_expression"
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": "neighbor",
+                  "regex": "^\\[$"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_STRING_LITERAL",
+        "message": "object access via string literals is disallowed"
+      }
+    }
+  ]
+}

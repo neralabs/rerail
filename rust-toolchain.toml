@@ -1,0 +1,7 @@
+# The Rust toolchain every Rerail build uses: rustup reads this file when cargo
+# runs under rerail/, CI feeds the channel to dtolnay/rust-toolchain, and the
+# host-aware development launchers install or select it. Bump it in one place.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

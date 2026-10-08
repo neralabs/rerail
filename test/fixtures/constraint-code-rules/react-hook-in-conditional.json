@@ -1,0 +1,69 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "example:react-hook-in-conditional",
+  "revision": 1,
+  "mode": "steer",
+  "description": "React hooks (callees named use[A-Z]…) must not be called conditionally: inside an if/else branch, a ternary branch, the right side of &&, || or ??, a loop, or a switch case, within the same function. `constraints` names the hook; a recursive util walks up to the nearest function boundary. Constraints only filter what the rule matched, so the rule also tests a child for the hook name first, which keeps the walk off every other call. Early returns before a hook are not detected.",
+  "scope": { "include": ["**/*.ts", "**/*.tsx"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "conditional-hook-call",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [{ "pattern": "$HOOK($$$ARGS)" }, { "pattern": "$HOOK<$$$TYPES>($$$ARGS)" }],
+            "all": [{ "has": { "any": [{ "kind": "identifier" }, { "kind": "member_expression" }], "regex": "^(React\\.)?use[A-Z][A-Za-z0-9_$]*$" } }],
+            "matches": "conditionally-reached"
+          },
+          "constraints": {
+            "HOOK": { "regex": "^(React\\.)?use[A-Z][A-Za-z0-9_$]*$" }
+          },
+          "utils": {
+            "conditionally-reached": {
+              "any": [
+                { "matches": "conditional-branch" },
+                { "inside": { "not": { "matches": "function-boundary" }, "matches": "conditionally-reached" } }
+              ]
+            },
+            "conditional-branch": {
+              "any": [
+                { "inside": { "kind": "if_statement" }, "not": { "kind": "parenthesized_expression" } },
+                { "inside": { "kind": "else_clause" } },
+                { "inside": { "kind": "ternary_expression" }, "follows": { "regex": "^[?:]$" } },
+                { "inside": { "kind": "binary_expression" }, "follows": { "regex": "^(&&|\\|\\||\\?\\?)$" } },
+                {
+                  "inside": {
+                    "any": [
+                      { "kind": "for_statement" },
+                      { "kind": "for_in_statement" },
+                      { "kind": "while_statement" },
+                      { "kind": "do_statement" },
+                      { "kind": "switch_case" },
+                      { "kind": "switch_default" }
+                    ]
+                  }
+                }
+              ]
+            },
+            "function-boundary": {
+              "any": [
+                { "kind": "function_declaration" },
+                { "kind": "function_expression" },
+                { "kind": "arrow_function" },
+                { "kind": "method_definition" },
+                { "kind": "generator_function_declaration" },
+                { "kind": "generator_function" }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "CONDITIONAL_HOOK_CALL",
+        "message": "Hooks must be called unconditionally, in the same order on every render."
+      }
+    }
+  ]
+}

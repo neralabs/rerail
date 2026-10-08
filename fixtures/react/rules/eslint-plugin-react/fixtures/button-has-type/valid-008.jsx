@@ -1,0 +1,1 @@
+<button type={condition ? "button" : "submit"}/>

@@ -1,0 +1,91 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-magic-numbers",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Option ignore-jsx: numbers directly inside a JSX `{expression}` are allowed.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "magic-number",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "number",
+                "not": {
+                  "any": [
+                    {"regex": "^[01](?:\\.0*)?$"},
+                    {"inside": {"stopBy": "neighbor", "kind": "unary_expression", "regex": "^-"}}
+                  ]
+                }
+              },
+              {
+                "kind": "unary_expression",
+                "regex": "^-\\s*[0-9.]",
+                "has": {"stopBy": "neighbor", "kind": "number"},
+                "not": {"regex": "^-\\s*1(?:\\.0*)?$"}
+              }
+            ],
+            "not": {"matches": "exempt"}
+          },
+          "utils": {
+            "exempt": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {"kind": "variable_declarator"},
+                      {"kind": "pair"},
+                      {"kind": "enum_assignment"},
+                      {"kind": "public_field_definition"},
+                      {"kind": "required_parameter"},
+                      {"kind": "optional_parameter"},
+                      {"kind": "export_statement"}
+                    ]
+                  }
+                },
+                {"inside": {"stopBy": "end", "matches": "number-method-call"}},
+                {"matches": "parse-int-tail-arg"},
+                {"inside": {"stopBy": "end", "matches": "parse-int-tail-arg"}},
+                {"inside": {"stopBy": "neighbor", "kind": "jsx_expression"}}
+              ]
+            },
+            "number-method-call": {
+              "kind": "call_expression",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "member_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "property_identifier",
+                  "regex": "^(?:toExponential|toFixed|toPrecision|toString)$"
+                }
+              }
+            },
+            "parse-int-tail-arg": {
+              "follows": {"stopBy": "neighbor", "regex": "^,$"},
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "arguments",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "call_expression",
+                  "has": {"stopBy": "neighbor", "kind": "identifier", "regex": "^parseInt$"}
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_MAGIC_NUMBERS",
+        "message": "'magic numbers' are not allowed"
+      }
+    }
+  ]
+}

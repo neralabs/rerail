@@ -1,0 +1,117 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:member-access",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of TSLint's `member-access` rule with its default options (https://palantir.github.io/tslint/rules/member-access/). Requires explicit visibility on class methods and properties (default options).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "member",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "member-name",
+            "not": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^(?:get|set)$"
+                  }
+                },
+                {
+                  "kind": "property_identifier",
+                  "regex": "^constructor$"
+                }
+              ]
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "class-member",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "accessibility_modifier"
+                }
+              }
+            }
+          },
+          "utils": {
+            "member-name": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "private_property_identifier"
+                },
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "number"
+                },
+                {
+                  "kind": "computed_property_name"
+                }
+              ],
+              "not": {
+                "follows": {
+                  "stopBy": "neighbor",
+                  "regex": "^=$"
+                }
+              }
+            },
+            "class-member": {
+              "any": [
+                {
+                  "kind": "method_definition"
+                },
+                {
+                  "kind": "method_signature"
+                },
+                {
+                  "kind": "public_field_definition"
+                },
+                {
+                  "kind": "abstract_method_signature"
+                }
+              ],
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "class_body"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "MEMBER_ACCESS",
+        "message": "The class member must be marked either 'private', 'public', or 'protected'"
+      }
+    }
+  ]
+}

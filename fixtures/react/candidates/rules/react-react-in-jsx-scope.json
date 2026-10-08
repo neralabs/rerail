@@ -1,0 +1,215 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-react-in-jsx-scope",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-react 7.37.5 react/react-in-jsx-scope (pragma React): a JSX opening element or fragment where no `React` binding is visible: none declared at the top level (import, var/let/const, function), in an enclosing block's own declarations, or as an enclosing function's parameter. Files whose `@jsx X` comment names another pragma are not checked: the pragma is a per-file fact a policy cannot read.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "jsx_opening_element"
+              },
+              {
+                "kind": "jsx_self_closing_element"
+              }
+            ],
+            "not": {
+              "any": [
+                {
+                  "matches": "react-visible"
+                },
+                {
+                  "matches": "other-pragma-file"
+                }
+              ]
+            }
+          },
+          "utils": {
+            "declares-react": {
+              "any": [
+                {
+                  "kind": "import_statement",
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "identifier",
+                    "regex": "^React$"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "lexical_declaration"
+                    },
+                    {
+                      "kind": "variable_declaration"
+                    }
+                  ],
+                  "has": {
+                    "kind": "variable_declarator",
+                    "has": {
+                      "field": "name",
+                      "any": [
+                        {
+                          "kind": "identifier",
+                          "regex": "^React$"
+                        },
+                        {
+                          "has": {
+                            "stopBy": "end",
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "shorthand_property_identifier_pattern"
+                              }
+                            ],
+                            "regex": "^React$"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "function_declaration"
+                    },
+                    {
+                      "kind": "class_declaration"
+                    }
+                  ],
+                  "has": {
+                    "field": "name",
+                    "regex": "^React$"
+                  }
+                },
+                {
+                  "kind": "export_statement",
+                  "has": {
+                    "field": "declaration",
+                    "matches": "declares-react"
+                  }
+                }
+              ]
+            },
+            "react-visible": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "program",
+                    "has": {
+                      "matches": "declares-react"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "statement_block",
+                    "has": {
+                      "matches": "declares-react"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "method_definition"
+                      }
+                    ],
+                    "matches": "react-parameter"
+                  }
+                }
+              ]
+            },
+            "react-parameter": {
+              "any": [
+                {
+                  "has": {
+                    "field": "parameters",
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "identifier",
+                      "regex": "^React$",
+                      "binds": {
+                        "form": "parameter"
+                      }
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "field": "parameter",
+                    "kind": "identifier",
+                    "regex": "^React$"
+                  }
+                }
+              ]
+            },
+            "other-pragma-file": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "program",
+                "has": {
+                  "kind": "comment",
+                  "regex": "@jsx\\s",
+                  "not": {
+                    "regex": "@jsx\\s+React(?:[.\\s]|$)"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/react-in-jsx-scope",
+        "message": "'React' must be in scope when using JSX",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/react-in-jsx-scope"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

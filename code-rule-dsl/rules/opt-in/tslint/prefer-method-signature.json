@@ -1,0 +1,77 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:prefer-method-signature",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of TSLint's `prefer-method-signature` rule with its default options (https://palantir.github.io/tslint/rules/prefer-method-signature/). Prefer `foo(): void` over `foo: () => void` in interfaces and type literals.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "property-signature",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "property_identifier"
+                  },
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "number"
+                  },
+                  {
+                    "kind": "computed_property_name"
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "property_signature",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "type_annotation",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "function_type"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PREFER_METHOD_SIGNATURE",
+        "message": "Use a method signature instead of a property signature of function type."
+      }
+    }
+  ]
+}

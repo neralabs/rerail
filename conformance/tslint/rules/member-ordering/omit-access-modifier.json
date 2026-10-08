@@ -1,0 +1,53 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:member-ordering",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Options [{\"order\": [\"static-field\", \"instance-field\", \"constructor\"]}]; alphabetize is not ported (needs comparison of two captured names). One check: a member of rank i fails when an earlier sibling member of the same body is ranked after i (TSLint compares with the last non-failing member, which holds the highest rank seen so far).",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "member-rank",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "inside": {"any": [{"kind": "class_body"}, {"kind": "interface_body"}, {"kind": "object_type"}]},
+            "any": [
+              {"matches": "rank-static-field", "follows": {"stopBy": "end", "matches": "after-static-field"}},
+              {"matches": "rank-instance-field", "follows": {"stopBy": "end", "matches": "after-instance-field"}}
+            ]
+          },
+          "utils": {
+            "rank-static-field": {"all": [{"matches": "static"}, {"matches": "field"}]},
+            "rank-instance-field": {"not": {"matches": "static"}, "matches": "field"},
+            "after-static-field": {"any": [{"not": {"matches": "static"}, "matches": "field"}, {"matches": "constructor"}]},
+            "after-instance-field": {"matches": "constructor"},
+            "static": {"has": {"regex": "^static$", "not": {"kind": "property_identifier"}}},
+            "function-initializer": {"has": {"any": [{"kind": "arrow_function"}, {"kind": "function_expression"}]}},
+            "field": {
+              "any": [
+                {"kind": "property_signature"},
+                {"kind": "public_field_definition", "not": {"matches": "function-initializer"}}
+              ]
+            },
+            "constructor": {
+              "any": [
+                {"kind": "construct_signature"},
+                {
+                  "any": [{"kind": "method_definition"}, {"kind": "method_signature", "inside": {"kind": "class_body"}}],
+                  "has": {"kind": "property_identifier", "regex": "^constructor$"}
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "MEMBER_ORDERING",
+        "message": "Member declaration not allowed after a member of a later-ranked category."
+      }
+    }
+  ]
+}

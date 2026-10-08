@@ -1,0 +1,3093 @@
+{
+    "php": "8.5.11",
+    "phpParser": "v5.9.0",
+    "files": {
+        "bindings/forms.php": [
+            {
+                "name": "$pairs",
+                "bindings": [
+                    {
+                        "start": 131,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    131,
+                    184,
+                    229,
+                    275,
+                    369
+                ]
+            },
+            {
+                "name": "$a",
+                "bindings": [
+                    {
+                        "start": 153,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 242,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 246,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    153,
+                    242,
+                    246,
+                    432
+                ]
+            },
+            {
+                "name": "$b",
+                "bindings": [
+                    {
+                        "start": 157,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    157,
+                    253
+                ]
+            },
+            {
+                "name": "$c",
+                "bindings": [
+                    {
+                        "start": 178,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    178,
+                    257
+                ]
+            },
+            {
+                "name": "$k",
+                "bindings": [
+                    {
+                        "start": 204,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    204,
+                    436
+                ]
+            },
+            {
+                "name": "$j1",
+                "bindings": [
+                    {
+                        "start": 216,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    216,
+                    440
+                ]
+            },
+            {
+                "name": "$j2",
+                "bindings": [
+                    {
+                        "start": 221,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    221,
+                    445
+                ]
+            },
+            {
+                "name": "$key",
+                "bindings": [
+                    {
+                        "start": 285,
+                        "form": "for"
+                    }
+                ],
+                "occurrences": [
+                    285,
+                    327
+                ]
+            },
+            {
+                "name": "$first",
+                "bindings": [
+                    {
+                        "start": 294,
+                        "form": "for"
+                    }
+                ],
+                "occurrences": [
+                    294,
+                    333
+                ]
+            },
+            {
+                "name": "$second",
+                "bindings": [
+                    {
+                        "start": 302,
+                        "form": "for"
+                    }
+                ],
+                "occurrences": [
+                    302,
+                    341
+                ]
+            },
+            {
+                "name": "$q",
+                "bindings": [
+                    {
+                        "start": 386,
+                        "form": "for"
+                    }
+                ],
+                "occurrences": [
+                    386,
+                    410
+                ]
+            },
+            {
+                "name": "$list",
+                "bindings": [
+                    {
+                        "start": 489,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 505,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 522,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 542,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 563,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 582,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 598,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 624,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    489,
+                    505,
+                    522,
+                    542,
+                    563,
+                    582,
+                    598,
+                    624,
+                    686,
+                    704
+                ]
+            },
+            {
+                "name": "$object",
+                "bindings": [
+                    {
+                        "start": 639,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    639,
+                    669
+                ]
+            },
+            {
+                "name": "$n",
+                "bindings": [
+                    {
+                        "start": 737,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    737,
+                    778
+                ]
+            },
+            {
+                "name": "$total",
+                "bindings": [
+                    {
+                        "start": 752,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 768,
+                        "form": "augmented"
+                    },
+                    {
+                        "start": 786,
+                        "form": "augmented"
+                    },
+                    {
+                        "start": 805,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 823,
+                        "form": "augmented"
+                    },
+                    {
+                        "start": 839,
+                        "form": "augmented"
+                    }
+                ],
+                "occurrences": [
+                    752,
+                    768,
+                    786,
+                    805,
+                    823,
+                    839,
+                    882
+                ]
+            },
+            {
+                "name": "$other",
+                "bindings": [
+                    {
+                        "start": 851,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    851,
+                    891
+                ]
+            },
+            {
+                "name": "$items",
+                "bindings": [
+                    {
+                        "start": 928,
+                        "form": "parameter"
+                    },
+                    {
+                        "start": 1183,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 1207,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    928,
+                    1010,
+                    1183,
+                    1207
+                ]
+            },
+            {
+                "name": "$count",
+                "bindings": [
+                    {
+                        "start": 947,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    947,
+                    973,
+                    1281
+                ]
+            },
+            {
+                "name": "$alias",
+                "bindings": [
+                    {
+                        "start": 963,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 985,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    963,
+                    985
+                ]
+            },
+            {
+                "name": "$item",
+                "bindings": [
+                    {
+                        "start": 1021,
+                        "form": "for"
+                    },
+                    {
+                        "start": 1038,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1021,
+                    1038,
+                    1065
+                ]
+            },
+            {
+                "name": "$matches",
+                "bindings": [
+                    {
+                        "start": 1100,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1100,
+                    1296
+                ]
+            },
+            {
+                "name": "$named",
+                "bindings": [
+                    {
+                        "start": 1149,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1149,
+                    1314
+                ]
+            },
+            {
+                "name": "$parsed",
+                "bindings": [
+                    {
+                        "start": 1223,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 1260,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1223,
+                    1260,
+                    1330
+                ]
+            },
+            {
+                "name": "$config",
+                "bindings": [
+                    {
+                        "start": 1380,
+                        "form": "global"
+                    }
+                ],
+                "occurrences": [
+                    1380,
+                    1461
+                ]
+            },
+            {
+                "name": "$settings",
+                "bindings": [
+                    {
+                        "start": 1389,
+                        "form": "global"
+                    },
+                    {
+                        "start": 1449,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1389,
+                    1449
+                ]
+            },
+            {
+                "name": "$calls",
+                "bindings": [
+                    {
+                        "start": 1411,
+                        "form": "static"
+                    },
+                    {
+                        "start": 1435,
+                        "form": "augmented"
+                    },
+                    {
+                        "start": 1685,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1411,
+                    1435,
+                    1685
+                ]
+            },
+            {
+                "name": "$cache",
+                "bindings": [
+                    {
+                        "start": 1423,
+                        "form": "static"
+                    },
+                    {
+                        "start": 1474,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1423,
+                    1474
+                ]
+            },
+            {
+                "name": "$error",
+                "bindings": [
+                    {
+                        "start": 1585,
+                        "form": "except"
+                    }
+                ],
+                "occurrences": [
+                    1585,
+                    1608
+                ]
+            },
+            {
+                "name": "$items",
+                "bindings": [
+                    {
+                        "start": 1727,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    1727,
+                    1780,
+                    1813
+                ]
+            },
+            {
+                "name": "$i",
+                "bindings": [
+                    {
+                        "start": 1751,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 1789,
+                        "form": "augmented"
+                    }
+                ],
+                "occurrences": [
+                    1751,
+                    1769,
+                    1789,
+                    1820
+                ]
+            },
+            {
+                "name": "$sum",
+                "bindings": [
+                    {
+                        "start": 1759,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 1805,
+                        "form": "augmented"
+                    }
+                ],
+                "occurrences": [
+                    1759,
+                    1805,
+                    1945,
+                    2105,
+                    2184
+                ]
+            },
+            {
+                "name": "$j",
+                "bindings": [
+                    {
+                        "start": 1835,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 1872,
+                        "form": "augmented"
+                    }
+                ],
+                "occurrences": [
+                    1835,
+                    1854,
+                    1872,
+                    1906,
+                    2191
+                ]
+            },
+            {
+                "name": "$k",
+                "bindings": [
+                    {
+                        "start": 1901,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1901,
+                    1923,
+                    2196
+                ]
+            },
+            {
+                "name": "$label",
+                "bindings": [
+                    {
+                        "start": 1981,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 2045,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1981,
+                    2045,
+                    2117
+                ]
+            },
+            {
+                "name": "$result",
+                "bindings": [
+                    {
+                        "start": 2072,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    2072,
+                    2208
+                ]
+            },
+            {
+                "name": "$fallback",
+                "bindings": [
+                    {
+                        "start": 2145,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    2145,
+                    2226
+                ]
+            },
+            {
+                "name": "$outer",
+                "bindings": [
+                    {
+                        "start": 2269,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    2269,
+                    2346,
+                    2574,
+                    2746
+                ]
+            },
+            {
+                "name": "$base",
+                "bindings": [
+                    {
+                        "start": 2290,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    2290,
+                    2339,
+                    2464,
+                    2566,
+                    2618,
+                    2672
+                ]
+            },
+            {
+                "name": "$byValue",
+                "bindings": [
+                    {
+                        "start": 2305,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    2305,
+                    2766
+                ]
+            },
+            {
+                "name": "$x",
+                "bindings": [
+                    {
+                        "start": 2330,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    2330,
+                    2385
+                ]
+            },
+            {
+                "name": "$base",
+                "bindings": [
+                    {
+                        "start": 2339,
+                        "form": "parameter"
+                    },
+                    {
+                        "start": 2369,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    2339,
+                    2369,
+                    2377,
+                    2404
+                ]
+            },
+            {
+                "name": "$outer",
+                "bindings": [
+                    {
+                        "start": 2346,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    2346,
+                    2412
+                ]
+            },
+            {
+                "name": "$byReference",
+                "bindings": [
+                    {
+                        "start": 2431,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    2431,
+                    2776
+                ]
+            },
+            {
+                "name": "$base",
+                "bindings": [
+                    {
+                        "start": 2464,
+                        "form": "parameter"
+                    },
+                    {
+                        "start": 2496,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    2464,
+                    2496
+                ]
+            },
+            {
+                "name": "$later",
+                "bindings": [
+                    {
+                        "start": 2472,
+                        "form": "parameter"
+                    },
+                    {
+                        "start": 2515,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    2472,
+                    2515
+                ]
+            },
+            {
+                "name": "$arrow",
+                "bindings": [
+                    {
+                        "start": 2538,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    2538,
+                    2790
+                ]
+            },
+            {
+                "name": "$y",
+                "bindings": [
+                    {
+                        "start": 2554,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    2554,
+                    2561
+                ]
+            },
+            {
+                "name": "$arrowLocal",
+                "bindings": [
+                    {
+                        "start": 2586,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    2586,
+                    2798
+                ]
+            },
+            {
+                "name": "$local",
+                "bindings": [
+                    {
+                        "start": 2609,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    2609,
+                    2627
+                ]
+            },
+            {
+                "name": "$nested",
+                "bindings": [
+                    {
+                        "start": 2639,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    2639,
+                    2811
+                ]
+            },
+            {
+                "name": "$z",
+                "bindings": [
+                    {
+                        "start": 2652,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    2652,
+                    2667
+                ]
+            },
+            {
+                "name": "$shadow",
+                "bindings": [
+                    {
+                        "start": 2683,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    2683,
+                    2820
+                ]
+            },
+            {
+                "name": "$base",
+                "bindings": [
+                    {
+                        "start": 2696,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    2696,
+                    2706
+                ]
+            },
+            {
+                "name": "$static",
+                "bindings": [
+                    {
+                        "start": 2721,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    2721,
+                    2829
+                ]
+            },
+            {
+                "name": "$promoted",
+                "bindings": [
+                    {
+                        "start": 2916,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    2916,
+                    2980
+                ]
+            },
+            {
+                "name": "$plain",
+                "bindings": [
+                    {
+                        "start": 2931,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    2931,
+                    2971
+                ]
+            },
+            {
+                "name": "$names",
+                "bindings": [
+                    {
+                        "start": 3040,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    3040,
+                    3093
+                ]
+            },
+            {
+                "name": "$joined",
+                "bindings": [
+                    {
+                        "start": 3070,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    3070,
+                    3128
+                ]
+            },
+            {
+                "name": "$made",
+                "bindings": [
+                    {
+                        "start": 3110,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    3110,
+                    3255
+                ]
+            },
+            {
+                "name": "$value",
+                "bindings": [
+                    {
+                        "start": 3193,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    3193
+                ]
+            },
+            {
+                "name": "$row",
+                "bindings": [
+                    {
+                        "start": 3314,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    3314,
+                    3379,
+                    3388
+                ]
+            },
+            {
+                "name": "$name",
+                "bindings": [
+                    {
+                        "start": 3342,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    3342,
+                    3372
+                ]
+            },
+            {
+                "name": "$unused",
+                "bindings": [
+                    {
+                        "start": 3467,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    3467
+                ]
+            },
+            {
+                "name": "$out",
+                "bindings": [
+                    {
+                        "start": 3484,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    3484
+                ]
+            },
+            {
+                "name": "$top",
+                "bindings": [
+                    {
+                        "start": 3500,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 3510,
+                        "form": "augmented"
+                    }
+                ],
+                "occurrences": [
+                    3500,
+                    3510,
+                    3577
+                ]
+            }
+        ],
+        "variables/branches.php": [
+            {
+                "name": "$c",
+                "bindings": [
+                    {
+                        "start": 30,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    30,
+                    58,
+                    107,
+                    185,
+                    303,
+                    393,
+                    431,
+                    847
+                ]
+            },
+            {
+                "name": "$n",
+                "bindings": [
+                    {
+                        "start": 38,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    38,
+                    221,
+                    476,
+                    561,
+                    764,
+                    900,
+                    916
+                ]
+            },
+            {
+                "name": "$a",
+                "bindings": [
+                    {
+                        "start": 72,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    72,
+                    95
+                ]
+            },
+            {
+                "name": "$b",
+                "bindings": [
+                    {
+                        "start": 121,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 150,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    121,
+                    150,
+                    173
+                ]
+            },
+            {
+                "name": "$d",
+                "bindings": [
+                    {
+                        "start": 199,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 239,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    199,
+                    239,
+                    291
+                ]
+            },
+            {
+                "name": "$e",
+                "bindings": [
+                    {
+                        "start": 317,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    317,
+                    385
+                ]
+            },
+            {
+                "name": "$f",
+                "bindings": [
+                    {
+                        "start": 400,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    400,
+                    418
+                ]
+            },
+            {
+                "name": "$g",
+                "bindings": [
+                    {
+                        "start": 426,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    426,
+                    459
+                ]
+            },
+            {
+                "name": "$h",
+                "bindings": [
+                    {
+                        "start": 437,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    437,
+                    463
+                ]
+            },
+            {
+                "name": "$i",
+                "bindings": [
+                    {
+                        "start": 471,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    471,
+                    501
+                ]
+            },
+            {
+                "name": "$j",
+                "bindings": [
+                    {
+                        "start": 483,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    483,
+                    505
+                ]
+            },
+            {
+                "name": "$k",
+                "bindings": [
+                    {
+                        "start": 513,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    513,
+                    545
+                ]
+            },
+            {
+                "name": "$l",
+                "bindings": [
+                    {
+                        "start": 527,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    527
+                ]
+            },
+            {
+                "name": "$s",
+                "bindings": [
+                    {
+                        "start": 595,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 650,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    595,
+                    650,
+                    739
+                ]
+            },
+            {
+                "name": "$s2",
+                "bindings": [
+                    {
+                        "start": 715,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    715,
+                    743
+                ]
+            },
+            {
+                "name": "$m",
+                "bindings": [
+                    {
+                        "start": 752,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    752,
+                    830
+                ]
+            },
+            {
+                "name": "$mv",
+                "bindings": [
+                    {
+                        "start": 783,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    783,
+                    834
+                ]
+            },
+            {
+                "name": "$x",
+                "bindings": [
+                    {
+                        "start": 861,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    861,
+                    882
+                ]
+            },
+            {
+                "name": "$y",
+                "bindings": [
+                    {
+                        "start": 911,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    911,
+                    936,
+                    955
+                ]
+            },
+            {
+                "name": "$c",
+                "bindings": [
+                    {
+                        "start": 982,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    982,
+                    1003,
+                    1065
+                ]
+            },
+            {
+                "name": "$a",
+                "bindings": [
+                    {
+                        "start": 1036,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1036,
+                    1053
+                ]
+            },
+            {
+                "name": "$b",
+                "bindings": [
+                    {
+                        "start": 1079,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1079,
+                    1130
+                ]
+            }
+        ],
+        "variables/closures.php": [
+            {
+                "name": "$a",
+                "bindings": [
+                    {
+                        "start": 29,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    29,
+                    304,
+                    554
+                ]
+            },
+            {
+                "name": "$b",
+                "bindings": [
+                    {
+                        "start": 45,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    45,
+                    85,
+                    309
+                ]
+            },
+            {
+                "name": "$byValue",
+                "bindings": [
+                    {
+                        "start": 57,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    57,
+                    660
+                ]
+            },
+            {
+                "name": "$b",
+                "bindings": [
+                    {
+                        "start": 85,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    85,
+                    106
+                ]
+            },
+            {
+                "name": "$undefinedUse",
+                "bindings": [
+                    {
+                        "start": 121,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    121,
+                    672
+                ]
+            },
+            {
+                "name": "$missing",
+                "bindings": [
+                    {
+                        "start": 154,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    154,
+                    181
+                ]
+            },
+            {
+                "name": "$byRef",
+                "bindings": [
+                    {
+                        "start": 202,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    202,
+                    689
+                ]
+            },
+            {
+                "name": "$later",
+                "bindings": [
+                    {
+                        "start": 229,
+                        "form": "parameter"
+                    },
+                    {
+                        "start": 247,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    229,
+                    247
+                ]
+            },
+            {
+                "name": "$arrow",
+                "bindings": [
+                    {
+                        "start": 287,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    287,
+                    699
+                ]
+            },
+            {
+                "name": "$arrowMissing",
+                "bindings": [
+                    {
+                        "start": 317,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    317,
+                    709
+                ]
+            },
+            {
+                "name": "$arrowLocal",
+                "bindings": [
+                    {
+                        "start": 352,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    352,
+                    726
+                ]
+            },
+            {
+                "name": "$p",
+                "bindings": [
+                    {
+                        "start": 369,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    369,
+                    376
+                ]
+            },
+            {
+                "name": "$q",
+                "bindings": [
+                    {
+                        "start": 382,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    382,
+                    392
+                ]
+            },
+            {
+                "name": "$static",
+                "bindings": [
+                    {
+                        "start": 400,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    400,
+                    742
+                ]
+            },
+            {
+                "name": "$inner",
+                "bindings": [
+                    {
+                        "start": 464,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    464,
+                    753
+                ]
+            },
+            {
+                "name": "$x",
+                "bindings": [
+                    {
+                        "start": 483,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    483,
+                    509
+                ]
+            },
+            {
+                "name": "$unusedUse",
+                "bindings": [
+                    {
+                        "start": 524,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    524,
+                    764
+                ]
+            },
+            {
+                "name": "$a",
+                "bindings": [
+                    {
+                        "start": 554,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    554
+                ]
+            },
+            {
+                "name": "$unusedParam",
+                "bindings": [
+                    {
+                        "start": 589,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    589,
+                    778
+                ]
+            },
+            {
+                "name": "$ignored",
+                "bindings": [
+                    {
+                        "start": 614,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    614
+                ]
+            },
+            {
+                "name": "$f",
+                "bindings": [
+                    {
+                        "start": 889,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    889,
+                    994
+                ]
+            },
+            {
+                "name": "$g",
+                "bindings": [
+                    {
+                        "start": 956,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    956,
+                    1001
+                ]
+            }
+        ],
+        "variables/edges.php": [
+            {
+                "name": "$s",
+                "bindings": [
+                    {
+                        "start": 186,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    186,
+                    238,
+                    304,
+                    392
+                ]
+            },
+            {
+                "name": "$named",
+                "bindings": [
+                    {
+                        "start": 251,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    251,
+                    269
+                ]
+            },
+            {
+                "name": "$reordered",
+                "bindings": [
+                    {
+                        "start": 317,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    317,
+                    355
+                ]
+            },
+            {
+                "name": "$mixed",
+                "bindings": [
+                    {
+                        "start": 405,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    405,
+                    423
+                ]
+            },
+            {
+                "name": "$read",
+                "bindings": [
+                    {
+                        "start": 475,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    475
+                ]
+            },
+            {
+                "name": "$captured",
+                "bindings": [
+                    {
+                        "start": 563,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    563,
+                    607
+                ]
+            },
+            {
+                "name": "$captured",
+                "bindings": [
+                    {
+                        "start": 607,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    607,
+                    635
+                ]
+            }
+        ],
+        "variables/loops.php": [
+            {
+                "name": "$items",
+                "bindings": [
+                    {
+                        "start": 28,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    28,
+                    141,
+                    290,
+                    352,
+                    621,
+                    767,
+                    855
+                ]
+            },
+            {
+                "name": "$n",
+                "bindings": [
+                    {
+                        "start": 40,
+                        "form": "parameter"
+                    },
+                    {
+                        "start": 103,
+                        "form": "augmented"
+                    },
+                    {
+                        "start": 516,
+                        "form": "augmented"
+                    }
+                ],
+                "occurrences": [
+                    40,
+                    63,
+                    103,
+                    417,
+                    516
+                ]
+            },
+            {
+                "name": "$w",
+                "bindings": [
+                    {
+                        "start": 98,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    86,
+                    98,
+                    124
+                ]
+            },
+            {
+                "name": "$key",
+                "bindings": [
+                    {
+                        "start": 151,
+                        "form": "for"
+                    }
+                ],
+                "occurrences": [
+                    151,
+                    182,
+                    211
+                ]
+            },
+            {
+                "name": "$value",
+                "bindings": [
+                    {
+                        "start": 159,
+                        "form": "for"
+                    }
+                ],
+                "occurrences": [
+                    159,
+                    188,
+                    217
+                ]
+            },
+            {
+                "name": "$one",
+                "bindings": [
+                    {
+                        "start": 248,
+                        "form": "for"
+                    }
+                ],
+                "occurrences": [
+                    248,
+                    271
+                ]
+            },
+            {
+                "name": "$p",
+                "bindings": [
+                    {
+                        "start": 301,
+                        "form": "for"
+                    }
+                ],
+                "occurrences": [
+                    301,
+                    325
+                ]
+            },
+            {
+                "name": "$q",
+                "bindings": [
+                    {
+                        "start": 305,
+                        "form": "for"
+                    }
+                ],
+                "occurrences": [
+                    305,
+                    329
+                ]
+            },
+            {
+                "name": "$ref",
+                "bindings": [
+                    {
+                        "start": 363,
+                        "form": "for"
+                    },
+                    {
+                        "start": 379,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    363,
+                    379
+                ]
+            },
+            {
+                "name": "$i",
+                "bindings": [
+                    {
+                        "start": 404,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 421,
+                        "form": "augmented"
+                    }
+                ],
+                "occurrences": [
+                    404,
+                    412,
+                    421,
+                    445,
+                    464
+                ]
+            },
+            {
+                "name": "$body",
+                "bindings": [
+                    {
+                        "start": 437,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    437,
+                    468
+                ]
+            },
+            {
+                "name": "$once",
+                "bindings": [
+                    {
+                        "start": 492,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    492,
+                    532
+                ]
+            },
+            {
+                "name": "$t",
+                "bindings": [
+                    {
+                        "start": 566,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    566,
+                    604
+                ]
+            },
+            {
+                "name": "$item",
+                "bindings": [
+                    {
+                        "start": 631,
+                        "form": "for"
+                    }
+                ],
+                "occurrences": [
+                    631,
+                    652,
+                    710
+                ]
+            },
+            {
+                "name": "$after",
+                "bindings": [
+                    {
+                        "start": 701,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    701,
+                    732
+                ]
+            },
+            {
+                "name": "$sum",
+                "bindings": [
+                    {
+                        "start": 744,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 791,
+                        "form": "augmented"
+                    }
+                ],
+                "occurrences": [
+                    744,
+                    791,
+                    818
+                ]
+            },
+            {
+                "name": "$v",
+                "bindings": [
+                    {
+                        "start": 777,
+                        "form": "for"
+                    }
+                ],
+                "occurrences": [
+                    777,
+                    799
+                ]
+            },
+            {
+                "name": "$last",
+                "bindings": [
+                    {
+                        "start": 828,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 880,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    828,
+                    880,
+                    908
+                ]
+            },
+            {
+                "name": "$v2",
+                "bindings": [
+                    {
+                        "start": 865,
+                        "form": "for"
+                    }
+                ],
+                "occurrences": [
+                    865,
+                    888
+                ]
+            }
+        ],
+        "variables/more.php": [
+            {
+                "name": "$a",
+                "bindings": [
+                    {
+                        "start": 62,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    62,
+                    139
+                ]
+            },
+            {
+                "name": "$items",
+                "bindings": [
+                    {
+                        "start": 181,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    181,
+                    210
+                ]
+            },
+            {
+                "name": "$item",
+                "bindings": [
+                    {
+                        "start": 220,
+                        "form": "for"
+                    }
+                ],
+                "occurrences": [
+                    220,
+                    245
+                ]
+            },
+            {
+                "name": "$one",
+                "bindings": [
+                    {
+                        "start": 290,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    290,
+                    488
+                ]
+            },
+            {
+                "name": "$two",
+                "bindings": [
+                    {
+                        "start": 364,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    364,
+                    469
+                ]
+            },
+            {
+                "name": "$three",
+                "bindings": [
+                    {
+                        "start": 434,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    434
+                ]
+            },
+            {
+                "name": "$value",
+                "bindings": [
+                    {
+                        "start": 559,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    559,
+                    591,
+                    651
+                ]
+            },
+            {
+                "name": "$x",
+                "bindings": [
+                    {
+                        "start": 707,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    707,
+                    736,
+                    754
+                ]
+            },
+            {
+                "name": "$rows",
+                "bindings": [
+                    {
+                        "start": 791,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    791,
+                    819,
+                    911
+                ]
+            },
+            {
+                "name": "$id",
+                "bindings": [
+                    {
+                        "start": 837,
+                        "form": "for"
+                    }
+                ],
+                "occurrences": [
+                    837,
+                    875
+                ]
+            },
+            {
+                "name": "$name",
+                "bindings": [
+                    {
+                        "start": 852,
+                        "form": "for"
+                    }
+                ],
+                "occurrences": [
+                    852,
+                    880
+                ]
+            },
+            {
+                "name": "$second",
+                "bindings": [
+                    {
+                        "start": 900,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    900,
+                    927
+                ]
+            },
+            {
+                "name": "$n",
+                "bindings": [
+                    {
+                        "start": 959,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    959,
+                    1058,
+                    1101
+                ]
+            },
+            {
+                "name": "$factor",
+                "bindings": [
+                    {
+                        "start": 974,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    974,
+                    1019,
+                    1063
+                ]
+            },
+            {
+                "name": "$scale",
+                "bindings": [
+                    {
+                        "start": 991,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    991,
+                    1094
+                ]
+            },
+            {
+                "name": "$x",
+                "bindings": [
+                    {
+                        "start": 1007,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    1007,
+                    1014
+                ]
+            },
+            {
+                "name": "$nested",
+                "bindings": [
+                    {
+                        "start": 1032,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1032,
+                    1107
+                ]
+            },
+            {
+                "name": "$c",
+                "bindings": [
+                    {
+                        "start": 1228,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    1228,
+                    1247
+                ]
+            },
+            {
+                "name": "$x",
+                "bindings": [
+                    {
+                        "start": 1292,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1292,
+                    1317
+                ]
+            },
+            {
+                "name": "$c",
+                "bindings": [
+                    {
+                        "start": 1354,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    1354,
+                    1374
+                ]
+            },
+            {
+                "name": "$x",
+                "bindings": [
+                    {
+                        "start": 1437,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1437,
+                    1456
+                ]
+            },
+            {
+                "name": "$n",
+                "bindings": [
+                    {
+                        "start": 1496,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    1496,
+                    1516
+                ]
+            },
+            {
+                "name": "$x",
+                "bindings": [
+                    {
+                        "start": 1511,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1511,
+                    1550
+                ]
+            },
+            {
+                "name": "$fallback",
+                "bindings": [
+                    {
+                        "start": 1523,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1523,
+                    1555
+                ]
+            },
+            {
+                "name": "$items",
+                "bindings": [
+                    {
+                        "start": 1603,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    1603,
+                    1647
+                ]
+            },
+            {
+                "name": "$total",
+                "bindings": [
+                    {
+                        "start": 1622,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 1674,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1622,
+                    1674,
+                    1683,
+                    1716
+                ]
+            },
+            {
+                "name": "$item",
+                "bindings": [
+                    {
+                        "start": 1657,
+                        "form": "for"
+                    }
+                ],
+                "occurrences": [
+                    1657,
+                    1692
+                ]
+            },
+            {
+                "name": "$c",
+                "bindings": [
+                    {
+                        "start": 1757,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    1757,
+                    1789
+                ]
+            },
+            {
+                "name": "$x",
+                "bindings": [
+                    {
+                        "start": 1773,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1773,
+                    1809,
+                    1829
+                ]
+            },
+            {
+                "name": "$key",
+                "bindings": [
+                    {
+                        "start": 1964,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    1964,
+                    2015,
+                    2050,
+                    2107
+                ]
+            }
+        ],
+        "variables/special.php": [
+            {
+                "name": "$config",
+                "bindings": [
+                    {
+                        "start": 57,
+                        "form": "global"
+                    }
+                ],
+                "occurrences": [
+                    57,
+                    75
+                ]
+            },
+            {
+                "name": "$count",
+                "bindings": [
+                    {
+                        "start": 95,
+                        "form": "static"
+                    },
+                    {
+                        "start": 111,
+                        "form": "augmented"
+                    }
+                ],
+                "occurrences": [
+                    95,
+                    111,
+                    130
+                ]
+            },
+            {
+                "name": "$s",
+                "bindings": [
+                    {
+                        "start": 230,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    230,
+                    277,
+                    328
+                ]
+            },
+            {
+                "name": "$list",
+                "bindings": [
+                    {
+                        "start": 240,
+                        "form": "parameter"
+                    },
+                    {
+                        "start": 374,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    240,
+                    374,
+                    391
+                ]
+            },
+            {
+                "name": "$matches",
+                "bindings": [
+                    {
+                        "start": 281,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    281,
+                    301
+                ]
+            },
+            {
+                "name": "$parsed",
+                "bindings": [
+                    {
+                        "start": 332,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    332,
+                    351
+                ]
+            },
+            {
+                "name": "$stack",
+                "bindings": [
+                    {
+                        "start": 416,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    416,
+                    437
+                ]
+            },
+            {
+                "name": "$t",
+                "bindings": [
+                    {
+                        "start": 535,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    535,
+                    630,
+                    746
+                ]
+            },
+            {
+                "name": "$e",
+                "bindings": [
+                    {
+                        "start": 580,
+                        "form": "except"
+                    }
+                ],
+                "occurrences": [
+                    580,
+                    599
+                ]
+            },
+            {
+                "name": "$u",
+                "bindings": [
+                    {
+                        "start": 768,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    768,
+                    837
+                ]
+            },
+            {
+                "name": "$e2",
+                "bindings": [
+                    {
+                        "start": 817,
+                        "form": "except"
+                    }
+                ],
+                "occurrences": [
+                    817
+                ]
+            },
+            {
+                "name": "$v",
+                "bindings": [
+                    {
+                        "start": 865,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    865,
+                    934
+                ]
+            },
+            {
+                "name": "$s",
+                "bindings": [
+                    {
+                        "start": 968,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    968
+                ]
+            },
+            {
+                "name": "$name",
+                "bindings": [
+                    {
+                        "start": 1062,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1062,
+                    1082
+                ]
+            },
+            {
+                "name": "$alias",
+                "bindings": [
+                    {
+                        "start": 1145,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1145,
+                    1191
+                ]
+            },
+            {
+                "name": "$defined",
+                "bindings": [
+                    {
+                        "start": 1377,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1377,
+                    1405,
+                    1431
+                ]
+            },
+            {
+                "name": "$later",
+                "bindings": [
+                    {
+                        "start": 1481,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1462,
+                    1481,
+                    1508
+                ]
+            },
+            {
+                "name": "$data",
+                "bindings": [
+                    {
+                        "start": 1545,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    1545,
+                    1572
+                ]
+            },
+            {
+                "name": "$kept",
+                "bindings": [
+                    {
+                        "start": 1797,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1797
+                ]
+            },
+            {
+                "name": "$known",
+                "bindings": [
+                    {
+                        "start": 1919,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1919,
+                    1948,
+                    1966
+                ]
+            },
+            {
+                "name": "$top",
+                "bindings": [
+                    {
+                        "start": 2018,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    2018,
+                    2033
+                ]
+            }
+        ],
+        "variables/straight.php": [
+            {
+                "name": "$a",
+                "bindings": [
+                    {
+                        "start": 39,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    39,
+                    56,
+                    402,
+                    416,
+                    475
+                ]
+            },
+            {
+                "name": "$b",
+                "bindings": [
+                    {
+                        "start": 81,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    81,
+                    86,
+                    483
+                ]
+            },
+            {
+                "name": "$c",
+                "bindings": [
+                    {
+                        "start": 98,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 110,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    98,
+                    110,
+                    127,
+                    509
+                ]
+            },
+            {
+                "name": "$d",
+                "bindings": [
+                    {
+                        "start": 135,
+                        "form": "augmented"
+                    }
+                ],
+                "occurrences": [
+                    135
+                ]
+            },
+            {
+                "name": "$e",
+                "bindings": [
+                    {
+                        "start": 148,
+                        "form": "augmented"
+                    }
+                ],
+                "occurrences": [
+                    148
+                ]
+            },
+            {
+                "name": "$f",
+                "bindings": [
+                    {
+                        "start": 164,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    164,
+                    202
+                ]
+            },
+            {
+                "name": "$g",
+                "bindings": [
+                    {
+                        "start": 169,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    169,
+                    206
+                ]
+            },
+            {
+                "name": "$h",
+                "bindings": [
+                    {
+                        "start": 173,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    173,
+                    210
+                ]
+            },
+            {
+                "name": "$i",
+                "bindings": [
+                    {
+                        "start": 226,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    226,
+                    274
+                ]
+            },
+            {
+                "name": "$j",
+                "bindings": [
+                    {
+                        "start": 237,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    237,
+                    278
+                ]
+            },
+            {
+                "name": "$k",
+                "bindings": [
+                    {
+                        "start": 291,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    291,
+                    323
+                ]
+            },
+            {
+                "name": "$l",
+                "bindings": [
+                    {
+                        "start": 297,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    297,
+                    327
+                ]
+            },
+            {
+                "name": "$m",
+                "bindings": [
+                    {
+                        "start": 335,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    335,
+                    357
+                ]
+            },
+            {
+                "name": "$n",
+                "bindings": [
+                    {
+                        "start": 340,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    340,
+                    361
+                ]
+            },
+            {
+                "name": "$o",
+                "bindings": [
+                    {
+                        "start": 369,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    369,
+                    388
+                ]
+            },
+            {
+                "name": "$p",
+                "bindings": [
+                    {
+                        "start": 424,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 436,
+                        "form": "augmented"
+                    }
+                ],
+                "occurrences": [
+                    424,
+                    436,
+                    451
+                ]
+            },
+            {
+                "name": "$q",
+                "bindings": [
+                    {
+                        "start": 459,
+                        "form": "augmented"
+                    }
+                ],
+                "occurrences": [
+                    459
+                ]
+            },
+            {
+                "name": "$x",
+                "bindings": [
+                    {
+                        "start": 558,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    558,
+                    612
+                ]
+            },
+            {
+                "name": "$y",
+                "bindings": [
+                    {
+                        "start": 562,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    562,
+                    616
+                ]
+            },
+            {
+                "name": "$z",
+                "bindings": [
+                    {
+                        "start": 571,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    571,
+                    620
+                ]
+            },
+            {
+                "name": "$rest",
+                "bindings": [
+                    {
+                        "start": 589,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    589,
+                    641
+                ]
+            },
+            {
+                "name": "$kept",
+                "bindings": [
+                    {
+                        "start": 719,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    719
+                ]
+            },
+            {
+                "name": "$plain",
+                "bindings": [
+                    {
+                        "start": 730,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    730,
+                    781
+                ]
+            },
+            {
+                "name": "$public",
+                "bindings": [
+                    {
+                        "start": 749,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    749
+                ]
+            },
+            {
+                "name": "$used",
+                "bindings": [
+                    {
+                        "start": 827,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    827,
+                    873
+                ]
+            },
+            {
+                "name": "$unused",
+                "bindings": [
+                    {
+                        "start": 838,
+                        "form": "parameter"
+                    }
+                ],
+                "occurrences": [
+                    838
+                ]
+            },
+            {
+                "name": "$a",
+                "bindings": [
+                    {
+                        "start": 1017,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1017
+                ]
+            },
+            {
+                "name": "$b",
+                "bindings": [
+                    {
+                        "start": 1029,
+                        "form": "assignment"
+                    },
+                    {
+                        "start": 1041,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1029,
+                    1041,
+                    1072
+                ]
+            },
+            {
+                "name": "$c",
+                "bindings": [
+                    {
+                        "start": 1053,
+                        "form": "assignment"
+                    }
+                ],
+                "occurrences": [
+                    1053
+                ]
+            }
+        ]
+    }
+}

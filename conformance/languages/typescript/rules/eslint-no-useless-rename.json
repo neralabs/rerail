@@ -1,0 +1,466 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-no-useless-rename",
+  "revision": 5,
+  "mode": "steer",
+  "description": "ESLint 10.11.0 no-useless-rename, default options. Port of ESLint's `no-useless-rename` rule (https://eslint.org/docs/latest/rules/no-useless-rename). Reports a destructuring property, import or export specifier renamed to its own name. Options are declared in the `options` define (the rule's defaults); a variant is a config patch.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "ignoreDestructuring": {
+            "type": "boolean",
+            "nullable": true,
+            "default": null
+          },
+          "ignoreImport": {
+            "type": "boolean",
+            "nullable": true,
+            "default": null
+          },
+          "ignoreExport": {
+            "type": "boolean",
+            "nullable": true,
+            "default": null
+          }
+        }
+      }
+    },
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "r1": {
+            "has": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "string"
+                }
+              ],
+              "pattern": "$K",
+              "precedes": {
+                "regex": "^as$",
+                "stopBy": "end"
+              },
+              "stopBy": "neighbor"
+            }
+          },
+          "r2": {
+            "has": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "string"
+                }
+              ],
+              "follows": {
+                "regex": "^as$",
+                "stopBy": "end"
+              },
+              "pattern": "$V",
+              "stopBy": "neighbor"
+            }
+          },
+          "r3": {
+            "has": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$V"
+                },
+                {
+                  "has": {
+                    "kind": "identifier",
+                    "pattern": "$V",
+                    "precedes": {
+                      "regex": "^=$",
+                      "stopBy": "end"
+                    },
+                    "stopBy": "neighbor"
+                  },
+                  "kind": "assignment_pattern"
+                }
+              ],
+              "pattern": "$VAL",
+              "stopBy": "neighbor"
+            }
+          },
+          "r4": {
+            "compare": {
+              "left": "K",
+              "op": "eq",
+              "right": "V",
+              "text": "name"
+            }
+          },
+          "r5": {
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "string"
+                }
+              ],
+              "pattern": "$K",
+              "stopBy": "neighbor"
+            }
+          },
+          "r6": {
+            "not": {
+              "has": {
+                "kind": "comment",
+                "stopBy": "neighbor"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "destructuring",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "pair_pattern"
+              },
+              {
+                "matches": "r5"
+              },
+              {
+                "matches": "r3"
+              },
+              {
+                "matches": "r4"
+              },
+              {
+                "matches": "r6"
+              }
+            ]
+          },
+          "transform": {
+            "VT": {
+              "substring": {
+                "source": "$V",
+                "value": true
+              }
+            }
+          },
+          "when": {
+            "option": {
+              "ignoreDestructuring": null
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-useless-rename",
+        "message": "Destructuring assignment $VT unnecessarily renamed.",
+        "fix": "$VAL",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-useless-rename"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "destructuring-commented",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "pair_pattern"
+              },
+              {
+                "matches": "r5"
+              },
+              {
+                "matches": "r3"
+              },
+              {
+                "matches": "r4"
+              },
+              {
+                "has": {
+                  "kind": "comment",
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          },
+          "transform": {
+            "VT": {
+              "substring": {
+                "source": "$V",
+                "value": true
+              }
+            }
+          },
+          "when": {
+            "option": {
+              "ignoreDestructuring": null
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-useless-rename",
+        "message": "Destructuring assignment $VT unnecessarily renamed.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-useless-rename"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "import",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "import_specifier"
+              },
+              {
+                "matches": "r1"
+              },
+              {
+                "matches": "r2"
+              },
+              {
+                "matches": "r4"
+              },
+              {
+                "matches": "r6"
+              }
+            ]
+          },
+          "transform": {
+            "VT": {
+              "substring": {
+                "source": "$V",
+                "value": true
+              }
+            }
+          },
+          "when": {
+            "option": {
+              "ignoreImport": null
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-useless-rename",
+        "message": "Import $VT unnecessarily renamed.",
+        "fix": "$V",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-useless-rename"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "import-commented",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "import_specifier"
+              },
+              {
+                "matches": "r1"
+              },
+              {
+                "matches": "r2"
+              },
+              {
+                "matches": "r4"
+              },
+              {
+                "has": {
+                  "kind": "comment",
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          },
+          "transform": {
+            "VT": {
+              "substring": {
+                "source": "$V",
+                "value": true
+              }
+            }
+          },
+          "when": {
+            "option": {
+              "ignoreImport": null
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-useless-rename",
+        "message": "Import $VT unnecessarily renamed.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-useless-rename"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "export",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "export_specifier"
+              },
+              {
+                "matches": "r1"
+              },
+              {
+                "matches": "r2"
+              },
+              {
+                "matches": "r4"
+              },
+              {
+                "matches": "r6"
+              }
+            ]
+          },
+          "transform": {
+            "KT": {
+              "substring": {
+                "source": "$K",
+                "value": true
+              }
+            }
+          },
+          "when": {
+            "option": {
+              "ignoreExport": null
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-useless-rename",
+        "message": "Export $KT unnecessarily renamed.",
+        "fix": "$K",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-useless-rename"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "export-commented",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "export_specifier"
+              },
+              {
+                "matches": "r1"
+              },
+              {
+                "matches": "r2"
+              },
+              {
+                "matches": "r4"
+              },
+              {
+                "has": {
+                  "kind": "comment",
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          },
+          "transform": {
+            "KT": {
+              "substring": {
+                "source": "$K",
+                "value": true
+              }
+            }
+          },
+          "when": {
+            "option": {
+              "ignoreExport": null
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-useless-rename",
+        "message": "Export $KT unnecessarily renamed.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-useless-rename"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

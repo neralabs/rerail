@@ -1,0 +1,13 @@
+{
+  "verdict": "AUTO",
+  "primitive": "type-checker",
+  "reason": "PASS covers only ts350.ts.lint. test.ts.lint is gated to TypeScript <3.5.0 and skipped. Its explicit unions are handled by the same check, but two cases would need the type checker: the implicit return type of `testFunc` (line 37), and `Text | undefined`, where Text is an alias for string | null (line 82).",
+  "evidence": [
+    {
+      "variant": ".",
+      "file": "test.ts.lint",
+      "line": 37,
+      "why": "`function testFunc()` with an inferred return type string | null | undefined (skipped by the version gate)"
+    }
+  ]
+}

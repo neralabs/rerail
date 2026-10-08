@@ -1,0 +1,31 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "python-conformance:bandit-b101-assert-used",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Bandit 1.8.6's B101 assert_used: every `assert` statement (Bandit's B101 with its default configuration, which skips no file). Bandit's `# nosec` is not modelled; its recordings run with --ignore-nosec.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "assert-used",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "assert_statement"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B101",
+        "message": "Bandit B101 (assert-used)"
+      }
+    }
+  ]
+}

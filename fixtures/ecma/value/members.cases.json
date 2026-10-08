@@ -1,0 +1,9 @@
+[
+ "const k = 'f';\nconst o = { f: 0, [k]: 1, ['f' + '']: 2, [`${k}`]: 3, [1 + 1]: 4, [String(1)]: 5, ['F'.toLowerCase()]: 6, [Math.max(1, 2)]: 7, [/a/]: 8, [null]: 9, [void 0]: 10 };\n",
+ "let v = 'x';\nv = 'y';\nconst o = { [v]: 1, [w]: 2, [f()]: 3 };\nconst p = { ['a' + v]: 1 };\n",
+ "class C { #a = 1; a = 2; get #b() { return this.#a; } ['c' + 'd']() {} static [Symbol.iterator]() {} [`e`] = 3; 'g'() {} 1e21 = 4; 0x10n = 5; }\n",
+ "const s = 'ab';\nobj[s]; obj['a' + 'b']; obj[s.length]; obj[`${s}c`]; obj?.[s]; obj[s].c;\n",
+ "function f(k) {\n  return { [k]: 1, [String]: 2 };\n}\n",
+ "const String = (x) => 'z';\nconst o = { [String(1)]: 1, ['\\u0061']: 2, \\u0062: 3 };\n",
+ "interface I { ['a' + 'b']: string; [`c`](): void }\n"
+]

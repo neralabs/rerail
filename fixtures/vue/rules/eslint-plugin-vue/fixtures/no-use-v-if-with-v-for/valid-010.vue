@@ -1,0 +1,1 @@
+<template><div v-if="shown"><div v-for="({x,y,z},i) in list"></div></div></template>

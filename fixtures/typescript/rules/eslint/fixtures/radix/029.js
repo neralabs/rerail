@@ -1,0 +1,1 @@
+Number.parseInt(...args, 1);

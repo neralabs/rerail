@@ -1,0 +1,43 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-probe-middleware-file",
+  "revision": 1,
+  "mode": "log",
+  "description": "Next pack probe. File role: the root middleware (Next 16 also reads proxy.ts) beside app/ or pages/.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "path": {
+              "regex": "^(?:src/)?(?:middleware|proxy)\\.(?:js|ts)$"
+            }
+          },
+          "rule": {
+            "kind": "program"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "file.start",
+        "code": "next/middleware-file",
+        "message": "File role: the root middleware (Next 16 also reads proxy.ts) beside app/ or pages/."
+      }
+    }
+  ]
+}

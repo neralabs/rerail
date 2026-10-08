@@ -1,0 +1,397 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-inline-script-id",
+  "revision": 1,
+  "mode": "steer",
+  "description": "@next/eslint-plugin-next 16.3.8 @next/next/inline-script-id: an element named by the first local an import from next/script binds, with children or dangerouslySetInnerHTML and no id (attributes and keys of object-literal spreads; any other spread makes it uncheckable).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "jsx_self_closing_element",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "name",
+                          "kind": "identifier",
+                          "pattern": "$N"
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "kind": "jsx_expression",
+                            "has": {
+                              "kind": "spread_element",
+                              "not": {
+                                "has": {
+                                  "kind": "object"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "jsx_attribute",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "kind": "property_identifier",
+                                      "regex": "^id$"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "kind": "jsx_expression",
+                                "has": {
+                                  "kind": "spread_element",
+                                  "has": {
+                                    "kind": "object",
+                                    "has": {
+                                      "any": [
+                                        {
+                                          "kind": "pair",
+                                          "has": {
+                                            "field": "key",
+                                            "kind": "property_identifier",
+                                            "regex": "^id$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "shorthand_property_identifier",
+                                          "regex": "^id$"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "jsx_element",
+                    "has": {
+                      "field": "open_tag",
+                      "kind": "jsx_opening_element",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "name",
+                            "kind": "identifier",
+                            "pattern": "$N"
+                          }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "kind": "jsx_expression",
+                              "has": {
+                                "kind": "spread_element",
+                                "not": {
+                                  "has": {
+                                    "kind": "object"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "any": [
+                                {
+                                  "kind": "jsx_attribute",
+                                  "all": [
+                                    {
+                                      "has": {
+                                        "kind": "property_identifier",
+                                        "regex": "^id$"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "kind": "jsx_expression",
+                                  "has": {
+                                    "kind": "spread_element",
+                                    "has": {
+                                      "kind": "object",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "pair",
+                                            "has": {
+                                              "field": "key",
+                                              "kind": "property_identifier",
+                                              "regex": "^id$"
+                                            }
+                                          },
+                                          {
+                                            "kind": "shorthand_property_identifier",
+                                            "regex": "^id$"
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "kind": "jsx_element",
+                    "has": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "jsx_opening_element"
+                          },
+                          {
+                            "kind": "jsx_closing_element"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "jsx_self_closing_element",
+                        "all": [
+                          {
+                            "has": {
+                              "any": [
+                                {
+                                  "kind": "jsx_attribute",
+                                  "all": [
+                                    {
+                                      "has": {
+                                        "kind": "property_identifier",
+                                        "regex": "^dangerouslySetInnerHTML$"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "kind": "jsx_expression",
+                                  "has": {
+                                    "kind": "spread_element",
+                                    "has": {
+                                      "kind": "object",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "pair",
+                                            "has": {
+                                              "field": "key",
+                                              "kind": "property_identifier",
+                                              "regex": "^dangerouslySetInnerHTML$"
+                                            }
+                                          },
+                                          {
+                                            "kind": "shorthand_property_identifier",
+                                            "regex": "^dangerouslySetInnerHTML$"
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "kind": "jsx_element",
+                        "has": {
+                          "field": "open_tag",
+                          "kind": "jsx_opening_element",
+                          "all": [
+                            {
+                              "has": {
+                                "any": [
+                                  {
+                                    "kind": "jsx_attribute",
+                                    "all": [
+                                      {
+                                        "has": {
+                                          "kind": "property_identifier",
+                                          "regex": "^dangerouslySetInnerHTML$"
+                                        }
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "kind": "jsx_expression",
+                                    "has": {
+                                      "kind": "spread_element",
+                                      "has": {
+                                        "kind": "object",
+                                        "has": {
+                                          "any": [
+                                            {
+                                              "kind": "pair",
+                                              "has": {
+                                                "field": "key",
+                                                "kind": "property_identifier",
+                                                "regex": "^dangerouslySetInnerHTML$"
+                                              }
+                                            },
+                                            {
+                                              "kind": "shorthand_property_identifier",
+                                              "regex": "^dangerouslySetInnerHTML$"
+                                            }
+                                          ]
+                                        }
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "kind": "program",
+                  "stopBy": "end",
+                  "has": {
+                    "kind": "import_statement",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "source",
+                          "kind": "string",
+                          "value": {
+                            "eq": "next/script"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "kind": "import_clause",
+                          "any": [
+                            {
+                              "has": {
+                                "kind": "identifier",
+                                "nthChild": 1,
+                                "pattern": "$N"
+                              }
+                            },
+                            {
+                              "has": {
+                                "kind": "namespace_import",
+                                "nthChild": 1,
+                                "has": {
+                                  "kind": "identifier",
+                                  "pattern": "$N"
+                                }
+                              }
+                            },
+                            {
+                              "has": {
+                                "kind": "named_imports",
+                                "nthChild": 1,
+                                "has": {
+                                  "kind": "import_specifier",
+                                  "nthChild": 1,
+                                  "any": [
+                                    {
+                                      "has": {
+                                        "field": "alias",
+                                        "pattern": "$N"
+                                      }
+                                    },
+                                    {
+                                      "all": [
+                                        {
+                                          "not": {
+                                            "has": {
+                                              "field": "alias",
+                                              "kind": "identifier"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "field": "name",
+                                            "pattern": "$N"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/inline-script-id",
+        "message": "`next/script` components with inline content must specify an `id` attribute. See: https://nextjs.org/docs/messages/inline-script-id",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/inline-script-id"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

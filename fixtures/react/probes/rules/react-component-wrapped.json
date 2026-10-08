@@ -1,0 +1,78 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-component-wrapped",
+  "revision": 1,
+  "mode": "log",
+  "description": "Fact: a component made by a wrapper: a declarator whose value is memo(...) / forwardRef(...) (or React.memo / React.forwardRef). Reported at the declarator name.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "identifier",
+            "inside": {
+              "field": "name",
+              "kind": "variable_declarator",
+              "has": {
+                "field": "value",
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "wrapper"
+                }
+              }
+            }
+          },
+          "utils": {
+            "wrapper": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:memo|forwardRef)$"
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^React$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "regex": "^(?:memo|forwardRef)$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-probe/component-wrapped",
+        "message": "Fact"
+      }
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tlint-spaces-around-blade-render-content",
+  "revision": 1,
+  "mode": "steer",
+  "description": "tlint 9.7.0 SpacesAroundBladeRenderContent: an echo on one line, `{{ }}` (not a `{{-- --}}` comment) or `{!! !!}`, not written with exactly one space inside each delimiter.",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "rule": {
+            "kind": "php_statement",
+            "all": [
+              {
+                "regex": "^(\\{\\{[^\\n]*\\}\\}|\\{!![^\\n]*!!\\})$"
+              },
+              {
+                "not": {
+                  "regex": "^\\{\\{--"
+                }
+              },
+              {
+                "not": {
+                  "regex": "^\\{\\{ [^ \\n]([^\\n]*[^ \\n])? \\}\\}$"
+                }
+              },
+              {
+                "not": {
+                  "regex": "^\\{!! [^ \\n]([^\\n]*[^ \\n])? !!\\}$"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "SpacesAroundBladeRenderContent",
+        "message": "Spaces around blade rendered content: `{{1 + 1}}` -> `{{ 1 + 1 }}`"
+      }
+    }
+  ]
+}

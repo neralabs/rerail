@@ -1,0 +1,1 @@
+var parseInt; parseInt();

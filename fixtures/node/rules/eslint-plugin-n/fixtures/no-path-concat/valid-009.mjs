@@ -1,0 +1,1 @@
+var fullPath = __filename + (test ? ".js" : ".ts");

@@ -1,0 +1,186 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-no-title-in-document-head",
+  "revision": 1,
+  "mode": "steer",
+  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-title-in-document-head: the first <title> element child of a <Head> element, in a file with an import from next/document that binds the local name Head.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "jsx_self_closing_element",
+                    "has": {
+                      "field": "name",
+                      "kind": "identifier",
+                      "regex": "^title$"
+                    }
+                  },
+                  {
+                    "kind": "jsx_element",
+                    "has": {
+                      "field": "open_tag",
+                      "has": {
+                        "field": "name",
+                        "kind": "identifier",
+                        "regex": "^title$"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "kind": "jsx_element",
+                  "has": {
+                    "field": "open_tag",
+                    "has": {
+                      "field": "name",
+                      "kind": "identifier",
+                      "regex": "^Head$"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "jsx_self_closing_element",
+                        "has": {
+                          "field": "name",
+                          "kind": "identifier",
+                          "regex": "^title$"
+                        }
+                      },
+                      {
+                        "kind": "jsx_element",
+                        "has": {
+                          "field": "open_tag",
+                          "has": {
+                            "field": "name",
+                            "kind": "identifier",
+                            "regex": "^title$"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "program",
+                  "stopBy": "end",
+                  "has": {
+                    "kind": "import_statement",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "source",
+                          "kind": "string",
+                          "value": {
+                            "eq": "next/document"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "kind": "import_clause",
+                          "any": [
+                            {
+                              "has": {
+                                "kind": "identifier",
+                                "regex": "^Head$"
+                              }
+                            },
+                            {
+                              "has": {
+                                "kind": "namespace_import",
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^Head$"
+                                }
+                              }
+                            },
+                            {
+                              "has": {
+                                "kind": "named_imports",
+                                "has": {
+                                  "kind": "import_specifier",
+                                  "any": [
+                                    {
+                                      "has": {
+                                        "field": "alias",
+                                        "regex": "^Head$"
+                                      }
+                                    },
+                                    {
+                                      "all": [
+                                        {
+                                          "not": {
+                                            "has": {
+                                              "field": "alias",
+                                              "kind": "identifier"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "field": "name",
+                                            "regex": "^Head$"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/no-title-in-document-head",
+        "message": "Do not use `<title>` element with `<Head />` component from `next/document`. Titles should defined at the page-level using `<Head />` from `next/head` instead. See: https://nextjs.org/docs/messages/no-title-in-document-head",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/no-title-in-document-head"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

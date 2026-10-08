@@ -1,0 +1,29 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-reference",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Disallows `/// <reference path=>` imports; anchored on the path value.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "reference-path",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?m)^[ \\t]*///[ \\t]*<reference[ \\t]+path[ \\t]*=[ \\t]*\"(?<PATH>[^\"\\n]*)\""
+        }
+      },
+      "violation": {
+        "anchor": "capture.PATH",
+        "code": "NO_REFERENCE",
+        "message": "<reference> is not allowed, use imports"
+      }
+    }
+  ]
+}

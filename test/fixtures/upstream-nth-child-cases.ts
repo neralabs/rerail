@@ -1,0 +1,34 @@
+import type { UpstreamCase } from "./upstream-relational-cases.js";
+
+/**
+ * Cases that pin `nthChild` to upstream ast-grep 0.45.3 (`rule/nth_child.rs`): the 1-based position among the parent's
+ * named children (comments count), as a number or `An+B`; `ofRule` counts only the siblings it matches and keeps the
+ * node's own bindings; `reverse` counts from the last. Each case runs through the CLI and both Rerail paths.
+ */
+const calls = "f(a, b, c, d, e);\ng(x);\nh(1, y, 2, z);\n";
+
+export const UPSTREAM_NTH_CHILD_CASES: UpstreamCase[] = [
+  { id: "nth-child-number", language: "typescript", source: calls, rule: { kind: "identifier", nthChild: 2 } },
+  { id: "nth-child-string-number", language: "typescript", source: calls, rule: { kind: "identifier", nthChild: "2" } },
+  { id: "nth-child-odd", language: "typescript", source: calls, rule: { kind: "identifier", inside: { kind: "arguments" }, nthChild: "2n+1" } },
+  { id: "nth-child-first-three", language: "typescript", source: calls, rule: { kind: "identifier", inside: { kind: "arguments" }, nthChild: "-n+3" } },
+  { id: "nth-child-reverse", language: "typescript", source: calls, rule: { kind: "identifier", nthChild: { position: 1, reverse: true } } },
+  { id: "nth-child-of-rule", language: "typescript", source: calls, rule: { kind: "identifier", nthChild: { position: 2, ofRule: { kind: "identifier" } } } },
+  {
+    id: "nth-child-of-rule-binds",
+    language: "typescript",
+    source: calls,
+    rule: { kind: "identifier", nthChild: { position: "n+2", ofRule: { pattern: "$X", kind: "identifier" }, reverse: true } },
+  },
+  { id: "nth-child-comments-count", language: "typescript", source: "f(a, /* c */ b);\nf(a, b);\n", rule: { kind: "identifier", nthChild: 3 } },
+  { id: "nth-child-array-holes", language: "typescript", source: "[a, , b];\n[, c];\n", rule: { kind: "identifier", nthChild: 2 } },
+  { id: "not-nth-child", language: "typescript", source: calls, rule: { kind: "identifier", inside: { kind: "arguments" }, not: { nthChild: 1 } } },
+  {
+    id: "nth-child-in-relation",
+    language: "typescript",
+    source: calls,
+    rule: { kind: "call_expression", has: { kind: "arguments", has: { kind: "identifier", nthChild: 5 } } },
+  },
+  { id: "nth-child-python", language: "python", source: "f(a, b=1, *c)\n[x, y, z]\n", rule: { kind: "identifier", nthChild: { position: 3 } } },
+  { id: "nth-child-python-statements", language: "python", source: "a = 1\nb = 2\nc = 3\n", rule: { kind: "expression_statement", nthChild: { position: "2n", reverse: true } } },
+];

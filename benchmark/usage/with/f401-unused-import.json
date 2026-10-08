@@ -1,0 +1,49 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bench:usage:f401-unused-import",
+  "revision": 1,
+  "mode": "log",
+  "description": "Ruff F401's shape: the latest import of a module or function scope that nothing reads.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "f401-unused-import",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "dotted_name"
+              },
+              {
+                "kind": "identifier"
+              }
+            ],
+            "binds": {
+              "form": "import",
+              "scope": [
+                "module",
+                "function"
+              ],
+              "latest": true,
+              "used": false,
+              "exported": false,
+              "outer": false
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F401_UNUSED_IMPORT",
+        "message": "f401-unused-import"
+      }
+    }
+  ]
+}

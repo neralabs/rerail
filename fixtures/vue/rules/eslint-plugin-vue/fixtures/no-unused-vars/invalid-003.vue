@@ -1,0 +1,1 @@
+<template><span><template scope="props"></template></span></template>

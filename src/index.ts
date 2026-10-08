@@ -1,0 +1,317 @@
+export {
+  createConversationRulesExtension,
+  bundledModelPath,
+  MATCH_ENTRY_TYPE,
+  MUTATION_ENTRY_TYPE,
+  TURN_ENTRY_TYPE,
+  type ConversationRulesOptions,
+} from "./extension.js";
+export { createPiConversationRulesExtension, type PiConversationRulesOptions } from "./pi-extension.js";
+export {
+  CustomerActivationManager,
+  CustomerProfileStore,
+  activationTrustRootsSchema,
+  customerProfileSchema,
+  flattenedJwsSchema,
+  verifyCustomerProfile,
+  type ActivationFetch,
+  type ActivationRequest,
+  type ActivationTrustRoots,
+  type CustomerProfile,
+  type DeviceIdentity,
+  type FlattenedJws,
+  type OfflineActivationRequestOptions,
+  type OnlineActivationOptions,
+  type SignedActivationRequest,
+  type VerifiedCustomerProfile,
+} from "./customer-profile.js";
+export { deviceSecretStore, FileDeviceSecretStore, SystemDeviceSecretStore, type DeviceSecretStore } from "./device-keystore.js";
+export {
+  ADAPTER_CAPABILITIES,
+  type AdapterCapabilityProfile,
+  type AdapterDelivery,
+  type AdapterEvent,
+  type AdapterSample,
+  type AdapterSession,
+  type RerailEventLoop,
+  type RerailHost,
+} from "./adapter-contract.js";
+export { claudeHookEvents, createClaudeEventHandler, type ClaudeHookInput } from "./claude-event-adapter.js";
+export { codexHookEvents, createCodexEventHandler, type CodexHookInput } from "./codex-event-adapter.js";
+export {
+  decodeRerailEventFrame,
+  encodeRerailEventResult,
+  RERAIL_EVENT_MAX_FRAME_BYTES,
+  RERAIL_EVENT_PROTOCOL_PREFACE,
+  type RerailEventErrorFrame,
+  type RerailEventFrame,
+  type RerailEventResultFrame,
+  type RerailEventSuccessFrame,
+} from "./event-protocol.js";
+export {
+  runRerailEventStream,
+  serveRerailEventStream,
+  type RunRerailEventStreamOptions,
+  type RerailEventStreamOptions,
+} from "./event-stream.js";
+export { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState } from "./host-runtime.js";
+export { CodeRuleBridge, generatedEditPaths } from "./code-rule-bridge.js";
+export { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
+export {
+  renderSteer,
+  type CodeRuleEdit,
+  type CodeRuleEditBatch,
+  type CodeRuleAuditor,
+  type CodeRuleViolation,
+  type CodeRuleResponse,
+  type AuditFailure,
+  type CodeRuleDslAstPattern,
+  type CodeRuleDslAstCount,
+  type CodeRuleDslAstQuery,
+  type CodeRuleDslAstRelation,
+  type CodeRuleDslAstRule,
+  type CodeRuleDslClause,
+  type CodeRuleDslClauseBase,
+  type CodeRuleDslCompare,
+  type CodeRuleDslDocument,
+  type CodeRuleDslEvidenceQuery,
+  type CodeRuleDslRelation,
+  type CodeRuleDslViolationAnchor,
+  type CodeRuleDslViolationSpec,
+  type CodeRuleDslPredicate,
+  type CodeRuleDslQuery,
+  type CodeRuleDslRegexQuery,
+  type CodeRuleDslScalar,
+  type CodeRuleDslScope,
+  type CodeRuleDslSelectWhenQuery,
+  type CodeRuleDslValue,
+  type CodeRuleCheckpoint,
+  type CodeRuleSourceLanguage,
+  type CodeRuleViolationFix,
+  type CodeRuleSourceSpan,
+  type RuleSteerDelivery,
+} from "./code-rule.js";
+export type {
+  CodeRuleDslSemanticAstRuleFields,
+  CodeRuleDslSemanticCompareText,
+  CodeRuleDslSuppress,
+  CodeRuleDslArguments,
+  CodeRuleDslBindingFilter,
+  CodeRuleDslBinds,
+  CodeRuleDslCalls,
+  CodeRuleDslFileCondition,
+  CodeRuleDslFormatArgs,
+  CodeRuleDslLanguageOptions,
+  CodeRuleDslParse,
+  CodeRuleDslResolves,
+  CodeRuleDslValueTest,
+} from "./code-rule-semantic.js";
+export {
+  AUDIT_SCOPES,
+  AUDIT_MODES,
+  type AuditMode,
+  type AuditRecord,
+  type AuditSummary,
+  type AuditScope,
+} from "./audit.js";
+export {
+  SqliteAuditControlStore,
+} from "./audit-control.js";
+export {
+  auditControlsSchema,
+  auditSettingsPatchSchema,
+  auditSettingsSchema,
+  repositoryAuditSchema,
+  auditRequestInputSchema,
+  auditRequestSchema,
+  type AuditControls,
+  type AuditSettings,
+  type RepositoryAudit,
+  type AuditRequestInput,
+  type AuditRequest,
+} from "./audit-control-schema.js";
+export {
+  bootstrapCodeRuleDslCatalog,
+  bundledCodeRuleDslDirectory,
+  type BootstrapCodeRuleDslCatalogOptions,
+  type CompiledCodeRuleDslEntry,
+  type CodeRuleDslCatalog,
+  type CodeRuleDslCatalogStatus,
+} from "./code-rule-dsl-catalog.js";
+export {
+  SqliteSessionStore,
+  SqliteSessionReader,
+  decodeEventPayload,
+  type SessionEvent,
+  type SessionEventRecord,
+  type StoredSessionSummary,
+  type WorkLink,
+  type WorkLinkRecord,
+} from "./session-store.js";
+export {
+  SqliteAuditReader,
+  SqliteAuditStore,
+  type AuditReader,
+  type AuditPage,
+  type AuditQuery,
+} from "./audit-store.js";
+export {
+  RULE_APPLICABILITIES,
+  RULE_KINDS,
+  RULE_ORIGINS,
+  RULE_SCOPES,
+  RERAIL_SCHEMA_VERSION,
+  catalogRules,
+  events,
+  audits,
+  ruleCatalogIdentities,
+  ruleProjectRepositories,
+  ruleProjects,
+  ruleRepositories,
+  rules,
+  repositoryAudits,
+  policySessionOwners,
+  sessions,
+  workLinks,
+  auditSettings,
+  auditRequests,
+  type AuditRow,
+  type EventRow,
+  type NewRuleRow,
+  type RuleCatalogIdentityRow,
+  type RuleApplicability,
+  type RuleKind,
+  type RuleOrigin,
+  type RuleProjectRepositoryRow,
+  type RuleProjectRow,
+  type RuleRepositoryRow,
+  type RuleRow,
+  type RuleScope,
+  type SessionRow,
+  type WorkLinkRow,
+} from "./schema.js";
+export { RERAIL_SCHEMA_SQL, RERAIL_SCHEMA_STATEMENTS } from "./schema-sql.js";
+export { defaultRerailDatabasePath, openRerailDatabase, type OpenRerailDatabaseOptions, type RerailDatabase } from "./database.js";
+export {
+  SqliteRuleStore,
+  type RuleQuery,
+  type RuleWriteOptions,
+  type StoredConversationRule,
+  type StoredCodeRule,
+  type StoredRule,
+} from "./rule-store.js";
+export {
+  openScopedRuleCatalog,
+  resolveRepositoryContext,
+  ScopedRuleCatalog,
+  type RepositoryContext,
+  type RuleCatalogContext,
+  type ScopedRuleQuery,
+  type ScopedRuleSelection,
+  type ScopedRuleRestore,
+  type ScopedRuleWriteOptions,
+  type ScopedStoredRule,
+} from "./scoped-rule-catalog.js";
+export { conversationRuleLoader, type ConversationRuleSourceOptions, type DatabaseConversationRules } from "./rule-sources.js";
+export {
+  ApiError,
+  eventRecordSchema,
+  operationInputShape,
+  operations,
+  ruleUpsertSchema,
+  storedRuleSchema,
+  workLinkInputSchema,
+  workLinkRecordSchema,
+  auditRecordSchema,
+  auditQuerySchema,
+  type Operation,
+  type OperationDefinition,
+  type OperationMethod,
+  type RerailApiStores,
+} from "./api/operations.js";
+export { sessionSummarySchema } from "./api/session-contracts.js";
+export { createRerailApi } from "./api/http.js";
+export { createRerailMcpHandler, createRerailMcpServer } from "./api/mcp.js";
+export {
+  MOCK_CONVERSATION_RULES,
+  MOCK_CODE_RULES,
+  MOCK_SESSION_ID,
+  mockSessionId,
+  mockWorkLinks,
+  seedRerailDatabase,
+  type SeedOptions,
+  type SeedResult,
+} from "./seed.js";
+export { type Json } from "./stable-json.js";
+export { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
+export { RULE_MODES, steers, type RuleMode } from "./rule-mode.js";
+export {
+  CONVERSATION_RULE_DOCUMENT_VERSION,
+  conversationRuleDocumentSchema,
+  conversationRuleSchema,
+  parseConversationRule,
+  MATCH_OPERATORS,
+  SAMPLE_BOUNDARIES,
+  parseConversationRuleDocument,
+  type ConversationRule,
+  type ConversationRuleDocument,
+  type MatchOperator,
+  type SampleBoundary,
+  type SampleSource,
+} from "./rule-schema.js";
+export {
+  ConversationRuleRegistry,
+  type ConversationRuleRegistryOptions,
+  type MatchOptions,
+  type RuleInspection,
+  type RuleMatch,
+} from "./registry.js";
+export {
+  nativeHealth,
+  type ModelFingerprint,
+  type NativeCompiledCodeRuleDsl,
+  type NativeHealth,
+  type NativeCodeRuleDslRuntimeConstructor,
+  type NativeCodeRuleDslEditor,
+  type NativeSample as ConversationSample,
+  type CodeRuleDslEvaluationMode,
+  type CodeRuleDslSourceFormat,
+} from "./native.js";
+export { InMemoryWatermarkStore, NativeSemanticEmbedder, SemanticWorkspace } from "./semantic-primitives.js";
+export {
+  OmpMessageContentSource,
+  OmpWatermarkStore,
+  OMP_WATERMARK_ENTRY_TYPE,
+  type OmpSessionEntryLike,
+} from "./omp-semantic.js";
+export type {
+  ContentItem,
+  ContentMetadata,
+  ContentRef,
+  ContentSnapshot,
+  ContentSource,
+  MarkReceipt,
+  ProjectedVector,
+  RelationReduction,
+  ProjectionRender,
+  ProjectionSpec,
+  ProjectionUnit,
+  RelationSpec,
+  SelectedContent,
+  Selection,
+  SelectionSpec,
+  SemanticEmbedder,
+  SemanticPrimitives,
+  SemanticProjection,
+  SemanticRelationReduction,
+  SemanticRelationSet,
+  SemanticRelation,
+  Watermark,
+  WatermarkAssignment,
+  WatermarkChange,
+  WatermarkExpression,
+  WatermarkSnapshot,
+  WatermarkStore,
+  WatermarkValue,
+  WatermarkVisibility,
+} from "./semantic-types.js";

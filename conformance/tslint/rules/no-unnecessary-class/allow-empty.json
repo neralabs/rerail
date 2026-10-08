@@ -1,0 +1,155 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-unnecessary-class",
+  "revision": 1,
+  "mode": "steer",
+  "description": "no-unnecessary-class with allow-empty-class.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "constructor-only",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "plain-class",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "class_body",
+              "all": [
+                {"has": {"stopBy": "neighbor", "matches": "constructor"}},
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [{"matches": "other-member"}, {"matches": "shorthand-constructor"}]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "utils": {
+            "plain-class": {
+              "any": [{"kind": "class_declaration"}, {"kind": "abstract_class_declaration"}],
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "class_heritage",
+                  "has": {"stopBy": "neighbor", "kind": "extends_clause"}
+                }
+              },
+              "has": {"stopBy": "neighbor", "regex": "^class$", "pattern": "$$KW"}
+            },
+            "member": {
+              "any": [
+                {"kind": "method_definition"},
+                {"kind": "public_field_definition"},
+                {"kind": "method_signature"},
+                {"kind": "abstract_method_signature"},
+                {"kind": "index_signature"},
+                {"kind": "class_static_block"}
+              ]
+            },
+            "constructor": {
+              "kind": "method_definition",
+              "has": {"stopBy": "neighbor", "kind": "property_identifier", "regex": "^constructor$"}
+            },
+            "other-member": {"matches": "member", "not": {"matches": "constructor"}},
+            "shorthand-constructor": {
+              "matches": "constructor",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "formal_parameters",
+                "has": {
+                  "stopBy": "neighbor",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [{"kind": "accessibility_modifier"}, {"kind": "override_modifier"}, {"regex": "^readonly$"}]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.KW",
+        "code": "NO_UNNECESSARY_CLASS_CONSTRUCTOR_ONLY",
+        "message": "Every member of this class is a constructor. Use functions instead."
+      }
+    },
+    {
+      "id": "static-only",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "plain-class",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "class_body",
+              "has": {"stopBy": "neighbor", "matches": "other-member"},
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {"matches": "shorthand-constructor"},
+                    {"matches": "other-member", "not": {"has": {"stopBy": "neighbor", "regex": "^static$"}}}
+                  ]
+                }
+              }
+            }
+          },
+          "utils": {
+            "plain-class": {
+              "any": [{"kind": "class_declaration"}, {"kind": "abstract_class_declaration"}],
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "class_heritage",
+                  "has": {"stopBy": "neighbor", "kind": "extends_clause"}
+                }
+              },
+              "has": {"stopBy": "neighbor", "regex": "^class$", "pattern": "$$KW"}
+            },
+            "member": {
+              "any": [
+                {"kind": "method_definition"},
+                {"kind": "public_field_definition"},
+                {"kind": "method_signature"},
+                {"kind": "abstract_method_signature"},
+                {"kind": "index_signature"},
+                {"kind": "class_static_block"}
+              ]
+            },
+            "constructor": {
+              "kind": "method_definition",
+              "has": {"stopBy": "neighbor", "kind": "property_identifier", "regex": "^constructor$"}
+            },
+            "other-member": {"matches": "member", "not": {"matches": "constructor"}},
+            "shorthand-constructor": {
+              "matches": "constructor",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "formal_parameters",
+                "has": {
+                  "stopBy": "neighbor",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [{"kind": "accessibility_modifier"}, {"kind": "override_modifier"}, {"regex": "^readonly$"}]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.KW",
+        "code": "NO_UNNECESSARY_CLASS_STATIC_ONLY",
+        "message": "Every member of this class is static. Use namespaces or plain objects instead."
+      }
+    }
+  ]
+}

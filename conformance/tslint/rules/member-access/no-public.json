@@ -1,0 +1,71 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:member-access",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Option no-public: flags explicit `public` (except on non-readonly parameter properties).",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "public-member",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "accessibility_modifier",
+            "regex": "^public$",
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {"kind": "method_definition"},
+                {"kind": "method_signature"},
+                {"kind": "public_field_definition"},
+                {"kind": "abstract_method_signature"}
+              ],
+              "inside": {"stopBy": "neighbor", "kind": "class_body"}
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "MEMBER_ACCESS",
+        "message": "'public' is implicit."
+      }
+    },
+    {
+      "id": "public-param",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "accessibility_modifier",
+            "regex": "^public$",
+            "precedes": {"stopBy": "neighbor", "regex": "^readonly$"},
+            "inside": {"stopBy": "neighbor", "matches": "parameter-in-constructor"}
+          },
+          "utils": {
+            "parameter-in-constructor": {
+              "any": [{"kind": "required_parameter"}, {"kind": "optional_parameter"}],
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "formal_parameters",
+                "inside": {"stopBy": "neighbor", "matches": "constructor"}
+              }
+            },
+            "constructor": {
+              "kind": "method_definition",
+              "has": {"stopBy": "neighbor", "kind": "property_identifier", "regex": "^constructor$"},
+              "inside": {"stopBy": "neighbor", "kind": "class_body"}
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "MEMBER_ACCESS",
+        "message": "'public' is implicit."
+      }
+    }
+  ]
+}

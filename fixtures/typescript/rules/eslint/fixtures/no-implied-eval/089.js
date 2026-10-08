@@ -1,0 +1,1 @@
+foo.self.setTimeout('foo', 100);

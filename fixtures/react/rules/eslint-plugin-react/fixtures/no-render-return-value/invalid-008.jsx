@@ -1,0 +1,1 @@
+var inst = React.render(<div />, document.body);

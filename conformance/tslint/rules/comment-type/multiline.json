@@ -1,0 +1,84 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:comment-type",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Allowed comment types: multiline.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "directive",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "comment"
+              },
+              {
+                "regex": "^///"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "COMMENT_TYPE",
+        "message": "triple-slash directives are not allowed"
+      }
+    },
+    {
+      "id": "singleline",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "comment"
+              },
+              {
+                "regex": "^//([^/]|$)"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "COMMENT_TYPE",
+        "message": "singleline comments are not allowed"
+      }
+    },
+    {
+      "id": "doc",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "comment"
+              },
+              {
+                "regex": "^/\\*\\*"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "COMMENT_TYPE",
+        "message": "doc comments are not allowed"
+      }
+    }
+  ]
+}

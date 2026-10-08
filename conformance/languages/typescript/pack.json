@@ -1,0 +1,327 @@
+{
+  "pack": "typescript",
+  "family": "ecma",
+  "capabilities": [
+    "syntax",
+    "value",
+    "compare",
+    "arguments",
+    "scope",
+    "suppression"
+  ],
+  "corpora": [
+    {
+      "name": "vscode",
+      "repository": "https://github.com/microsoft/vscode",
+      "commit": "729f257fa411ea4b1cbdb7f404aa79941182209b",
+      "paths": [
+        "src"
+      ],
+      "exclude": []
+    }
+  ],
+  "tools": [
+    {
+      "name": "eslint",
+      "version": "10.11.0"
+    },
+    {
+      "name": "typescript-eslint",
+      "version": "8.70.1"
+    }
+  ],
+  "rules": [
+    {
+      "id": "eslint-no-debugger",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-debugger"
+      },
+      "policy": "rules/eslint-no-debugger.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-eqeqeq",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "eqeqeq"
+      },
+      "policy": "rules/eslint-eqeqeq.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-dupe-keys",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-dupe-keys"
+      },
+      "policy": "rules/eslint-no-dupe-keys.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-self-compare",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-self-compare"
+      },
+      "policy": "rules/eslint-no-self-compare.json",
+      "capabilities": [
+        "syntax",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-duplicate-case",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-duplicate-case"
+      },
+      "policy": "rules/eslint-no-duplicate-case.json",
+      "capabilities": [
+        "syntax",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-useless-rename",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-useless-rename"
+      },
+      "policy": "rules/eslint-no-useless-rename.json",
+      "capabilities": [
+        "syntax",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-script-url",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-script-url"
+      },
+      "policy": "rules/eslint-no-script-url.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-implied-eval",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-implied-eval"
+      },
+      "policy": "rules/eslint-no-implied-eval.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-radix",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "radix"
+      },
+      "policy": "rules/eslint-radix.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-use-isnan",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "use-isnan"
+      },
+      "policy": "rules/eslint-use-isnan.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-new-wrappers",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-new-wrappers"
+      },
+      "policy": "rules/eslint-no-new-wrappers.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-unused-private-class-members",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-unused-private-class-members"
+      },
+      "policy": "rules/eslint-no-unused-private-class-members.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-compare-neg-zero",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-compare-neg-zero"
+      },
+      "policy": "rules/eslint-no-compare-neg-zero.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-template-curly-in-string",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-template-curly-in-string"
+      },
+      "policy": "rules/eslint-no-template-curly-in-string.json",
+      "capabilities": [
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-non-null-assertion",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-non-null-assertion"
+      },
+      "policy": "rules/typescript-eslint-no-non-null-assertion.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-namespace",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-namespace"
+      },
+      "policy": "rules/typescript-eslint-no-namespace.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-duplicate-enum-values",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-duplicate-enum-values"
+      },
+      "policy": "rules/typescript-eslint-no-duplicate-enum-values.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-prefer-as-const",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/prefer-as-const"
+      },
+      "policy": "rules/typescript-eslint-prefer-as-const.json",
+      "capabilities": [
+        "syntax",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-this-alias",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-this-alias"
+      },
+      "policy": "rules/typescript-eslint-no-this-alias.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-unsafe-function-type",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-unsafe-function-type"
+      },
+      "policy": "rules/typescript-eslint-no-unsafe-function-type.json",
+      "capabilities": [
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-wrapper-object-types",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-wrapper-object-types"
+      },
+      "policy": "rules/typescript-eslint-no-wrapper-object-types.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    }
+  ]
+}

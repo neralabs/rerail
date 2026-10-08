@@ -1,0 +1,215 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "python-conformance:ruff-f601-multi-value-repeated-key-literal",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F601 (multi-value-repeated-key-literal) with default settings: a literal dictionary key (string, bytes, number, boolean, None, Ellipsis, tuple, f-string, signed number, real +/- imaginary; Ruff's is_literal_key) equal to an earlier key of the same dict display, reported on each repeat (parentheses are transparent). Equality is Ruff's HashableExpr (`compare` `text: \"structure-hash\"`): numbers fold by value (`1 == 1.0 == True`, `1 + 0j == 1`), strings by decoded value, tuples of constants element by element, anything else structurally as ComparableExpr (names without NFKC normalization). Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F601.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "multi-value-repeated-key-literal",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "complex": {
+              "any": [
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "complex"
+                  }
+                }
+              ],
+              "regex": "[jJ]\\)*$"
+            },
+            "literal-key": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "regex": "^[A-Za-z]*[tT]"
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "regex": "^[A-Za-z]*[tT]"
+                    }
+                  }
+                },
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "kind": "tuple"
+                },
+                {
+                  "kind": "unary_operator",
+                  "regex": "^[-+]",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "signed-literal"
+                  }
+                },
+                {
+                  "kind": "binary_operator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^[-+]$",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "matches": "signed-literal",
+                      "not": {
+                        "regex": "[jJ]\\)*$"
+                      }
+                    },
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "matches": "complex"
+                    }
+                  }
+                }
+              ]
+            },
+            "signed-literal": {
+              "any": [
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                },
+                {
+                  "kind": "unary_operator",
+                  "regex": "^[-+]",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "signed-literal"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "signed-literal"
+                  }
+                }
+              ]
+            },
+            "key-slot": {
+              "any": [
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "pair"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "key-slot"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "pattern": "$KEY",
+            "not": {
+              "kind": "parenthesized_expression"
+            },
+            "all": [
+              {
+                "matches": "literal-key"
+              },
+              {
+                "matches": "key-slot"
+              }
+            ],
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "kind": "pair",
+              "count": {
+                "follows": {
+                  "stopBy": "end",
+                  "kind": "pair",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "pattern": "$J"
+                  },
+                  "compare": {
+                    "left": "J",
+                    "op": "eq",
+                    "right": "KEY",
+                    "text": "structure-hash"
+                  }
+                },
+                "min": 1
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F601",
+        "message": "Dictionary key literal `$KEY` repeated",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F601"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

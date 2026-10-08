@@ -1,0 +1,503 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-radix",
+  "revision": 1,
+  "mode": "steer",
+  "description": "ESLint 10.11.0 radix, default options. Port of ESLint's `radix` rule (https://eslint.org/docs/latest/rules/radix). Flags calls of the global `parseInt` / `Number.parseInt` (resolved with `resolves`) with no arguments, no radix, or a radix that is not an integer 2..36: any literal whose value is not such a Number, a signed Number literal likewise, or the global `undefined`. The 'always'/'as-needed' option is deprecated and changes nothing.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "missing-parameters",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {},
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "matches": "callee"
+            },
+            "arguments": {
+              "signature": [
+                "string",
+                "radix"
+              ],
+              "absent": [
+                "string"
+              ]
+            }
+          },
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "resolves": {
+                        "global": [
+                          "parseInt"
+                        ],
+                        "directives": "eslint"
+                      }
+                    },
+                    {
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "property_identifier",
+                            "regex": "^parseInt$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "matches": "number-obj"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "subscript_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "string"
+                              },
+                              {
+                                "kind": "template_string",
+                                "not": {
+                                  "has": {
+                                    "kind": "template_substitution"
+                                  }
+                                }
+                              }
+                            ],
+                            "value": {
+                              "eq": "parseInt"
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "matches": "number-obj"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "number-obj": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "global": [
+                      "Number"
+                    ],
+                    "directives": "eslint"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "number-obj"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "radix",
+        "message": "Missing parameters.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "radix"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "missing-radix",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {},
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "matches": "callee"
+            },
+            "arguments": {
+              "signature": [
+                "string",
+                "radix"
+              ],
+              "bind": {
+                "S": "string"
+              },
+              "absent": [
+                "radix"
+              ]
+            }
+          },
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "resolves": {
+                        "global": [
+                          "parseInt"
+                        ],
+                        "directives": "eslint"
+                      }
+                    },
+                    {
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "property_identifier",
+                            "regex": "^parseInt$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "matches": "number-obj"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "subscript_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "string"
+                              },
+                              {
+                                "kind": "template_string",
+                                "not": {
+                                  "has": {
+                                    "kind": "template_substitution"
+                                  }
+                                }
+                              }
+                            ],
+                            "value": {
+                              "eq": "parseInt"
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "matches": "number-obj"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "number-obj": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "global": [
+                      "Number"
+                    ],
+                    "directives": "eslint"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "number-obj"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "radix",
+        "message": "Missing radix parameter.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "radix"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-radix",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {},
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "matches": "callee"
+            },
+            "arguments": {
+              "signature": [
+                "string",
+                "radix"
+              ],
+              "bind": {
+                "R": "radix"
+              }
+            }
+          },
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "resolves": {
+                        "global": [
+                          "parseInt"
+                        ],
+                        "directives": "eslint"
+                      }
+                    },
+                    {
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "property_identifier",
+                            "regex": "^parseInt$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "matches": "number-obj"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "subscript_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "string"
+                              },
+                              {
+                                "kind": "template_string",
+                                "not": {
+                                  "has": {
+                                    "kind": "template_substitution"
+                                  }
+                                }
+                              }
+                            ],
+                            "value": {
+                              "eq": "parseInt"
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "matches": "number-obj"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "number-obj": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "global": [
+                      "Number"
+                    ],
+                    "directives": "eslint"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "number-obj"
+                  }
+                }
+              ]
+            },
+            "invalid-radix": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "null"
+                    },
+                    {
+                      "kind": "true"
+                    },
+                    {
+                      "kind": "false"
+                    },
+                    {
+                      "kind": "string"
+                    },
+                    {
+                      "kind": "regex"
+                    }
+                  ]
+                },
+                {
+                  "kind": "number",
+                  "not": {
+                    "value": {
+                      "type": "number",
+                      "ge": 2,
+                      "le": 36,
+                      "bitsAny": 63
+                    }
+                  }
+                },
+                {
+                  "kind": "unary_expression",
+                  "has": {
+                    "regex": "^[-+]$"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "matches": "num-lit"
+                      }
+                    },
+                    {
+                      "not": {
+                        "value": {
+                          "type": "number",
+                          "ge": 2,
+                          "le": 36,
+                          "bitsAny": 63
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "undefined"
+                    },
+                    {
+                      "kind": "identifier"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "undefined"
+                    ],
+                    "directives": "eslint"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "invalid-radix"
+                  }
+                }
+              ]
+            },
+            "num-lit": {
+              "any": [
+                {
+                  "kind": "number",
+                  "value": {
+                    "type": "number"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "num-lit"
+                  }
+                }
+              ]
+            }
+          },
+          "constraints": {
+            "R": {
+              "matches": "invalid-radix"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "radix",
+        "message": "Invalid radix parameter, must be an integer between 2 and 36.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "radix"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

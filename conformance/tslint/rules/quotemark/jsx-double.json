@@ -1,0 +1,75 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:quotemark",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Single quotes in code, double quotes in JSX attributes.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "single",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "string"
+              },
+              {
+                "regex": "^\""
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "jsx_attribute"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "QUOTEMARK",
+        "message": "\" should be '"
+      }
+    },
+    {
+      "id": "jsx-double",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "string"
+              },
+              {
+                "regex": "^'"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "jsx_attribute"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "QUOTEMARK",
+        "message": "' should be \""
+      }
+    }
+  ]
+}

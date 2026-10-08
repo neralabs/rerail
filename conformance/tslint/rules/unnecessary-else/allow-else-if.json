@@ -1,0 +1,194 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:unnecessary-else",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Flags the `else` of an if whose then-branch is, or ends with (one nested block deep when it is the only statement), a return/throw/break/continue, unless an if up the direct else-if chain (any length) does not end with one; with allow-else-if, `else if` is not flagged.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unnecessary-else",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "regex": "^else$",
+            "inside": {
+              "kind": "else_clause",
+              "inside": {
+                "kind": "if_statement",
+                "matches": "ends-in-jump",
+                "all": [
+                  {
+                    "matches": "chain-ok"
+                  },
+                  {
+                    "has": {
+                      "follows": {
+                        "kind": "parenthesized_expression"
+                      },
+                      "any": [
+                        {
+                          "has": {
+                            "pattern": "$$KW",
+                            "regex": "^(return|throw|break|continue)$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "precedes": {
+                              "matches": "block-close"
+                            },
+                            "has": {
+                              "pattern": "$$KW",
+                              "regex": "^(return|throw|break|continue)$"
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "kind": "statement_block",
+                            "has": {
+                              "precedes": {
+                                "matches": "block-close"
+                              },
+                              "has": {
+                                "pattern": "$$KW",
+                                "regex": "^(return|throw|break|continue)$"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "not": {
+                "has": {
+                  "kind": "if_statement"
+                }
+              }
+            }
+          },
+          "utils": {
+            "jump": {
+              "any": [
+                {
+                  "kind": "return_statement"
+                },
+                {
+                  "kind": "throw_statement"
+                },
+                {
+                  "kind": "break_statement"
+                },
+                {
+                  "kind": "continue_statement"
+                }
+              ]
+            },
+            "block-open": {
+              "any": [
+                {
+                  "regex": "^\\{$"
+                },
+                {
+                  "kind": "comment",
+                  "follows": {
+                    "matches": "block-open"
+                  }
+                }
+              ]
+            },
+            "block-close": {
+              "any": [
+                {
+                  "regex": "^\\}$"
+                },
+                {
+                  "kind": "comment",
+                  "precedes": {
+                    "matches": "block-close"
+                  }
+                }
+              ]
+            },
+            "ends-in-jump": {
+              "has": {
+                "follows": {
+                  "kind": "parenthesized_expression"
+                },
+                "any": [
+                  {
+                    "matches": "jump"
+                  },
+                  {
+                    "kind": "statement_block",
+                    "any": [
+                      {
+                        "has": {
+                          "matches": "jump",
+                          "precedes": {
+                            "matches": "block-close"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "kind": "statement_block",
+                          "follows": {
+                            "matches": "block-open"
+                          },
+                          "precedes": {
+                            "matches": "block-close"
+                          },
+                          "has": {
+                            "matches": "jump",
+                            "precedes": {
+                              "matches": "block-close"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "chain-ok": {
+              "not": {
+                "inside": {
+                  "kind": "else_clause",
+                  "inside": {
+                    "kind": "if_statement",
+                    "not": {
+                      "all": [
+                        {
+                          "matches": "ends-in-jump"
+                        },
+                        {
+                          "matches": "chain-ok"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UNNECESSARY_ELSE",
+        "message": "The preceding `if` block ends with a `$KW` statement. This `else` is unnecessary."
+      }
+    }
+  ]
+}

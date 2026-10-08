@@ -1,0 +1,285 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-no-this-alias",
+  "revision": 2,
+  "mode": "steer",
+  "description": "typescript-eslint 8.70.1 @typescript-eslint/no-this-alias, default options. Port of typescript-eslint's `no-this-alias` rule (https://typescript-eslint.io/rules/no-this-alias). Reports a variable declared or assigned as `this`. Options are declared in the `options` define (the rule's defaults); a variant is a config patch.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "allowDestructuring": {
+            "type": "boolean",
+            "nullable": true,
+            "default": null
+          },
+          "allowedNames": {
+            "type": "array",
+            "items": "string",
+            "nullable": true,
+            "default": null
+          }
+        }
+      }
+    },
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "this-value": {
+            "any": [
+              {
+                "kind": "this"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "this-value",
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          },
+          "r1": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "comment"
+              },
+              {
+                "kind": "type_annotation"
+              },
+              {
+                "regex": "=$"
+              },
+              {
+                "kind": "this"
+              },
+              {
+                "kind": "parenthesized_expression"
+              }
+            ]
+          },
+          "r2": {
+            "has": {
+              "follows": {
+                "regex": "^=$",
+                "stopBy": "end"
+              },
+              "matches": "this-value",
+              "stopBy": "neighbor"
+            }
+          },
+          "r3": {
+            "has": {
+              "follows": {
+                "regex": "=$",
+                "stopBy": "end"
+              },
+              "matches": "this-value",
+              "stopBy": "neighbor"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "this-assignment",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "variable_declarator",
+                "all": [
+                  {
+                    "has": {
+                      "$option": "allowedNames",
+                      "cases": {
+                        "[\"self\"]": {
+                          "kind": "identifier",
+                          "not": {
+                            "regex": "^(self)$"
+                          },
+                          "pattern": "$ID",
+                          "precedes": {
+                            "regex": "^=$",
+                            "stopBy": "end"
+                          },
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      "default": {
+                        "kind": "identifier",
+                        "pattern": "$ID",
+                        "precedes": {
+                          "regex": "^=$",
+                          "stopBy": "end"
+                        },
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  },
+                  {
+                    "matches": "r2"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "kind": "assignment_expression"
+                  },
+                  {
+                    "kind": "augmented_assignment_expression"
+                  }
+                ],
+                "all": [
+                  {
+                    "has": {
+                      "$option": "allowedNames",
+                      "cases": {
+                        "[\"self\"]": {
+                          "kind": "identifier",
+                          "not": {
+                            "regex": "^(self)$"
+                          },
+                          "pattern": "$ID",
+                          "precedes": {
+                            "regex": "=$",
+                            "stopBy": "end"
+                          },
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      "default": {
+                        "kind": "identifier",
+                        "pattern": "$ID",
+                        "precedes": {
+                          "regex": "=$",
+                          "stopBy": "end"
+                        },
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  },
+                  {
+                    "matches": "r3"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.ID",
+        "code": "@typescript-eslint/no-this-alias",
+        "message": "Unexpected aliasing of 'this' to local variable.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-this-alias"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "this-destructure",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "variable_declarator",
+                "all": [
+                  {
+                    "has": {
+                      "not": {
+                        "matches": "r1"
+                      },
+                      "pattern": "$ID",
+                      "precedes": {
+                        "regex": "^=$",
+                        "stopBy": "end"
+                      },
+                      "stopBy": "neighbor"
+                    }
+                  },
+                  {
+                    "matches": "r2"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "kind": "assignment_expression"
+                  },
+                  {
+                    "kind": "augmented_assignment_expression"
+                  }
+                ],
+                "all": [
+                  {
+                    "has": {
+                      "not": {
+                        "matches": "r1"
+                      },
+                      "pattern": "$ID",
+                      "precedes": {
+                        "regex": "=$",
+                        "stopBy": "end"
+                      },
+                      "stopBy": "neighbor"
+                    }
+                  },
+                  {
+                    "matches": "r3"
+                  }
+                ]
+              }
+            ]
+          },
+          "when": {
+            "option": {
+              "allowDestructuring": false
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.ID",
+        "code": "@typescript-eslint/no-this-alias",
+        "message": "Unexpected aliasing of members of 'this' to local variables.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-this-alias"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

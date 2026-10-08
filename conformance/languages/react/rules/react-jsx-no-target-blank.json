@@ -1,0 +1,515 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-jsx-no-target-blank",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-react 7.37.5 react/jsx-no-target-blank (default options: links only, enforceDynamicLinks always, allowReferrer false): an `<a>` whose last `target` is possibly `_blank` (a string, or a conditional with a `_blank` branch), with an external last `href` string (`scheme:` or `//`) or any `href` expression, and whose last `rel` does not give `noreferrer` on every value it may take (a string, the first quasi of a template, both branches of a conditional, or, when target and rel test the same name, the branch target is `_blank` on).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "jsx_opening_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^a$"
+                }
+              },
+              {
+                "kind": "jsx_self_closing_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^a$"
+                }
+              }
+            ],
+            "all": [
+              {
+                "has": {
+                  "matches": "last-target",
+                  "all": [
+                    {
+                      "matches": "possibly-blank"
+                    }
+                  ]
+                }
+              },
+              {
+                "matches": "dangerous-link"
+              },
+              {
+                "not": {
+                  "matches": "secure-rel"
+                }
+              }
+            ]
+          },
+          "utils": {
+            "last-target": {
+              "kind": "jsx_attribute",
+              "has": {
+                "kind": "property_identifier",
+                "regex": "^target$"
+              },
+              "not": {
+                "precedes": {
+                  "stopBy": "end",
+                  "kind": "jsx_attribute",
+                  "has": {
+                    "kind": "property_identifier",
+                    "regex": "^target$"
+                  }
+                }
+              }
+            },
+            "last-href": {
+              "kind": "jsx_attribute",
+              "has": {
+                "kind": "property_identifier",
+                "regex": "^href$"
+              },
+              "not": {
+                "precedes": {
+                  "stopBy": "end",
+                  "kind": "jsx_attribute",
+                  "has": {
+                    "kind": "property_identifier",
+                    "regex": "^href$"
+                  }
+                }
+              }
+            },
+            "last-rel": {
+              "kind": "jsx_attribute",
+              "has": {
+                "kind": "property_identifier",
+                "regex": "^rel$"
+              },
+              "not": {
+                "precedes": {
+                  "stopBy": "end",
+                  "kind": "jsx_attribute",
+                  "has": {
+                    "kind": "property_identifier",
+                    "regex": "^rel$"
+                  }
+                }
+              }
+            },
+            "blank-literal": {
+              "any": [
+                {
+                  "kind": "string",
+                  "value": {
+                    "regex": "(?i)^_blank$"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "blank-literal"
+                  }
+                }
+              ]
+            },
+            "exact-blank": {
+              "any": [
+                {
+                  "kind": "string",
+                  "value": {
+                    "eq": "_blank"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "exact-blank"
+                  }
+                }
+              ]
+            },
+            "possibly-blank": {
+              "any": [
+                {
+                  "has": {
+                    "kind": "string",
+                    "value": {
+                      "regex": "(?i)^_blank$"
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "kind": "jsx_expression",
+                    "has": {
+                      "matches": "blank-literal"
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "kind": "jsx_expression",
+                    "has": {
+                      "kind": "ternary_expression",
+                      "any": [
+                        {
+                          "has": {
+                            "field": "consequence",
+                            "matches": "blank-literal"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "alternative",
+                            "matches": "blank-literal"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "dangerous-link": {
+              "any": [
+                {
+                  "has": {
+                    "matches": "last-href",
+                    "all": [
+                      {
+                        "has": {
+                          "kind": "string",
+                          "value": {
+                            "regex": "^(?:[A-Za-z0-9_]+:|//)"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "has": {
+                    "kind": "jsx_attribute",
+                    "has": {
+                      "kind": "property_identifier",
+                      "regex": "^href$"
+                    },
+                    "all": [
+                      {
+                        "has": {
+                          "kind": "jsx_expression"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "ok-literal": {
+              "any": [
+                {
+                  "kind": "string",
+                  "value": {
+                    "regex": "(?i)(?:^| )noreferrer(?: |$)"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "ok-literal"
+                  }
+                }
+              ]
+            },
+            "ok-template": {
+              "kind": "template_string",
+              "regex": "\\A`(?:(?:[^$`]|\\$[^{`])*? )?(?i:noreferrer)(?: |`|\\$\\{)"
+            },
+            "same-test": {
+              "all": [
+                {
+                  "has": {
+                    "matches": "last-rel",
+                    "has": {
+                      "kind": "jsx_expression",
+                      "has": {
+                        "kind": "ternary_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "condition",
+                              "kind": "identifier",
+                              "pattern": "$RT"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "matches": "last-target",
+                    "has": {
+                      "kind": "jsx_expression",
+                      "has": {
+                        "kind": "ternary_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "condition",
+                              "kind": "identifier",
+                              "pattern": "$TT"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "compare": {
+                    "left": "RT",
+                    "op": "eq",
+                    "right": "TT"
+                  }
+                }
+              ]
+            },
+            "secure-rel": {
+              "any": [
+                {
+                  "has": {
+                    "matches": "last-rel",
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "string",
+                          "value": {
+                            "regex": "(?i)(?:^| )noreferrer(?: |$)"
+                          }
+                        },
+                        {
+                          "kind": "jsx_expression",
+                          "has": {
+                            "any": [
+                              {
+                                "matches": "ok-literal"
+                              },
+                              {
+                                "matches": "ok-template"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "all": [
+                    {
+                      "has": {
+                        "matches": "last-rel",
+                        "has": {
+                          "kind": "jsx_expression",
+                          "has": {
+                            "kind": "ternary_expression",
+                            "all": [
+                              {
+                                "has": {
+                                  "field": "consequence",
+                                  "matches": "ok-literal"
+                                }
+                              },
+                              {
+                                "has": {
+                                  "field": "alternative",
+                                  "matches": "ok-literal"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "matches": "same-test"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "has": {
+                        "matches": "last-rel",
+                        "has": {
+                          "kind": "jsx_expression",
+                          "has": {
+                            "kind": "ternary_expression",
+                            "all": [
+                              {
+                                "has": {
+                                  "field": "condition",
+                                  "kind": "identifier",
+                                  "pattern": "$RC"
+                                }
+                              },
+                              {
+                                "has": {
+                                  "field": "consequence",
+                                  "matches": "ok-literal"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "matches": "last-target",
+                        "has": {
+                          "kind": "jsx_expression",
+                          "has": {
+                            "kind": "ternary_expression",
+                            "all": [
+                              {
+                                "has": {
+                                  "field": "condition",
+                                  "kind": "identifier",
+                                  "pattern": "$TC"
+                                }
+                              },
+                              {
+                                "has": {
+                                  "field": "consequence",
+                                  "matches": "exact-blank"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "compare": {
+                        "left": "RC",
+                        "op": "eq",
+                        "right": "TC"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "has": {
+                        "matches": "last-rel",
+                        "has": {
+                          "kind": "jsx_expression",
+                          "has": {
+                            "kind": "ternary_expression",
+                            "all": [
+                              {
+                                "has": {
+                                  "field": "condition",
+                                  "kind": "identifier",
+                                  "pattern": "$RA"
+                                }
+                              },
+                              {
+                                "has": {
+                                  "field": "alternative",
+                                  "matches": "ok-literal"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "matches": "last-target",
+                        "has": {
+                          "kind": "jsx_expression",
+                          "has": {
+                            "kind": "ternary_expression",
+                            "all": [
+                              {
+                                "has": {
+                                  "field": "condition",
+                                  "kind": "identifier",
+                                  "pattern": "$TA"
+                                }
+                              },
+                              {
+                                "not": {
+                                  "has": {
+                                    "field": "consequence",
+                                    "matches": "exact-blank"
+                                  }
+                                }
+                              },
+                              {
+                                "has": {
+                                  "field": "alternative",
+                                  "matches": "exact-blank"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "compare": {
+                        "left": "RA",
+                        "op": "eq",
+                        "right": "TA"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/jsx-no-target-blank",
+        "message": "Using target=\"_blank\" without rel=\"noreferrer\" (which implies rel=\"noopener\") is a security risk in older browsers",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/jsx-no-target-blank"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

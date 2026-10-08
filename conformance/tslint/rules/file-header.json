@@ -1,0 +1,55 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:file-header",
+  "revision": 1,
+  "mode": "steer",
+  "description": "First comment (after any shebang) must match /Good header \\d/ (the fixtures' common option; the header regex is a rule option). One check: an empty file, a file without a leading header comment, and a shebang file (reported at the next line) share the program rule.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "missing-header",
+      "forbid": {
+        "select_when": {
+          "select": {
+            "regex": {
+              "source": "file.content",
+              "pattern": "\\A(?:#![^\\n]*\\n)?(?<AFTER>)"
+            }
+          },
+          "exists": {
+            "ast": {
+              "language": "typescript",
+              "rule": {
+                "kind": "program",
+                "not": {
+                  "has": {
+                    "kind": "comment",
+                    "regex": "Good header \\d",
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "not": {
+                          "kind": "hash_bang_line"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.AFTER",
+        "code": "FILE_HEADER",
+        "message": "missing file header"
+      }
+    }
+  ]
+}

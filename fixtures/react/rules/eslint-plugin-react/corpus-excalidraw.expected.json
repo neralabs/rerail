@@ -1,0 +1,7989 @@
+{
+ "tool": "eslint-plugin-react",
+ "version": "7.37.5",
+ "source": {
+  "kind": "corpus",
+  "name": "excalidraw",
+  "repository": "https://github.com/excalidraw/excalidraw",
+  "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+  "rules": [
+   "react/button-has-type",
+   "react/jsx-key",
+   "react/jsx-no-comment-textnodes",
+   "react/jsx-no-duplicate-props",
+   "react/jsx-no-target-blank",
+   "react/jsx-no-undef",
+   "react/no-children-prop",
+   "react/no-danger",
+   "react/no-danger-with-children",
+   "react/no-direct-mutation-state",
+   "react/no-find-dom-node",
+   "react/no-is-mounted",
+   "react/no-render-return-value",
+   "react/no-string-refs",
+   "react/no-unescaped-entities",
+   "react/react-in-jsx-scope",
+   "react/self-closing-comp",
+   "react/void-dom-elements-no-children"
+  ],
+  "skipped": []
+ },
+ "findings": [
+  {
+   "rule": "react/button-has-type",
+   "path": "excalidraw-app/components/TopErrorBoundary.tsx",
+   "line": 83,
+   "column": 17
+  },
+  {
+   "rule": "react/button-has-type",
+   "path": "excalidraw-app/components/TopErrorBoundary.tsx",
+   "line": 91,
+   "column": 17
+  },
+  {
+   "rule": "react/button-has-type",
+   "path": "excalidraw-app/components/TopErrorBoundary.tsx",
+   "line": 126,
+   "column": 19
+  },
+  {
+   "rule": "react/button-has-type",
+   "path": "packages/excalidraw/components/Button.tsx",
+   "line": 39,
+   "column": 13
+  },
+  {
+   "rule": "react/button-has-type",
+   "path": "packages/excalidraw/components/DialogActionButton.tsx",
+   "line": 31,
+   "column": 13
+  },
+  {
+   "rule": "react/button-has-type",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuItem.tsx",
+   "line": 49,
+   "column": 7
+  },
+  {
+   "rule": "react/button-has-type",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 252,
+   "column": 17
+  },
+  {
+   "rule": "react/button-has-type",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 417,
+   "column": 15
+  },
+  {
+   "rule": "react/button-has-type",
+   "path": "packages/excalidraw/tests/tooltip.test.tsx",
+   "line": 25,
+   "column": 9
+  },
+  {
+   "rule": "react/jsx-no-target-blank",
+   "path": "excalidraw-app/components/EncryptedIcon.tsx",
+   "line": 9,
+   "column": 5
+  },
+  {
+   "rule": "react/jsx-no-target-blank",
+   "path": "excalidraw-app/components/ExcalidrawPlusPromoBanner.tsx",
+   "line": 10,
+   "column": 5
+  },
+  {
+   "rule": "react/jsx-no-target-blank",
+   "path": "packages/excalidraw/components/HelpDialog.tsx",
+   "line": 23,
+   "column": 5
+  },
+  {
+   "rule": "react/jsx-no-target-blank",
+   "path": "packages/excalidraw/components/HelpDialog.tsx",
+   "line": 32,
+   "column": 5
+  },
+  {
+   "rule": "react/jsx-no-target-blank",
+   "path": "packages/excalidraw/components/LinkButton.tsx",
+   "line": 11,
+   "column": 5
+  },
+  {
+   "rule": "react/jsx-no-target-blank",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 388,
+   "column": 17
+  },
+  {
+   "rule": "react/jsx-no-target-blank",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuItemLink.tsx",
+   "line": 42,
+   "column": 7
+  },
+  {
+   "rule": "react/jsx-no-target-blank",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 76,
+   "column": 5
+  },
+  {
+   "rule": "react/no-danger",
+   "path": "excalidraw-app/share/QRCode.tsx",
+   "line": 53,
+   "column": 7
+  },
+  {
+   "rule": "react/no-unescaped-entities",
+   "path": "excalidraw-app/App.tsx",
+   "line": 897,
+   "column": 14
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 207,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 209,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 210,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 423,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 425,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 816,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 888,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 897,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 906,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 921,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 942,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 948,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 964,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1001,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1003,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1008,
+   "column": 39
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1009,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1030,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1037,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1041,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1042,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1043,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1045,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1061,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1062,
+   "column": 27
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1064,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1066,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1071,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1076,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1083,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1086,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1103,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1106,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1111,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1293,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1308,
+   "column": 12
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1312,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1313,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1314,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/App.tsx",
+   "line": 1315,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/CustomStats.tsx",
+   "line": 61,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/CustomStats.tsx",
+   "line": 62,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/CustomStats.tsx",
+   "line": 63,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/CustomStats.tsx",
+   "line": 74,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/CustomStats.tsx",
+   "line": 78,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/CustomStats.tsx",
+   "line": 79,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/CustomStats.tsx",
+   "line": 80,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/CustomStats.tsx",
+   "line": 81,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/CustomStats.tsx",
+   "line": 83,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/CustomStats.tsx",
+   "line": 84,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/CustomStats.tsx",
+   "line": 85,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/collab/Collab.tsx",
+   "line": 1072,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/collab/Collab.tsx",
+   "line": 1074,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/collab/CollabError.tsx",
+   "line": 41,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/collab/CollabError.tsx",
+   "line": 42,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AI.tsx",
+   "line": 25,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AI.tsx",
+   "line": 26,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AI.tsx",
+   "line": 153,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 17,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 18,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 19,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 24,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 37,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 39,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 42,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 48,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 54,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 63,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 72,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 73,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 74,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 80,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 87,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 88,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 89,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 98,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 99,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 108,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 109,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 110,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 119,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/AppSidebar.tsx",
+   "line": 120,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/EncryptedIcon.tsx",
+   "line": 9,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/EncryptedIcon.tsx",
+   "line": 16,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/components/ExcalidrawPlusPromoBanner.tsx",
+   "line": 10,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/index.tsx",
+   "line": 14,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/index.tsx",
+   "line": 15,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/QRCode.tsx",
+   "line": 42,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/QRCode.tsx",
+   "line": 43,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/QRCode.tsx",
+   "line": 49,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 106,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 107,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 110,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 117,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 118,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 126,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 135,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 146,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 147,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 148,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 149,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 158,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 161,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 162,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 187,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 188,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 192,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 193,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 197,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 198,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 210,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 211,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 218,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 222,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 223,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 226,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 230,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 231,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 251,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 252,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 254,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 260,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/share/ShareDialog.tsx",
+   "line": 286,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/tests/LanguageList.test.tsx",
+   "line": 21,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/tests/LanguageList.test.tsx",
+   "line": 22,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/tests/LanguageList.test.tsx",
+   "line": 23,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/tests/LanguageList.test.tsx",
+   "line": 24,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/tests/LanguageList.test.tsx",
+   "line": 36,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/tests/LanguageList.test.tsx",
+   "line": 37,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/tests/MobileMenu.test.tsx",
+   "line": 19,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/tests/MobileMenu.test.tsx",
+   "line": 20,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/tests/collab.test.tsx",
+   "line": 76,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "excalidraw-app/tests/collab.test.tsx",
+   "line": 146,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionAlign.tsx",
+   "line": 99,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionAlign.tsx",
+   "line": 133,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionAlign.tsx",
+   "line": 167,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionAlign.tsx",
+   "line": 201,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionAlign.tsx",
+   "line": 233,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionAlign.tsx",
+   "line": 263,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionCanvas.tsx",
+   "line": 68,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionCanvas.tsx",
+   "line": 158,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionCanvas.tsx",
+   "line": 163,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionCanvas.tsx",
+   "line": 212,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionCanvas.tsx",
+   "line": 217,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionCanvas.tsx",
+   "line": 271,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionCanvas.tsx",
+   "line": 277,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionCropEditor.tsx",
+   "line": 50,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionDeleteSelected.tsx",
+   "line": 312,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionDistribute.tsx",
+   "line": 90,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionDistribute.tsx",
+   "line": 121,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionDuplicateSelection.test.tsx",
+   "line": 18,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionDuplicateSelection.tsx",
+   "line": 124,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionExport.tsx",
+   "line": 48,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionExport.tsx",
+   "line": 82,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionExport.tsx",
+   "line": 104,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionExport.tsx",
+   "line": 109,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionExport.tsx",
+   "line": 110,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionExport.tsx",
+   "line": 134,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionExport.tsx",
+   "line": 136,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionExport.tsx",
+   "line": 380,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionExport.tsx",
+   "line": 445,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionExport.tsx",
+   "line": 453,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionFinalize.tsx",
+   "line": 426,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionFlip.test.tsx",
+   "line": 62,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionFlip.test.tsx",
+   "line": 85,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionGroup.tsx",
+   "line": 89,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionGroup.tsx",
+   "line": 205,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionGroup.tsx",
+   "line": 208,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionGroup.tsx",
+   "line": 220,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionGroup.tsx",
+   "line": 313,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionGroup.tsx",
+   "line": 316,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionHistory.tsx",
+   "line": 92,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionHistory.tsx",
+   "line": 132,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionLinearEditor.tsx",
+   "line": 95,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionLinearEditor.tsx",
+   "line": 201,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionLink.tsx",
+   "line": 49,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionNavigate.tsx",
+   "line": 77,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionNavigate.tsx",
+   "line": 81,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionNavigate.tsx",
+   "line": 82,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionNavigate.tsx",
+   "line": 83,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionNavigate.tsx",
+   "line": 86,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionNavigate.tsx",
+   "line": 93,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionNavigate.tsx",
+   "line": 98,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionNavigate.tsx",
+   "line": 107,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionNavigate.tsx",
+   "line": 114,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionNavigate.tsx",
+   "line": 117,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionNavigate.tsx",
+   "line": 119,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionNavigate.tsx",
+   "line": 131,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionNavigate.tsx",
+   "line": 134,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionNavigate.tsx",
+   "line": 144,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.test.tsx",
+   "line": 18,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 411,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 412,
+   "column": 40
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 413,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 523,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 525,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 527,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 575,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 577,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 579,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 636,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 637,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 638,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 639,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 726,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 727,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 728,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 729,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 783,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 784,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 785,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 786,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 860,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 875,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 876,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 877,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 878,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 919,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 920,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 921,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 922,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 985,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1020,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1021,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1022,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1023,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1439,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1441,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1443,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1586,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1587,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1588,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1589,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1685,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1686,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1687,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1693,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1699,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1705,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1790,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1791,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1792,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1793,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1840,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1846,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1851,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1857,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1871,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1877,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1882,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1888,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1895,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1905,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1911,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1917,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1923,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1929,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1935,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1995,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1996,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1997,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 1998,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 2015,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 2049,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 2253,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 2254,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 2255,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionProperties.tsx",
+   "line": 2256,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionZindex.tsx",
+   "line": 42,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionZindex.tsx",
+   "line": 72,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionZindex.tsx",
+   "line": 105,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/actions/actionZindex.tsx",
+   "line": 143,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 70,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 71,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 72,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 95,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 96,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 97,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 98,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 100,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 106,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 114,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 152,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 153,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 161,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 162,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 164,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 170,
+   "column": 34
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 174,
+   "column": 33
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 176,
+   "column": 32
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 178,
+   "column": 32
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 181,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 182,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 189,
+   "column": 33
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 193,
+   "column": 29
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 196,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 202,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 203,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 204,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 246,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 247,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 257,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 258,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 277,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 283,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 294,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 296,
+   "column": 41
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 331,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 332,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 342,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 343,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 389,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 422,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 423,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 439,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 440,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 464,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 477,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 513,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 514,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 524,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 525,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 543,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 553,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 555,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 559,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 564,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 565,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 566,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 595,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 628,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 631,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 638,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 649,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 654,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 662,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 673,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 680,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 681,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 684,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 696,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 703,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 708,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 765,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 781,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 790,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 796,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 804,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 812,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 822,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 828,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 829,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 832,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 843,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 853,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 860,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 861,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 863,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 868,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 882,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 883,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 898,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 899,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 900,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 904,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 905,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 919,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Actions.tsx",
+   "line": 935,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ActiveConfirmDialog.tsx",
+   "line": 22,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ActiveConfirmDialog.tsx",
+   "line": 30,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/BraveMeasureTextError.tsx",
+   "line": 5,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/BraveMeasureTextError.tsx",
+   "line": 6,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/BraveMeasureTextError.tsx",
+   "line": 7,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/BraveMeasureTextError.tsx",
+   "line": 9,
+   "column": 25
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/BraveMeasureTextError.tsx",
+   "line": 12,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/BraveMeasureTextError.tsx",
+   "line": 13,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/BraveMeasureTextError.tsx",
+   "line": 15,
+   "column": 25
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/BraveMeasureTextError.tsx",
+   "line": 18,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/BraveMeasureTextError.tsx",
+   "line": 19,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/BraveMeasureTextError.tsx",
+   "line": 22,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/BraveMeasureTextError.tsx",
+   "line": 28,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/BraveMeasureTextError.tsx",
+   "line": 29,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/BraveMeasureTextError.tsx",
+   "line": 32,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/BraveMeasureTextError.tsx",
+   "line": 36,
+   "column": 32
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ButtonIconCycle.tsx",
+   "line": 25,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ButtonIconCycle.tsx",
+   "line": 26,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ButtonSeparator.tsx",
+   "line": 2,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Card.tsx",
+   "line": 27,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorInput.tsx",
+   "line": 79,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorInput.tsx",
+   "line": 80,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorInput.tsx",
+   "line": 85,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorInput.tsx",
+   "line": 86,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorInput.tsx",
+   "line": 115,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorInput.tsx",
+   "line": 116,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorInput.tsx",
+   "line": 123,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorInput.tsx",
+   "line": 149,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorPicker.tsx",
+   "line": 110,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorPicker.tsx",
+   "line": 111,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorPicker.tsx",
+   "line": 112,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorPicker.tsx",
+   "line": 131,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorPicker.tsx",
+   "line": 196,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorPicker.tsx",
+   "line": 306,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorPicker.tsx",
+   "line": 330,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorPicker.tsx",
+   "line": 332,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorPicker.tsx",
+   "line": 333,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorPicker.tsx",
+   "line": 418,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorPicker.tsx",
+   "line": 419,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorPicker.tsx",
+   "line": 427,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorPicker.tsx",
+   "line": 450,
+   "column": 28
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorPicker.tsx",
+   "line": 451,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorPicker.tsx",
+   "line": 460,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ColorPicker.tsx",
+   "line": 482,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/CustomColorList.tsx",
+   "line": 43,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/CustomColorList.tsx",
+   "line": 47,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/CustomColorList.tsx",
+   "line": 70,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/CustomColorList.tsx",
+   "line": 71,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/PickerColorList.tsx",
+   "line": 67,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/PickerColorList.tsx",
+   "line": 76,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/PickerColorList.tsx",
+   "line": 94,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/PickerColorList.tsx",
+   "line": 121,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/PickerColorList.tsx",
+   "line": 123,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/PickerHeading.tsx",
+   "line": 4,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ShadeList.tsx",
+   "line": 62,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ShadeList.tsx",
+   "line": 69,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ShadeList.tsx",
+   "line": 95,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ShadeList.tsx",
+   "line": 97,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ShadeList.tsx",
+   "line": 108,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ShadeList.tsx",
+   "line": 113,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/ShadeList.tsx",
+   "line": 118,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/TopPicks.tsx",
+   "line": 75,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/TopPicks.tsx",
+   "line": 80,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/TopPicks.tsx",
+   "line": 86,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/TopPicks.tsx",
+   "line": 91,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ColorPicker/TopPicks.tsx",
+   "line": 125,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 128,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 131,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 132,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 136,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 193,
+   "column": 12
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 233,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 883,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 891,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 902,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 903,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 906,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 909,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 915,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 917,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 918,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 920,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 929,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 944,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 945,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 947,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 962,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 963,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 983,
+   "column": 10
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 1008,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 1025,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 1027,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 1037,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CommandPalette/CommandPalette.tsx",
+   "line": 1040,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ConfirmDialog.tsx",
+   "line": 36,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ConfirmDialog.tsx",
+   "line": 43,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ConfirmDialog.tsx",
+   "line": 44,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ConfirmDialog.tsx",
+   "line": 60,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ConvertElementTypePopup.tsx",
+   "line": 191,
+   "column": 10
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ConvertElementTypePopup.tsx",
+   "line": 316,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ConvertElementTypePopup.tsx",
+   "line": 339,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/CursorHint.tsx",
+   "line": 199,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DarkModeToggle.tsx",
+   "line": 25,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DarkModeToggle.tsx",
+   "line": 40,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DarkModeToggle.tsx",
+   "line": 41,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DarkModeToggle.tsx",
+   "line": 48,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DarkModeToggle.tsx",
+   "line": 49,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DefaultSidebar.tsx",
+   "line": 34,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DefaultSidebar.tsx",
+   "line": 35,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DefaultSidebar.tsx",
+   "line": 49,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DefaultSidebar.tsx",
+   "line": 80,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DefaultSidebar.tsx",
+   "line": 99,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DefaultSidebar.tsx",
+   "line": 100,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DefaultSidebar.tsx",
+   "line": 101,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DefaultSidebar.tsx",
+   "line": 102,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DefaultSidebar.tsx",
+   "line": 105,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DefaultSidebar.tsx",
+   "line": 108,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DefaultSidebar.tsx",
+   "line": 111,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DefaultSidebar.tsx",
+   "line": 112,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DefaultSidebar.tsx",
+   "line": 114,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DefaultSidebar.tsx",
+   "line": 115,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DialogActionButton.tsx",
+   "line": 29,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DialogActionButton.tsx",
+   "line": 37,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DialogActionButton.tsx",
+   "line": 39,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DialogActionButton.tsx",
+   "line": 41,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/DialogActionButton.tsx",
+   "line": 42,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ElementCanvasButtons.tsx",
+   "line": 57,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ElementLinkDialog.tsx",
+   "line": 115,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ElementLinkDialog.tsx",
+   "line": 116,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ElementLinkDialog.tsx",
+   "line": 117,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ElementLinkDialog.tsx",
+   "line": 118,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ElementLinkDialog.tsx",
+   "line": 121,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ElementLinkDialog.tsx",
+   "line": 122,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ElementLinkDialog.tsx",
+   "line": 140,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ElementLinkDialog.tsx",
+   "line": 159,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ElementLinkDialog.tsx",
+   "line": 160,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ElementLinkDialog.tsx",
+   "line": 170,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Ellipsify.tsx",
+   "line": 6,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ExcalidrawLogo.tsx",
+   "line": 4,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ExcalidrawLogo.tsx",
+   "line": 10,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ExcalidrawLogo.tsx",
+   "line": 18,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ExcalidrawLogo.tsx",
+   "line": 24,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ExcalidrawLogo.tsx",
+   "line": 28,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ExcalidrawLogo.tsx",
+   "line": 32,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ExcalidrawLogo.tsx",
+   "line": 36,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ExcalidrawLogo.tsx",
+   "line": 64,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ExcalidrawLogo.tsx",
+   "line": 65,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ExcalidrawLogo.tsx",
+   "line": 66,
+   "column": 20
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/EyeDropper.tsx",
+   "line": 281,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FileDropOverlay.tsx",
+   "line": 127,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FileDropOverlay.tsx",
+   "line": 132,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FileDropOverlay.tsx",
+   "line": 133,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FileDropOverlay.tsx",
+   "line": 134,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FileDropOverlay.tsx",
+   "line": 143,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FileDropOverlay.tsx",
+   "line": 147,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FileDropOverlay.tsx",
+   "line": 149,
+   "column": 38
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FileDropOverlay.tsx",
+   "line": 154,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FileDropOverlay.tsx",
+   "line": 159,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FileDropOverlay.tsx",
+   "line": 161,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FileDropOverlay.tsx",
+   "line": 167,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FileDropOverlay.tsx",
+   "line": 171,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FileDropOverlay.tsx",
+   "line": 172,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FileDropOverlay.tsx",
+   "line": 177,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FontPicker/FontPicker.test.tsx",
+   "line": 21,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FontPicker/FontPicker.test.tsx",
+   "line": 93,
+   "column": 34
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FontPicker/FontPickerTrigger.tsx",
+   "line": 35,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FontPicker/FontPickerTrigger.tsx",
+   "line": 36,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/FontPicker/FontPickerTrigger.tsx",
+   "line": 37,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/HelpButton.tsx",
+   "line": 13,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/HelpButton.tsx",
+   "line": 14,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/HintViewer.tsx",
+   "line": 299,
+   "column": 14
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/HintViewer.tsx",
+   "line": 305,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/HintViewer.tsx",
+   "line": 306,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/InlineIcon.tsx",
+   "line": 11,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LaserPointerButton.tsx",
+   "line": 15,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuBrowseButton.tsx",
+   "line": 19,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuControlButtons.tsx",
+   "line": 23,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuControlButtons.tsx",
+   "line": 27,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuHeaderContent.tsx",
+   "line": 70,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuHeaderContent.tsx",
+   "line": 84,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuHeaderContent.tsx",
+   "line": 109,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuHeaderContent.tsx",
+   "line": 115,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuHeaderContent.tsx",
+   "line": 116,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuHeaderContent.tsx",
+   "line": 120,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuHeaderContent.tsx",
+   "line": 130,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuHeaderContent.tsx",
+   "line": 194,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuHeaderContent.tsx",
+   "line": 195,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuHeaderContent.tsx",
+   "line": 200,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuHeaderContent.tsx",
+   "line": 206,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuHeaderContent.tsx",
+   "line": 215,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuHeaderContent.tsx",
+   "line": 224,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuHeaderContent.tsx",
+   "line": 233,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuHeaderContent.tsx",
+   "line": 246,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuHeaderContent.tsx",
+   "line": 249,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuHeaderContent.tsx",
+   "line": 253,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryMenuHeaderContent.tsx",
+   "line": 312,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryUnit.tsx",
+   "line": 49,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryUnit.tsx",
+   "line": 53,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryUnit.tsx",
+   "line": 85,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryUnit.tsx",
+   "line": 113,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryUnit.tsx",
+   "line": 114,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryUnit.tsx",
+   "line": 115,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryUnit.tsx",
+   "line": 121,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LibraryUnit.tsx",
+   "line": 133,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LinkButton.tsx",
+   "line": 11,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LinkButton.tsx",
+   "line": 12,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LoadingMessage.tsx",
+   "line": 33,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LoadingMessage.tsx",
+   "line": 38,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LoadingMessage.tsx",
+   "line": 39,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LoadingMessage.tsx",
+   "line": 41,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/LockButton.tsx",
+   "line": 16,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MagicButton.tsx",
+   "line": 15,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 159,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 168,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 171,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 174,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 177,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 180,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 203,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 223,
+   "column": 31
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 226,
+   "column": 32
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 229,
+   "column": 32
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 232,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 233,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 256,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 263,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 276,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 286,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 298,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 309,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 318,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 328,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 338,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 348,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 351,
+   "column": 45
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 352,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 360,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 361,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/MobileToolbar.tsx",
+   "line": 365,
+   "column": 24
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Modal.tsx",
+   "line": 49,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Modal.tsx",
+   "line": 58,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Modal.tsx",
+   "line": 62,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Paragraph.tsx",
+   "line": 6,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PenModeButton.tsx",
+   "line": 20,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 144,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 146,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 150,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 151,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 159,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 169,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 176,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 177,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 180,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 184,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 195,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 346,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 347,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 361,
+   "column": 12
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 377,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 383,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 384,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 385,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 388,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 398,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 399,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 402,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 413,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 417,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 422,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 423,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 424,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 425,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 426,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 430,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 439,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 440,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 441,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 442,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 446,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 455,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 456,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 457,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 458,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 462,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 471,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 472,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 473,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 481,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 482,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 483,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 491,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 492,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 493,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 503,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 504,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 507,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 518,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 519,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 524,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 533,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/RadioButton.tsx",
+   "line": 21,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/RadioGroup.tsx",
+   "line": 25,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/RadioGroup.tsx",
+   "line": 27,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/RadioGroup.tsx",
+   "line": 34,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/RadioSelection.tsx",
+   "line": 30,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/RadioSelection.tsx",
+   "line": 33,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/RadioSelection.tsx",
+   "line": 42,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/RadioSelection.tsx",
+   "line": 47,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SVGLayer.tsx",
+   "line": 30,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SVGLayer.tsx",
+   "line": 31,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ScrollableList.tsx",
+   "line": 20,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ScrollableList.tsx",
+   "line": 21,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 345,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 346,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 347,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 385,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 387,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 389,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 393,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 395,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 396,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 404,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 419,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 423,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 453,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 465,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 467,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 467,
+   "column": 44
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 494,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 496,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 497,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 498,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 499,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 502,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 511,
+   "column": 38
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 516,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 517,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 518,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 519,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 522,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ShareableLinkDialog.tsx",
+   "line": 51,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ShareableLinkDialog.tsx",
+   "line": 52,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ShareableLinkDialog.tsx",
+   "line": 53,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ShareableLinkDialog.tsx",
+   "line": 54,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ShareableLinkDialog.tsx",
+   "line": 55,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ShareableLinkDialog.tsx",
+   "line": 63,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ShareableLinkDialog.tsx",
+   "line": 74,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Sidebar/SidebarHeader.tsx",
+   "line": 27,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Sidebar/SidebarHeader.tsx",
+   "line": 32,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Sidebar/SidebarHeader.tsx",
+   "line": 34,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Sidebar/SidebarHeader.tsx",
+   "line": 35,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Sidebar/SidebarHeader.tsx",
+   "line": 46,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Sidebar/SidebarTab.tsx",
+   "line": 14,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Sidebar/SidebarTabTrigger.tsx",
+   "line": 16,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Sidebar/SidebarTabTrigger.tsx",
+   "line": 17,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Sidebar/SidebarTabTriggers.tsx",
+   "line": 11,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Sidebar/SidebarTabs.tsx",
+   "line": 22,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Sidebar/SidebarTrigger.tsx",
+   "line": 26,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Sidebar/SidebarTrigger.tsx",
+   "line": 46,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Sidebar/SidebarTrigger.tsx",
+   "line": 47,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Sidebar/SidebarTrigger.tsx",
+   "line": 48,
+   "column": 22
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/Angle.tsx",
+   "line": 89,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/CanvasGrid.tsx",
+   "line": 26,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/Collapsible.tsx",
+   "line": 25,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/Collapsible.tsx",
+   "line": 26,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/Collapsible.tsx",
+   "line": 38,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/Collapsible.tsx",
+   "line": 42,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/Dimension.tsx",
+   "line": 347,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/DragInput.tsx",
+   "line": 233,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/DragInput.tsx",
+   "line": 237,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/DragInput.tsx",
+   "line": 365,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/DragInput.tsx",
+   "line": 367,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/FontSize.tsx",
+   "line": 97,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/MultiAngle.tsx",
+   "line": 121,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/MultiDimension.tsx",
+   "line": 500,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/MultiFontSize.tsx",
+   "line": 153,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/MultiPosition.tsx",
+   "line": 261,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/Position.tsx",
+   "line": 199,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 61,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 83,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 106,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 186,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 191,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 192,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 193,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 194,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 199,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 200,
+   "column": 20
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 213,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 214,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 215,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 216,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 217,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 219,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 220,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 221,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 223,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 224,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 225,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 228,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 229,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 230,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 231,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 246,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 252,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 253,
+   "column": 24
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 269,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 271,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 273,
+   "column": 25
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 281,
+   "column": 27
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 282,
+   "column": 29
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 283,
+   "column": 29
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 290,
+   "column": 27
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 291,
+   "column": 29
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 292,
+   "column": 29
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 296,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 306,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 307,
+   "column": 25
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 315,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 316,
+   "column": 25
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 324,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 325,
+   "column": 25
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 332,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 333,
+   "column": 25
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 340,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 341,
+   "column": 25
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 348,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 349,
+   "column": 25
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 360,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 362,
+   "column": 25
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 365,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 366,
+   "column": 25
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 367,
+   "column": 25
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 370,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 371,
+   "column": 25
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 380,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 381,
+   "column": 25
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 390,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 391,
+   "column": 25
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 400,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 401,
+   "column": 25
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 410,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 411,
+   "column": 25
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 418,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Stats/index.tsx",
+   "line": 419,
+   "column": 25
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Switch.tsx",
+   "line": 21,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Switch.tsx",
+   "line": 22,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/Chat/ChatHistoryMenu.tsx",
+   "line": 37,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/Chat/ChatHistoryMenu.tsx",
+   "line": 39,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/Chat/ChatHistoryMenu.tsx",
+   "line": 44,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/Chat/ChatHistoryMenu.tsx",
+   "line": 45,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/Chat/ChatHistoryMenu.tsx",
+   "line": 46,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/Chat/ChatHistoryMenu.tsx",
+   "line": 55,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/Chat/ChatHistoryMenu.tsx",
+   "line": 56,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/Chat/ChatHistoryMenu.tsx",
+   "line": 58,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/Chat/ChatHistoryMenu.tsx",
+   "line": 67,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/Chat/ChatHistoryMenu.tsx",
+   "line": 70,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/Chat/TTDChatPanel.tsx",
+   "line": 96,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/Chat/TTDChatPanel.tsx",
+   "line": 117,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/Chat/TTDChatPanel.tsx",
+   "line": 119,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/Chat/TTDChatPanel.tsx",
+   "line": 120,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/Chat/TTDChatPanel.tsx",
+   "line": 121,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/Chat/TTDChatPanel.tsx",
+   "line": 122,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/Chat/TTDChatPanel.tsx",
+   "line": 141,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/CodeMirrorEditor.tsx",
+   "line": 232,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/MermaidToExcalidraw.tsx",
+   "line": 234,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/MermaidToExcalidraw.tsx",
+   "line": 235,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/MermaidToExcalidraw.tsx",
+   "line": 236,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/MermaidToExcalidraw.tsx",
+   "line": 239,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/MermaidToExcalidraw.tsx",
+   "line": 248,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/MermaidToExcalidraw.tsx",
+   "line": 257,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/MermaidToExcalidraw.tsx",
+   "line": 266,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/MermaidToExcalidraw.tsx",
+   "line": 276,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/MermaidToExcalidraw.tsx",
+   "line": 277,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/MermaidToExcalidraw.tsx",
+   "line": 278,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/MermaidToExcalidraw.tsx",
+   "line": 288,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/MermaidToExcalidraw.tsx",
+   "line": 299,
+   "column": 39
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/MermaidToExcalidraw.tsx",
+   "line": 301,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialog.tsx",
+   "line": 42,
+   "column": 10
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialog.tsx",
+   "line": 85,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialog.tsx",
+   "line": 95,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialog.tsx",
+   "line": 97,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialog.tsx",
+   "line": 99,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialog.tsx",
+   "line": 100,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialog.tsx",
+   "line": 101,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialog.tsx",
+   "line": 103,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialog.tsx",
+   "line": 108,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialog.tsx",
+   "line": 115,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialog.tsx",
+   "line": 116,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialog.tsx",
+   "line": 125,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialog.tsx",
+   "line": 126,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogInput.tsx",
+   "line": 104,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogInput.tsx",
+   "line": 117,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogInput.tsx",
+   "line": 130,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogInput.tsx",
+   "line": 131,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogOutput.tsx",
+   "line": 48,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogOutput.tsx",
+   "line": 54,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogOutput.tsx",
+   "line": 59,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogOutput.tsx",
+   "line": 60,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogOutput.tsx",
+   "line": 64,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogOutput.tsx",
+   "line": 65,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogOutput.tsx",
+   "line": 68,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogOutput.tsx",
+   "line": 71,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogOutput.tsx",
+   "line": 73,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogOutput.tsx",
+   "line": 78,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogOutput.tsx",
+   "line": 80,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogOutput.tsx",
+   "line": 94,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogOutput.tsx",
+   "line": 96,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogOutput.tsx",
+   "line": 109,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogOutput.tsx",
+   "line": 115,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogOutput.tsx",
+   "line": 118,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogPanel.tsx",
+   "line": 49,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogPanel.tsx",
+   "line": 60,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogPanel.tsx",
+   "line": 70,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogPanel.tsx",
+   "line": 75,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogPanel.tsx",
+   "line": 77,
+   "column": 35
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogPanel.tsx",
+   "line": 79,
+   "column": 37
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogPanel.tsx",
+   "line": 86,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogPanel.tsx",
+   "line": 99,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogPanel.tsx",
+   "line": 101,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogPanel.tsx",
+   "line": 102,
+   "column": 40
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogPanel.tsx",
+   "line": 107,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogPanel.tsx",
+   "line": 116,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogPanels.tsx",
+   "line": 4,
+   "column": 10
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogSubmitShortcut.tsx",
+   "line": 5,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogSubmitShortcut.tsx",
+   "line": 6,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogSubmitShortcut.tsx",
+   "line": 9,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogTab.tsx",
+   "line": 12,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogTabTrigger.tsx",
+   "line": 14,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogTabTrigger.tsx",
+   "line": 15,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogTabTriggers.tsx",
+   "line": 8,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogTabs.tsx",
+   "line": 21,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogTrigger.tsx",
+   "line": 22,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogTrigger.tsx",
+   "line": 23,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogTrigger.tsx",
+   "line": 29,
+   "column": 16
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDPreviewPanel.tsx",
+   "line": 34,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDPreviewPanel.tsx",
+   "line": 39,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDWelcomeMessage.tsx",
+   "line": 5,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDWelcomeMessage.tsx",
+   "line": 6,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDWelcomeMessage.tsx",
+   "line": 7,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TTDWelcomeMessage.tsx",
+   "line": 8,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TextToDiagram.tsx",
+   "line": 194,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TextToDiagram.tsx",
+   "line": 201,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TextToDiagram.tsx",
+   "line": 228,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TTDDialog/TextToDiagram.tsx",
+   "line": 256,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TextField.tsx",
+   "line": 68,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TextField.tsx",
+   "line": 78,
+   "column": 19
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TextField.tsx",
+   "line": 79,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TextField.tsx",
+   "line": 84,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TextField.tsx",
+   "line": 104,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toast.tsx",
+   "line": 13,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toast.tsx",
+   "line": 14,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toast.tsx",
+   "line": 59,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toast.tsx",
+   "line": 66,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toast.tsx",
+   "line": 68,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 81,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 82,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 118,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 124,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 135,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 145,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 154,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 164,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 174,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 185,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 195,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 198,
+   "column": 43
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 199,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 207,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 211,
+   "column": 20
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 247,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 255,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 262,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 266,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 274,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 275,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 283,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 290,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 292,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 294,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 296,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 298,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 299,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 300,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 301,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 302,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 304,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 306,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 308,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 309,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 310,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 312,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Toolbar.tsx",
+   "line": 317,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Tools.tsx",
+   "line": 284,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Tools.tsx",
+   "line": 403,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Tools.tsx",
+   "line": 463,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TopPicksDnD/TopPicksContextMenu.tsx",
+   "line": 32,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TopPicksDnD/TopPicksContextMenu.tsx",
+   "line": 33,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TopPicksDnD/TopPicksContextMenu.tsx",
+   "line": 34,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TopPicksDnD/TopPicksContextMenu.tsx",
+   "line": 35,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TopPicksDnD/TopPicksContextMenu.tsx",
+   "line": 39,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TopPicksDnD/TopPicksTip.tsx",
+   "line": 23,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TopPicksDnD/TopPicksTip.tsx",
+   "line": 26,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TopPicksDnD/TopPicksTip.tsx",
+   "line": 28,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TopPicksDnD/topPicksDnD.tsx",
+   "line": 133,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/TopPicksDnD/topPicksDnD.tsx",
+   "line": 134,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Trans.test.tsx",
+   "line": 22,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Trans.test.tsx",
+   "line": 23,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Trans.test.tsx",
+   "line": 24,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Trans.test.tsx",
+   "line": 29,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Trans.test.tsx",
+   "line": 30,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Trans.test.tsx",
+   "line": 32,
+   "column": 27
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Trans.test.tsx",
+   "line": 35,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Trans.test.tsx",
+   "line": 36,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Trans.test.tsx",
+   "line": 38,
+   "column": 27
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Trans.test.tsx",
+   "line": 42,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Trans.test.tsx",
+   "line": 43,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Trans.test.tsx",
+   "line": 45,
+   "column": 27
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Trans.test.tsx",
+   "line": 47,
+   "column": 27
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Trans.test.tsx",
+   "line": 50,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Trans.test.tsx",
+   "line": 51,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/Trans.test.tsx",
+   "line": 53,
+   "column": 35
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/UnlockPopup.tsx",
+   "line": 61,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ViewportStatusFrame/ViewportStatusFrame.tsx",
+   "line": 21,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ViewportStatusFrame/ViewportStatusFrame.tsx",
+   "line": 36,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ViewportStatusFrame/ViewportStatusFrame.tsx",
+   "line": 38,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ViewportStatusFrame/ViewportStatusFrame.tsx",
+   "line": 45,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ViewportStatusFrame/ViewportStatusFrame.tsx",
+   "line": 57,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ViewportStatusFrame/ViewportStatusFrame.tsx",
+   "line": 64,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/ViewportStatusFrame/ViewportStatusFrame.tsx",
+   "line": 71,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/canvases/NewElementCanvas.tsx",
+   "line": 49,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuItemCheckbox.tsx",
+   "line": 11,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuItemContent.tsx",
+   "line": 22,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuItemContent.tsx",
+   "line": 23,
+   "column": 16
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuItemContent.tsx",
+   "line": 24,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuItemContent.tsx",
+   "line": 25,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuItemContent.tsx",
+   "line": 27,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuItemContent.tsx",
+   "line": 29,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuItemContentRadio.tsx",
+   "line": 31,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuItemContentRadio.tsx",
+   "line": 32,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuItemContentRadio.tsx",
+   "line": 33,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuItemContentRadio.tsx",
+   "line": 34,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuItemContentRadio.tsx",
+   "line": 35,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuItemContentRadio.tsx",
+   "line": 37,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuItemContentRadio.tsx",
+   "line": 45,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuSub.tsx",
+   "line": 14,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuSubContent.tsx",
+   "line": 48,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuSubContent.tsx",
+   "line": 56,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuSubContent.tsx",
+   "line": 58,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuTrigger.tsx",
+   "line": 28,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/footer/Footer.tsx",
+   "line": 33,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/footer/Footer.tsx",
+   "line": 40,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/footer/Footer.tsx",
+   "line": 41,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/footer/Footer.tsx",
+   "line": 42,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/footer/Footer.tsx",
+   "line": 44,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/footer/Footer.tsx",
+   "line": 48,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/footer/Footer.tsx",
+   "line": 60,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/footer/Footer.tsx",
+   "line": 62,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/footer/Footer.tsx",
+   "line": 70,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/footer/Footer.tsx",
+   "line": 71,
+   "column": 37
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/footer/Footer.tsx",
+   "line": 73,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/footer/Footer.tsx",
+   "line": 81,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/footer/FooterCenter.tsx",
+   "line": 12,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/footer/FooterCenter.tsx",
+   "line": 13,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/hyperlink/Hyperlink.tsx",
+   "line": 252,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/hyperlink/Hyperlink.tsx",
+   "line": 262,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/hyperlink/Hyperlink.tsx",
+   "line": 282,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/hyperlink/Hyperlink.tsx",
+   "line": 309,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/hyperlink/Hyperlink.tsx",
+   "line": 313,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/hyperlink/Hyperlink.tsx",
+   "line": 315,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/hyperlink/Hyperlink.tsx",
+   "line": 325,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/hyperlink/Hyperlink.tsx",
+   "line": 341,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/live-collaboration/LiveCollaborationTrigger.tsx",
+   "line": 29,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/live-collaboration/LiveCollaborationTrigger.tsx",
+   "line": 39,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 88,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 90,
+   "column": 29
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 91,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 101,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 123,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 138,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 156,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 178,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 200,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 224,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 263,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 300,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 337,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 338,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 348,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 360,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 378,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 379,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 386,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 393,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 414,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 435,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 454,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 487,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 520,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 538,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 555,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 572,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 590,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 608,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 629,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 647,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 669,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 670,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 673,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 675,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 676,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 677,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 678,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 679,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 680,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 681,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 682,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 683,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 684,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 685,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/main-menu/DefaultItems.tsx",
+   "line": 686,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 23,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 24,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 25,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 27,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 48,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 54,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 76,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 83,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 94,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 95,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 97,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 98,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 99,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 100,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 101,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 102,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 114,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 115,
+   "column": 20
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 123,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 131,
+   "column": 10
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 139,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 159,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
+   "line": 177,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Hints.tsx",
+   "line": 12,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Hints.tsx",
+   "line": 13,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Hints.tsx",
+   "line": 15,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Hints.tsx",
+   "line": 27,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Hints.tsx",
+   "line": 28,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Hints.tsx",
+   "line": 29,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Hints.tsx",
+   "line": 42,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Hints.tsx",
+   "line": 43,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Hints.tsx",
+   "line": 44,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.tsx",
+   "line": 8,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.tsx",
+   "line": 10,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.tsx",
+   "line": 11,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.tsx",
+   "line": 12,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.tsx",
+   "line": 13,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.tsx",
+   "line": 14,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/MermaidToExcalidraw.test.tsx",
+   "line": 109,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/appStateHooks.test.tsx",
+   "line": 55,
+   "column": 14
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/appStateHooks.test.tsx",
+   "line": 59,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/appStateHooks.test.tsx",
+   "line": 60,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/appStateHooks.test.tsx",
+   "line": 83,
+   "column": 14
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/appStateHooks.test.tsx",
+   "line": 87,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/appStateHooks.test.tsx",
+   "line": 88,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/arrowBinding.test.tsx",
+   "line": 72,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/arrowEndpointTextBinding.test.tsx",
+   "line": 90,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/bucketFill.test.tsx",
+   "line": 50,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/bucketFill.test.tsx",
+   "line": 242,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/colorInput.test.tsx",
+   "line": 122,
+   "column": 40
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/convertElementType.binding.test.tsx",
+   "line": 22,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/convertElementType.test.tsx",
+   "line": 13,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/created.test.tsx",
+   "line": 19,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/drawShape.test.tsx",
+   "line": 117,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/drawShape.test.tsx",
+   "line": 388,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/drawShape.test.tsx",
+   "line": 525,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/drawShape.test.tsx",
+   "line": 594,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/drawShape.test.tsx",
+   "line": 774,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/drawShape.test.tsx",
+   "line": 815,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/elementLocking.test.tsx",
+   "line": 20,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 31,
+   "column": 42
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 54,
+   "column": 42
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 77,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 78,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 85,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 86,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 87,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 106,
+   "column": 42
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 124,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 146,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 155,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 164,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 173,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 182,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 190,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 201,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 212,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 224,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 227,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 228,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 240,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 249,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 250,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 251,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 252,
+   "column": 17
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 259,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 273,
+   "column": 42
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 282,
+   "column": 42
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 292,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 306,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 319,
+   "column": 20
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 333,
+   "column": 20
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 362,
+   "column": 42
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 375,
+   "column": 42
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 389,
+   "column": 42
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 397,
+   "column": 42
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 408,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 409,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 410,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 413,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 416,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 417,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 424,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 437,
+   "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 438,
+   "column": 15
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 443,
+   "column": 16
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 446,
+   "column": 42
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 466,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 479,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/excalidraw.test.tsx",
+   "line": 493,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/flip.test.tsx",
+   "line": 68,
+   "column": 16
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/freedrawMode.test.tsx",
+   "line": 16,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/image.test.tsx",
+   "line": 29,
+   "column": 5
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/laser.test.tsx",
+   "line": 27,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/laser.test.tsx",
+   "line": 66,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/laser.test.tsx",
+   "line": 111,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/laser.test.tsx",
+   "line": 154,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/laser.test.tsx",
+   "line": 176,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/laser.test.tsx",
+   "line": 242,
+   "column": 20
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/laser.test.tsx",
+   "line": 269,
+   "column": 20
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/lasso.test.tsx",
+   "line": 43,
+   "column": 16
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/tooltip.test.tsx",
+   "line": 22,
+   "column": 3
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/tooltip.test.tsx",
+   "line": 24,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/tooltip.test.tsx",
+   "line": 25,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/tooltip.test.tsx",
+   "line": 45,
+   "column": 43
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/tooltip.test.tsx",
+   "line": 59,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/tooltip.test.tsx",
+   "line": 78,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/tooltip.test.tsx",
+   "line": 85,
+   "column": 14
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/tooltip.test.tsx",
+   "line": 94,
+   "column": 7
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/tests/tooltip.test.tsx",
+   "line": 100,
+   "column": 14
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/wysiwyg/textWysiwyg.test.tsx",
+   "line": 89,
+   "column": 20
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/wysiwyg/textWysiwyg.test.tsx",
+   "line": 676,
+   "column": 20
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/wysiwyg/textWysiwyg.test.tsx",
+   "line": 806,
+   "column": 20
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/wysiwyg/textWysiwyg.test.tsx",
+   "line": 1107,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/wysiwyg/textWysiwyg.test.tsx",
+   "line": 1373,
+   "column": 20
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/wysiwyg/textWysiwyg.test.tsx",
+   "line": 3359,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/wysiwyg/textWysiwyg.test.tsx",
+   "line": 3407,
+   "column": 20
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/wysiwyg/textWysiwyg.test.tsx",
+   "line": 3494,
+   "column": 9
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "packages/excalidraw/wysiwyg/textWysiwyg.test.tsx",
+   "line": 3521,
+   "column": 20
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/actions/actionGroup.tsx",
+   "line": 205,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/actions/actionGroup.tsx",
+   "line": 313,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/DarkModeToggle.tsx",
+   "line": 41,
+   "column": 7
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/DarkModeToggle.tsx",
+   "line": 49,
+   "column": 7
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/OverwriteConfirm/OverwriteConfirm.tsx",
+   "line": 54,
+   "column": 17
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/TTDDialog/Chat/TTDChatPanel.tsx",
+   "line": 120,
+   "column": 11
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 117,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 118,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 119,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 120,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 139,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 140,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 141,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 142,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 336,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 355,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 380,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 381,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 382,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 383,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 409,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 513,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 514,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 515,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 516,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 531,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 532,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 533,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 534,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 541,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 542,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 543,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 544,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 652,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 653,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 654,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 655,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 656,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 657,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 658,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 940,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 941,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 942,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 943,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 944,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1826,
+   "column": 7
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1877,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1878,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1879,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1880,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1881,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1888,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1889,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1890,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1891,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1898,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1899,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1900,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1918,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1919,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1920,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1921,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1928,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1929,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1936,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1937,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1948,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1949,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1971,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1981,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1982,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1983,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1984,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1985,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1992,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1993,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1994,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1995,
+   "column": 5
+  },
+  {
+   "rule": "react/self-closing-comp",
+   "path": "packages/excalidraw/components/icons.tsx",
+   "line": 1996,
+   "column": 5
+  }
+ ]
+}

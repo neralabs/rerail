@@ -1,0 +1,110 @@
+{
+  "pack": "node-probes",
+  "family": "ecma",
+  "capabilities": [
+    "syntax",
+    "scope",
+    "value"
+  ],
+  "corpora": [],
+  "tools": [
+    {
+      "name": "labels",
+      "version": "1"
+    }
+  ],
+  "oracles": ".",
+  "rules": [
+    {
+      "id": "probe-cjs-scope-bindings",
+      "upstream": {
+        "tool": "labels",
+        "rule": "probe-cjs-scope-bindings"
+      },
+      "policy": "rules/probe-cjs-scope-bindings.json",
+      "capabilities": [
+        "syntax",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "probe-cjs-wrapper-scope",
+      "upstream": {
+        "tool": "labels",
+        "rule": "probe-cjs-wrapper-scope"
+      },
+      "policy": "rules/probe-cjs-wrapper-scope.json",
+      "capabilities": [
+        "syntax",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "probe-script-global-scope",
+      "upstream": {
+        "tool": "labels",
+        "rule": "probe-script-global-scope"
+      },
+      "policy": "rules/probe-script-global-scope.json",
+      "capabilities": [
+        "syntax",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "probe-node-globals",
+      "upstream": {
+        "tool": "labels",
+        "rule": "probe-node-globals"
+      },
+      "policy": "rules/probe-node-globals.json",
+      "capabilities": [
+        "syntax",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "probe-node-globals-undeclared",
+      "upstream": {
+        "tool": "labels",
+        "rule": "probe-node-globals-undeclared"
+      },
+      "policy": "rules/probe-node-globals-undeclared.json",
+      "capabilities": [
+        "syntax",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "probe-builtin-module-specifier",
+      "upstream": {
+        "tool": "labels",
+        "rule": "probe-builtin-module-specifier"
+      },
+      "policy": "rules/probe-builtin-module-specifier.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "probe-esm-require-unbound",
+      "upstream": {
+        "tool": "labels",
+        "rule": "probe-esm-require-unbound"
+      },
+      "policy": "rules/probe-esm-require-unbound.json",
+      "capabilities": [
+        "syntax",
+        "scope"
+      ],
+      "match": "line+column"
+    }
+  ]
+}

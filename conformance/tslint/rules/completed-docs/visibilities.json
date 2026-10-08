@@ -1,0 +1,137 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:completed-docs",
+  "revision": 1,
+  "mode": "steer",
+  "description": "exported enums/enum members/variables, internal interfaces.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "enums-exported",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "kind": "export_statement" },
+              { "has": { "kind": "enum_declaration" } },
+              { "not": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "message": "Documentation must exist for exported enums."
+      }
+    },
+    {
+      "id": "enum-members",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "any": [{ "kind": "property_identifier" }, { "kind": "enum_assignment" }] },
+              {
+                "inside": {
+                  "kind": "enum_body",
+                  "inside": { "all": [{ "kind": "enum_declaration" }, { "inside": { "kind": "export_statement" } }] }
+                }
+              },
+              { "not": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "message": "Documentation must exist for enum members."
+      }
+    },
+    {
+      "id": "interfaces-internal",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "kind": "interface_declaration" },
+              { "not": { "inside": { "kind": "export_statement" } } },
+              { "not": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "message": "Documentation must exist for interfaces."
+      }
+    },
+    {
+      "id": "variables-exported",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "kind": "variable_declarator" },
+              {
+                "inside": {
+                  "all": [
+                    { "any": [{ "kind": "lexical_declaration" }, { "kind": "variable_declaration" }] },
+                    {
+                      "inside": {
+                        "all": [
+                          { "kind": "export_statement" },
+                          {
+                            "inside": {
+                              "any": [
+                                { "kind": "program" },
+                                {
+                                  "kind": "statement_block",
+                                  "inside": { "any": [{ "kind": "internal_module" }, { "kind": "module" }] }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  { "matches": "later-declarator" },
+                  {
+                    "inside": { "inside": { "not": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } } }
+                  }
+                ]
+              }
+            ]
+          },
+          "utils": {
+            "later-declarator": {
+              "follows": {
+                "any": [
+                  { "kind": "variable_declarator" },
+                  { "regex": "^,$" },
+                  { "kind": "comment", "matches": "later-declarator" }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "message": "Documentation must exist for exported variables."
+      }
+    }
+  ]
+}

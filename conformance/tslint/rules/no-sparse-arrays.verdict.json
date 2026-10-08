@@ -1,0 +1,19 @@
+{
+  "verdict": "BLOCKED",
+  "primitive": "grammar-gap",
+  "reason": "The hole check (a `[` or `,` inside an `array`, never an `array_pattern`, immediately followed by a `,`) anchors zero-width at that token's end (witness.end), which is where TSLint's OmittedExpression starts, so every hole matches its start; the repaired fixture passes 7/0/0. The real fixture contains `[foo, , (bar)] = []`, which TypeScript accepts but tree-sitter rejects: the destructuring target parses as an array literal inside an error region, giving one FP. End positions differ: TSLint's OmittedExpression spans the whitespace up to the hole's comma.",
+  "evidence": [
+    {
+      "variant": ".",
+      "file": "test.ts.lint",
+      "line": 8,
+      "why": "`[foo, , (bar)] = [];`: tree-sitter has no parenthesized target inside an array destructuring pattern, so the kernel reports source-incomplete and 0 findings for the file"
+    },
+    {
+      "variant": ".",
+      "file": "test.ts.lint",
+      "line": 1,
+      "why": "`[1, , 3]`: expected col 4, the space after the first comma; witness.end of that comma starts there"
+    }
+  ]
+}

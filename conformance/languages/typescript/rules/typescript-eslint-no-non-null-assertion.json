@@ -1,0 +1,195 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-no-non-null-assertion",
+  "revision": 1,
+  "mode": "steer",
+  "description": "typescript-eslint 8.70.1 @typescript-eslint/no-non-null-assertion, default options. Port of typescript-eslint's `no-non-null-assertion` rule (https://typescript-eslint.io/rules/no-non-null-assertion). Flags every non-null assertion `x!`. Where the grammar misparses a prefix operator applied to an assertion (`!x!` as `(!x)!`), the finding starts at the real operand.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "non-null-assertion",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "utils": {
+            "prefix-operation": {
+              "any": [
+                {
+                  "kind": "unary_expression"
+                },
+                {
+                  "kind": "update_expression",
+                  "has": {
+                    "regex": "^(?:\\+\\+|--)$",
+                    "not": {
+                      "follows": {
+                        "regex": "[\\s\\S]"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "operand-start": {
+              "any": [
+                {
+                  "not": {
+                    "matches": "prefix-operation"
+                  },
+                  "pattern": "$START"
+                },
+                {
+                  "matches": "prefix-operation",
+                  "has": {
+                    "not": {
+                      "regex": "^(?:!|~|\\+|-|\\+\\+|--|typeof|void|delete)$"
+                    },
+                    "matches": "operand-start"
+                  }
+                }
+              ]
+            },
+            "misparsed": {
+              "kind": "non_null_expression",
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "matches": "prefix-operation"
+                  },
+                  {
+                    "matches": "misparsed"
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "kind": "non_null_expression",
+            "not": {
+              "matches": "misparsed"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-non-null-assertion",
+        "message": "Forbidden non-null assertion.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-non-null-assertion"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "non-null-assertion-under-prefix",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "utils": {
+            "prefix-operation": {
+              "any": [
+                {
+                  "kind": "unary_expression"
+                },
+                {
+                  "kind": "update_expression",
+                  "has": {
+                    "regex": "^(?:\\+\\+|--)$",
+                    "not": {
+                      "follows": {
+                        "regex": "[\\s\\S]"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "operand-start": {
+              "any": [
+                {
+                  "not": {
+                    "matches": "prefix-operation"
+                  },
+                  "pattern": "$START"
+                },
+                {
+                  "matches": "prefix-operation",
+                  "has": {
+                    "not": {
+                      "regex": "^(?:!|~|\\+|-|\\+\\+|--|typeof|void|delete)$"
+                    },
+                    "matches": "operand-start"
+                  }
+                }
+              ]
+            },
+            "misparsed": {
+              "kind": "non_null_expression",
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "matches": "prefix-operation"
+                  },
+                  {
+                    "matches": "misparsed"
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "matches": "misparsed",
+            "has": {
+              "stopBy": "end",
+              "all": [
+                {
+                  "not": {
+                    "follows": {
+                      "regex": "[\\s\\S]"
+                    }
+                  }
+                },
+                {
+                  "matches": "prefix-operation"
+                },
+                {
+                  "matches": "operand-start"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.START",
+        "code": "@typescript-eslint/no-non-null-assertion",
+        "message": "Forbidden non-null assertion.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-non-null-assertion"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

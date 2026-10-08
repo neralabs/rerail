@@ -1,0 +1,51 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:prefer-const",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Requires const for variables never reassigned. APPROXIMATION: only flags a plain `let x` loop variable of for-of/for-in; reassignment in the body is not checked (needs binding resolution).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "let-loop-variable",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "for_in_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^let$"
+                  }
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "regex": "^(of|in)$"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PREFER_CONST",
+        "message": "Identifier is never reassigned; use 'const' instead of 'let'."
+      }
+    }
+  ]
+}

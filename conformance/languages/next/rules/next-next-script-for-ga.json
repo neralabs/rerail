@@ -1,0 +1,143 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-next-script-for-ga",
+  "revision": 1,
+  "mode": "steer",
+  "description": "@next/eslint-plugin-next 16.3.8 @next/next/next-script-for-ga: a <script> with a literal src containing the Google Analytics or gtag URL, or whose dangerouslySetInnerHTML object's first property is a template literal whose first quasi contains the GA or GTM script URL.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "jsx_opening_element"
+                  },
+                  {
+                    "kind": "jsx_self_closing_element"
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^script$"
+                }
+              },
+              {
+                "has": {
+                  "any": [
+                    {
+                      "kind": "jsx_attribute"
+                    },
+                    {
+                      "kind": "jsx_expression"
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "has": {
+                      "kind": "jsx_attribute",
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "property_identifier",
+                            "regex": "^src$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "string",
+                                "value": {
+                                  "regex": "www\\.google-analytics\\.com/analytics\\.js|www\\.googletagmanager\\.com/gtag/js"
+                                }
+                              },
+                              {
+                                "kind": "jsx_expression",
+                                "has": {
+                                  "kind": "string",
+                                  "value": {
+                                    "regex": "www\\.google-analytics\\.com/analytics\\.js|www\\.googletagmanager\\.com/gtag/js"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "jsx_attribute",
+                      "all": [
+                        {
+                          "has": {
+                            "kind": "property_identifier",
+                            "regex": "^dangerouslySetInnerHTML$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "kind": "jsx_expression",
+                            "has": {
+                              "kind": "object",
+                              "has": {
+                                "kind": "pair",
+                                "nthChild": 1,
+                                "has": {
+                                  "field": "value",
+                                  "kind": "template_string",
+                                  "regex": "^`(?:[^$]|\\$[^{])*?(?:www\\.google-analytics\\.com/analytics\\.js|www\\.googletagmanager\\.com/gtm\\.js)"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/next-script-for-ga",
+        "message": "Prefer `@next/third-parties/google` when using the inline script for Google Analytics and Tag Manager. See: https://nextjs.org/docs/messages/next-script-for-ga",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/next-script-for-ga"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

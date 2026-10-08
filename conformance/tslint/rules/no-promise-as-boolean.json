@@ -1,0 +1,107 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-promise-as-boolean",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Syntactic under-approximation: `new Promise(...)` / `x.then(...)` used as a condition or as an operand of !, &&, ||, ?:. Deciding whether an arbitrary expression is Promise-typed needs the type checker.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "promise-literal-as-boolean",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "pattern": "new Promise($$$A)"
+                  },
+                  {
+                    "pattern": "$O.then($$$A)"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "parenthesized_expression",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "if_statement"
+                          },
+                          {
+                            "kind": "while_statement"
+                          },
+                          {
+                            "kind": "do_statement"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "pattern": "!$X"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "pattern": "$L && $R"
+                        },
+                        {
+                          "pattern": "$L || $R"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "all": [
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "ternary_expression"
+                        }
+                      },
+                      {
+                        "precedes": {
+                          "stopBy": "neighbor",
+                          "regex": "^\\?$"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "for_statement"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_PROMISE_AS_BOOLEAN",
+        "message": "Promises are not allowed as boolean."
+      }
+    }
+  ]
+}

@@ -1,0 +1,469 @@
+{
+ "oracle": "ruff 0.16.9 --isolated",
+ "cases": [
+  {
+   "rule": "T100",
+   "target": "py313",
+   "files": [
+    {
+     "path": "t100.py",
+     "module": null,
+     "source": "import pdb\nimport pdb.foo\nimport os, pdb\nimport IPython.terminal.embed as e\nfrom IPython.terminal import embed\nfrom pdb import foo\nfrom pdb import (set_trace as st)\nfrom pdb import set_trace, foo as bar\nfrom .pdb import set_trace\nfrom . import pdb\nfrom .. import ipdb\nfrom .x import pdb\nfrom celery.contrib import rdb\nfrom celery.contrib.rdb import set_trace\nfrom sys import breakpointhook\nfrom ..celery.contrib.rdb import set_trace\nfrom .. import (ipdb as i, os)\n",
+     "rows": [
+      1,
+      3,
+      4,
+      7,
+      8,
+      9,
+      10,
+      11,
+      14,
+      15,
+      16,
+      17
+     ]
+    }
+   ]
+  },
+  {
+   "rule": "T100",
+   "target": "py313",
+   "files": [
+    {
+     "path": "pkg/__init__.py",
+     "module": "pkg.__init__",
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "pkg/t100.py",
+     "module": "pkg.t100",
+     "source": "import pdb\nimport pdb.foo\nimport os, pdb\nimport IPython.terminal.embed as e\nfrom IPython.terminal import embed\nfrom pdb import foo\nfrom pdb import (set_trace as st)\nfrom pdb import set_trace, foo as bar\nfrom .pdb import set_trace\nfrom . import pdb\nfrom .. import ipdb\nfrom .x import pdb\nfrom celery.contrib import rdb\nfrom celery.contrib.rdb import set_trace\nfrom sys import breakpointhook\nfrom ..celery.contrib.rdb import set_trace\nfrom .. import (ipdb as i, os)\n",
+     "rows": [
+      1,
+      3,
+      4,
+      7,
+      8,
+      9,
+      10,
+      11,
+      14,
+      15,
+      16,
+      17
+     ]
+    }
+   ]
+  },
+  {
+   "rule": "B905",
+   "target": "py39",
+   "files": [
+    {
+     "path": "b905.py",
+     "module": null,
+     "source": "zip(a, b)\nzip(a, b, strict=True)\nzip(a, strict=False)\n",
+     "rows": []
+    }
+   ]
+  },
+  {
+   "rule": "B905",
+   "target": "py310",
+   "files": [
+    {
+     "path": "b905.py",
+     "module": null,
+     "source": "zip(a, b)\nzip(a, b, strict=True)\nzip(a, strict=False)\n",
+     "rows": [
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "rule": "B905",
+   "target": "py313",
+   "files": [
+    {
+     "path": "b905.py",
+     "module": null,
+     "source": "zip(a, b)\nzip(a, b, strict=True)\nzip(a, strict=False)\n",
+     "rows": [
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "rule": "INP001",
+   "target": "py313",
+   "files": [
+    {
+     "path": "pkg/__init__.py",
+     "module": "pkg.__init__",
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "pkg/a.py",
+     "module": "pkg.a",
+     "source": "x = 1\n",
+     "rows": []
+    },
+    {
+     "path": "pkg/sub/c.py",
+     "module": null,
+     "source": "x = 1\n",
+     "rows": [
+      1
+     ]
+    },
+    {
+     "path": "loose/b.py",
+     "module": null,
+     "source": "x = 1\n",
+     "rows": [
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "rule": "N999",
+   "target": "py313",
+   "files": [
+    {
+     "path": "pkg/__init__.py",
+     "module": "pkg.__init__",
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "pkg/Bad.py",
+     "module": "pkg.Bad",
+     "source": "",
+     "rows": [
+      1
+     ]
+    },
+    {
+     "path": "pkg/good.py",
+     "module": "pkg.good",
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "pkg/0001_initial.py",
+     "module": "pkg.0001_initial",
+     "source": "",
+     "rows": [
+      1
+     ]
+    },
+    {
+     "path": "Mod/__init__.py",
+     "module": "Mod.__init__",
+     "source": "",
+     "rows": [
+      1
+     ]
+    },
+    {
+     "path": "Mod/fine.py",
+     "module": "Mod.fine",
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "loose/Bad.py",
+     "module": null,
+     "source": "",
+     "rows": []
+    }
+   ]
+  },
+  {
+   "rule": "N999",
+   "target": "py313",
+   "files": [
+    {
+     "path": "pkg/__init__.py",
+     "module": "pkg.__init__",
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "pkg/setUp.py",
+     "module": "pkg.setUp",
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "pkg/maxDiff.py",
+     "module": "pkg.maxDiff",
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "pkg/class.py",
+     "module": "pkg.class",
+     "source": "",
+     "rows": [
+      1
+     ]
+    },
+    {
+     "path": "pkg/migrations/__init__.py",
+     "module": "pkg.migrations.__init__",
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "pkg/migrations/0001_initial.py",
+     "module": "pkg.migrations.0001_initial",
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "pkg/migrations/Bad.py",
+     "module": "pkg.migrations.Bad",
+     "source": "",
+     "rows": [
+      1
+     ]
+    },
+    {
+     "path": "pkg/versions/__init__.py",
+     "module": "pkg.versions.__init__",
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "pkg/versions/1a.py",
+     "module": "pkg.versions.1a",
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "pkg/other/__init__.py",
+     "module": "pkg.other.__init__",
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "pkg/other/0001.py",
+     "module": "pkg.other.0001",
+     "source": "",
+     "rows": [
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "rule": "A005",
+   "target": "py313",
+   "files": [
+    {
+     "path": "logging/__init__.py",
+     "module": "logging.__init__",
+     "source": "",
+     "rows": [
+      1
+     ]
+    },
+    {
+     "path": "utils/__init__.py",
+     "module": "utils.__init__",
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "utils/logging.py",
+     "module": "utils.logging",
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "string.py",
+     "module": null,
+     "source": "",
+     "rows": [
+      1
+     ]
+    },
+    {
+     "path": "fine.py",
+     "module": null,
+     "source": "",
+     "rows": []
+    }
+   ]
+  },
+  {
+   "rule": "N999",
+   "target": "py313",
+   "files": [
+    {
+     "path": "json.d/__init__.py",
+     "module": [
+      "json.d",
+      "__init__"
+     ],
+     "source": "",
+     "rows": [
+      1
+     ]
+    },
+    {
+     "path": "json.d/m.py",
+     "module": [
+      "json.d",
+      "m"
+     ],
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "Ok.x/__init__.py",
+     "module": [
+      "Ok.x",
+      "__init__"
+     ],
+     "source": "",
+     "rows": [
+      1
+     ]
+    },
+    {
+     "path": "good/__init__.py",
+     "module": "good.__init__",
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "good/my.mod.py",
+     "module": [
+      "good",
+      "my.mod"
+     ],
+     "source": "",
+     "rows": [
+      1
+     ]
+    },
+    {
+     "path": "good/fine.py",
+     "module": "good.fine",
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "my.mod.py",
+     "module": null,
+     "source": "",
+     "rows": []
+    }
+   ]
+  },
+  {
+   "rule": "A005",
+   "target": "py313",
+   "files": [
+    {
+     "path": "json.d/__init__.py",
+     "module": [
+      "json.d",
+      "__init__"
+     ],
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "json.d/logging.py",
+     "module": [
+      "json.d",
+      "logging"
+     ],
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "logging.d/__init__.py",
+     "module": [
+      "logging.d",
+      "__init__"
+     ],
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "my.logging.py",
+     "module": null,
+     "source": "",
+     "rows": []
+    },
+    {
+     "path": "json.py",
+     "module": null,
+     "source": "",
+     "rows": [
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "rule": "SIM112",
+   "target": "py313",
+   "files": [
+    {
+     "path": "module_import.py",
+     "module": null,
+     "source": "os.environ[\"before_the_import\"]\n\n\ndef reads_later():\n    os.environ[\"in_a_body\"]\n\n\nimport os\n\nos.environ[\"after_the_import\"]\n",
+     "rows": [
+      5,
+      10
+     ]
+    },
+    {
+     "path": "body_import.py",
+     "module": null,
+     "source": "def first():\n    os.environ[\"before_the_body_import\"]\n\n\ndef second():\n    import os\n\n    os.environ[\"after_it\"]\n\n\ndef third():\n    os.environ[\"in_a_later_body\"]\n\n    def nested():\n        os.environ[\"in_a_nested_body\"]\n\n\nlater = lambda: os.environ[\"in_a_lambda\"]\nos.environ[\"in_the_module\"]\n",
+     "rows": [
+      8,
+      12,
+      15,
+      18
+     ]
+    }
+   ]
+  },
+  {
+   "rule": "ASYNC109",
+   "target": "py310",
+   "files": [
+    {
+     "path": "module_import.py",
+     "module": null,
+     "source": "async def before(timeout): ...\n\n\nimport trio\n\n\nasync def after(timeout): ...\n\n\ndef outer():\n    async def nested(timeout): ...\n",
+     "rows": [
+      7,
+      11
+     ]
+    },
+    {
+     "path": "body_import.py",
+     "module": null,
+     "source": "def outer():\n    import anyio\n\n\nasync def in_the_module(timeout): ...\n\n\ndef later():\n    async def nested(timeout): ...\n\n\nfrom .relative import trio\n",
+     "rows": [
+      9
+     ]
+    }
+   ]
+  }
+ ]
+}

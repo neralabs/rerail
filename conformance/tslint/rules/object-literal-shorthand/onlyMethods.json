@@ -1,0 +1,83 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:object-literal-shorthand",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Method shorthand required, property shorthand disallowed ({property: never, method: always}).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "longhand-method",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "pair"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "object"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "function_expression"
+                    },
+                    {
+                      "kind": "generator_function"
+                    }
+                  ],
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "OBJECT_LITERAL_SHORTHAND",
+        "message": "Expected method shorthand in object literal."
+      }
+    },
+    {
+      "id": "shorthand-property",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "shorthand_property_identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier_pattern"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "OBJECT_LITERAL_SHORTHAND",
+        "message": "Shorthand property assignments have been disallowed."
+      }
+    }
+  ]
+}

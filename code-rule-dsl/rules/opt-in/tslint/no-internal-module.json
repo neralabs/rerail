@@ -1,0 +1,58 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-internal-module",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of TSLint's `no-internal-module` rule with its default options (https://palantir.github.io/tslint/rules/no-internal-module/). Disallows internal `module` (use `namespace`).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "internal-module",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "module"
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_INTERNAL_MODULE",
+        "message": "The internal 'module' syntax is deprecated, use the 'namespace' keyword instead."
+      }
+    }
+  ]
+}

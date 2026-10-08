@@ -1,0 +1,39 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:file-name-casing",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Regex-keyed config: .ts$ ignored, .tsx$ -> PascalCase.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "tsx-pascal",
+      "forbid": {
+        "select_when": {
+          "select": {
+            "regex": {
+              "source": "file.path",
+              "pattern": "\\A(?:.*/)?(?:[a-z][^/]*$|[^/]*[_-][^/]*$)"
+            }
+          },
+          "exists": {
+            "regex": {
+              "source": "file.path",
+              "pattern": "(?i).tsx$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "FILE_NAME_CASING",
+        "message": "File name must be PascalCase"
+      }
+    }
+  ]
+}

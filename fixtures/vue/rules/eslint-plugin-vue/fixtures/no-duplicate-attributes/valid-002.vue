@@ -1,0 +1,1 @@
+<template><div><div @click="foo" @click="bar"></div></div></template>

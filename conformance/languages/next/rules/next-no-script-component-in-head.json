@@ -1,0 +1,102 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-no-script-component-in-head",
+  "revision": 1,
+  "mode": "steer",
+  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-script-component-in-head: a <Head> element with a direct <Script> element child, in a file that imports next/head.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "jsx_element",
+            "all": [
+              {
+                "has": {
+                  "field": "open_tag",
+                  "has": {
+                    "field": "name",
+                    "kind": "identifier",
+                    "regex": "^Head$"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "any": [
+                    {
+                      "kind": "jsx_self_closing_element",
+                      "has": {
+                        "field": "name",
+                        "kind": "identifier",
+                        "regex": "^Script$"
+                      }
+                    },
+                    {
+                      "kind": "jsx_element",
+                      "has": {
+                        "field": "open_tag",
+                        "has": {
+                          "field": "name",
+                          "kind": "identifier",
+                          "regex": "^Script$"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "kind": "program",
+                  "stopBy": "end",
+                  "has": {
+                    "kind": "import_statement",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "source",
+                          "kind": "string",
+                          "value": {
+                            "eq": "next/head"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/no-script-component-in-head",
+        "message": "`next/script` should not be used in `next/head` component. Move `<Script />` outside of `<Head>` instead. See: https://nextjs.org/docs/messages/no-script-component-in-head",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/no-script-component-in-head"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

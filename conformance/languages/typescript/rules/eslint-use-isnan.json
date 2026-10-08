@@ -1,0 +1,360 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-use-isnan",
+  "revision": 2,
+  "mode": "steer",
+  "description": "ESLint 10.11.0 use-isnan, default options. Port of ESLint's `use-isnan` rule (https://eslint.org/docs/latest/rules/use-isnan). Flags comparisons with NaN and, by default, `switch(NaN)` / `case NaN`. NaN and Number are resolved with `resolves` so a shadowing binding does not fire. Default options: enforceForSwitchCase true, enforceForIndexOf false. Options are declared in the `options` define (the rule's defaults); a variant is a config patch.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "enforceForIndexOf": {
+            "type": "boolean",
+            "nullable": true,
+            "default": null
+          },
+          "enforceForSwitchCase": {
+            "type": "boolean",
+            "nullable": true,
+            "default": null
+          }
+        }
+      }
+    },
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "nan": {
+            "any": [
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "global": [
+                    "NaN"
+                  ],
+                  "directives": "eslint"
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "kind": "property_identifier",
+                      "regex": "^NaN$"
+                    }
+                  },
+                  {
+                    "matches": "r1"
+                  }
+                ]
+              },
+              {
+                "kind": "subscript_expression",
+                "all": [
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "matches": "r2"
+                        }
+                      ],
+                      "has": {
+                        "kind": "string_fragment",
+                        "regex": "^NaN$"
+                      }
+                    }
+                  },
+                  {
+                    "matches": "r1"
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "nan"
+                }
+              },
+              {
+                "kind": "sequence_expression",
+                "has": {
+                  "matches": "nan",
+                  "not": {
+                    "precedes": {
+                      "regex": "[\\s\\S]"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "r1": {
+            "has": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "parenthesized_expression"
+                }
+              ],
+              "resolves": {
+                "directives": "eslint",
+                "global": [
+                  "Number"
+                ]
+              }
+            }
+          },
+          "r2": {
+            "kind": "template_string",
+            "not": {
+              "has": {
+                "kind": "template_substitution"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "comparison-with-nan",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {},
+          "rule": {
+            "kind": "binary_expression",
+            "all": [
+              {
+                "has": {
+                  "regex": "^(<|>|<=|>=|==|!=|===|!==)$"
+                }
+              },
+              {
+                "has": {
+                  "matches": "nan"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "use-isnan",
+        "message": "Use the isNaN function to compare with NaN.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "use-isnan"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "switch-nan",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {},
+          "rule": {
+            "kind": "switch_statement",
+            "has": {
+              "kind": "parenthesized_expression",
+              "matches": "nan"
+            }
+          },
+          "when": {
+            "option": {
+              "enforceForSwitchCase": null
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "use-isnan",
+        "message": "'switch(NaN)' can never match a case clause. Use Number.isNaN instead of the switch.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "use-isnan"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "case-nan",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {},
+          "rule": {
+            "kind": "switch_case",
+            "has": {
+              "matches": "nan",
+              "follows": {
+                "regex": "^case$"
+              }
+            }
+          },
+          "when": {
+            "option": {
+              "enforceForSwitchCase": null
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "use-isnan",
+        "message": "'case NaN' can never match. Use Number.isNaN before the switch.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "use-isnan"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "index-of-nan",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {},
+          "rule": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "matches": "callee"
+                }
+              },
+              {
+                "has": {
+                  "kind": "arguments",
+                  "all": [
+                    {
+                      "has": {
+                        "matches": "nan",
+                        "follows": {
+                          "regex": "^\\($"
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "count": {
+                          "has": {
+                            "not": {
+                              "any": [
+                                {
+                                  "regex": "^[(),]$"
+                                },
+                                {
+                                  "kind": "comment"
+                                }
+                              ]
+                            }
+                          },
+                          "min": 3
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "matches": "callee-plain"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "callee-plain": {
+              "any": [
+                {
+                  "kind": "member_expression",
+                  "has": {
+                    "kind": "property_identifier",
+                    "regex": "^(indexOf|lastIndexOf)$",
+                    "pattern": "$M"
+                  }
+                },
+                {
+                  "kind": "subscript_expression",
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "matches": "r2"
+                      }
+                    ],
+                    "has": {
+                      "kind": "string_fragment",
+                      "regex": "^(indexOf|lastIndexOf)$",
+                      "pattern": "$M"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "when": {
+            "option": {
+              "enforceForIndexOf": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "use-isnan",
+        "message": "Array prototype method '$M' cannot find NaN.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "use-isnan"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

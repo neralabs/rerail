@@ -1,0 +1,35 @@
+setTimeout(String('x=1'), 100);
+setTimeout('a'.toUpperCase());
+setTimeout(...['x=1']);
+setTimeout(Math.max(1, 2));
+setInterval(`a${b}`);
+setTimeout('a' + b);
+setTimeout(b + 'a');
+setTimeout(b);
+setTimeout(String(b));
+execScript(['a', 'b'].join(''));
+setTimeout(parseInt('1'));
+setTimeout(/a/ + '');
+setTimeout(('x').concat(1));
+function f(setTimeout) {
+  setTimeout('x');
+}
+setTimeout(String.raw`a`);
+setTimeout(null ?? 'x');
+setTimeout(Object.freeze('x'));
+setTimeout(Math.random());
+setTimeout(Boolean('x') ? 'y' : 1);
+setTimeout(...[b], 'x');
+setTimeout(Number('1').toFixed(2));
+const code = 'x=1';
+setTimeout(code.slice(1));
+const { d } = { d: 'x' };
+setTimeout(d);
+const toText = String;
+setTimeout(toText('x'), 1);
+const alias = toText;
+setTimeout(alias(2));
+const toNumber = Number;
+setTimeout(toNumber('1'));
+const { fromPattern } = { fromPattern: String };
+setTimeout(fromPattern('x'));

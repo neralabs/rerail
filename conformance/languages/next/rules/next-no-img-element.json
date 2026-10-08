@@ -1,0 +1,231 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-no-img-element",
+  "revision": 1,
+  "mode": "steer",
+  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-img-element: an <img> opening element with attributes, not a direct child of <picture>, unless the file is an app-dir metadata image route (the path relative to the ESLint cwd matches ^(src/)?app/ and /opengraph-image|twitter-image|icon.ext).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "path": {
+              "notRegex": "^(?:src/)?app(?:/.*)?/opengraph-image|^(?:src/)?app/.*twitter-image|^(?:src/)?app/.*icon\\.[A-Za-z0-9_]+$"
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "jsx_opening_element"
+                  },
+                  {
+                    "kind": "jsx_self_closing_element"
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^img$"
+                }
+              },
+              {
+                "has": {
+                  "any": [
+                    {
+                      "kind": "jsx_attribute"
+                    },
+                    {
+                      "kind": "jsx_expression"
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "jsx_self_closing_element",
+                    "inside": {
+                      "matches": "not-picture"
+                    }
+                  },
+                  {
+                    "kind": "jsx_opening_element",
+                    "inside": {
+                      "kind": "jsx_element",
+                      "inside": {
+                        "matches": "not-picture"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "utils": {
+            "not-picture": {
+              "any": [
+                {
+                  "kind": "jsx_element",
+                  "has": {
+                    "field": "open_tag",
+                    "kind": "jsx_opening_element",
+                    "any": [
+                      {
+                        "has": {
+                          "field": "name",
+                          "kind": "identifier",
+                          "regex": "^(?:.{0,6}|.{8,}|[^p].{6}|p[^i].{5}|pi[^c].{4}|pic[^t].{3}|pict[^u].{2}|pictu[^r].|pictur[^e])$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "any": [
+                            {
+                              "kind": "member_expression"
+                            },
+                            {
+                              "kind": "jsx_namespace_name"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "regex": "^<\\s*>$"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "jsx_expression"
+                    },
+                    {
+                      "kind": "arrow_function"
+                    },
+                    {
+                      "kind": "return_statement"
+                    },
+                    {
+                      "kind": "variable_declarator"
+                    },
+                    {
+                      "kind": "assignment_expression"
+                    },
+                    {
+                      "kind": "augmented_assignment_expression"
+                    },
+                    {
+                      "kind": "arguments"
+                    },
+                    {
+                      "kind": "array"
+                    },
+                    {
+                      "kind": "pair"
+                    },
+                    {
+                      "kind": "ternary_expression"
+                    },
+                    {
+                      "kind": "binary_expression"
+                    },
+                    {
+                      "kind": "unary_expression"
+                    },
+                    {
+                      "kind": "spread_element"
+                    },
+                    {
+                      "kind": "jsx_attribute"
+                    },
+                    {
+                      "kind": "expression_statement"
+                    },
+                    {
+                      "kind": "sequence_expression"
+                    },
+                    {
+                      "kind": "await_expression"
+                    },
+                    {
+                      "kind": "yield_expression"
+                    },
+                    {
+                      "kind": "export_statement"
+                    },
+                    {
+                      "kind": "template_substitution"
+                    },
+                    {
+                      "kind": "member_expression"
+                    },
+                    {
+                      "kind": "subscript_expression"
+                    },
+                    {
+                      "kind": "as_expression"
+                    },
+                    {
+                      "kind": "satisfies_expression"
+                    },
+                    {
+                      "kind": "non_null_expression"
+                    },
+                    {
+                      "kind": "public_field_definition"
+                    },
+                    {
+                      "kind": "assignment_pattern"
+                    },
+                    {
+                      "kind": "object_assignment_pattern"
+                    },
+                    {
+                      "kind": "program"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/no-img-element",
+        "message": "Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/no-img-element"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

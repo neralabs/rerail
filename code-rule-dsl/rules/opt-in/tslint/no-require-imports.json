@@ -1,0 +1,63 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-require-imports",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of TSLint's `no-require-imports` rule with its default options (https://palantir.github.io/tslint/rules/no-require-imports/). Disallows invocation of require().",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "require-call",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "pattern": "require($$$A)"
+              },
+              {
+                "all": [
+                  {
+                    "regex": "^require$"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "import_require_clause"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_REQUIRE_IMPORTS",
+        "message": "require() style import is forbidden"
+      }
+    }
+  ]
+}

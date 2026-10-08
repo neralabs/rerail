@@ -1,0 +1,43 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "phpstan-variable-undefined",
+  "revision": 1,
+  "mode": "steer",
+  "description": "PHPStan 2.2.16 variable.undefined (DefinedVariableRule): a variable read no path defines (\"Undefined variable: $x\"); \"might not be defined\" reports (some paths) are not claimed.",
+  "scope": {
+    "include": [
+      "**/*.php"
+    ],
+    "exclude": [
+      "**/*.blade.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "kind": "variable_name",
+            "resolves": {
+              "unresolved": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "variable.undefined",
+        "message": "Undefined variable",
+        "suppress": {
+          "phpstan": {
+            "identifiers": [
+              "variable.undefined"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

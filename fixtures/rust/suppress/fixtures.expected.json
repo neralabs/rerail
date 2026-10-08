@@ -1,0 +1,1292 @@
+{
+ "tool": "clippy-driver",
+ "version": "clippy 0.1.99 (b940084d7e 2026-09-28)",
+ "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+ "source": {
+  "kind": "fixtures",
+  "origin": "Rerail-authored (Apache-2.0), rerail-fixtures/rust/suppress/fixtures",
+  "clippy": "https://github.com/rust-lang/rust-clippy@49e2f89a2605a9a340e04955fdbefa9803e6027a",
+  "rules": [
+   "clippy::double_parens",
+   "clippy::needless_else",
+   "clippy::unreadable_literal",
+   "clippy::redundant_static_lifetimes",
+   "unused_variables",
+   "unused_labels"
+  ],
+  "attribute_rules": [
+   "clippy::duplicated_attributes",
+   "forbidden_lint_groups",
+   "renamed_and_removed_lints",
+   "unfulfilled_lint_expectations",
+   "unknown_lints",
+   "unused_attributes"
+  ],
+  "edition": "2024",
+  "crate_type": "lib"
+ },
+ "files": {
+  "fixtures/argument.rs": {
+   "exit_force_warn": 0,
+   "exit": 0
+  },
+  "fixtures/cfg_attr.rs": {
+   "exit_force_warn": 0,
+   "exit": 0
+  },
+  "fixtures/expect.rs": {
+   "exit_force_warn": 0,
+   "exit": 0
+  },
+  "fixtures/expression.rs": {
+   "exit_force_warn": 1,
+   "exit": 1
+  },
+  "fixtures/forbid.rs": {
+   "exit_force_warn": 0,
+   "exit": 1
+  },
+  "fixtures/groups.rs": {
+   "exit_force_warn": 0,
+   "exit": 0
+  },
+  "fixtures/macros.rs": {
+   "exit_force_warn": 0,
+   "exit": 0
+  },
+  "fixtures/names.rs": {
+   "exit_force_warn": 0,
+   "exit": 0
+  },
+  "fixtures/override.rs": {
+   "exit_force_warn": 0,
+   "exit": 1
+  },
+  "fixtures/placement.rs": {
+   "exit_force_warn": 0,
+   "exit": 0
+  }
+ },
+ "cases": [
+  {
+   "file": "fixtures/argument.rs",
+   "rule": "clippy::double_parens",
+   "line": 9,
+   "column": 40,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/argument.rs",
+   "rule": "clippy::double_parens",
+   "line": 9,
+   "column": 52,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/argument.rs",
+   "rule": "clippy::double_parens",
+   "line": 13,
+   "column": 38,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/argument.rs",
+   "rule": "clippy::double_parens",
+   "line": 13,
+   "column": 45,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/argument.rs",
+   "rule": "clippy::double_parens",
+   "line": 24,
+   "column": 12,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/argument.rs",
+   "rule": "clippy::double_parens",
+   "line": 25,
+   "column": 12,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/cfg_attr.rs",
+   "rule": "clippy::double_parens",
+   "line": 6,
+   "column": 5,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/cfg_attr.rs",
+   "rule": "clippy::double_parens",
+   "line": 11,
+   "column": 5,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/cfg_attr.rs",
+   "rule": "clippy::double_parens",
+   "line": 16,
+   "column": 5,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/cfg_attr.rs",
+   "rule": "clippy::double_parens",
+   "line": 21,
+   "column": 5,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/cfg_attr.rs",
+   "rule": "clippy::double_parens",
+   "line": 26,
+   "column": 5,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/cfg_attr.rs",
+   "rule": "clippy::double_parens",
+   "line": 31,
+   "column": 5,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/cfg_attr.rs",
+   "rule": "unused_variables",
+   "line": 36,
+   "column": 9,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/cfg_attr.rs",
+   "rule": "unused_variables",
+   "line": 38,
+   "column": 9,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/cfg_attr.rs",
+   "rule": "clippy::double_parens",
+   "line": 39,
+   "column": 5,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/cfg_attr.rs",
+   "rule": "clippy::double_parens",
+   "line": 45,
+   "column": 9,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/expect.rs",
+   "rule": "clippy::double_parens",
+   "line": 6,
+   "column": 5,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/expect.rs",
+   "rule": "unfulfilled_lint_expectations",
+   "line": 9,
+   "column": 10,
+   "emitted": true,
+   "level": "warning",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/expect.rs",
+   "rule": "clippy::double_parens",
+   "line": 16,
+   "column": 5,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/expect.rs",
+   "rule": "unfulfilled_lint_expectations",
+   "line": 19,
+   "column": 33,
+   "emitted": true,
+   "level": "warning",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/expect.rs",
+   "rule": "clippy::double_parens",
+   "line": 21,
+   "column": 5,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/expect.rs",
+   "rule": "unfulfilled_lint_expectations",
+   "line": 24,
+   "column": 10,
+   "emitted": true,
+   "level": "warning",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/expect.rs",
+   "rule": "clippy::double_parens",
+   "line": 27,
+   "column": 13,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/expect.rs",
+   "rule": "clippy::double_parens",
+   "line": 33,
+   "column": 5,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/expect.rs",
+   "rule": "clippy::double_parens",
+   "line": 33,
+   "column": 13,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/expect.rs",
+   "rule": "clippy::double_parens",
+   "line": 38,
+   "column": 5,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/expect.rs",
+   "rule": "clippy::double_parens",
+   "line": 44,
+   "column": 13,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/expect.rs",
+   "rule": "unused_variables",
+   "line": 50,
+   "column": 9,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/expect.rs",
+   "rule": "unfulfilled_lint_expectations",
+   "line": 51,
+   "column": 14,
+   "emitted": true,
+   "level": "warning",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/expect.rs",
+   "rule": "unfulfilled_lint_expectations",
+   "line": 56,
+   "column": 10,
+   "emitted": true,
+   "level": "warning",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/expression.rs",
+   "rule": "E0658",
+   "line": 5,
+   "column": 13,
+   "emitted": true,
+   "level": "error",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/expression.rs",
+   "rule": "clippy::double_parens",
+   "line": 6,
+   "column": 8,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/forbid.rs",
+   "rule": "clippy::double_parens",
+   "line": 6,
+   "column": 5,
+   "emitted": true,
+   "level": "error",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/forbid.rs",
+   "rule": "E0453",
+   "line": 9,
+   "column": 9,
+   "emitted": true,
+   "level": "error",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/forbid.rs",
+   "rule": "clippy::double_parens",
+   "line": 11,
+   "column": 5,
+   "emitted": true,
+   "level": "error",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/forbid.rs",
+   "rule": "E0453",
+   "line": 14,
+   "column": 10,
+   "emitted": true,
+   "level": "error",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/forbid.rs",
+   "rule": "clippy::double_parens",
+   "line": 16,
+   "column": 5,
+   "emitted": true,
+   "level": "error",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/forbid.rs",
+   "rule": "E0453",
+   "line": 19,
+   "column": 8,
+   "emitted": true,
+   "level": "error",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/forbid.rs",
+   "rule": "clippy::double_parens",
+   "line": 21,
+   "column": 5,
+   "emitted": true,
+   "level": "error",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/forbid.rs",
+   "rule": "clippy::double_parens",
+   "line": 26,
+   "column": 5,
+   "emitted": true,
+   "level": "error",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/forbid.rs",
+   "rule": "unused_variables",
+   "line": 33,
+   "column": 13,
+   "emitted": true,
+   "level": "error",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/groups.rs",
+   "rule": "clippy::needless_else",
+   "line": 12,
+   "column": 7,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/groups.rs",
+   "rule": "clippy::double_parens",
+   "line": 14,
+   "column": 5,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/groups.rs",
+   "rule": "clippy::unreadable_literal",
+   "line": 19,
+   "column": 5,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/groups.rs",
+   "rule": "clippy::unreadable_literal",
+   "line": 24,
+   "column": 5,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/groups.rs",
+   "rule": "clippy::needless_else",
+   "line": 31,
+   "column": 7,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/groups.rs",
+   "rule": "clippy::double_parens",
+   "line": 33,
+   "column": 5,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/groups.rs",
+   "rule": "clippy::needless_else",
+   "line": 40,
+   "column": 7,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/groups.rs",
+   "rule": "clippy::double_parens",
+   "line": 42,
+   "column": 5,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/groups.rs",
+   "rule": "unused_variables",
+   "line": 47,
+   "column": 9,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/groups.rs",
+   "rule": "unused_variables",
+   "line": 52,
+   "column": 9,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/groups.rs",
+   "rule": "clippy::needless_else",
+   "line": 55,
+   "column": 7,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/groups.rs",
+   "rule": "clippy::unreadable_literal",
+   "line": 57,
+   "column": 5,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/groups.rs",
+   "rule": "clippy::unreadable_literal",
+   "line": 64,
+   "column": 9,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/macros.rs",
+   "rule": "clippy::double_parens",
+   "line": 9,
+   "column": 13,
+   "emitted": true,
+   "level": "warning",
+   "sites": 2,
+   "emitted_sites": 2
+  },
+  {
+   "file": "fixtures/macros.rs",
+   "rule": "unused_attributes",
+   "line": 16,
+   "column": 1,
+   "emitted": true,
+   "level": "warning",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/macros.rs",
+   "rule": "clippy::double_parens",
+   "line": 23,
+   "column": 13,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/macros.rs",
+   "rule": "clippy::double_parens",
+   "line": 32,
+   "column": 9,
+   "emitted": true,
+   "level": "warning",
+   "sites": 2,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/macros.rs",
+   "rule": "clippy::double_parens",
+   "line": 52,
+   "column": 11,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/macros.rs",
+   "rule": "clippy::double_parens",
+   "line": 57,
+   "column": 11,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/macros.rs",
+   "rule": "unused_variables",
+   "line": 62,
+   "column": 13,
+   "emitted": true,
+   "level": "warning",
+   "sites": 2,
+   "emitted_sites": 2
+  },
+  {
+   "file": "fixtures/macros.rs",
+   "rule": "unused_attributes",
+   "line": 67,
+   "column": 5,
+   "emitted": true,
+   "level": "warning",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/macros.rs",
+   "rule": "clippy::double_parens",
+   "line": 81,
+   "column": 19,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/names.rs",
+   "rule": "renamed_and_removed_lints",
+   "line": 5,
+   "column": 9,
+   "emitted": true,
+   "level": "warning",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/names.rs",
+   "rule": "clippy::redundant_static_lifetimes",
+   "line": 6,
+   "column": 21,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/names.rs",
+   "rule": "clippy::redundant_static_lifetimes",
+   "line": 7,
+   "column": 25,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/names.rs",
+   "rule": "renamed_and_removed_lints",
+   "line": 9,
+   "column": 9,
+   "emitted": true,
+   "level": "warning",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/names.rs",
+   "rule": "unused_labels",
+   "line": 11,
+   "column": 5,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/names.rs",
+   "rule": "renamed_and_removed_lints",
+   "line": 14,
+   "column": 9,
+   "emitted": true,
+   "level": "warning",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/names.rs",
+   "rule": "clippy::double_parens",
+   "line": 16,
+   "column": 5,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/names.rs",
+   "rule": "unknown_lints",
+   "line": 19,
+   "column": 9,
+   "emitted": true,
+   "level": "warning",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/names.rs",
+   "rule": "clippy::double_parens",
+   "line": 21,
+   "column": 5,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/names.rs",
+   "rule": "unknown_lints",
+   "line": 24,
+   "column": 9,
+   "emitted": true,
+   "level": "warning",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/names.rs",
+   "rule": "clippy::double_parens",
+   "line": 26,
+   "column": 5,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/names.rs",
+   "rule": "unknown_lints",
+   "line": 29,
+   "column": 9,
+   "emitted": true,
+   "level": "warning",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/names.rs",
+   "rule": "clippy::double_parens",
+   "line": 31,
+   "column": 5,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/names.rs",
+   "rule": "clippy::double_parens",
+   "line": 36,
+   "column": 5,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/names.rs",
+   "rule": "unknown_lints",
+   "line": 39,
+   "column": 9,
+   "emitted": true,
+   "level": "warning",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/names.rs",
+   "rule": "clippy::double_parens",
+   "line": 41,
+   "column": 5,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/names.rs",
+   "rule": "clippy::duplicated_attributes",
+   "line": 44,
+   "column": 32,
+   "emitted": true,
+   "level": "warning",
+   "sites": 0,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/names.rs",
+   "rule": "clippy::double_parens",
+   "line": 46,
+   "column": 5,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/override.rs",
+   "rule": "clippy::double_parens",
+   "line": 9,
+   "column": 9,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/override.rs",
+   "rule": "clippy::double_parens",
+   "line": 14,
+   "column": 9,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/override.rs",
+   "rule": "clippy::double_parens",
+   "line": 20,
+   "column": 13,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/override.rs",
+   "rule": "clippy::needless_else",
+   "line": 30,
+   "column": 7,
+   "emitted": true,
+   "level": "error",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/override.rs",
+   "rule": "clippy::needless_else",
+   "line": 38,
+   "column": 7,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/override.rs",
+   "rule": "clippy::double_parens",
+   "line": 44,
+   "column": 5,
+   "emitted": true,
+   "level": "error",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/override.rs",
+   "rule": "clippy::double_parens",
+   "line": 50,
+   "column": 5,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/override.rs",
+   "rule": "clippy::double_parens",
+   "line": 56,
+   "column": 5,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/override.rs",
+   "rule": "clippy::double_parens",
+   "line": 62,
+   "column": 5,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/override.rs",
+   "rule": "clippy::double_parens",
+   "line": 68,
+   "column": 5,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/override.rs",
+   "rule": "unused_variables",
+   "line": 74,
+   "column": 9,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::double_parens",
+   "line": 7,
+   "column": 5,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::double_parens",
+   "line": 12,
+   "column": 5,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::double_parens",
+   "line": 20,
+   "column": 9,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::double_parens",
+   "line": 27,
+   "column": 9,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::double_parens",
+   "line": 31,
+   "column": 9,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::double_parens",
+   "line": 38,
+   "column": 9,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::double_parens",
+   "line": 42,
+   "column": 9,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::double_parens",
+   "line": 49,
+   "column": 9,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::double_parens",
+   "line": 56,
+   "column": 9,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::double_parens",
+   "line": 62,
+   "column": 5,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::double_parens",
+   "line": 67,
+   "column": 13,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::double_parens",
+   "line": 68,
+   "column": 13,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "unused_variables",
+   "line": 70,
+   "column": 9,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "unused_variables",
+   "line": 71,
+   "column": 9,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::unreadable_literal",
+   "line": 73,
+   "column": 13,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::unreadable_literal",
+   "line": 74,
+   "column": 13,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::double_parens",
+   "line": 80,
+   "column": 12,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::double_parens",
+   "line": 81,
+   "column": 12,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::needless_else",
+   "line": 89,
+   "column": 11,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::needless_else",
+   "line": 94,
+   "column": 7,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::double_parens",
+   "line": 104,
+   "column": 14,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::double_parens",
+   "line": 105,
+   "column": 14,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::double_parens",
+   "line": 111,
+   "column": 16,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::double_parens",
+   "line": 112,
+   "column": 16,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::unreadable_literal",
+   "line": 118,
+   "column": 23,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::unreadable_literal",
+   "line": 119,
+   "column": 24,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::unreadable_literal",
+   "line": 124,
+   "column": 9,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::unreadable_literal",
+   "line": 125,
+   "column": 9,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::unreadable_literal",
+   "line": 129,
+   "column": 26,
+   "emitted": false,
+   "level": "allow",
+   "sites": 1,
+   "emitted_sites": 0
+  },
+  {
+   "file": "fixtures/placement.rs",
+   "rule": "clippy::unreadable_literal",
+   "line": 130,
+   "column": 27,
+   "emitted": true,
+   "level": "warning",
+   "sites": 1,
+   "emitted_sites": 1
+  }
+ ]
+}

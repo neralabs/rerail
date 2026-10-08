@@ -1,0 +1,1 @@
+React.createElement("span", {type: "foo"})

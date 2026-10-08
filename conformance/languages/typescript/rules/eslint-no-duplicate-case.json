@@ -1,0 +1,150 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-no-duplicate-case",
+  "revision": 2,
+  "mode": "steer",
+  "description": "ESLint 10.11.0 no-duplicate-case, default options. Port of ESLint's `no-duplicate-case` rule (https://eslint.org/docs/latest/rules/no-duplicate-case). Reports a case whose test (inside any parentheses) is token-equal (ESLint's equalTokens, via `compare` text `tokens`) to an earlier case of the same switch.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "duplicate-case",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "switch_case",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "kind": "comment"
+                  },
+                  "matches": "t",
+                  "precedes": {
+                    "regex": "^:$",
+                    "stopBy": "end"
+                  }
+                }
+              },
+              {
+                "count": {
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "switch_case",
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "kind": "comment"
+                          },
+                          "matches": "u",
+                          "precedes": {
+                            "regex": "^:$",
+                            "stopBy": "end"
+                          }
+                        }
+                      }
+                    ],
+                    "compare": {
+                      "left": "U",
+                      "op": "eq",
+                      "right": "T",
+                      "text": "tokens"
+                    }
+                  },
+                  "min": 1
+                }
+              }
+            ]
+          },
+          "utils": {
+            "t": {
+              "any": [
+                {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  },
+                  "pattern": "$T"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      },
+                      {
+                        "not": {
+                          "regex": "^[()]$"
+                        }
+                      }
+                    ],
+                    "matches": "t"
+                  }
+                }
+              ]
+            },
+            "u": {
+              "any": [
+                {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  },
+                  "pattern": "$U"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      },
+                      {
+                        "not": {
+                          "regex": "^[()]$"
+                        }
+                      }
+                    ],
+                    "matches": "u"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-duplicate-case",
+        "message": "Duplicate case label.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-duplicate-case"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

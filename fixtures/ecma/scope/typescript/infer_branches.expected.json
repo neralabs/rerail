@@ -1,0 +1,333 @@
+{
+ "oracle": "@typescript-eslint/parser 8.70.1 scope manager (lib: [])",
+ "builtins": [],
+ "unresolved": [
+  {
+   "start": 51,
+   "name": "Function"
+  },
+  {
+   "start": 130,
+   "name": "Head"
+  },
+  {
+   "start": 136,
+   "name": "Tail"
+  },
+  {
+   "start": 195,
+   "name": "U"
+  },
+  {
+   "start": 221,
+   "name": "Array"
+  },
+  {
+   "start": 272,
+   "name": "F"
+  },
+  {
+   "start": 279,
+   "name": "E"
+  },
+  {
+   "start": 282,
+   "name": "F"
+  },
+  {
+   "start": 323,
+   "name": "U"
+  },
+  {
+   "start": 339,
+   "name": "infer_left"
+  },
+  {
+   "start": 375,
+   "name": "V"
+  },
+  {
+   "start": 428,
+   "name": "K"
+  },
+  {
+   "start": 508,
+   "name": "A"
+  }
+ ],
+ "constants": [
+  {
+   "start": 13,
+   "name": "X",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 40,
+   "name": "Function",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 74,
+   "name": "X",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 115,
+   "name": "Head",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 121,
+   "name": "Tail",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 156,
+   "name": "X",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 191,
+   "name": "U",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 211,
+   "name": "X",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 239,
+   "name": "E",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 260,
+   "name": "E",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 263,
+   "name": "F",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 269,
+   "name": "E",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 299,
+   "name": "X",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 319,
+   "name": "X",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 350,
+   "name": "X",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 371,
+   "name": "V",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 391,
+   "name": "X",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 424,
+   "name": "K",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 444,
+   "name": "X",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 500,
+   "name": "A",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 503,
+   "name": "R",
+   "constant": false,
+   "mutated": false
+  }
+ ],
+ "variables": [
+  {
+   "start": 5,
+   "name": "T1",
+   "references": 0
+  },
+  {
+   "start": 8,
+   "name": "X",
+   "references": 1
+  },
+  {
+   "start": 29,
+   "name": "Function",
+   "references": 1
+  },
+  {
+   "start": 66,
+   "name": "T2",
+   "references": 0
+  },
+  {
+   "start": 69,
+   "name": "X",
+   "references": 1
+  },
+  {
+   "start": 91,
+   "name": "Head",
+   "references": 1
+  },
+  {
+   "start": 106,
+   "name": "Tail",
+   "references": 1
+  },
+  {
+   "start": 148,
+   "name": "T3",
+   "references": 0
+  },
+  {
+   "start": 151,
+   "name": "X",
+   "references": 1
+  },
+  {
+   "start": 172,
+   "name": "U",
+   "references": 1
+  },
+  {
+   "start": 203,
+   "name": "T4",
+   "references": 0
+  },
+  {
+   "start": 206,
+   "name": "X",
+   "references": 1
+  },
+  {
+   "start": 233,
+   "name": "E",
+   "references": 3
+  },
+  {
+   "start": 255,
+   "name": "F",
+   "references": 1
+  },
+  {
+   "start": 291,
+   "name": "T5",
+   "references": 0
+  },
+  {
+   "start": 294,
+   "name": "X",
+   "references": 2
+  },
+  {
+   "start": 315,
+   "name": "U",
+   "references": 0
+  },
+  {
+   "start": 331,
+   "name": "T6",
+   "references": 0
+  },
+  {
+   "start": 334,
+   "name": "X",
+   "references": 1
+  },
+  {
+   "start": 367,
+   "name": "V",
+   "references": 1
+  },
+  {
+   "start": 383,
+   "name": "T7",
+   "references": 0
+  },
+  {
+   "start": 386,
+   "name": "X",
+   "references": 1
+  },
+  {
+   "start": 402,
+   "name": "k",
+   "references": 0
+  },
+  {
+   "start": 411,
+   "name": "K",
+   "references": 1
+  },
+  {
+   "start": 436,
+   "name": "T8",
+   "references": 0
+  },
+  {
+   "start": 439,
+   "name": "X",
+   "references": 1
+  },
+  {
+   "start": 472,
+   "name": "a",
+   "references": 0
+  },
+  {
+   "start": 481,
+   "name": "A",
+   "references": 1
+  },
+  {
+   "start": 493,
+   "name": "R",
+   "references": 1
+  }
+ ]
+}

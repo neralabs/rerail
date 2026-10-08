@@ -1,4 +1,0 @@
-[submodule "fixtures"]
-	path = fixtures
-	url = https://github.com/neralabs/rerail-fixtures.git
-	branch = main

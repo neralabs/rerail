@@ -1,0 +1,64 @@
+{
+  "pack": "react-candidates",
+  "family": "ecma",
+  "capabilities": [
+    "syntax",
+    "scope",
+    "compare",
+    "suppression"
+  ],
+  "corpora": [
+    {
+      "name": "excalidraw",
+      "repository": "https://github.com/excalidraw/excalidraw",
+      "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+      "paths": [
+        "packages/excalidraw",
+        "excalidraw-app"
+      ],
+      "exclude": []
+    }
+  ],
+  "tools": [
+    {
+      "name": "eslint-plugin-react",
+      "version": "7.37.5"
+    },
+    {
+      "name": "eslint-plugin-react-hooks",
+      "version": "7.1.1"
+    }
+  ],
+  "oracles": "../rules",
+  "rules": [
+    {
+      "id": "react-react-in-jsx-scope",
+      "upstream": {
+        "tool": "eslint-plugin-react",
+        "rule": "react/react-in-jsx-scope"
+      },
+      "policy": "rules/react-react-in-jsx-scope.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-hooks-exhaustive-deps",
+      "upstream": {
+        "tool": "eslint-plugin-react-hooks",
+        "rule": "react-hooks/exhaustive-deps"
+      },
+      "policy": "rules/react-hooks-exhaustive-deps.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    }
+  ]
+}

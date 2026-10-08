@@ -1,0 +1,45 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "phpcs-squiz-php-eval",
+  "revision": 1,
+  "mode": "steer",
+  "description": "PHP_CodeSniffer 4.0.4 Squiz.PHP.Eval: every eval construct.",
+  "scope": {
+    "include": [
+      "**/*.php"
+    ],
+    "exclude": [
+      "**/*.blade.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "kind": "function_call_expression",
+            "has": {
+              "field": "function",
+              "kind": "name",
+              "regex": "^(?i:eval)$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "Squiz.PHP.Eval",
+        "message": "eval() is discouraged",
+        "suppress": {
+          "phpcs": {
+            "sniffs": [
+              "Squiz.PHP.Eval.Discouraged"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "probe-cjs-scope-bindings",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Node fact: in a CommonJS module, require, module, exports, __dirname and __filename are bindings of the module wrapper (sourceType commonjs declares require/module/exports; __dirname/__filename are declared as Node globals). A reference resolves to them unless a parameter or block binding shadows it.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "reference",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "sourceType": "commonjs",
+            "globals": {
+              "__dirname": "readonly",
+              "__filename": "readonly"
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier"
+              }
+            ],
+            "regex": "^(?:require|module|exports|__dirname|__filename)$",
+            "resolves": {
+              "global": [
+                "require",
+                "module",
+                "exports",
+                "__dirname",
+                "__filename"
+              ]
+            }
+          },
+          "file": {
+            "path": {
+              "notRegex": "\\.m[jt]s$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "probe-cjs-scope-bindings",
+        "message": "CommonJS-scope binding"
+      }
+    }
+  ]
+}

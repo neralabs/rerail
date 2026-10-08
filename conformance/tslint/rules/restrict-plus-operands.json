@@ -1,0 +1,295 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:restrict-plus-operands",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Syntactic approximation: flags `+` whose operands are literals of different base types (number / string / bigint) or an array/object literal. Operands whose type needs inference are not checked.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "mixed-literal-plus",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "binary_expression"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^\\+$"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "precedes": {
+                        "stopBy": "neighbor",
+                        "regex": "^\\+$"
+                      },
+                      "any": [
+                        {
+                          "kind": "array"
+                        },
+                        {
+                          "kind": "object"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "^\\+$"
+                      },
+                      "any": [
+                        {
+                          "kind": "array"
+                        },
+                        {
+                          "kind": "object"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "precedes": {
+                            "stopBy": "neighbor",
+                            "regex": "^\\+$"
+                          },
+                          "kind": "number",
+                          "not": {
+                            "regex": "n$"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "follows": {
+                            "stopBy": "neighbor",
+                            "regex": "^\\+$"
+                          },
+                          "any": [
+                            {
+                              "kind": "string"
+                            },
+                            {
+                              "kind": "template_string"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "precedes": {
+                            "stopBy": "neighbor",
+                            "regex": "^\\+$"
+                          },
+                          "kind": "number",
+                          "not": {
+                            "regex": "n$"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "follows": {
+                            "stopBy": "neighbor",
+                            "regex": "^\\+$"
+                          },
+                          "any": [
+                            {
+                              "kind": "number",
+                              "regex": "n$"
+                            },
+                            {
+                              "pattern": "BigInt($$$A)"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "precedes": {
+                            "stopBy": "neighbor",
+                            "regex": "^\\+$"
+                          },
+                          "any": [
+                            {
+                              "kind": "string"
+                            },
+                            {
+                              "kind": "template_string"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "follows": {
+                            "stopBy": "neighbor",
+                            "regex": "^\\+$"
+                          },
+                          "kind": "number",
+                          "not": {
+                            "regex": "n$"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "precedes": {
+                            "stopBy": "neighbor",
+                            "regex": "^\\+$"
+                          },
+                          "any": [
+                            {
+                              "kind": "string"
+                            },
+                            {
+                              "kind": "template_string"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "follows": {
+                            "stopBy": "neighbor",
+                            "regex": "^\\+$"
+                          },
+                          "any": [
+                            {
+                              "kind": "number",
+                              "regex": "n$"
+                            },
+                            {
+                              "pattern": "BigInt($$$A)"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "precedes": {
+                            "stopBy": "neighbor",
+                            "regex": "^\\+$"
+                          },
+                          "any": [
+                            {
+                              "kind": "number",
+                              "regex": "n$"
+                            },
+                            {
+                              "pattern": "BigInt($$$A)"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "follows": {
+                            "stopBy": "neighbor",
+                            "regex": "^\\+$"
+                          },
+                          "kind": "number",
+                          "not": {
+                            "regex": "n$"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "precedes": {
+                            "stopBy": "neighbor",
+                            "regex": "^\\+$"
+                          },
+                          "any": [
+                            {
+                              "kind": "number",
+                              "regex": "n$"
+                            },
+                            {
+                              "pattern": "BigInt($$$A)"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "follows": {
+                            "stopBy": "neighbor",
+                            "regex": "^\\+$"
+                          },
+                          "any": [
+                            {
+                              "kind": "string"
+                            },
+                            {
+                              "kind": "template_string"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RESTRICT_PLUS_OPERANDS",
+        "message": "Operands of '+' operation must either be both strings or both numbers or both bigints."
+      }
+    }
+  ]
+}

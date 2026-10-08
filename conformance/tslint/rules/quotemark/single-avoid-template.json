@@ -1,0 +1,88 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:quotemark",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Single quotes, avoid-escape, and no-substitution templates must be quoted.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "single",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "string"
+              },
+              {
+                "regex": "^\"[^']*\"$"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "QUOTEMARK",
+        "message": "\" should be '"
+      }
+    },
+    {
+      "id": "template-literal",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "template_string"
+              },
+              {
+                "regex": "^`[^\\n]*`$"
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "template_substitution"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call_expression"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "all": [
+                    {
+                      "regex": "'"
+                    },
+                    {
+                      "regex": "\""
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "QUOTEMARK",
+        "message": "` should be '"
+      }
+    }
+  ]
+}

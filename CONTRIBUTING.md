@@ -17,13 +17,17 @@ Do not paste code, data or rules from another project without recording it:
 2. Add the upstream licence text (to `LICENSES/` or beside the material under `licenses/<project>/`).
 3. Annotate the path in `REUSE.toml`.
 
-`reuse lint` must pass. Only permissively licensed material is accepted; nothing distributed by Rerail may carry
-a copyleft licence.
+`reuse lint` must pass. Only permissively licensed material is accepted, anywhere in the repository: the licence
+texts in `LICENSES/` must be on the allowlist in `scripts/check-licenses.mjs` (Apache-2.0, MIT, BSD-2-Clause,
+BSD-3-Clause, ISC, Zlib, 0BSD, CC0-1.0, Unicode-3.0), so no copyleft file can be committed.
+
+Fixtures (`fixtures/`) and rule packs (`packs/`) follow the same rules; see their READMEs.
 
 ## Dependencies
 
-New dependencies must be permissively licensed if they end up in anything Rerail distributes. Copyleft is
-acceptable only in development-only dependencies.
+New dependencies must be permissively licensed if they end up in anything Rerail distributes:
+`npm run check:licenses` fails on a copyleft production dependency. Copyleft is acceptable only in
+development-only dependencies and tools, which are never committed or distributed.
 
 ## Pull requests
 

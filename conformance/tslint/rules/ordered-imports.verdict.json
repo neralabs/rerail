@@ -1,0 +1,26 @@
+{
+  "verdict": "BLOCKED",
+  "primitive": "trivia/whitespace",
+  "secondary": [],
+  "reason": "Source and named-import ordering port exactly with the M5 compare: an import fails when its module path sorts before the path of the import directly before it (through comments; another statement ends the block) after the option's transform (fold-upper for case-insensitive, fold-lower for -legacy, lowercase-first), relative paths sorting last as compare() does; named imports report the first specifier followed by a smaller one. What remains is TSLint's blank-line block boundary, invisible to relations: every import after a blank line that sorts before the one above is a false positive (36 FP). grouped-imports/groups check the order of those blank-line blocks, and module-source-path basename compares only the text after the last slash, which compare has no transform for; neither is ported.",
+  "evidence": [
+    {
+      "variant": "case-insensitive",
+      "file": "test.ts.lint",
+      "line": 23,
+      "why": "`'abc'` follows `'foo'` across a blank line. TSLint starts a new block there, but the blank line is not visible to follows, so the port reports a false positive"
+    },
+    {
+      "variant": "groups-shared-order",
+      "file": "test.ts.lint",
+      "line": 5,
+      "why": "'app_a/foo' after 'app_b/...' is found by comparing the full paths (was a first-character enumeration)"
+    },
+    {
+      "variant": "module-source-path",
+      "file": "test.ts.lint",
+      "line": 8,
+      "why": "basename ordering compares the text after the last '/', which the port does not transform"
+    }
+  ]
+}

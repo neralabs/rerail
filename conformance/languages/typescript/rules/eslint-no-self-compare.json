@@ -1,0 +1,111 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-no-self-compare",
+  "revision": 2,
+  "mode": "steer",
+  "description": "ESLint 10.11.0 no-self-compare, default options. Port of ESLint's `no-self-compare` rule (https://eslint.org/docs/latest/rules/no-self-compare). Reports an equality or relational comparison whose operands (parentheses around an operand aside, as ESTree drops them) have the same tokens, comments aside.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "self-compare",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "utils": {
+            "left": {
+              "any": [
+                {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  },
+                  "pattern": "$L"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "kind": "comment"
+                    },
+                    "matches": "left"
+                  }
+                }
+              ]
+            },
+            "right": {
+              "any": [
+                {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  },
+                  "pattern": "$R"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "kind": "comment"
+                    },
+                    "matches": "right"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "binary_expression",
+            "has": {
+              "stopBy": "neighbor",
+              "regex": "^(===|==|!==|!=|>|<|>=|<=)$",
+              "follows": {
+                "stopBy": "end",
+                "not": {
+                  "kind": "comment"
+                },
+                "matches": "left"
+              },
+              "precedes": {
+                "stopBy": "end",
+                "not": {
+                  "kind": "comment"
+                },
+                "matches": "right"
+              }
+            },
+            "compare": {
+              "left": "L",
+              "op": "eq",
+              "right": "R",
+              "text": "tokens"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-self-compare",
+        "message": "Comparing to itself is potentially pointless.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-self-compare"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

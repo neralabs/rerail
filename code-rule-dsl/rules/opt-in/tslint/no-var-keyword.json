@@ -1,0 +1,79 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-var-keyword",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of TSLint's `no-var-keyword` rule with its default options (https://palantir.github.io/tslint/rules/no-var-keyword/). Disallows usage of the var keyword; `declare var` and `declare global { var }` are allowed.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "var-keyword",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "pattern": "var"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "variable_declaration",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "ambient_declaration"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "variable_declaration",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "statement_block",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "ambient_declaration"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_VAR_KEYWORD",
+        "message": "Forbidden 'var' keyword, use 'let' or 'const' instead",
+        "fix": "let"
+      }
+    }
+  ]
+}

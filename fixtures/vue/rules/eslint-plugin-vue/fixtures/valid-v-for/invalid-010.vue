@@ -1,0 +1,1 @@
+<template><div><div :is="your-component" v-for="x in list"></div></div></template>

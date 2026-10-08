@@ -1,0 +1,80 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:arrow-return-shorthand",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Arrow bodies whose only statement (comments aside) is `return <expr>` should use the expression form (option multiline).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "block-body",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "body"
+          },
+          "utils": {
+            "body": {
+              "kind": "statement_block",
+              "inside": {
+                "kind": "arrow_function"
+              },
+              "has": {
+                "kind": "return_statement",
+                "follows": {
+                  "matches": "block-open"
+                },
+                "precedes": {
+                  "matches": "block-close"
+                },
+                "has": {
+                  "pattern": "$E",
+                  "not": {
+                    "kind": "comment"
+                  }
+                }
+              }
+            },
+            "block-open": {
+              "any": [
+                {
+                  "regex": "^\\{$"
+                },
+                {
+                  "kind": "comment",
+                  "follows": {
+                    "matches": "block-open"
+                  }
+                }
+              ]
+            },
+            "block-close": {
+              "any": [
+                {
+                  "regex": "^\\}$"
+                },
+                {
+                  "kind": "comment",
+                  "precedes": {
+                    "matches": "block-close"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "ARROW_RETURN_SHORTHAND",
+        "message": "This arrow function body can be simplified by omitting the curly braces and the keyword 'return'."
+      }
+    }
+  ]
+}

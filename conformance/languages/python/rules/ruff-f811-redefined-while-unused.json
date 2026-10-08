@@ -1,0 +1,649 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "python-conformance:ruff-f811-redefined-while-unused",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F811 (redefined-while-unused) with default settings, on the engine's shadowed-binding pairs (M10a `binds.redefines`): a binding (not a loop variable) whose shadowed binding is unused, on the same fork, where Ruff's Binding::redefines allows the pair (an import redefines an import, a definition or an assignment; a submodule import only the same qualified name, `sameImport`; an assignment only an import or a definition; any other binding an import, a definition or an assignment). Same scope: a dummy name is exempt unless the shadowed binding is an import, and a `def` decorated with an `overload` that resolves to `typing`, `_typeshed` or `typing_extensions` is never redefined. Across scopes: only a shadowed import that is no explicit re-export, and not from a class body. Reported on the redefining name. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F811.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "redefined-while-unused",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "submodule-import": {
+              "kind": "dotted_name",
+              "regex": "\\.",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "import_statement"
+              }
+            },
+            "module-or-member-import": {
+              "not": {
+                "any": [
+                  {
+                    "matches": "submodule-import"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "future_import_statement"
+                    }
+                  }
+                ]
+              }
+            },
+            "typing-overload": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.overload",
+                      "_typeshed.overload",
+                      "typing_extensions.overload"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "typing-overload"
+                  }
+                }
+              ]
+            },
+            "overloaded": {
+              "kind": "function_definition",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "decorated_definition",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "decorator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "typing-overload"
+                  }
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "dotted_name"
+              }
+            ],
+            "pattern": "$N",
+            "all": [
+              {
+                "any": [
+                  {
+                    "binds": {
+                      "form": [
+                        "import"
+                      ],
+                      "site": {
+                        "matches": "module-or-member-import"
+                      },
+                      "redefines": {
+                        "form": "import",
+                        "used": false,
+                        "sameScope": true,
+                        "sameImport": true,
+                        "site": {
+                          "matches": "submodule-import"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "import"
+                      ],
+                      "site": {
+                        "matches": "module-or-member-import"
+                      },
+                      "scope": [
+                        "module",
+                        "function",
+                        "lambda",
+                        "comprehension",
+                        "typeParameters"
+                      ],
+                      "redefines": {
+                        "form": "import",
+                        "used": false,
+                        "sameScope": false,
+                        "sameImport": true,
+                        "exported": false,
+                        "site": {
+                          "matches": "submodule-import"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "import"
+                      ],
+                      "site": {
+                        "matches": "module-or-member-import"
+                      },
+                      "redefines": {
+                        "form": "import",
+                        "used": false,
+                        "sameScope": true,
+                        "site": {
+                          "matches": "module-or-member-import"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "import"
+                      ],
+                      "site": {
+                        "matches": "module-or-member-import"
+                      },
+                      "scope": [
+                        "module",
+                        "function",
+                        "lambda",
+                        "comprehension",
+                        "typeParameters"
+                      ],
+                      "redefines": {
+                        "form": "import",
+                        "used": false,
+                        "sameScope": false,
+                        "exported": false,
+                        "site": {
+                          "matches": "module-or-member-import"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "import"
+                      ],
+                      "site": {
+                        "matches": "module-or-member-import"
+                      },
+                      "redefines": {
+                        "form": "definition",
+                        "used": false,
+                        "sameScope": true,
+                        "site": {
+                          "not": {
+                            "matches": "overloaded"
+                          }
+                        }
+                      }
+                    },
+                    "not": {
+                      "regex": "^(?:_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9])$"
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "import"
+                      ],
+                      "site": {
+                        "matches": "module-or-member-import"
+                      },
+                      "redefines": {
+                        "form": [
+                          "assignment",
+                          "annotated",
+                          "augmented",
+                          "match",
+                          "named",
+                          "typeAlias"
+                        ],
+                        "used": false,
+                        "sameScope": true
+                      }
+                    },
+                    "not": {
+                      "regex": "^(?:_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9])$"
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "import"
+                      ],
+                      "site": {
+                        "matches": "module-or-member-import"
+                      },
+                      "redefines": {
+                        "form": "for",
+                        "used": false,
+                        "sameScope": true,
+                        "site": {
+                          "kind": "for_in_clause"
+                        }
+                      }
+                    },
+                    "not": {
+                      "regex": "^(?:_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9])$"
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "import"
+                      ],
+                      "site": {
+                        "matches": "submodule-import"
+                      },
+                      "redefines": {
+                        "form": "import",
+                        "used": false,
+                        "sameScope": true,
+                        "sameImport": true,
+                        "site": {
+                          "matches": "module-or-member-import"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "import"
+                      ],
+                      "site": {
+                        "matches": "submodule-import"
+                      },
+                      "scope": [
+                        "module",
+                        "function",
+                        "lambda",
+                        "comprehension",
+                        "typeParameters"
+                      ],
+                      "redefines": {
+                        "form": "import",
+                        "used": false,
+                        "sameScope": false,
+                        "sameImport": true,
+                        "exported": false,
+                        "site": {
+                          "matches": "module-or-member-import"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "import"
+                      ],
+                      "site": {
+                        "matches": "submodule-import"
+                      },
+                      "redefines": {
+                        "form": "import",
+                        "used": false,
+                        "sameScope": true,
+                        "sameImport": true,
+                        "site": {
+                          "matches": "submodule-import"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "import"
+                      ],
+                      "site": {
+                        "matches": "submodule-import"
+                      },
+                      "scope": [
+                        "module",
+                        "function",
+                        "lambda",
+                        "comprehension",
+                        "typeParameters"
+                      ],
+                      "redefines": {
+                        "form": "import",
+                        "used": false,
+                        "sameScope": false,
+                        "sameImport": true,
+                        "exported": false,
+                        "site": {
+                          "matches": "submodule-import"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "import"
+                      ],
+                      "site": {
+                        "matches": "submodule-import"
+                      },
+                      "redefines": {
+                        "form": "definition",
+                        "used": false,
+                        "sameScope": true,
+                        "site": {
+                          "not": {
+                            "matches": "overloaded"
+                          }
+                        }
+                      }
+                    },
+                    "not": {
+                      "regex": "^(?:_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9])$"
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "import"
+                      ],
+                      "site": {
+                        "matches": "submodule-import"
+                      },
+                      "redefines": {
+                        "form": [
+                          "assignment",
+                          "annotated",
+                          "augmented",
+                          "match",
+                          "named",
+                          "typeAlias"
+                        ],
+                        "used": false,
+                        "sameScope": true
+                      }
+                    },
+                    "not": {
+                      "regex": "^(?:_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9])$"
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "import"
+                      ],
+                      "site": {
+                        "matches": "submodule-import"
+                      },
+                      "redefines": {
+                        "form": "for",
+                        "used": false,
+                        "sameScope": true,
+                        "site": {
+                          "kind": "for_in_clause"
+                        }
+                      }
+                    },
+                    "not": {
+                      "regex": "^(?:_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9])$"
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "assignment",
+                        "annotated",
+                        "augmented",
+                        "match",
+                        "named",
+                        "typeAlias",
+                        "definition",
+                        "with",
+                        "except",
+                        "parameter",
+                        "global",
+                        "typeParameter"
+                      ],
+                      "redefines": {
+                        "form": "import",
+                        "used": false,
+                        "sameScope": true,
+                        "site": {
+                          "matches": "module-or-member-import"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "for"
+                      ],
+                      "site": {
+                        "kind": "for_in_clause"
+                      },
+                      "redefines": {
+                        "form": "import",
+                        "used": false,
+                        "sameScope": true,
+                        "site": {
+                          "matches": "module-or-member-import"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "assignment",
+                        "annotated",
+                        "augmented",
+                        "match",
+                        "named",
+                        "typeAlias",
+                        "definition",
+                        "with",
+                        "except",
+                        "parameter",
+                        "global",
+                        "typeParameter"
+                      ],
+                      "scope": [
+                        "module",
+                        "function",
+                        "lambda",
+                        "comprehension",
+                        "typeParameters"
+                      ],
+                      "redefines": {
+                        "form": "import",
+                        "used": false,
+                        "sameScope": false,
+                        "exported": false,
+                        "site": {
+                          "matches": "module-or-member-import"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "for"
+                      ],
+                      "site": {
+                        "kind": "for_in_clause"
+                      },
+                      "scope": [
+                        "module",
+                        "function",
+                        "lambda",
+                        "comprehension",
+                        "typeParameters"
+                      ],
+                      "redefines": {
+                        "form": "import",
+                        "used": false,
+                        "sameScope": false,
+                        "exported": false,
+                        "site": {
+                          "matches": "module-or-member-import"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "assignment",
+                        "annotated",
+                        "augmented",
+                        "match",
+                        "named",
+                        "typeAlias",
+                        "definition",
+                        "with",
+                        "except",
+                        "parameter",
+                        "global",
+                        "typeParameter"
+                      ],
+                      "redefines": {
+                        "form": "definition",
+                        "used": false,
+                        "sameScope": true,
+                        "site": {
+                          "not": {
+                            "matches": "overloaded"
+                          }
+                        }
+                      }
+                    },
+                    "not": {
+                      "regex": "^(?:_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9])$"
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "for"
+                      ],
+                      "site": {
+                        "kind": "for_in_clause"
+                      },
+                      "redefines": {
+                        "form": "definition",
+                        "used": false,
+                        "sameScope": true,
+                        "site": {
+                          "not": {
+                            "matches": "overloaded"
+                          }
+                        }
+                      }
+                    },
+                    "not": {
+                      "regex": "^(?:_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9])$"
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "definition",
+                        "with",
+                        "except",
+                        "parameter",
+                        "global",
+                        "typeParameter"
+                      ],
+                      "redefines": {
+                        "form": [
+                          "assignment",
+                          "annotated",
+                          "augmented",
+                          "match",
+                          "named",
+                          "typeAlias"
+                        ],
+                        "used": false,
+                        "sameScope": true
+                      }
+                    },
+                    "not": {
+                      "regex": "^(?:_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9])$"
+                    }
+                  },
+                  {
+                    "binds": {
+                      "form": [
+                        "definition",
+                        "with",
+                        "except",
+                        "parameter",
+                        "global",
+                        "typeParameter"
+                      ],
+                      "redefines": {
+                        "form": "for",
+                        "used": false,
+                        "sameScope": true,
+                        "site": {
+                          "kind": "for_in_clause"
+                        }
+                      }
+                    },
+                    "not": {
+                      "regex": "^(?:_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9])$"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F811",
+        "message": "Redefinition of unused `$N`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F811"
+            ],
+            "parent": "statement"
+          }
+        }
+      }
+    }
+  ]
+}

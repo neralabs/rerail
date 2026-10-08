@@ -1,0 +1,111 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:object-literal-key-quotes",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Quote all property names if any needs quotes, otherwise none (consistent-as-needed).",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "missing",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [{ "kind": "property_identifier" }, { "kind": "number" }],
+            "matches": "unquoted-key",
+            "inside": { "stopBy": "neighbor", "inside": { "stopBy": "neighbor", "matches": "quoting-object" } }
+          },
+          "utils": {
+            "key": {
+              "any": [
+                {
+                  "inside": { "stopBy": "neighbor", "kind": "pair" },
+                  "not": { "follows": { "stopBy": "neighbor", "regex": "^:$" } }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "method_definition",
+                    "inside": { "stopBy": "neighbor", "kind": "object" }
+                  }
+                }
+              ]
+            },
+            "unquoted-key": { "any": [{ "kind": "property_identifier" }, { "kind": "number" }], "matches": "key" },
+            "quoted-key": { "kind": "string", "matches": "key" },
+            "quoting-object": {
+              "kind": "object",
+              "has": {
+                "stopBy": "neighbor",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "quoted-key",
+                  "not": {
+                    "regex": "^['\"]([A-Za-z_$][A-Za-z0-9_$]*|0|[1-9][0-9]*|[1-9][0-9]*\\.[0-9]*[1-9]|0\\.[0-9]*[1-9])['\"]$"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "OBJECT_LITERAL_KEY_QUOTES",
+        "message": "Unquoted property found."
+      }
+    },
+    {
+      "id": "unnecessary",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "string",
+            "matches": "quoted-key",
+            "not": {
+              "inside": { "stopBy": "neighbor", "inside": { "stopBy": "neighbor", "matches": "quoting-object" } }
+            }
+          },
+          "utils": {
+            "key": {
+              "any": [
+                {
+                  "inside": { "stopBy": "neighbor", "kind": "pair" },
+                  "not": { "follows": { "stopBy": "neighbor", "regex": "^:$" } }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "method_definition",
+                    "inside": { "stopBy": "neighbor", "kind": "object" }
+                  }
+                }
+              ]
+            },
+            "quoted-key": { "kind": "string", "matches": "key" },
+            "quoting-object": {
+              "kind": "object",
+              "has": {
+                "stopBy": "neighbor",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "quoted-key",
+                  "not": {
+                    "regex": "^['\"]([A-Za-z_$][A-Za-z0-9_$]*|0|[1-9][0-9]*|[1-9][0-9]*\\.[0-9]*[1-9]|0\\.[0-9]*[1-9])['\"]$"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "OBJECT_LITERAL_KEY_QUOTES",
+        "message": "Unnecessarily quoted property found."
+      }
+    }
+  ]
+}

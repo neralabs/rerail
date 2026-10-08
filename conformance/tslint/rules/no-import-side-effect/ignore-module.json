@@ -1,0 +1,71 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-import-side-effect",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Option ignore-module: (allow-side-effect|\\.css)$",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "side-effect-import",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "import_statement"
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "import_clause"
+                      },
+                      {
+                        "kind": "import_require_clause"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "program"
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "regex": "(allow-side-effect|\\.css)['\"]$"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_IMPORT_SIDE_EFFECT",
+        "message": "import with explicit side-effect"
+      }
+    }
+  ]
+}

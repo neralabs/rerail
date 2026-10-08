@@ -1,0 +1,132 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-duplicate-imports",
+  "revision": 1,
+  "mode": "steer",
+  "description": "no-duplicate-imports with allow-namespace-imports: namespace imports are compared only with namespace imports, other imports only with other imports.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "duplicate-import",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "import_statement",
+            "all": [
+              { "matches": "import-of-M" },
+              {
+                "any": [
+                  { "follows": { "stopBy": "end", "matches": "earlier-import-of-M" } },
+                  {
+                    "inside": {
+                      "kind": "statement_block",
+                      "inside": {
+                        "matches": "string-module",
+                        "inside": {
+                          "kind": "ambient_declaration",
+                          "inside": {
+                            "kind": "program",
+                            "has": { "any": [{ "kind": "import_statement" }, { "kind": "export_statement" }] }
+                          },
+                          "follows": { "stopBy": "end", "matches": "earlier-import-of-M" }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "utils": {
+            "import-of-M": {
+              "kind": "import_statement",
+              "has": { "kind": "string", "has": { "kind": "string_fragment", "pattern": "$M" } },
+              "not": { "has": { "kind": "import_clause", "has": { "kind": "namespace_import" } } }
+            },
+            "string-module": { "kind": "module", "has": { "kind": "string" } },
+            "earlier-import-of-M": {
+              "any": [
+                { "matches": "import-of-M" },
+                {
+                  "kind": "ambient_declaration",
+                  "has": {
+                    "matches": "string-module",
+                    "has": { "kind": "statement_block", "has": { "matches": "import-of-M" } }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_DUPLICATE_IMPORTS",
+        "message": "Multiple imports from the same module can be combined into one."
+      }
+    },
+    {
+      "id": "duplicate-namespace-import",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "import_statement",
+            "all": [
+              { "matches": "import-of-M" },
+              {
+                "any": [
+                  { "follows": { "stopBy": "end", "matches": "earlier-import-of-M" } },
+                  {
+                    "inside": {
+                      "kind": "statement_block",
+                      "inside": {
+                        "matches": "string-module",
+                        "inside": {
+                          "kind": "ambient_declaration",
+                          "inside": {
+                            "kind": "program",
+                            "has": { "any": [{ "kind": "import_statement" }, { "kind": "export_statement" }] }
+                          },
+                          "follows": { "stopBy": "end", "matches": "earlier-import-of-M" }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "utils": {
+            "import-of-M": {
+              "kind": "import_statement",
+              "all": [
+                { "has": { "kind": "string", "has": { "kind": "string_fragment", "pattern": "$M" } } },
+                { "has": { "kind": "import_clause", "has": { "kind": "namespace_import" } } }
+              ]
+            },
+            "string-module": { "kind": "module", "has": { "kind": "string" } },
+            "earlier-import-of-M": {
+              "any": [
+                { "matches": "import-of-M" },
+                {
+                  "kind": "ambient_declaration",
+                  "has": {
+                    "matches": "string-module",
+                    "has": { "kind": "statement_block", "has": { "matches": "import-of-M" } }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_DUPLICATE_IMPORTS",
+        "message": "Multiple imports from the same module can be combined into one."
+      }
+    }
+  ]
+}

@@ -1,0 +1,187 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-no-duplicate-head",
+  "revision": 1,
+  "mode": "steer",
+  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-duplicate-head: every <Head> child of a returned element after the first, in a return inside a class extending the default import of next/document.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "jsx_self_closing_element",
+                    "has": {
+                      "field": "name",
+                      "kind": "identifier",
+                      "regex": "^Head$"
+                    }
+                  },
+                  {
+                    "kind": "jsx_element",
+                    "has": {
+                      "field": "open_tag",
+                      "has": {
+                        "field": "name",
+                        "kind": "identifier",
+                        "regex": "^Head$"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "jsx_self_closing_element",
+                      "has": {
+                        "field": "name",
+                        "kind": "identifier",
+                        "regex": "^Head$"
+                      }
+                    },
+                    {
+                      "kind": "jsx_element",
+                      "has": {
+                        "field": "open_tag",
+                        "has": {
+                          "field": "name",
+                          "kind": "identifier",
+                          "regex": "^Head$"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "kind": "jsx_element",
+                  "any": [
+                    {
+                      "inside": {
+                        "kind": "return_statement"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "parenthesized_expression",
+                        "inside": {
+                          "kind": "return_statement"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "class_declaration"
+                        },
+                        {
+                          "kind": "class",
+                          "inside": {
+                            "kind": "export_statement"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "has": {
+                        "kind": "class_heritage",
+                        "any": [
+                          {
+                            "has": {
+                              "kind": "identifier",
+                              "pattern": "$D"
+                            }
+                          },
+                          {
+                            "has": {
+                              "kind": "extends_clause",
+                              "has": {
+                                "field": "value",
+                                "kind": "identifier",
+                                "pattern": "$D"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "program",
+                        "stopBy": "end",
+                        "has": {
+                          "kind": "import_statement",
+                          "all": [
+                            {
+                              "has": {
+                                "field": "source",
+                                "kind": "string",
+                                "value": {
+                                  "eq": "next/document"
+                                }
+                              }
+                            },
+                            {
+                              "has": {
+                                "kind": "import_clause",
+                                "has": {
+                                  "kind": "identifier",
+                                  "pattern": "$D"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/no-duplicate-head",
+        "message": "Do not include multiple instances of `<Head/>`. See: https://nextjs.org/docs/messages/no-duplicate-head",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/no-duplicate-head"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

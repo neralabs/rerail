@@ -1,0 +1,64 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:completed-docs",
+  "revision": 1,
+  "mode": "steer",
+  "description": "functions, overloads documented separately.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "functions-internal",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  { "kind": "function_declaration" },
+                  { "kind": "function_signature" },
+                  { "kind": "generator_function_declaration" }
+                ]
+              },
+              { "not": { "inside": { "kind": "export_statement" } } },
+              { "not": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "message": "Documentation must exist for functions."
+      }
+    },
+    {
+      "id": "functions-exported",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "kind": "export_statement" },
+              {
+                "has": {
+                  "any": [
+                    { "kind": "function_declaration" },
+                    { "kind": "function_signature" },
+                    { "kind": "generator_function_declaration" }
+                  ]
+                }
+              },
+              { "not": { "follows": { "kind": "comment", "regex": "^/\\*\\*[\\s*]*[^\\s*@/]" } } }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "COMPLETED_DOCS",
+        "message": "Documentation must exist for exported functions."
+      }
+    }
+  ]
+}

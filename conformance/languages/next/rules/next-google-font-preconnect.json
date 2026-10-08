@@ -1,0 +1,133 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-google-font-preconnect",
+  "revision": 1,
+  "mode": "steer",
+  "description": "@next/eslint-plugin-next 16.3.8 @next/next/google-font-preconnect: a <link> whose literal href starts with https://fonts.gstatic.com and whose rel is not the literal \"preconnect\".",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "jsx_opening_element"
+                  },
+                  {
+                    "kind": "jsx_self_closing_element"
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^link$"
+                }
+              },
+              {
+                "has": {
+                  "kind": "jsx_attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "kind": "property_identifier",
+                        "regex": "^href$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "string",
+                            "value": {
+                              "startsWith": "https://fonts.gstatic.com"
+                            }
+                          },
+                          {
+                            "kind": "jsx_expression",
+                            "has": {
+                              "kind": "string",
+                              "value": {
+                                "startsWith": "https://fonts.gstatic.com"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "jsx_attribute",
+                    "all": [
+                      {
+                        "has": {
+                          "kind": "property_identifier",
+                          "regex": "^rel$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "string",
+                              "value": {
+                                "eq": "preconnect"
+                              }
+                            },
+                            {
+                              "kind": "jsx_expression",
+                              "has": {
+                                "kind": "string",
+                                "value": {
+                                  "eq": "preconnect"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/google-font-preconnect",
+        "message": "`rel=\"preconnect\"` is missing from Google Font. See: https://nextjs.org/docs/messages/google-font-preconnect",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/google-font-preconnect"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

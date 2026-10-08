@@ -1,0 +1,56 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:function-constructor",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of TSLint's `function-constructor` rule with its default options (https://palantir.github.io/tslint/rules/function-constructor/). Prevents using the built-in Function constructor (Function(...) or new Function(...)).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "function-constructor",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "pattern": "Function($$$A)"
+              },
+              {
+                "pattern": "new Function($$$A)"
+              },
+              {
+                "pattern": "new Function"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "FUNCTION_CONSTRUCTOR",
+        "message": "Do not use the Function constructor to create functions."
+      }
+    }
+  ]
+}

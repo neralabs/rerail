@@ -1,0 +1,168 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:number-literal-format",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of TSLint's `number-literal-format` rule with its default options (https://palantir.github.io/tslint/rules/number-literal-format/). Checks that decimal literals begin with '0.' not just '.', have no trailing zeros, no leading zeros, and uppercase hex. Exponent leading-zero and trailing-0 mantissa failures anchor mid-token through named groups in the number's regex.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "leading-0",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "number"
+              },
+              {
+                "regex": "^0[^xob.]"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NUMBER_LITERAL_FORMAT",
+        "message": "Number literal should not have a leading '0'."
+      }
+    },
+    {
+      "id": "uppercase-hex",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "number"
+              },
+              {
+                "regex": "^0x.*[a-z]"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NUMBER_LITERAL_FORMAT",
+        "message": "Hexadecimal number literal should be uppercase."
+      }
+    },
+    {
+      "id": "leading-decimal",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "number"
+              },
+              {
+                "regex": "^\\."
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NUMBER_LITERAL_FORMAT",
+        "message": "Number literal should begin with '0.' and not just '.'."
+      }
+    },
+    {
+      "id": "trailing-decimal",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "number"
+              },
+              {
+                "regex": "^(?:0|[1-9][0-9_]*)\\.(?:[eE].*)?$"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NUMBER_LITERAL_FORMAT",
+        "message": "Number literal should not end in '.'."
+      }
+    },
+    {
+      "id": "trailing-0",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "number"
+              },
+              {
+                "regex": "^(?<MANTISSA>(?:0|[1-9][0-9_]*)?\\.[0-9_]*0)(?:[eE].*)?$"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.MANTISSA",
+        "code": "NUMBER_LITERAL_FORMAT",
+        "message": "Number literal should not have a trailing '0'."
+      }
+    },
+    {
+      "id": "exponent-leading-0",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "number"
+              },
+              {
+                "regex": "[eE](?<EXPONENT>[+-]?0[0-9_]+)$"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.EXPONENT",
+        "code": "NUMBER_LITERAL_FORMAT",
+        "message": "Number literal should not have a leading '0'."
+      }
+    }
+  ]
+}

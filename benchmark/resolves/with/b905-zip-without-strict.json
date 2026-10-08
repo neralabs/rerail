@@ -1,0 +1,52 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bench:resolves:b905-zip-without-strict",
+  "revision": 1,
+  "mode": "log",
+  "description": "Tier 1 (Ruff B905): builtin zip() without strict=.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "b905-zip-without-strict",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$)",
+            "not": {
+              "has": {
+                "kind": "argument_list",
+                "has": {
+                  "kind": "keyword_argument",
+                  "has": {
+                    "kind": "identifier",
+                    "regex": "^strict$"
+                  }
+                }
+              }
+            }
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "global": [
+                  "zip"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B905_ZIP_WITHOUT_STRICT",
+        "message": "b905-zip-without-strict"
+      }
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+React.render(<div ref={ref => this.node = ref}/>, document.body);

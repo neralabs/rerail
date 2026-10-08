@@ -1,0 +1,1270 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-button-has-type",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-react 7.37.5 react/button-has-type (button, submit and reset allowed): a `<button>` without a `type` attribute (jsx-ast-utils getProp, case-insensitive) or whose first `type` value is not a literal button/submit/reset (each leaf of a conditional is checked; a non-literal leaf is reported at itself); the same for `React.createElement('button', props)` (isCreateElement, default pragma).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "create-element": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^React$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^createElement$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "identifier",
+                "regex": "^createElement$",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "matches": "react-site"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "react-site": {
+            "any": [
+              {
+                "kind": "variable_declarator",
+                "has": {
+                  "field": "value",
+                  "matches": "react-init"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "import_statement",
+                  "has": {
+                    "field": "source",
+                    "kind": "string",
+                    "value": {
+                      "eq": "react"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "react-init": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^React$"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "regex": "^React$"
+                    },
+                    {
+                      "matches": "require-react"
+                    }
+                  ]
+                }
+              },
+              {
+                "matches": "require-react"
+              }
+            ]
+          },
+          "require-react": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "kind": "identifier",
+                  "regex": "^require$"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "kind": "string",
+                    "nthChild": 1,
+                    "value": {
+                      "eq": "react"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "type-attribute": {
+            "any": [
+              {
+                "kind": "jsx_attribute",
+                "has": {
+                  "kind": "property_identifier",
+                  "regex": "^(?i:type)$"
+                }
+              },
+              {
+                "kind": "jsx_expression",
+                "has": {
+                  "kind": "spread_element",
+                  "has": {
+                    "kind": "object",
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "pair",
+                          "has": {
+                            "field": "key",
+                            "kind": "property_identifier",
+                            "regex": "^(?:(?i:type))$"
+                          }
+                        },
+                        {
+                          "kind": "shorthand_property_identifier",
+                          "regex": "^(?:(?i:type))$"
+                        },
+                        {
+                          "kind": "method_definition",
+                          "has": {
+                            "field": "name",
+                            "kind": "property_identifier",
+                            "regex": "^(?:(?i:type))$"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "first-type-attribute": {
+            "matches": "type-attribute",
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "matches": "type-attribute"
+              }
+            }
+          },
+          "plain-template": {
+            "kind": "template_string",
+            "not": {
+              "has": {
+                "kind": "template_substitution"
+              }
+            }
+          },
+          "invalid-leaf": {
+            "any": [
+              {
+                "kind": "string",
+                "not": {
+                  "value": {
+                    "regex": "^(?:button|submit|reset)$"
+                  }
+                }
+              },
+              {
+                "matches": "plain-template",
+                "not": {
+                  "regex": "^`(?:button|submit|reset)`$"
+                }
+              },
+              {
+                "kind": "number"
+              },
+              {
+                "kind": "true"
+              },
+              {
+                "kind": "false"
+              },
+              {
+                "kind": "null"
+              },
+              {
+                "kind": "regex"
+              }
+            ]
+          },
+          "complex-leaf": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "this"
+              },
+              {
+                "kind": "super"
+              },
+              {
+                "kind": "undefined"
+              },
+              {
+                "kind": "member_expression"
+              },
+              {
+                "kind": "subscript_expression"
+              },
+              {
+                "kind": "call_expression"
+              },
+              {
+                "kind": "new_expression"
+              },
+              {
+                "kind": "await_expression"
+              },
+              {
+                "kind": "unary_expression"
+              },
+              {
+                "kind": "binary_expression"
+              },
+              {
+                "kind": "update_expression"
+              },
+              {
+                "kind": "assignment_expression"
+              },
+              {
+                "kind": "augmented_assignment_expression"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "class"
+              },
+              {
+                "kind": "object"
+              },
+              {
+                "kind": "array"
+              },
+              {
+                "kind": "jsx_element"
+              },
+              {
+                "kind": "jsx_self_closing_element"
+              },
+              {
+                "kind": "sequence_expression"
+              },
+              {
+                "kind": "yield_expression"
+              },
+              {
+                "kind": "as_expression"
+              },
+              {
+                "kind": "satisfies_expression"
+              },
+              {
+                "kind": "non_null_expression"
+              },
+              {
+                "kind": "meta_property"
+              },
+              {
+                "kind": "import"
+              },
+              {
+                "kind": "template_string",
+                "has": {
+                  "kind": "template_substitution"
+                }
+              }
+            ]
+          },
+          "button-create-element": {
+            "kind": "call_expression",
+            "pattern": "$CALL",
+            "all": [
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "kind": "string",
+                    "nthChild": 1,
+                    "value": {
+                      "eq": "button"
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "create-element"
+                }
+              }
+            ]
+          },
+          "ce-first-type-property": {
+            "any": [
+              {
+                "kind": "pair",
+                "has": {
+                  "field": "key",
+                  "kind": "property_identifier",
+                  "regex": "^(?:type)$"
+                }
+              },
+              {
+                "kind": "shorthand_property_identifier",
+                "regex": "^(?:type)$"
+              },
+              {
+                "kind": "method_definition",
+                "has": {
+                  "field": "name",
+                  "kind": "property_identifier",
+                  "regex": "^(?:type)$"
+                }
+              }
+            ],
+            "all": [
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "pair",
+                        "has": {
+                          "field": "key",
+                          "kind": "property_identifier",
+                          "regex": "^(?:type)$"
+                        }
+                      },
+                      {
+                        "kind": "shorthand_property_identifier",
+                        "regex": "^(?:type)$"
+                      },
+                      {
+                        "kind": "method_definition",
+                        "has": {
+                          "field": "name",
+                          "kind": "property_identifier",
+                          "regex": "^(?:type)$"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "object",
+                  "nthChild": 2,
+                  "inside": {
+                    "kind": "arguments",
+                    "inside": {
+                      "matches": "button-create-element"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "complex-capture": {
+            "matches": "complex-leaf",
+            "pattern": "$LEAF"
+          },
+          "u-invalid": {
+            "any": [
+              {
+                "matches": "invalid-leaf"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "u-invalid"
+                }
+              }
+            ]
+          },
+          "u-complex": {
+            "any": [
+              {
+                "matches": "complex-capture"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "u-complex"
+                }
+              }
+            ]
+          },
+          "consequence-invalid": {
+            "any": [
+              {
+                "kind": "ternary_expression",
+                "has": {
+                  "field": "consequence",
+                  "matches": "u-invalid"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "consequence-invalid"
+                }
+              }
+            ]
+          },
+          "alternative-invalid": {
+            "any": [
+              {
+                "kind": "ternary_expression",
+                "has": {
+                  "field": "alternative",
+                  "matches": "u-invalid"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "alternative-invalid"
+                }
+              }
+            ]
+          },
+          "consequence-complex": {
+            "any": [
+              {
+                "kind": "ternary_expression",
+                "has": {
+                  "field": "consequence",
+                  "matches": "u-complex"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "consequence-complex"
+                }
+              }
+            ]
+          },
+          "alternative-complex": {
+            "any": [
+              {
+                "kind": "ternary_expression",
+                "has": {
+                  "field": "alternative",
+                  "matches": "u-complex"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "alternative-complex"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "jsx-missing",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "jsx_opening_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^button$"
+                }
+              },
+              {
+                "kind": "jsx_self_closing_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^button$"
+                }
+              }
+            ],
+            "not": {
+              "has": {
+                "matches": "type-attribute"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/button-has-type",
+        "message": "Missing an explicit type attribute for button",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/button-has-type"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "jsx-invalid-attribute",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "jsx_opening_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^button$"
+                }
+              },
+              {
+                "kind": "jsx_self_closing_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^button$"
+                }
+              }
+            ],
+            "has": {
+              "kind": "jsx_attribute",
+              "matches": "first-type-attribute",
+              "any": [
+                {
+                  "not": {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "kind": "jsx_expression"
+                        },
+                        {
+                          "kind": "jsx_element"
+                        },
+                        {
+                          "kind": "jsx_self_closing_element"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "kind": "string",
+                    "not": {
+                      "value": {
+                        "regex": "^(?:button|submit|reset)$"
+                      }
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "jsx_element"
+                      },
+                      {
+                        "kind": "jsx_self_closing_element"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/button-has-type",
+        "message": "Invalid value for button type attribute",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/button-has-type"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "jsx-invalid",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "jsx_opening_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^button$"
+                }
+              },
+              {
+                "kind": "jsx_self_closing_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^button$"
+                }
+              }
+            ],
+            "has": {
+              "kind": "jsx_attribute",
+              "matches": "first-type-attribute",
+              "has": {
+                "kind": "jsx_expression",
+                "has": {
+                  "matches": "u-invalid"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/button-has-type",
+        "message": "Invalid value for button type attribute",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/button-has-type"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "jsx-complex",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "jsx_opening_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^button$"
+                }
+              },
+              {
+                "kind": "jsx_self_closing_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^button$"
+                }
+              }
+            ],
+            "has": {
+              "kind": "jsx_attribute",
+              "matches": "first-type-attribute",
+              "has": {
+                "kind": "jsx_expression",
+                "has": {
+                  "matches": "u-complex"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.LEAF",
+        "code": "react/button-has-type",
+        "message": "The button type attribute must be specified by a static string or a trivial ternary expression",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/button-has-type"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "jsx-invalid-consequence",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "jsx_opening_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^button$"
+                }
+              },
+              {
+                "kind": "jsx_self_closing_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^button$"
+                }
+              }
+            ],
+            "has": {
+              "kind": "jsx_attribute",
+              "matches": "first-type-attribute",
+              "has": {
+                "kind": "jsx_expression",
+                "has": {
+                  "matches": "consequence-invalid"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/button-has-type",
+        "message": "Invalid value for button type attribute",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/button-has-type"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "jsx-complex-consequence",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "jsx_opening_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^button$"
+                }
+              },
+              {
+                "kind": "jsx_self_closing_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^button$"
+                }
+              }
+            ],
+            "has": {
+              "kind": "jsx_attribute",
+              "matches": "first-type-attribute",
+              "has": {
+                "kind": "jsx_expression",
+                "has": {
+                  "matches": "consequence-complex"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.LEAF",
+        "code": "react/button-has-type",
+        "message": "The button type attribute must be specified by a static string or a trivial ternary expression",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/button-has-type"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "jsx-invalid-alternative",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "jsx_opening_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^button$"
+                }
+              },
+              {
+                "kind": "jsx_self_closing_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^button$"
+                }
+              }
+            ],
+            "has": {
+              "kind": "jsx_attribute",
+              "matches": "first-type-attribute",
+              "has": {
+                "kind": "jsx_expression",
+                "has": {
+                  "matches": "alternative-invalid"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/button-has-type",
+        "message": "Invalid value for button type attribute",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/button-has-type"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "jsx-complex-alternative",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "jsx_opening_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^button$"
+                }
+              },
+              {
+                "kind": "jsx_self_closing_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^button$"
+                }
+              }
+            ],
+            "has": {
+              "kind": "jsx_attribute",
+              "matches": "first-type-attribute",
+              "has": {
+                "kind": "jsx_expression",
+                "has": {
+                  "matches": "alternative-complex"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.LEAF",
+        "code": "react/button-has-type",
+        "message": "The button type attribute must be specified by a static string or a trivial ternary expression",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/button-has-type"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create-element-missing",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "button-create-element",
+            "not": {
+              "has": {
+                "field": "arguments",
+                "has": {
+                  "kind": "object",
+                  "nthChild": 2,
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "pair",
+                        "has": {
+                          "field": "key",
+                          "kind": "property_identifier",
+                          "regex": "^(?:type)$"
+                        }
+                      },
+                      {
+                        "kind": "shorthand_property_identifier",
+                        "regex": "^(?:type)$"
+                      },
+                      {
+                        "kind": "method_definition",
+                        "has": {
+                          "field": "name",
+                          "kind": "property_identifier",
+                          "regex": "^(?:type)$"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/button-has-type",
+        "message": "Missing an explicit type attribute for button",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/button-has-type"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create-element-invalid",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "button-create-element",
+            "has": {
+              "field": "arguments",
+              "has": {
+                "kind": "object",
+                "nthChild": 2,
+                "has": {
+                  "kind": "pair",
+                  "matches": "ce-first-type-property",
+                  "has": {
+                    "field": "value",
+                    "matches": "u-invalid"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/button-has-type",
+        "message": "Invalid value for button type attribute",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/button-has-type"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create-element-complex",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "button-create-element",
+            "has": {
+              "field": "arguments",
+              "has": {
+                "kind": "object",
+                "nthChild": 2,
+                "has": {
+                  "kind": "pair",
+                  "matches": "ce-first-type-property",
+                  "has": {
+                    "field": "value",
+                    "matches": "u-complex"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.LEAF",
+        "code": "react/button-has-type",
+        "message": "The button type attribute must be specified by a static string or a trivial ternary expression",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/button-has-type"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create-element-invalid-consequence",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "button-create-element",
+            "has": {
+              "field": "arguments",
+              "has": {
+                "kind": "object",
+                "nthChild": 2,
+                "has": {
+                  "kind": "pair",
+                  "matches": "ce-first-type-property",
+                  "has": {
+                    "field": "value",
+                    "matches": "consequence-invalid"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/button-has-type",
+        "message": "Invalid value for button type attribute",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/button-has-type"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create-element-complex-consequence",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "button-create-element",
+            "has": {
+              "field": "arguments",
+              "has": {
+                "kind": "object",
+                "nthChild": 2,
+                "has": {
+                  "kind": "pair",
+                  "matches": "ce-first-type-property",
+                  "has": {
+                    "field": "value",
+                    "matches": "consequence-complex"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.LEAF",
+        "code": "react/button-has-type",
+        "message": "The button type attribute must be specified by a static string or a trivial ternary expression",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/button-has-type"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create-element-invalid-alternative",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "button-create-element",
+            "has": {
+              "field": "arguments",
+              "has": {
+                "kind": "object",
+                "nthChild": 2,
+                "has": {
+                  "kind": "pair",
+                  "matches": "ce-first-type-property",
+                  "has": {
+                    "field": "value",
+                    "matches": "alternative-invalid"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/button-has-type",
+        "message": "Invalid value for button type attribute",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/button-has-type"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create-element-complex-alternative",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "button-create-element",
+            "has": {
+              "field": "arguments",
+              "has": {
+                "kind": "object",
+                "nthChild": 2,
+                "has": {
+                  "kind": "pair",
+                  "matches": "ce-first-type-property",
+                  "has": {
+                    "field": "value",
+                    "matches": "alternative-complex"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.LEAF",
+        "code": "react/button-has-type",
+        "message": "The button type attribute must be specified by a static string or a trivial ternary expression",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/button-has-type"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create-element-complex-shorthand",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "button-create-element",
+            "has": {
+              "field": "arguments",
+              "has": {
+                "kind": "object",
+                "nthChild": 2,
+                "has": {
+                  "kind": "shorthand_property_identifier",
+                  "regex": "^type$",
+                  "pattern": "$LEAF",
+                  "matches": "ce-first-type-property"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.LEAF",
+        "code": "react/button-has-type",
+        "message": "The button type attribute must be specified by a static string or a trivial ternary expression",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/button-has-type"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

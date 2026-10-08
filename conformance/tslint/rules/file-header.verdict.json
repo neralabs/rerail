@@ -1,0 +1,12 @@
+{
+  "verdict": "AUTO",
+  "reason": "Genuine port. One missing-header check per doc: a `select_when` content regex `\\A(?:#![^\\n]*\\n)?(?<AFTER>)` anchors at offset 0, or at the start of the line after a shebang (capture.AFTER), and fires when the `program` has no qualifying first comment; an empty file is a program without one, so it needs no separate check. The trailing-newline check is a content regex anchored at \\A; the header regex is a rule option, ported through overrides. Every failure is zero-width.",
+  "evidence": [
+    {
+      "variant": "bad-shebang",
+      "file": "test.ts.lint",
+      "line": 2,
+      "why": "TSLint reports at 2:1 (offset after `#!...\\n`); the empty AFTER group starts there, while `program` starts at 1:1"
+    }
+  ]
+}

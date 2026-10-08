@@ -1,0 +1,83 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-no-string-refs",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-react 7.37.5 react/no-string-refs (latest React, noTemplateLiterals: false): a `ref` attribute whose value is a string literal, bare or in braces. From React 18.3 on the rule no longer reports `this.refs` reads.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "jsx_attribute",
+            "all": [
+              {
+                "has": {
+                  "kind": "property_identifier",
+                  "regex": "^ref$"
+                }
+              },
+              {
+                "has": {
+                  "any": [
+                    {
+                      "kind": "string"
+                    },
+                    {
+                      "kind": "jsx_expression",
+                      "has": {
+                        "matches": "string-in-parens"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": {
+            "string-in-parens": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "string-in-parens"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-string-refs",
+        "message": "Using string literals in ref attributes is deprecated.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-string-refs"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

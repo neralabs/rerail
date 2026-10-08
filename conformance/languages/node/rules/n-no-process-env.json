@@ -1,0 +1,87 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-no-process-env",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-n 18.4.1 n/no-process-env: `process.env` / `process['env']` member reads on an identifier named process (upstream reads the name only, no scope); default options allow no variable.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^process$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^env$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "subscript_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^process$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "index",
+                      "kind": "string",
+                      "has": {
+                        "kind": "string_fragment",
+                        "regex": "^env$"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/no-process-env",
+        "message": "Unexpected use of process.env.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/no-process-env"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+<template><template v-for="x of list">foo<div></div></template></template>

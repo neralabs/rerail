@@ -1,0 +1,116 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-probe-invalid-segment-config",
+  "revision": 1,
+  "mode": "log",
+  "description": "Next pack probe. Route segment config: dynamic not one of auto|force-dynamic|error|force-static, runtime not nodejs|edge, or revalidate not a number or false, in an app-router route file.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "path": {
+              "regex": "^(?:src/)?app/(?:.*/)?(?:page|layout|template|loading|error|global-error|not-found|default|route)\\.(?:js|jsx|ts|tsx)$"
+            }
+          },
+          "rule": {
+            "inside": {
+              "kind": "variable_declarator",
+              "inside": {
+                "kind": "lexical_declaration",
+                "inside": {
+                  "kind": "export_statement",
+                  "inside": {
+                    "kind": "program"
+                  }
+                }
+              }
+            },
+            "any": [
+              {
+                "inside": {
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "name",
+                    "regex": "^dynamic$"
+                  }
+                },
+                "value": {
+                  "type": "string"
+                },
+                "not": {
+                  "value": {
+                    "regex": "^(?:auto|force-dynamic|error|force-static)$"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "name",
+                    "regex": "^runtime$"
+                  }
+                },
+                "value": {
+                  "type": "string"
+                },
+                "not": {
+                  "value": {
+                    "regex": "^(?:nodejs|edge)$"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "name",
+                    "regex": "^revalidate$"
+                  }
+                },
+                "value": {
+                  "constant": true
+                },
+                "not": {
+                  "any": [
+                    {
+                      "value": {
+                        "type": "number"
+                      }
+                    },
+                    {
+                      "value": {
+                        "eq": false
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "next/invalid-segment-config",
+        "message": "Route segment config: dynamic not one of auto|force-dynamic|error|force-static, runtime not nodejs|edge, or revalidate not a number or false, in an app-router route file."
+      }
+    }
+  ]
+}

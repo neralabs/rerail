@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Rerail</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/tokens.generated.css" />
+    <link rel="stylesheet" href="/app.css" />
+    <script>
+      // Apply the persisted theme before first paint so the page never flashes the other scheme.
+      try { const t = localStorage.getItem("rerail-ui-theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
+    </script>
+  </head>
+  <body data-view="rules">
+    <div class="canvas" aria-hidden="true"></div>
+    <div class="frame">
+      <div class="shell">
+        <header class="topbar">
+          <h1>Rerail</h1>
+          <span class="repoid" id="repoId"></span>
+          <nav class="views" aria-label="Views">
+            <button data-view="rules" aria-current="page">Rules</button>
+            <button data-view="sessions">Sessions</button>
+          </nav>
+          <div class="status">
+            <fieldset class="seg2 theme" id="themeSeg" aria-label="Theme">
+              <button data-t="" aria-pressed="true">System</button>
+              <button data-t="light" aria-pressed="false">Light</button>
+              <button data-t="dark" aria-pressed="false">Dark</button>
+            </fieldset>
+            <span class="dot" aria-hidden="true"></span>
+            <span id="statusText">Watching this project</span>
+          </div>
+        </header>
+        <div class="gen" id="gen">
+          <span class="pill" id="freshness"><span class="d" aria-hidden="true"></span><span id="freshnessText">Connecting…</span></span>
+        </div>
+        <div class="rollup" id="overview"></div>
+        <div class="controls" id="controls">
+          <div class="search">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+            <input id="q" type="search" placeholder="Search rules, ids or descriptions" aria-label="Search rules" />
+          </div>
+          <div class="chips" id="chips">
+            <button class="chip" data-f="all" aria-pressed="true">All</button>
+            <button class="chip" data-f="added" aria-pressed="false">Added by you</button>
+            <button class="chip" data-f="preset" aria-pressed="false">Nera presets</button>
+            <button class="chip" data-f="on" aria-pressed="false">On</button>
+            <button class="chip" data-f="off" aria-pressed="false">Off</button>
+            <button class="chip" data-f="fired" aria-pressed="false">Has triggered</button>
+          </div>
+        </div>
+        <div class="main">
+          <div id="content"></div>
+        </div>
+      </div>
+      <aside class="panel" id="panel" aria-label="Rule detail"></aside>
+    </div>
+    <output class="toast" id="toast"></output>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

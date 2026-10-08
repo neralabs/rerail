@@ -1,0 +1,1 @@
+var foo = React.render(<div />, root);

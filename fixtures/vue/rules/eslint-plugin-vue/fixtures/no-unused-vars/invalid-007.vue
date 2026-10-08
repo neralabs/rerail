@@ -1,0 +1,1 @@
+<template><div v-for="(a, b, c) in foo">{{a}}</div></template>

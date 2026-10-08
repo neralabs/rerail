@@ -1,0 +1,1 @@
+var x = err => { setTimeout( () => { callback(); }); }

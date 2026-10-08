@@ -1,0 +1,1 @@
+const {access} = process.getBuiltinModule('fs'); access()

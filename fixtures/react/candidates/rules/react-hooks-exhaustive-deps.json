@@ -1,0 +1,1419 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-hooks-exhaustive-deps",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-react-hooks 7.1.1 react-hooks/exhaustive-deps, the missing-dependency report only: the dependency array literal of useEffect / useLayoutEffect / useInsertionEffect / useCallback / useMemo (and React.*), when the inline callback reads a name bound in the function that calls the hook (outside the callback) that no dependency's root names; useState/useReducer setters and dispatchers, useRef, useEffectEvent and useTransition results count as stable.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "missing-dependency",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "array",
+            "pattern": "$DEPS",
+            "all": [
+              {
+                "nthChild": 2,
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "kind": "call_expression",
+                    "pattern": "$CALL",
+                    "matches": "deps-hook",
+                    "all": [
+                      {
+                        "inside": {
+                          "stopBy": {
+                            "matches": "fn"
+                          },
+                          "matches": "fn",
+                          "pattern": "$C"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "arrow_function"
+                    },
+                    {
+                      "kind": "function_expression"
+                    }
+                  ],
+                  "pattern": "$CB",
+                  "nthChild": 1,
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "identifier",
+                    "pattern": "$R",
+                    "all": [
+                      {
+                        "not": {
+                          "inside": {
+                            "field": "name",
+                            "kind": "variable_declarator"
+                          }
+                        }
+                      },
+                      {
+                        "resolves": {
+                          "binding": {
+                            "site": {
+                              "all": [
+                                {
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "matches": "fn",
+                                    "pattern": "$SC",
+                                    "compare": {
+                                      "left": "SC",
+                                      "op": "eq",
+                                      "right": "C",
+                                      "text": "node"
+                                    }
+                                  }
+                                },
+                                {
+                                  "not": {
+                                    "inside": {
+                                      "stopBy": "end",
+                                      "pattern": "$SCB",
+                                      "compare": {
+                                        "left": "SCB",
+                                        "op": "eq",
+                                        "right": "CB",
+                                        "text": "node"
+                                      }
+                                    }
+                                  }
+                                },
+                                {
+                                  "not": {
+                                    "matches": "stable-site"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "stopBy": "end",
+                            "kind": "array",
+                            "pattern": "$D2",
+                            "compare": {
+                              "left": "D2",
+                              "op": "eq",
+                              "right": "DEPS",
+                              "text": "node"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "identifier",
+                    "pattern": "$E",
+                    "compare": {
+                      "left": "E",
+                      "op": "eq",
+                      "right": "R"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "utils": {
+            "class-field": {
+              "kind": "public_field_definition"
+            },
+            "fn": {
+              "any": [
+                {
+                  "kind": "function_declaration"
+                },
+                {
+                  "kind": "generator_function_declaration"
+                },
+                {
+                  "kind": "function_expression"
+                },
+                {
+                  "kind": "generator_function"
+                },
+                {
+                  "kind": "arrow_function"
+                },
+                {
+                  "kind": "method_definition"
+                }
+              ]
+            },
+            "hook": {
+              "kind": "call_expression",
+              "has": {
+                "field": "function",
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$"
+                  },
+                  {
+                    "kind": "member_expression",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "object",
+                          "kind": "identifier",
+                          "regex": "^[A-Z]"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "property",
+                          "kind": "property_identifier",
+                          "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "use-hook": {
+              "has": {
+                "field": "function",
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^use$"
+                  },
+                  {
+                    "kind": "member_expression",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "object",
+                          "kind": "identifier",
+                          "regex": "^React$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "property",
+                          "regex": "^use$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "named-component": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "function_declaration"
+                    },
+                    {
+                      "kind": "generator_function_declaration"
+                    },
+                    {
+                      "kind": "function_expression"
+                    },
+                    {
+                      "kind": "generator_function"
+                    }
+                  ],
+                  "has": {
+                    "field": "name",
+                    "any": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "kind": "property_identifier"
+                      },
+                      {
+                        "kind": "shorthand_property_identifier_pattern"
+                      }
+                    ],
+                    "regex": "^[A-Z]"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "function_expression"
+                    },
+                    {
+                      "kind": "generator_function"
+                    },
+                    {
+                      "kind": "arrow_function"
+                    }
+                  ],
+                  "not": {
+                    "has": {
+                      "field": "name",
+                      "regex": "[\\s\\S]"
+                    }
+                  },
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "inside": {
+                            "field": "value",
+                            "kind": "variable_declarator",
+                            "has": {
+                              "field": "name",
+                              "any": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "kind": "property_identifier"
+                                },
+                                {
+                                  "kind": "shorthand_property_identifier_pattern"
+                                }
+                              ],
+                              "regex": "^[A-Z]"
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "field": "right",
+                            "kind": "assignment_expression",
+                            "has": {
+                              "field": "left",
+                              "any": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "kind": "property_identifier"
+                                },
+                                {
+                                  "kind": "shorthand_property_identifier_pattern"
+                                }
+                              ],
+                              "regex": "^[A-Z]"
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "field": "value",
+                            "kind": "pair",
+                            "has": {
+                              "field": "key",
+                              "not": {
+                                "kind": "computed_property_name"
+                              },
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "kind": "property_identifier"
+                                    },
+                                    {
+                                      "kind": "shorthand_property_identifier_pattern"
+                                    }
+                                  ],
+                                  "regex": "^[A-Z]"
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "field": "right",
+                            "kind": "assignment_pattern",
+                            "has": {
+                              "field": "left",
+                              "any": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "kind": "property_identifier"
+                                },
+                                {
+                                  "kind": "shorthand_property_identifier_pattern"
+                                }
+                              ],
+                              "regex": "^[A-Z]"
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "field": "right",
+                            "kind": "object_assignment_pattern",
+                            "has": {
+                              "field": "left",
+                              "any": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "kind": "property_identifier"
+                                },
+                                {
+                                  "kind": "shorthand_property_identifier_pattern"
+                                }
+                              ],
+                              "regex": "^[A-Z]"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "method_definition",
+                  "inside": {
+                    "kind": "object"
+                  },
+                  "has": {
+                    "field": "name",
+                    "not": {
+                      "kind": "computed_property_name"
+                    },
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "kind": "property_identifier"
+                          },
+                          {
+                            "kind": "shorthand_property_identifier_pattern"
+                          }
+                        ],
+                        "regex": "^[A-Z]"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "named-hook": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "function_declaration"
+                    },
+                    {
+                      "kind": "generator_function_declaration"
+                    },
+                    {
+                      "kind": "function_expression"
+                    },
+                    {
+                      "kind": "generator_function"
+                    }
+                  ],
+                  "has": {
+                    "field": "name",
+                    "any": [
+                      {
+                        "any": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "kind": "property_identifier"
+                          },
+                          {
+                            "kind": "shorthand_property_identifier_pattern"
+                          }
+                        ],
+                        "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$"
+                      },
+                      {
+                        "kind": "member_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "object",
+                              "kind": "identifier",
+                              "regex": "^[A-Z]"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "property",
+                              "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "function_expression"
+                    },
+                    {
+                      "kind": "generator_function"
+                    },
+                    {
+                      "kind": "arrow_function"
+                    }
+                  ],
+                  "not": {
+                    "has": {
+                      "field": "name",
+                      "regex": "[\\s\\S]"
+                    }
+                  },
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "inside": {
+                            "field": "value",
+                            "kind": "variable_declarator",
+                            "has": {
+                              "field": "name",
+                              "any": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "kind": "property_identifier"
+                                    },
+                                    {
+                                      "kind": "shorthand_property_identifier_pattern"
+                                    }
+                                  ],
+                                  "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$"
+                                },
+                                {
+                                  "kind": "member_expression",
+                                  "all": [
+                                    {
+                                      "has": {
+                                        "field": "object",
+                                        "kind": "identifier",
+                                        "regex": "^[A-Z]"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "field": "property",
+                                        "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "field": "right",
+                            "kind": "assignment_expression",
+                            "has": {
+                              "field": "left",
+                              "any": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "kind": "property_identifier"
+                                    },
+                                    {
+                                      "kind": "shorthand_property_identifier_pattern"
+                                    }
+                                  ],
+                                  "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$"
+                                },
+                                {
+                                  "kind": "member_expression",
+                                  "all": [
+                                    {
+                                      "has": {
+                                        "field": "object",
+                                        "kind": "identifier",
+                                        "regex": "^[A-Z]"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "field": "property",
+                                        "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "field": "value",
+                            "kind": "pair",
+                            "has": {
+                              "field": "key",
+                              "not": {
+                                "kind": "computed_property_name"
+                              },
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "kind": "property_identifier"
+                                        },
+                                        {
+                                          "kind": "shorthand_property_identifier_pattern"
+                                        }
+                                      ],
+                                      "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$"
+                                    },
+                                    {
+                                      "kind": "member_expression",
+                                      "all": [
+                                        {
+                                          "has": {
+                                            "field": "object",
+                                            "kind": "identifier",
+                                            "regex": "^[A-Z]"
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "field": "property",
+                                            "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "field": "right",
+                            "kind": "assignment_pattern",
+                            "has": {
+                              "field": "left",
+                              "any": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "kind": "property_identifier"
+                                    },
+                                    {
+                                      "kind": "shorthand_property_identifier_pattern"
+                                    }
+                                  ],
+                                  "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$"
+                                },
+                                {
+                                  "kind": "member_expression",
+                                  "all": [
+                                    {
+                                      "has": {
+                                        "field": "object",
+                                        "kind": "identifier",
+                                        "regex": "^[A-Z]"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "field": "property",
+                                        "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "field": "right",
+                            "kind": "object_assignment_pattern",
+                            "has": {
+                              "field": "left",
+                              "any": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "kind": "property_identifier"
+                                    },
+                                    {
+                                      "kind": "shorthand_property_identifier_pattern"
+                                    }
+                                  ],
+                                  "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$"
+                                },
+                                {
+                                  "kind": "member_expression",
+                                  "all": [
+                                    {
+                                      "has": {
+                                        "field": "object",
+                                        "kind": "identifier",
+                                        "regex": "^[A-Z]"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "field": "property",
+                                        "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "method_definition",
+                  "inside": {
+                    "kind": "object"
+                  },
+                  "has": {
+                    "field": "name",
+                    "not": {
+                      "kind": "computed_property_name"
+                    },
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "property_identifier"
+                              },
+                              {
+                                "kind": "shorthand_property_identifier_pattern"
+                              }
+                            ],
+                            "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$"
+                          },
+                          {
+                            "kind": "member_expression",
+                            "all": [
+                              {
+                                "has": {
+                                  "field": "object",
+                                  "kind": "identifier",
+                                  "regex": "^[A-Z]"
+                                }
+                              },
+                              {
+                                "has": {
+                                  "field": "property",
+                                  "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "named": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "function_declaration"
+                    },
+                    {
+                      "kind": "generator_function_declaration"
+                    },
+                    {
+                      "kind": "function_expression"
+                    },
+                    {
+                      "kind": "generator_function"
+                    }
+                  ],
+                  "has": {
+                    "field": "name",
+                    "regex": "[\\s\\S]"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "function_expression"
+                    },
+                    {
+                      "kind": "generator_function"
+                    },
+                    {
+                      "kind": "arrow_function"
+                    }
+                  ],
+                  "not": {
+                    "has": {
+                      "field": "name",
+                      "regex": "[\\s\\S]"
+                    }
+                  },
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "inside": {
+                            "field": "value",
+                            "kind": "variable_declarator",
+                            "has": {
+                              "field": "name",
+                              "regex": "[\\s\\S]"
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "field": "right",
+                            "kind": "assignment_expression",
+                            "has": {
+                              "field": "left",
+                              "regex": "[\\s\\S]"
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "field": "value",
+                            "kind": "pair",
+                            "has": {
+                              "field": "key",
+                              "not": {
+                                "kind": "computed_property_name"
+                              },
+                              "all": [
+                                {
+                                  "regex": "[\\s\\S]"
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "field": "right",
+                            "kind": "assignment_pattern",
+                            "has": {
+                              "field": "left",
+                              "regex": "[\\s\\S]"
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "field": "right",
+                            "kind": "object_assignment_pattern",
+                            "has": {
+                              "field": "left",
+                              "regex": "[\\s\\S]"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "method_definition",
+                  "inside": {
+                    "kind": "object"
+                  },
+                  "has": {
+                    "field": "name",
+                    "not": {
+                      "kind": "computed_property_name"
+                    },
+                    "all": [
+                      {
+                        "regex": "[\\s\\S]"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "memo-callback": {
+              "inside": {
+                "kind": "arguments",
+                "inside": {
+                  "kind": "call_expression",
+                  "has": {
+                    "field": "function",
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^(?:memo|forwardRef)$"
+                      },
+                      {
+                        "kind": "member_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "object",
+                              "kind": "identifier",
+                              "regex": "^React$"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "property",
+                              "regex": "^(?:memo|forwardRef)$"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "component-or-hook": {
+              "any": [
+                {
+                  "matches": "named-component"
+                },
+                {
+                  "matches": "named-hook"
+                },
+                {
+                  "not": {
+                    "matches": "named"
+                  },
+                  "matches": "memo-callback"
+                }
+              ]
+            },
+            "class-function": {
+              "any": [
+                {
+                  "kind": "method_definition",
+                  "inside": {
+                    "kind": "class_body"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "function_expression"
+                    },
+                    {
+                      "kind": "generator_function"
+                    },
+                    {
+                      "kind": "arrow_function"
+                    }
+                  ],
+                  "inside": {
+                    "field": "value",
+                    "matches": "class-field"
+                  }
+                }
+              ]
+            },
+            "in-do-while": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "do_statement"
+              }
+            },
+            "cycled": {
+              "inside": {
+                "stopBy": {
+                  "matches": "fn"
+                },
+                "not": {
+                  "matches": "fn"
+                },
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "for_statement"
+                      },
+                      {
+                        "kind": "for_in_statement"
+                      },
+                      {
+                        "kind": "while_statement"
+                      },
+                      {
+                        "kind": "do_statement"
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "conditional": {
+              "any": [
+                {
+                  "matches": "conditional-position"
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "matches": "fn"
+                    },
+                    "not": {
+                      "matches": "fn"
+                    },
+                    "all": [
+                      {
+                        "matches": "conditional-position"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "conditional-position": {
+              "any": [
+                {
+                  "inside": {
+                    "field": "consequence",
+                    "kind": "if_statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "field": "alternative",
+                    "kind": "if_statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "field": "consequence",
+                    "kind": "ternary_expression"
+                  }
+                },
+                {
+                  "inside": {
+                    "field": "alternative",
+                    "kind": "ternary_expression"
+                  }
+                },
+                {
+                  "inside": {
+                    "field": "right",
+                    "kind": "binary_expression",
+                    "has": {
+                      "field": "operator",
+                      "regex": "^(?:&&|\\|\\||\\?\\?)$"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "field": "right",
+                    "kind": "augmented_assignment_expression",
+                    "has": {
+                      "field": "operator",
+                      "regex": "^(?:&&=|\\|\\|=|\\?\\?=)$"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "field": "body",
+                    "kind": "switch_case"
+                  }
+                },
+                {
+                  "inside": {
+                    "field": "body",
+                    "kind": "switch_default"
+                  }
+                },
+                {
+                  "kind": "catch_clause"
+                },
+                {
+                  "inside": {
+                    "field": "body",
+                    "kind": "try_statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "field": "right",
+                    "kind": "assignment_pattern"
+                  }
+                },
+                {
+                  "inside": {
+                    "field": "right",
+                    "kind": "object_assignment_pattern"
+                  }
+                }
+              ]
+            },
+            "exit": {
+              "any": [
+                {
+                  "kind": "return_statement"
+                },
+                {
+                  "kind": "break_statement",
+                  "has": {
+                    "kind": "statement_identifier"
+                  }
+                }
+              ]
+            },
+            "has-return": {
+              "not": {
+                "matches": "fn"
+              },
+              "has": {
+                "stopBy": {
+                  "matches": "fn"
+                },
+                "matches": "exit"
+              }
+            },
+            "early-return": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": "has-return"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "matches": "fn"
+                    },
+                    "not": {
+                      "matches": "fn"
+                    },
+                    "all": [
+                      {
+                        "follows": {
+                          "stopBy": "end",
+                          "matches": "has-return"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "effect-event-callee": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^useEffectEvent$"
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^React$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "regex": "^useEffectEvent$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "effect-event-value": {
+              "has": {
+                "field": "value",
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "kind": "identifier",
+                  "regex": "^useEffectEvent$"
+                }
+              }
+            },
+            "effect-event-declarator": {
+              "matches": "effect-event-value",
+              "inside": {
+                "any": [
+                  {
+                    "kind": "lexical_declaration"
+                  },
+                  {
+                    "kind": "variable_declaration"
+                  }
+                ],
+                "inside": {
+                  "kind": "statement_block",
+                  "inside": {
+                    "field": "body",
+                    "any": [
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      }
+                    ],
+                    "matches": "inside-or-is-component-or-hook"
+                  }
+                }
+              }
+            },
+            "effect-call": {
+              "kind": "call_expression",
+              "has": {
+                "field": "arguments",
+                "has": {
+                  "regex": "[\\s\\S]",
+                  "not": {
+                    "regex": "^[(),]$"
+                  }
+                }
+              },
+              "all": [
+                {
+                  "has": {
+                    "field": "function",
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^(?:useEffect|useLayoutEffect|useInsertionEffect|useEffectEvent)$"
+                      },
+                      {
+                        "kind": "member_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "object",
+                              "kind": "identifier",
+                              "regex": "^React$"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "property",
+                              "regex": "^(?:useEffect|useLayoutEffect|useInsertionEffect|useEffectEvent)$"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "inside-or-is-component-or-hook": {
+              "any": [
+                {
+                  "matches": "component-or-hook"
+                },
+                {
+                  "matches": "inside-component-or-hook"
+                }
+              ]
+            },
+            "inside-component-or-hook": {
+              "inside": {
+                "stopBy": "end",
+                "matches": "fn",
+                "all": [
+                  {
+                    "matches": "component-or-hook"
+                  }
+                ]
+              }
+            },
+            "deps-hook": {
+              "has": {
+                "field": "function",
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:useEffect|useLayoutEffect|useInsertionEffect|useCallback|useMemo)$"
+                  },
+                  {
+                    "kind": "member_expression",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "object",
+                          "kind": "identifier",
+                          "regex": "^React$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "property",
+                          "regex": "^(?:useEffect|useLayoutEffect|useInsertionEffect|useCallback|useMemo)$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "stable-site": {
+              "any": [
+                {
+                  "matches": "stable-hook-site"
+                },
+                {
+                  "matches": "literal-const-site"
+                }
+              ]
+            },
+            "literal-const-site": {
+              "kind": "variable_declarator",
+              "inside": {
+                "kind": "lexical_declaration",
+                "has": {
+                  "regex": "^const$"
+                }
+              },
+              "has": {
+                "field": "value",
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "number"
+                  },
+                  {
+                    "kind": "true"
+                  },
+                  {
+                    "kind": "false"
+                  },
+                  {
+                    "kind": "null"
+                  },
+                  {
+                    "kind": "regex"
+                  }
+                ]
+              }
+            },
+            "stable-hook-site": {
+              "kind": "variable_declarator",
+              "has": {
+                "field": "value",
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "regex": "^(?:React\\.)?(?:useRef|useState|useReducer|useEffectEvent|useTransition|useActionState)$"
+                }
+              },
+              "not": {
+                "has": {
+                  "field": "name",
+                  "kind": "array_pattern"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-hooks/exhaustive-deps",
+        "message": "React Hook has a missing dependency. Either include it or remove the dependency array.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react-hooks/exhaustive-deps"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

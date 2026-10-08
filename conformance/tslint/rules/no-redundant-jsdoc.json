@@ -1,0 +1,85 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-redundant-jsdoc",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Flags JSDoc tags redundant in TypeScript. Without a JSDoc parse, content regexes anchor on the tag name / type expression through named groups, and are not confined to /** */ comments.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "redundant-tag",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "@(?<TAG>(?:abstract|access|class|constant|constructs|default|enum|exports|function|global|implements|interface|instance|member|memberof|mixes|mixin|module|name|namespace|override|private|property|protected|public|readonly|requires|static|this|type|typedef))\\b[^-/]"
+        }
+      },
+      "violation": {
+        "anchor": "capture.TAG",
+        "code": "NO_REDUNDANT_JSDOC",
+        "message": "JSDoc tag is redundant in TypeScript code."
+      }
+    },
+    {
+      "id": "jsdoc-type",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "@(?:param|returns?)[ \\t]+(?<TYPE>\\{[^}\\n]*\\})"
+        }
+      },
+      "violation": {
+        "anchor": "capture.TYPE",
+        "code": "NO_REDUNDANT_JSDOC",
+        "message": "Type annotation in JSDoc is redundant in TypeScript code."
+      }
+    },
+    {
+      "id": "param-without-description",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?m)@(?<TAG>param)(?:[ \\t]+\\{[^}\\n]*\\})?[ \\t]+\\[?[\\w$.]+(?:=[^\\]\\s]*\\])?[ \\t]*(?:\\*/)?$"
+        }
+      },
+      "violation": {
+        "anchor": "capture.TAG",
+        "code": "NO_REDUNDANT_JSDOC",
+        "message": "Tag is redundant in TypeScript code if it has no description."
+      }
+    },
+    {
+      "id": "returns-without-description",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?m)@(?<TAG>returns?)(?:[ \\t]+\\{[^}\\n]*\\})?[ \\t]*(?:\\*/)?$"
+        }
+      },
+      "violation": {
+        "anchor": "capture.TAG",
+        "code": "NO_REDUNDANT_JSDOC",
+        "message": "Tag is redundant in TypeScript code if it has no description."
+      }
+    },
+    {
+      "id": "template-without-description",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?m)@(?<TAG>template)[ \\t]+[\\w$]+(?:[ \\t]*,[ \\t]*[\\w$]+)*[ \\t]*(?:\\*/)?$"
+        }
+      },
+      "violation": {
+        "anchor": "capture.TAG",
+        "code": "NO_REDUNDANT_JSDOC",
+        "message": "Tag is redundant in TypeScript code if it has no description."
+      }
+    }
+  ]
+}

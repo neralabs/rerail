@@ -1,0 +1,25 @@
+{
+  "verdict": "INFEASIBLE",
+  "primitive": "type-checker",
+  "secondary": [],
+  "needs": [
+    "expression-type",
+    "symbol-resolution",
+    "lib-types"
+  ],
+  "reason": "The checker must answer: is the type of the for-in right operand an array or string type? The port is a sound under-approximation (for-in over an array, string or template literal) that matches nothing in the fixture, where every operand is an identifier. Checker APIs: getTypeAtLocation(for-in operand), symbol name Array (lib) or StringLike flags (:61-63). Line 36 `str` is string only through initializer inference.",
+  "evidence": [
+    {
+      "variant": ".",
+      "file": "test.ts.lint",
+      "line": 34,
+      "why": "`for (var k in array);` is flagged. It is syntactically identical to line 26 `for (var k in o);`, which is valid. Only the declared types of `array` and `o` differ"
+    },
+    {
+      "variant": ".",
+      "file": "test.ts.lint",
+      "line": 36,
+      "why": "`for (var k in str)`: `str` is string-typed only through its initializer on line 10"
+    }
+  ]
+}

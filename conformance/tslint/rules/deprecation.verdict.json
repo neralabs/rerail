@@ -1,0 +1,29 @@
+{
+  "verdict": "INFEASIBLE",
+  "primitive": "type-checker",
+  "secondary": [
+    "cross-file",
+    "jsdoc-parse"
+  ],
+  "needs": [
+    "symbol-resolution",
+    "cross-file",
+    "overload-resolution",
+    "expression-type"
+  ],
+  "reason": "Needs 'does this identifier resolve to a symbol whose declaration carries a JSDoc @deprecated tag?'. That is cross-file symbol resolution (imports from ./other.test), overload-signature selection, and JSDoc parsing. No syntactic proxy exists, so there is no port. Checker APIs: getResolvedSignature (:144, overload chosen for `other()` vs `other(1)`), getTypeAtLocation().getProperty (:152, member `p.h`), getSymbolAtLocation (:161), getAliasedSymbol (:165, imports from ./other.test); the same-file plain-identifier subset would need only shared-metavar-env + scope-graph.",
+  "evidence": [
+    {
+      "variant": ".",
+      "file": "test.ts.lint",
+      "line": 6,
+      "why": "`other();` is flagged because the signature chosen in other.test.ts is @deprecated; `other(1)` next line resolves to a non-deprecated overload"
+    },
+    {
+      "variant": ".",
+      "file": "test.ts.lint",
+      "line": 39,
+      "why": "`p.h` flagged but `p.g` (line 38) not: member resolution to a JSDoc-tagged property"
+    }
+  ]
+}

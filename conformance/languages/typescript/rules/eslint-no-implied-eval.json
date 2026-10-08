@@ -1,0 +1,451 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-no-implied-eval",
+  "revision": 1,
+  "mode": "steer",
+  "description": "ESLint 10.11.0 no-implied-eval, default options. Port of ESLint's `no-implied-eval` rule (https://eslint.org/docs/latest/rules/no-implied-eval). Flags `setTimeout`/`setInterval`/`execScript` called (directly or through `window`/`self`/`global`/`globalThis`) with a first argument whose value is a string (through an effectively constant binding: `value.follow`), a template literal, or a `+` with such an operand. Those names count only when the configured ecmaVersion and globals declare them (`ast.languageOptions`) and nothing shadows them (`resolves`).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "implied-eval",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {},
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "matches": "callee"
+            },
+            "arguments": {
+              "signature": [
+                "code"
+              ],
+              "bind": {
+                "S": "code"
+              }
+            }
+          },
+          "utils": {
+            "global-obj": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$G",
+                  "resolves": {
+                    "global": [
+                      "window",
+                      "self",
+                      "global",
+                      "globalThis"
+                    ],
+                    "directives": "eslint"
+                  }
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "matches": "global-obj"
+                      }
+                    },
+                    {
+                      "has": {
+                        "kind": "property_identifier",
+                        "pattern": "$G"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "subscript_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "matches": "global-obj"
+                      }
+                    },
+                    {
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "template_string",
+                            "not": {
+                              "has": {
+                                "kind": "template_substitution"
+                              }
+                            }
+                          }
+                        ],
+                        "has": {
+                          "kind": "string_fragment",
+                          "pattern": "$G"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "pattern": "$G",
+                      "resolves": {
+                        "global": [
+                          "setTimeout",
+                          "setInterval"
+                        ],
+                        "directives": "eslint"
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "member_expression",
+                          "all": [
+                            {
+                              "has": {
+                                "kind": "property_identifier",
+                                "regex": "^(setTimeout|setInterval)$"
+                              }
+                            },
+                            {
+                              "has": {
+                                "matches": "global-obj"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "kind": "subscript_expression",
+                          "all": [
+                            {
+                              "has": {
+                                "any": [
+                                  {
+                                    "kind": "string"
+                                  },
+                                  {
+                                    "kind": "template_string",
+                                    "not": {
+                                      "has": {
+                                        "kind": "template_substitution"
+                                      }
+                                    }
+                                  }
+                                ],
+                                "value": {
+                                  "regex": "^(setTimeout|setInterval)$"
+                                }
+                              }
+                            },
+                            {
+                              "has": {
+                                "matches": "global-obj"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "string-arg": {
+              "any": [
+                {
+                  "value": {
+                    "type": "string",
+                    "follow": true
+                  }
+                },
+                {
+                  "kind": "template_string"
+                },
+                {
+                  "kind": "binary_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "regex": "^\\+$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "matches": "string-arg"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "string-arg"
+                  }
+                }
+              ]
+            }
+          },
+          "constraints": {
+            "S": {
+              "matches": "string-arg"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-implied-eval",
+        "message": "Implied eval. Consider passing a function instead of a string.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-implied-eval"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "exec-script",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {},
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "matches": "callee"
+            },
+            "arguments": {
+              "signature": [
+                "code"
+              ],
+              "bind": {
+                "S": "code"
+              }
+            }
+          },
+          "utils": {
+            "global-obj": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$G",
+                  "resolves": {
+                    "global": [
+                      "window",
+                      "self",
+                      "global",
+                      "globalThis"
+                    ],
+                    "directives": "eslint"
+                  }
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "matches": "global-obj"
+                      }
+                    },
+                    {
+                      "has": {
+                        "kind": "property_identifier",
+                        "pattern": "$G"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "subscript_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "matches": "global-obj"
+                      }
+                    },
+                    {
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "template_string",
+                            "not": {
+                              "has": {
+                                "kind": "template_substitution"
+                              }
+                            }
+                          }
+                        ],
+                        "has": {
+                          "kind": "string_fragment",
+                          "pattern": "$G"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "pattern": "$G",
+                      "resolves": {
+                        "global": [
+                          "execScript"
+                        ],
+                        "directives": "eslint"
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "member_expression",
+                          "all": [
+                            {
+                              "has": {
+                                "kind": "property_identifier",
+                                "regex": "^execScript$"
+                              }
+                            },
+                            {
+                              "has": {
+                                "matches": "global-obj"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "kind": "subscript_expression",
+                          "all": [
+                            {
+                              "has": {
+                                "any": [
+                                  {
+                                    "kind": "string"
+                                  },
+                                  {
+                                    "kind": "template_string",
+                                    "not": {
+                                      "has": {
+                                        "kind": "template_substitution"
+                                      }
+                                    }
+                                  }
+                                ],
+                                "value": {
+                                  "regex": "^execScript$"
+                                }
+                              }
+                            },
+                            {
+                              "has": {
+                                "matches": "global-obj"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "string-arg": {
+              "any": [
+                {
+                  "value": {
+                    "type": "string",
+                    "follow": true
+                  }
+                },
+                {
+                  "kind": "template_string"
+                },
+                {
+                  "kind": "binary_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "regex": "^\\+$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "matches": "string-arg"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "string-arg"
+                  }
+                }
+              ]
+            }
+          },
+          "constraints": {
+            "S": {
+              "matches": "string-arg"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-implied-eval",
+        "message": "Implied eval. Do not use execScript().",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-implied-eval"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

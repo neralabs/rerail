@@ -1,0 +1,103 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-jsx-no-undef",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-react 7.37.5 react/jsx-no-undef (allowGlobals: false, module code): a JSX tag name (not a DOM tag) or the root of a member tag name that no file-local binding declares; globals, even configured ones, do not count in a module.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "any": [
+              {
+                "inside": {
+                  "field": "name",
+                  "any": [
+                    {
+                      "kind": "jsx_opening_element"
+                    },
+                    {
+                      "kind": "jsx_self_closing_element"
+                    }
+                  ]
+                },
+                "regex": "^[^a-z]"
+              },
+              {
+                "matches": "member-root"
+              }
+            ],
+            "not": {
+              "resolves": {
+                "binding": {}
+              }
+            }
+          },
+          "utils": {
+            "name-chain": {
+              "any": [
+                {
+                  "inside": {
+                    "field": "name",
+                    "any": [
+                      {
+                        "kind": "jsx_opening_element"
+                      },
+                      {
+                        "kind": "jsx_self_closing_element"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "field": "object",
+                    "kind": "member_expression",
+                    "matches": "name-chain"
+                  }
+                }
+              ]
+            },
+            "member-root": {
+              "inside": {
+                "field": "object",
+                "kind": "member_expression",
+                "matches": "name-chain"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/jsx-no-undef",
+        "message": "'$NAME' is not defined.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/jsx-no-undef"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

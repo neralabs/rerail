@@ -1,0 +1,24 @@
+{
+  "verdict": "INFEASIBLE",
+  "primitive": "type-checker",
+  "secondary": [],
+  "needs": [
+    "expression-type",
+    "lib-types"
+  ],
+  "reason": "The checker must answer: is the expression statement's type Promise-like (Promise or a configured class)? The port is a syntactic under-approximation: statement-level `x.then()`, `x.then(onFulfilled)`, `x.finally(...)` and `new Promise(...)`. It has 100% precision and 42% recall on the fixture. Every FN is a bare call whose return type is Promise only through inference. Checker APIs: getTypeAtLocation(call).symbol.name (:76). Misses are calls whose Promise return type is inferred (line 27 function body, line 39 method body returning `new Promise`).",
+  "evidence": [
+    {
+      "variant": "promises",
+      "file": "test.ts.lint",
+      "line": 27,
+      "why": "`returnsPromiseFunction();` is flagged, but `returnsNotAPromise();` (jquerypromise line 15) is the same call-statement shape and is not. Only the callee's inferred return type differs"
+    },
+    {
+      "variant": "promises",
+      "file": "test.ts.lint",
+      "line": 39,
+      "why": "`new ReturnsPromiseClass().returnsPromiseMemberFunction();` is a Promise only because the method body returns `new Promise<void>()`"
+    }
+  ]
+}

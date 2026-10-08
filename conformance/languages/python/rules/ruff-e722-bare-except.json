@@ -1,0 +1,57 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "python-conformance:ruff-e722-bare-except",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's E722 (bare-except) with default settings: an `except` clause that names no exception type, unless its body re-raises with a bare `raise` statement. Reported on the `except` keyword, as Ruff does. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/E722.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bare-except",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "regex": "^except$",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "except_clause",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "raise_statement",
+                    "regex": "^raise$"
+                  }
+                }
+              }
+            },
+            "precedes": {
+              "stopBy": "neighbor",
+              "regex": "^:$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "E722",
+        "message": "Do not use bare `except`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "E722"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:file-header",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Header /Copyright \\d{4}/ with enforce-trailing-newline.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "missing-header",
+      "forbid": {
+        "select_when": {
+          "select": {
+            "regex": {
+              "source": "file.content",
+              "pattern": "\\A(?:#![^\\n]*\\n)?(?<AFTER>)"
+            }
+          },
+          "exists": {
+            "ast": {
+              "language": "typescript",
+              "rule": {
+                "kind": "program",
+                "not": {
+                  "has": {
+                    "kind": "comment",
+                    "regex": "Copyright \\d{4}",
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "not": {
+                          "kind": "hash_bang_line"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.AFTER",
+        "code": "FILE_HEADER",
+        "message": "missing file header"
+      }
+    },
+    {
+      "id": "header-trailing-newline",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\A(?:/\\*(?:[^*]|\\*[^/])*Copyright \\d{4}(?:[^*]|\\*[^/])*\\*/|//[^\\n]*Copyright \\d{4}[^\\n]*)\\r?\\n[^\\r\\n]"
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "FILE_HEADER",
+        "message": "missing new line following the file header"
+      }
+    }
+  ]
+}

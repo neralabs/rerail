@@ -1,0 +1,47 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-sparse-arrays",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Forbids array literals with missing elements (holes); destructuring patterns are allowed. A hole is reported zero-width at the end of the `[` or `,` before it, where TSLint's OmittedExpression starts.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "array-hole",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "regex": "^[,\\[]$"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "array"
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "regex": "^,$"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.end",
+        "code": "NO_SPARSE_ARRAYS",
+        "message": "Array has a missing element."
+      }
+    }
+  ]
+}

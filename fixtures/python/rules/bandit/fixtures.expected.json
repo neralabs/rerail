@@ -1,0 +1,342 @@
+{
+ "tool": "bandit",
+ "version": "1.8.6",
+ "source": {
+  "kind": "fixtures",
+  "origin": "https://github.com/PyCQA/bandit@2d0b675b04c80ae42277e10500db06a0a37bae17",
+  "rules": [
+   "B101",
+   "B113",
+   "B505",
+   "B506",
+   "B610"
+  ],
+  "files": [
+   "assert.py",
+   "django_sql_injection_extra.py",
+   "requests-missing-timeout.py",
+   "weak_cryptographic_key_sizes.py",
+   "yaml_load.py"
+  ]
+ },
+ "findings": [
+  {
+   "rule": "B101",
+   "path": "assert.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 6,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 8,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 11,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 12,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 14,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 15,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 17,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 18,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 19,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 21,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 23,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 25,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 27,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 29,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 31,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 33,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 35,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 37,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 40,
+   "column": 6
+  },
+  {
+   "rule": "B113",
+   "path": "requests-missing-timeout.py",
+   "line": 44,
+   "column": 12
+  },
+  {
+   "rule": "B505",
+   "path": "weak_cryptographic_key_sizes.py",
+   "line": 38,
+   "column": 1
+  },
+  {
+   "rule": "B505",
+   "path": "weak_cryptographic_key_sizes.py",
+   "line": 40,
+   "column": 1
+  },
+  {
+   "rule": "B505",
+   "path": "weak_cryptographic_key_sizes.py",
+   "line": 42,
+   "column": 1
+  },
+  {
+   "rule": "B505",
+   "path": "weak_cryptographic_key_sizes.py",
+   "line": 45,
+   "column": 1
+  },
+  {
+   "rule": "B505",
+   "path": "weak_cryptographic_key_sizes.py",
+   "line": 46,
+   "column": 1
+  },
+  {
+   "rule": "B505",
+   "path": "weak_cryptographic_key_sizes.py",
+   "line": 47,
+   "column": 1
+  },
+  {
+   "rule": "B505",
+   "path": "weak_cryptographic_key_sizes.py",
+   "line": 48,
+   "column": 1
+  },
+  {
+   "rule": "B505",
+   "path": "weak_cryptographic_key_sizes.py",
+   "line": 51,
+   "column": 1
+  },
+  {
+   "rule": "B505",
+   "path": "weak_cryptographic_key_sizes.py",
+   "line": 53,
+   "column": 1
+  },
+  {
+   "rule": "B505",
+   "path": "weak_cryptographic_key_sizes.py",
+   "line": 55,
+   "column": 1
+  },
+  {
+   "rule": "B505",
+   "path": "weak_cryptographic_key_sizes.py",
+   "line": 58,
+   "column": 1
+  },
+  {
+   "rule": "B505",
+   "path": "weak_cryptographic_key_sizes.py",
+   "line": 59,
+   "column": 1
+  },
+  {
+   "rule": "B505",
+   "path": "weak_cryptographic_key_sizes.py",
+   "line": 60,
+   "column": 1
+  },
+  {
+   "rule": "B505",
+   "path": "weak_cryptographic_key_sizes.py",
+   "line": 61,
+   "column": 1
+  },
+  {
+   "rule": "B506",
+   "path": "yaml_load.py",
+   "line": 9,
+   "column": 9
+  },
+  {
+   "rule": "B506",
+   "path": "yaml_load.py",
+   "line": 22,
+   "column": 1
+  },
+  {
+   "rule": "B610",
+   "path": "django_sql_injection_extra.py",
+   "line": 12,
+   "column": 1
+  },
+  {
+   "rule": "B610",
+   "path": "django_sql_injection_extra.py",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "B610",
+   "path": "django_sql_injection_extra.py",
+   "line": 15,
+   "column": 1
+  },
+  {
+   "rule": "B610",
+   "path": "django_sql_injection_extra.py",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "B610",
+   "path": "django_sql_injection_extra.py",
+   "line": 17,
+   "column": 1
+  },
+  {
+   "rule": "B610",
+   "path": "django_sql_injection_extra.py",
+   "line": 20,
+   "column": 1
+  },
+  {
+   "rule": "B610",
+   "path": "django_sql_injection_extra.py",
+   "line": 22,
+   "column": 1
+  },
+  {
+   "rule": "B610",
+   "path": "django_sql_injection_extra.py",
+   "line": 23,
+   "column": 1
+  },
+  {
+   "rule": "B610",
+   "path": "django_sql_injection_extra.py",
+   "line": 24,
+   "column": 1
+  },
+  {
+   "rule": "B610",
+   "path": "django_sql_injection_extra.py",
+   "line": 27,
+   "column": 1
+  },
+  {
+   "rule": "B610",
+   "path": "django_sql_injection_extra.py",
+   "line": 29,
+   "column": 1
+  }
+ ]
+}

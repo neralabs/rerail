@@ -1,0 +1,3 @@
+# target-version: py315
+fd = frozendict[str, Late]
+class Late: ...

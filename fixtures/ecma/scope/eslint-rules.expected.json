@@ -1,0 +1,723 @@
+{
+ "oracle": "eslint 10.11.0",
+ "cases": [
+  {
+   "rule": "no-obj-calls",
+   "code": "Reflect();\nJSON();\nvar x = new Atomics();\n",
+   "languageOptions": {
+    "ecmaVersion": 5,
+    "sourceType": "script"
+   },
+   "reported": [
+    11
+   ]
+  },
+  {
+   "rule": "no-obj-calls",
+   "code": "Reflect();\nJSON();\nvar x = new Atomics();\n",
+   "languageOptions": {
+    "ecmaVersion": 2015,
+    "sourceType": "script"
+   },
+   "reported": [
+    0,
+    11
+   ]
+  },
+  {
+   "rule": "no-obj-calls",
+   "code": "Reflect();\nJSON();\nvar x = new Atomics();\n",
+   "languageOptions": {
+    "ecmaVersion": 2017,
+    "sourceType": "script"
+   },
+   "reported": [
+    0,
+    11,
+    27
+   ]
+  },
+  {
+   "rule": "no-obj-calls",
+   "code": "Reflect();\nJSON();\nvar x = new Atomics();\n",
+   "languageOptions": {
+    "ecmaVersion": 2017,
+    "globals": {
+     "JSON": "off"
+    }
+   },
+   "reported": [
+    0,
+    27
+   ]
+  },
+  {
+   "rule": "no-obj-calls",
+   "code": "/* global Reflect */\nReflect();\n",
+   "languageOptions": {
+    "ecmaVersion": 5,
+    "sourceType": "script"
+   },
+   "reported": [
+    21
+   ]
+  },
+  {
+   "rule": "no-obj-calls",
+   "code": "var foo = JSON; function f(foo) { foo(); }\nvar a = JSON, b = a; b();\nconst d = Math; new d();\nvar e = e; e();\n",
+   "languageOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "script"
+   },
+   "reported": [
+    64,
+    85
+   ]
+  },
+  {
+   "rule": "no-implied-eval",
+   "code": "const s = 'alert(1)'; setTimeout(s);\nlet t = 'a'; t = 'b'; setTimeout(t);\nsetTimeout(() => 1);\nsetTimeout('a' + x);\nconst n = 1; setTimeout(n);\nsetTimeout(`x`);\nvar u = 'x'; function f(u) { setTimeout(u); }\n",
+   "languageOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "script",
+    "globals": {
+     "setTimeout": "readonly"
+    }
+   },
+   "reported": [
+    22,
+    95,
+    144
+   ]
+  },
+  {
+   "rule": "no-new-wrappers",
+   "code": "new String('a');\nnew Number(1);\nnew Boolean(true);\n",
+   "languageOptions": {},
+   "reported": [
+    0,
+    17,
+    32
+   ]
+  },
+  {
+   "rule": "no-new-wrappers",
+   "code": "new String('a');\nnew Number(1);\nnew Boolean(true);\n",
+   "languageOptions": {
+    "globals": {
+     "String": "off"
+    }
+   },
+   "reported": [
+    17,
+    32
+   ]
+  },
+  {
+   "rule": "no-new-wrappers",
+   "code": "new String('a');\nnew Number(1);\nnew Boolean(true);\n",
+   "languageOptions": {
+    "ecmaVersion": 3,
+    "sourceType": "script",
+    "globals": {
+     "Number": false,
+     "Boolean": "off"
+    }
+   },
+   "reported": [
+    0,
+    17
+   ]
+  },
+  {
+   "rule": "no-eval",
+   "code": "this.eval('a');\n",
+   "languageOptions": {
+    "sourceType": "script"
+   },
+   "reported": [
+    5
+   ]
+  },
+  {
+   "rule": "no-eval",
+   "code": "this.eval('a');\n",
+   "languageOptions": {
+    "sourceType": "module"
+   },
+   "reported": []
+  },
+  {
+   "rule": "no-eval",
+   "code": "'use strict'; this.eval('a');\n",
+   "languageOptions": {
+    "sourceType": "script"
+   },
+   "reported": [
+    19
+   ]
+  },
+  {
+   "rule": "no-eval",
+   "code": "(() => this.eval('a'))();\n",
+   "languageOptions": {
+    "sourceType": "script"
+   },
+   "reported": [
+    12
+   ]
+  },
+  {
+   "rule": "no-eval",
+   "code": "function f() { this.eval('a'); }\nfunction g() { 'use strict'; this.eval('b'); }\nfunction h() { function i() { this.eval('c'); } 'use strict'; }\nfunction j() { 'a'; 'use strict'; function k() { this.eval('d'); } }\nfunction l() { ('use strict'); this.eval('e'); }\n",
+   "languageOptions": {
+    "ecmaVersion": 5,
+    "sourceType": "script"
+   },
+   "reported": [
+    20,
+    115,
+    249
+   ]
+  },
+  {
+   "rule": "no-eval",
+   "code": "'use strict';\nthis.eval('a');\nfunction f() { this.eval('b'); }\n",
+   "languageOptions": {
+    "ecmaVersion": 5,
+    "sourceType": "script"
+   },
+   "reported": [
+    19
+   ]
+  },
+  {
+   "rule": "no-eval",
+   "code": "function f() { 'use strict'; this.eval('a'); }\n",
+   "languageOptions": {
+    "ecmaVersion": 3,
+    "sourceType": "script"
+   },
+   "reported": [
+    34
+   ]
+  },
+  {
+   "rule": "no-eval",
+   "code": "function f() { this.eval('a'); }\nthis.eval('b');\n",
+   "languageOptions": {
+    "ecmaVersion": 5,
+    "sourceType": "script",
+    "parserOptions": {
+     "ecmaFeatures": {
+      "impliedStrict": true
+     }
+    }
+   },
+   "reported": [
+    38
+   ]
+  },
+  {
+   "rule": "no-eval",
+   "code": "function f() { 'use strict'; this.eval('a'); }\n",
+   "languageOptions": {
+    "ecmaVersion": 3,
+    "sourceType": "script",
+    "parserOptions": {
+     "ecmaFeatures": {
+      "impliedStrict": true
+     }
+    }
+   },
+   "reported": [
+    34
+   ]
+  },
+  {
+   "rule": "no-eval",
+   "code": "function f() { this.eval('a'); }\n",
+   "languageOptions": {
+    "ecmaVersion": 2015,
+    "sourceType": "module"
+   },
+   "reported": []
+  },
+  {
+   "rule": "no-eval",
+   "code": "var j = () => { 'use strict'; function k() { this.eval('a'); } };\nclass A extends function () { this.eval('b'); } { m() { this.eval('c'); } static { this.eval('d'); } }\nvar o = { m() { this.eval('e'); }, get p() { return this.eval('f'); } };\nfunction* g() { this.eval('g'); }\n",
+   "languageOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "script"
+   },
+   "reported": [
+    263
+   ]
+  },
+  {
+   "rule": "no-eval",
+   "code": "this.eval('a');\nfunction f() { this.eval('b'); }\n",
+   "languageOptions": {
+    "ecmaVersion": 5,
+    "sourceType": "script",
+    "parserOptions": {
+     "ecmaFeatures": {
+      "globalReturn": true
+     }
+    }
+   },
+   "reported": [
+    5,
+    36
+   ]
+  },
+  {
+   "rule": "no-eval",
+   "code": "'use strict';\nthis.eval('a');\nfunction f() { this.eval('b'); }\n",
+   "languageOptions": {
+    "ecmaVersion": 5,
+    "sourceType": "script",
+    "parserOptions": {
+     "ecmaFeatures": {
+      "globalReturn": true
+     }
+    }
+   },
+   "reported": []
+  },
+  {
+   "rule": "no-eval",
+   "code": "this.eval('a');\n",
+   "languageOptions": {
+    "ecmaVersion": 5,
+    "sourceType": "script",
+    "parserOptions": {
+     "ecmaFeatures": {
+      "globalReturn": true,
+      "impliedStrict": true
+     }
+    }
+   },
+   "reported": []
+  },
+  {
+   "rule": "no-eval",
+   "code": "function f() { this.eval('a'); }\n",
+   "languageOptions": {
+    "sourceType": "commonjs"
+   },
+   "reported": [
+    20
+   ]
+  },
+  {
+   "rule": "no-eval",
+   "code": "'use strict';\nfunction f() { this.eval('a'); }\n",
+   "languageOptions": {
+    "sourceType": "commonjs"
+   },
+   "reported": []
+  },
+  {
+   "rule": "no-eval",
+   "code": "this.eval('a');\n",
+   "languageOptions": {
+    "sourceType": "commonjs",
+    "parserOptions": {
+     "ecmaFeatures": {
+      "globalReturn": true
+     }
+    }
+   },
+   "reported": [
+    5
+   ]
+  },
+  {
+   "rule": "no-eval",
+   "code": "this.eval('a');\n'use strict';\n{ this.eval('b'); }\n(() => this.eval('c'))();\n",
+   "languageOptions": {
+    "sourceType": "commonjs"
+   },
+   "reported": [
+    5,
+    37,
+    62
+   ]
+  },
+  {
+   "rule": "no-alert",
+   "code": "alert(1);\nwindow.alert(2);\nwindow.confirm(3);\nfunction f(alert) { alert(4); }\nprompt(5);\n",
+   "languageOptions": {
+    "ecmaVersion": 5,
+    "sourceType": "script"
+   },
+   "reported": [
+    0,
+    10,
+    27,
+    78
+   ]
+  },
+  {
+   "rule": "no-alert",
+   "code": "alert(1);\nwindow.alert(2);\nwindow.confirm(3);\nfunction f(alert) { alert(4); }\nprompt(5);\n",
+   "languageOptions": {
+    "ecmaVersion": 2015,
+    "sourceType": "module",
+    "globals": {
+     "window": "readonly",
+     "alert": "off"
+    }
+   },
+   "reported": [
+    0,
+    10,
+    27,
+    78
+   ]
+  },
+  {
+   "rule": "no-alert",
+   "code": "var window = {};\nwindow.alert(1);\nconfirm(2);\n",
+   "languageOptions": {
+    "ecmaVersion": 5,
+    "sourceType": "script"
+   },
+   "reported": [
+    34
+   ]
+  },
+  {
+   "rule": "no-alert",
+   "code": "this.alert(1);\n{ this.alert(2); }\nif (a) { this.alert(3); } else this.alert(4);\nswitch (a) { case 1: this.alert(5); }\ntry { this.alert(6); } catch (e) { this.alert(7); }\nfor (var i in this.alert(8)) this.alert(9);\nfunction f() { this.alert(10); }\nx = { a: this.alert(11) };\n",
+   "languageOptions": {
+    "ecmaVersion": 3,
+    "sourceType": "script"
+   },
+   "reported": [
+    0,
+    17,
+    43,
+    65,
+    101,
+    124,
+    184,
+    199,
+    256
+   ]
+  },
+  {
+   "rule": "no-alert",
+   "code": "this.alert(1);\n{ this.alert(2); }\nif (a) { this.alert(3); } else this.alert(4);\nswitch (a) { case 1: this.alert(5); }\ntry { this.alert(6); } catch (e) { this.alert(7); }\nfor (var i in this.alert(8)) this.alert(9);\nfunction f() { this.alert(10); }\nx = { a: this.alert(11) };\n",
+   "languageOptions": {
+    "ecmaVersion": 5,
+    "sourceType": "script"
+   },
+   "reported": [
+    0,
+    17,
+    43,
+    65,
+    101,
+    124,
+    184,
+    199,
+    256
+   ]
+  },
+  {
+   "rule": "no-alert",
+   "code": "this.alert(1);\n{ this.alert(2); }\nif (a) { this.alert(3); } else this.alert(4);\nswitch (a) { case 1: this.alert(5); }\ntry { this.alert(6); } catch (e) { this.alert(7); }\nfor (var i in this.alert(8)) this.alert(9);\nfunction f() { this.alert(10); }\nx = { a: this.alert(11) };\n",
+   "languageOptions": {
+    "ecmaVersion": 2015,
+    "sourceType": "script"
+   },
+   "reported": [
+    0,
+    65,
+    184,
+    199,
+    256
+   ]
+  },
+  {
+   "rule": "no-alert",
+   "code": "this.alert(1);\n{ this.alert(2); }\nif (a) { this.alert(3); } else this.alert(4);\nswitch (a) { case 1: this.alert(5); }\ntry { this.alert(6); } catch (e) { this.alert(7); }\nfor (var i in this.alert(8)) this.alert(9);\nfunction f() { this.alert(10); }\nx = { a: this.alert(11) };\n",
+   "languageOptions": {
+    "ecmaVersion": 2015,
+    "sourceType": "module"
+   },
+   "reported": []
+  },
+  {
+   "rule": "no-alert",
+   "code": "this.alert(1);\n{ this.alert(2); }\nif (a) { this.alert(3); } else this.alert(4);\nswitch (a) { case 1: this.alert(5); }\ntry { this.alert(6); } catch (e) { this.alert(7); }\nfor (var i in this.alert(8)) this.alert(9);\nfunction f() { this.alert(10); }\nx = { a: this.alert(11) };\n",
+   "languageOptions": {
+    "ecmaVersion": 2015,
+    "sourceType": "commonjs"
+   },
+   "reported": []
+  },
+  {
+   "rule": "no-alert",
+   "code": "with (a) this.alert(1);\nwith (this.alert(2)) {}\n",
+   "languageOptions": {
+    "ecmaVersion": 5,
+    "sourceType": "script"
+   },
+   "reported": []
+  },
+  {
+   "rule": "no-alert",
+   "code": "for (let i = this.alert(1);;) {}\nfor (const k of this.alert(2)) this.alert(3);\nclass A extends this.alert(4) {}\n() => this.alert(5);\nlabel: this.alert(6);\n",
+   "languageOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "script"
+   },
+   "reported": [
+    140
+   ]
+  },
+  {
+   "rule": "no-extend-native",
+   "code": "var Array;\nArray.prototype.a = 1;\nfunction Object() {}\nObject.prototype.b = 2;\nlet Map;\nMap.prototype.c = 3;\nfunction f(Set) { Set.prototype.d = 4; }\nSet.prototype.e = 5;\n",
+   "languageOptions": {
+    "ecmaVersion": 2015,
+    "sourceType": "script"
+   },
+   "reported": [
+    11,
+    55,
+    88,
+    150
+   ]
+  },
+  {
+   "rule": "no-extend-native",
+   "code": "var Array;\nArray.prototype.a = 1;\nfunction Object() {}\nObject.prototype.b = 2;\nlet Map;\nMap.prototype.c = 3;\nfunction f(Set) { Set.prototype.d = 4; }\nSet.prototype.e = 5;\n",
+   "languageOptions": {
+    "ecmaVersion": 2015,
+    "sourceType": "module"
+   },
+   "reported": [
+    150
+   ]
+  },
+  {
+   "rule": "no-extend-native",
+   "code": "var Array;\nArray.prototype.a = 1;\nfunction Object() {}\nObject.prototype.b = 2;\nlet Map;\nMap.prototype.c = 3;\nfunction f(Set) { Set.prototype.d = 4; }\nSet.prototype.e = 5;\n",
+   "languageOptions": {
+    "ecmaVersion": 2015,
+    "sourceType": "commonjs"
+   },
+   "reported": [
+    150
+   ]
+  },
+  {
+   "rule": "no-extend-native",
+   "code": "var Promise;\nPromise.prototype.a = 1;\n",
+   "languageOptions": {
+    "ecmaVersion": 5,
+    "sourceType": "script"
+   },
+   "reported": [
+    13
+   ]
+  },
+  {
+   "rule": "no-extend-native",
+   "code": "{ function Array() {} }\nArray.prototype.a = 1;\nif (a) { function Object() {} }\nObject.prototype.b = 2;\n",
+   "languageOptions": {
+    "ecmaVersion": 5,
+    "sourceType": "script"
+   },
+   "reported": [
+    24,
+    79
+   ]
+  },
+  {
+   "rule": "no-extend-native",
+   "code": "{ function Array() {} }\nArray.prototype.a = 1;\nif (a) { function Object() {} }\nObject.prototype.b = 2;\n",
+   "languageOptions": {
+    "ecmaVersion": 2015,
+    "sourceType": "script"
+   },
+   "reported": [
+    24,
+    79
+   ]
+  },
+  {
+   "rule": "no-eval",
+   "code": "var window;\nwindow.eval('a');\nfunction f() { window.eval('b'); }\n",
+   "languageOptions": {
+    "ecmaVersion": 2015,
+    "sourceType": "script"
+   },
+   "reported": [
+    19,
+    52
+   ]
+  },
+  {
+   "rule": "no-eval",
+   "code": "var window;\nwindow.eval('a');\nfunction f() { window.eval('b'); }\n",
+   "languageOptions": {
+    "ecmaVersion": 2015,
+    "sourceType": "module"
+   },
+   "reported": []
+  },
+  {
+   "rule": "strict",
+   "code": "'use strict';\nfunction f() { 'use strict'; return 1; }\nfunction g() { return 2; }\n",
+   "languageOptions": {
+    "sourceType": "script"
+   },
+   "reported": [
+    0,
+    55
+   ]
+  },
+  {
+   "rule": "strict",
+   "code": "'use strict';\nfunction f() { 'use strict'; return 1; }\nfunction g() { return 2; }\n",
+   "languageOptions": {
+    "sourceType": "module"
+   },
+   "reported": [
+    0,
+    29
+   ]
+  },
+  {
+   "rule": "strict",
+   "code": "'use strict';\nfunction f() { 'use strict'; return 1; }\nfunction g() { return 2; }\n",
+   "languageOptions": {
+    "sourceType": "commonjs"
+   },
+   "reported": [
+    29
+   ]
+  },
+  {
+   "rule": "strict",
+   "code": "'use strict';\nfunction f() { 'use strict'; return 1; }\nfunction g() { return 2; }\n",
+   "languageOptions": {
+    "sourceType": "script",
+    "parserOptions": {
+     "ecmaFeatures": {
+      "impliedStrict": true
+     }
+    }
+   },
+   "reported": [
+    0,
+    29
+   ]
+  },
+  {
+   "rule": "strict",
+   "code": "'use strict';\nfunction f() { 'use strict'; return 1; }\nfunction g() { return 2; }\n",
+   "languageOptions": {
+    "sourceType": "script",
+    "parserOptions": {
+     "ecmaFeatures": {
+      "globalReturn": true
+     }
+    }
+   },
+   "reported": [
+    29
+   ]
+  },
+  {
+   "rule": "strict",
+   "code": "'use strict';\nfunction f() { 'use strict'; return 1; }\nfunction g() { return 2; }\n",
+   "languageOptions": {
+    "sourceType": "commonjs",
+    "parserOptions": {
+     "ecmaFeatures": {
+      "impliedStrict": true
+     }
+    }
+   },
+   "reported": [
+    0,
+    29
+   ]
+  },
+  {
+   "rule": "strict",
+   "code": "function g() { return 2; }\n",
+   "languageOptions": {
+    "sourceType": "script"
+   },
+   "reported": [
+    0
+   ]
+  },
+  {
+   "rule": "strict",
+   "code": "function g() { return 2; }\n",
+   "languageOptions": {
+    "sourceType": "module"
+   },
+   "reported": []
+  },
+  {
+   "rule": "strict",
+   "code": "function g() { return 2; }\n",
+   "languageOptions": {
+    "sourceType": "commonjs"
+   },
+   "reported": [
+    0
+   ]
+  },
+  {
+   "rule": "strict",
+   "code": "function g() { return 2; }\n",
+   "languageOptions": {
+    "sourceType": "script",
+    "parserOptions": {
+     "ecmaFeatures": {
+      "impliedStrict": true
+     }
+    }
+   },
+   "reported": []
+  },
+  {
+   "rule": "strict",
+   "code": "function g() { return 2; }\n",
+   "languageOptions": {
+    "sourceType": "script",
+    "parserOptions": {
+     "ecmaFeatures": {
+      "globalReturn": true
+     }
+    }
+   },
+   "reported": [
+    0
+   ]
+  },
+  {
+   "rule": "strict",
+   "code": "function g() { return 2; }\n",
+   "languageOptions": {
+    "sourceType": "commonjs",
+    "parserOptions": {
+     "ecmaFeatures": {
+      "impliedStrict": true
+     }
+    }
+   },
+   "reported": []
+  }
+ ]
+}

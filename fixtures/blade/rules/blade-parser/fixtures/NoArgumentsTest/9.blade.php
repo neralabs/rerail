@@ -1,0 +1,1 @@
+@endAuth($some, $args)

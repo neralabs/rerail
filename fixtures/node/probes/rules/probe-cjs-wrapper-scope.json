@@ -1,0 +1,55 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "probe-cjs-wrapper-scope",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Node fact: a CommonJS module body runs inside a function wrapper, so a top-level `var process` is module-local and shadows the global process (sourceType commonjs).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "reference",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "sourceType": "commonjs",
+            "globals": {
+              "process": "readonly"
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "regex": "^process$",
+            "resolves": {
+              "global": [
+                "process"
+              ]
+            }
+          },
+          "file": {
+            "path": {
+              "notRegex": "\\.m[jt]s$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "probe-cjs-wrapper-scope",
+        "message": "global process"
+      }
+    }
+  ]
+}

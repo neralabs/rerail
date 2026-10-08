@@ -1,0 +1,35 @@
+{
+  "verdict": "BLOCKED",
+  "primitive": "type-checker",
+  "secondary": [
+    "trivia/whitespace",
+    "fixture-artifact"
+  ],
+  "reason": "checkAlphabetical ports exactly apart from blank lines: each identifier- or string-keyed property compares its key with the nearest earlier such key back to the last spread (a follows with stopBy spread and an M5 compare, UTF-16 order or fold-lower for ignore-case, string keys unquoted), only the first descending key per object is reported, and shorthand-first is an override. Missing: match-declaration-order(-only) needs the contextual type (type-checker, 14 FN); TSLint does not report a descending key after a blank line or a blank-line-separated comment (trivia/whitespace, 6 FP on the repaired default fixture); locale-compare needs ICU collation (1 FN, 1 FP). The default fixture has a syntax error (`'11': 2` then `2: 4` without a comma), and the first-failure-only `not follows` is unsound under errors, so the raw file is skipped.",
+  "evidence": [
+    {
+      "variant": "default",
+      "file": "test.ts.lint",
+      "line": 107,
+      "why": "`'11': 2` followed by `2: 4` with no comma: syntax error, so the file is source-incomplete and loses 20 expected findings"
+    },
+    {
+      "variant": "default",
+      "file": "test.ts.lint",
+      "line": 185,
+      "why": "`c: 3` after `d: 4` across a blank line: TSLint starts over, the port reports it (repaired fixture FP)"
+    },
+    {
+      "variant": "locale-compare",
+      "file": "test.ts.lint",
+      "line": 10,
+      "why": "`título` after `type` is out of order only under locale collation (í sorts before y); code-unit order says it is sorted"
+    },
+    {
+      "variant": "match-declaration-order",
+      "file": "test.ts.lint",
+      "line": 12,
+      "why": "order must follow the contextual type I's member order: type-checker"
+    }
+  ]
+}

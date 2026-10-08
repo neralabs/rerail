@@ -1,0 +1,107 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-void-expression",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Syntactic approximation: flags calls known to return void (console.*) used as a value (not an expression statement, ternary branch, or &&/|| operand chain thereof).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "void-expression",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "call_expression"
+              },
+              {
+                "pattern": "console.$M($$$A)"
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "expression_statement"
+                          },
+                          {
+                            "kind": "ternary_expression"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "binary_expression",
+                        "any": [
+                          {
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "any": [
+                                {
+                                  "kind": "expression_statement"
+                                },
+                                {
+                                  "kind": "ternary_expression"
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "binary_expression",
+                        "any": [
+                          {
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "binary_expression",
+                              "any": [
+                                {
+                                  "inside": {
+                                    "stopBy": "neighbor",
+                                    "any": [
+                                      {
+                                        "kind": "expression_statement"
+                                      },
+                                      {
+                                        "kind": "ternary_expression"
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_VOID_EXPRESSION",
+        "message": "Expression has type `void`. Put it on its own line as a statement."
+      }
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "verdict": "INFEASIBLE",
+  "primitive": "type-checker",
+  "secondary": [],
+  "needs": [
+    "expression-type",
+    "symbol-resolution",
+    "lib-types",
+    "compiler-options"
+  ],
+  "reason": "The checker must answer: is this boolean-context operand typed Promise (or a configured promise class), with no union including a falsy type? The port flags only `new Promise(...)` or `x.then(...)` in conditions or as operands of !, &&, || and ?:, with 100% precision and 6% recall. Checker APIs: getTypeAtLocation + union parts + symbol name (:141-152). Line 10 needs the return type of an `async` function, line 18 a declared union, custom-promise line 9 an initializer's class.",
+  "evidence": [
+    {
+      "variant": "es6-promise",
+      "file": "test.ts.lint",
+      "line": 10,
+      "why": "`!!promiseFunc()` is flagged only because promiseFunc is `async`. Line 8 `\"text\" + promiseFunc()` shows the call itself is not the signal"
+    },
+    {
+      "variant": "es6-promise",
+      "file": "test.ts.lint",
+      "line": 18,
+      "why": "`promiseOrUndefined || ...` is Promise<any> | undefined, so it is not flagged. Only the declared union type distinguishes it"
+    },
+    {
+      "variant": "custom-promise",
+      "file": "test.ts.lint",
+      "line": 9,
+      "why": "`if (customPromise)`: the variable's class comes from its initializer, and the promise class comes from rule options"
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+globalThis.location.assign('/foo')

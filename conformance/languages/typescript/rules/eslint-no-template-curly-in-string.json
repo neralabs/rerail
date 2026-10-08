@@ -1,0 +1,48 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-no-template-curly-in-string",
+  "revision": 2,
+  "mode": "steer",
+  "description": "ESLint 10.11.0 no-template-curly-in-string, default options. Port of ESLint's `no-template-curly-in-string` rule (https://eslint.org/docs/latest/rules/no-template-curly-in-string). Flags a string literal whose value contains `${...}`: cooked, or for a JSX attribute string raw with HTML character references decoded.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "template-curly-in-string",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "string",
+            "value": {
+              "regex": "\\$\\{[^}]+\\}"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-template-curly-in-string",
+        "message": "Unexpected template string expression.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-template-curly-in-string"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

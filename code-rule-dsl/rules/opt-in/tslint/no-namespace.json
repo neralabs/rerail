@@ -1,0 +1,157 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-namespace",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of TSLint's `no-namespace` rule with its default options (https://palantir.github.io/tslint/rules/no-namespace/). Disallows top-level `namespace`/`module` declarations (string-named ambient modules and `declare global` allowed).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "namespace",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "program"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "expression_statement",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "program"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "any": [
+                      {
+                        "kind": "internal_module"
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "module"
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "string"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "export_statement"
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "internal_module"
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "not": {
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "kind": "string"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "ambient_declaration"
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "internal_module"
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "module"
+                                },
+                                {
+                                  "not": {
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "kind": "string"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_NAMESPACE",
+        "message": "'namespace' and 'module' are disallowed"
+      }
+    }
+  ]
+}

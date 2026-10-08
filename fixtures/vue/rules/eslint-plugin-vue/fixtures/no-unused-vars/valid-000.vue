@@ -1,0 +1,1 @@
+<template><ol v-for="i in 5"><li>{{i}}</li></ol></template>

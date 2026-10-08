@@ -1,0 +1,293 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:prefer-switch",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of TSLint's `prefer-switch` rule with its default options (https://palantir.github.io/tslint/rules/prefer-switch/). Flags an if/else-if chain (any length, recursive utils) with an else, whose conditions are `||` trees of `$X === <simple>` with one simple $X, comparing at least 3 values in total (TSLint's min-cases, default 3). Simple operands are identifiers, literals, this, substitution-free templates, property accesses and non-++/-- prefix unaries of simple operands. The else-if directly under a flagged if is not flagged again.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "if-chain",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "binary_expression",
+            "inside": {
+              "kind": "parenthesized_expression",
+              "inside": {
+                "kind": "if_statement",
+                "matches": "flagged"
+              }
+            }
+          },
+          "utils": {
+            "flagged": {
+              "all": [
+                {
+                  "kind": "if_statement"
+                },
+                {
+                  "has": {
+                    "kind": "else_clause"
+                  }
+                },
+                {
+                  "matches": "chain"
+                },
+                {
+                  "matches": "cases-3"
+                },
+                {
+                  "not": {
+                    "inside": {
+                      "kind": "else_clause",
+                      "inside": {
+                        "matches": "flagged"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "chain": {
+              "all": [
+                {
+                  "has": {
+                    "kind": "parenthesized_expression",
+                    "has": {
+                      "matches": "cond"
+                    }
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "not": {
+                        "has": {
+                          "kind": "else_clause",
+                          "has": {
+                            "kind": "if_statement"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "kind": "else_clause",
+                        "has": {
+                          "kind": "if_statement",
+                          "matches": "chain"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "cond": {
+              "any": [
+                {
+                  "kind": "binary_expression",
+                  "pattern": "$X === $_",
+                  "has": {
+                    "precedes": {
+                      "regex": "^===$"
+                    },
+                    "matches": "simple"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "follows": {
+                          "regex": "^===$"
+                        },
+                        "matches": "simple"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "binary_expression",
+                  "has": {
+                    "precedes": {
+                      "regex": "^\\|\\|$"
+                    },
+                    "matches": "cond"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "follows": {
+                          "regex": "^\\|\\|$"
+                        },
+                        "matches": "cond"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "simple": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "this"
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "null"
+                },
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "number",
+                  "not": {
+                    "regex": "n$"
+                  }
+                },
+                {
+                  "kind": "template_string",
+                  "not": {
+                    "has": {
+                      "kind": "template_substitution"
+                    }
+                  }
+                },
+                {
+                  "kind": "member_expression",
+                  "has": {
+                    "precedes": {
+                      "any": [
+                        {
+                          "regex": "^\\.$"
+                        },
+                        {
+                          "kind": "optional_chain"
+                        }
+                      ]
+                    },
+                    "matches": "simple"
+                  }
+                },
+                {
+                  "kind": "unary_expression",
+                  "has": {
+                    "follows": {
+                      "regex": "^[-+!~]$"
+                    },
+                    "matches": "simple"
+                  }
+                }
+              ]
+            },
+            "or-cond": {
+              "has": {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "kind": "binary_expression",
+                  "has": {
+                    "regex": "^\\|\\|$"
+                  }
+                }
+              }
+            },
+            "else-if": {
+              "has": {
+                "kind": "else_clause",
+                "has": {
+                  "kind": "if_statement"
+                }
+              }
+            },
+            "cases-2": {
+              "any": [
+                {
+                  "matches": "or-cond"
+                },
+                {
+                  "matches": "else-if"
+                }
+              ]
+            },
+            "cases-3": {
+              "any": [
+                {
+                  "has": {
+                    "kind": "parenthesized_expression",
+                    "has": {
+                      "kind": "binary_expression",
+                      "has": {
+                        "kind": "binary_expression",
+                        "has": {
+                          "regex": "^\\|\\|$"
+                        }
+                      },
+                      "all": [
+                        {
+                          "has": {
+                            "regex": "^\\|\\|$"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "matches": "or-cond",
+                  "all": [
+                    {
+                      "matches": "else-if"
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "kind": "else_clause",
+                    "has": {
+                      "kind": "if_statement",
+                      "matches": "cases-2"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PREFER_SWITCH",
+        "message": "Use a switch statement instead of using multiple '===' checks."
+      }
+    }
+  ]
+}

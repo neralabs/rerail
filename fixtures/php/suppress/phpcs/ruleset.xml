@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<ruleset name="RerailSuppress">
+    <description>Sniffs that report on single lines, from two standards, for the suppress oracle.</description>
+    <rule ref="Generic.PHP.ForbiddenFunctions"/>
+    <rule ref="Generic.PHP.LowerCaseConstant"/>
+    <rule ref="Generic.PHP.NoSilencedErrors"/>
+    <rule ref="Generic.Commenting.Todo"/>
+    <rule ref="Squiz.PHP.DiscouragedFunctions"/>
+</ruleset>

@@ -1,0 +1,454 @@
+{
+    "php": "8.5.11",
+    "phpParser": "5.9.0",
+    "cases": [
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f()",
+            "slots": [
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(1)",
+            "slots": [
+                "1",
+                null,
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(1, 2, 3)",
+            "slots": [
+                "1",
+                "2",
+                "3"
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(1, 2, 3, 4)",
+            "slots": [
+                "1",
+                "2",
+                "3"
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(1, 2, 3,)",
+            "slots": [
+                "1",
+                "2",
+                "3"
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(b: 2)",
+            "slots": [
+                null,
+                "2",
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(c: 3, a: 1)",
+            "slots": [
+                "1",
+                null,
+                "3"
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(1, c: 3)",
+            "slots": [
+                "1",
+                null,
+                "3"
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(1, a: 9)",
+            "slots": [
+                "9",
+                null,
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(a: 1, 2)",
+            "slots": [
+                "1",
+                null,
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(a: 1, a: 2)",
+            "slots": [
+                "1",
+                null,
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(A: 1)",
+            "slots": [
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(x: 1, 2)",
+            "slots": [
+                "2",
+                null,
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(...$x)",
+            "slots": [
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(1, ...$x)",
+            "slots": [
+                "1",
+                null,
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(1, ...$x, b: 2)",
+            "slots": [
+                "1",
+                "2",
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(...$x, 2)",
+            "slots": [
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(...[1, 2])",
+            "slots": [
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(...['b' => 2])",
+            "slots": [
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(1, ...[2], c: 3)",
+            "slots": [
+                "1",
+                null,
+                "3"
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f((1), ((2)))",
+            "slots": [
+                "1",
+                "2",
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(fn() => 1, $x ?? 2)",
+            "slots": [
+                "fn() => 1",
+                "$x ?? 2",
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(/* c */ 1, // d\n 2)",
+            "slots": [
+                "1",
+                "2",
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b",
+                "c"
+            ],
+            "call": "f(...)",
+            "callable": true
+        },
+        {
+            "signature": [
+                "a",
+                "b"
+            ],
+            "call": "$o->m(1, b: 2)",
+            "slots": [
+                "1",
+                "2"
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b"
+            ],
+            "call": "$o?->m(b: 2)",
+            "slots": [
+                null,
+                "2"
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b"
+            ],
+            "call": "C::m(1, 2)",
+            "slots": [
+                "1",
+                "2"
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b"
+            ],
+            "call": "new C(b: 2, a: 1)",
+            "slots": [
+                "1",
+                "2"
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b"
+            ],
+            "call": "new C",
+            "slots": [
+                null,
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b"
+            ],
+            "call": "new class(1, b: 2) { function __construct($a, $b) {} }",
+            "slots": [
+                "1",
+                "2"
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b"
+            ],
+            "call": "new #[A(9)] class(b: 2) {}",
+            "slots": [
+                null,
+                "2"
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b"
+            ],
+            "call": "new class { function __construct($a = 1, $b = 2) {} }",
+            "slots": [
+                null,
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b"
+            ],
+            "call": "new class(...$x) extends B {}",
+            "slots": [
+                null,
+                null
+            ]
+        },
+        {
+            "signature": [
+                "a",
+                "b"
+            ],
+            "call": "$o->m(...)",
+            "callable": true
+        },
+        {
+            "signature": [
+                "a"
+            ],
+            "call": "f(a: $x, ...$y)",
+            "slots": [
+                "$x"
+            ]
+        },
+        {
+            "signature": [
+                "array",
+                "callback"
+            ],
+            "call": "array_filter($x, callback: 'trim')",
+            "slots": [
+                "$x",
+                "'trim'"
+            ]
+        },
+        {
+            "signature": [
+                "array",
+                "callback",
+                "mode"
+            ],
+            "call": "array_filter($x, mode: 1)",
+            "slots": [
+                "$x",
+                null,
+                "1"
+            ]
+        }
+    ]
+}

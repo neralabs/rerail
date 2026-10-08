@@ -1,0 +1,60 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-no-assign-module-variable",
+  "revision": 1,
+  "mode": "steer",
+  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-assign-module-variable: a variable declaration with a declarator whose identifier is `module`.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "lexical_declaration"
+              },
+              {
+                "kind": "variable_declaration"
+              }
+            ],
+            "has": {
+              "kind": "variable_declarator",
+              "has": {
+                "field": "name",
+                "kind": "identifier",
+                "regex": "^module$"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/no-assign-module-variable",
+        "message": "Do not assign to the variable `module`. See: https://nextjs.org/docs/messages/no-assign-module-variable",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/no-assign-module-variable"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

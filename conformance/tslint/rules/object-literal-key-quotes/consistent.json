@@ -1,0 +1,50 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:object-literal-key-quotes",
+  "revision": 1,
+  "mode": "steer",
+  "description": "All property names in an object literal must be consistently quoted or unquoted (consistent). Reported at the opening brace.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "consistent",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "object",
+            "regex": "^(?<OPEN>\\{)",
+            "all": [
+              { "has": { "stopBy": "neighbor", "has": { "stopBy": "neighbor", "matches": "quoted-key" } } },
+              { "has": { "stopBy": "neighbor", "has": { "stopBy": "neighbor", "matches": "unquoted-key" } } }
+            ]
+          },
+          "utils": {
+            "key": {
+              "any": [
+                {
+                  "inside": { "stopBy": "neighbor", "kind": "pair" },
+                  "not": { "follows": { "stopBy": "neighbor", "regex": "^:$" } }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "method_definition",
+                    "inside": { "stopBy": "neighbor", "kind": "object" }
+                  }
+                }
+              ]
+            },
+            "quoted-key": { "kind": "string", "matches": "key" },
+            "unquoted-key": { "any": [{ "kind": "property_identifier" }, { "kind": "number" }], "matches": "key" }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.OPEN",
+        "code": "OBJECT_LITERAL_KEY_QUOTES",
+        "message": "All property names in this object literal must be consistently quoted or unquoted."
+      }
+    }
+  ]
+}

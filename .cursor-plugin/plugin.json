@@ -1,0 +1,6 @@
+{
+  "name": "rerail",
+  "description": "Persistent semantic monitoring, rule delivery, and workspace tools for Cursor",
+  "license": "Apache-2.0",
+  "hooks": "./hooks/cursor.json"
+}

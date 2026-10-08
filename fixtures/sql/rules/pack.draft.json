@@ -1,0 +1,372 @@
+{
+  "$comment": "Draft T4 manifest for the future SQL pack. Not under rerail/conformance/languages/ because the kernel has no SQL family yet and the runner would load it; the policies named here are written once the engine exists. `dialects` is a proposed manifest field: per-path dialect selection. `paths` are the globs the generators score.",
+  "pack": "sql",
+  "family": "sql",
+  "capabilities": [
+    "syntax",
+    "names",
+    "values",
+    "suppression"
+  ],
+  "corpora": [
+    {
+      "name": "postgres",
+      "repository": "https://github.com/postgres/postgres",
+      "commit": "724edf9bde9d356724ad384a2e196edc3c9f80f7",
+      "paths": [
+        "src/test/regress/sql/*.sql",
+        "src/pl/plpgsql/src/sql/*.sql",
+        "contrib/**/*.sql",
+        "src/backend/catalog/*.sql"
+      ],
+      "exclude": [],
+      "dialects": [
+        {
+          "glob": "src/test/regress/sql/*.sql",
+          "dialect": "postgres"
+        },
+        {
+          "glob": "src/pl/plpgsql/src/sql/*.sql",
+          "dialect": "postgres"
+        },
+        {
+          "glob": "contrib/**/*.sql",
+          "dialect": "postgres"
+        },
+        {
+          "glob": "src/backend/catalog/*.sql",
+          "dialect": "postgres"
+        }
+      ]
+    },
+    {
+      "name": "mattermost",
+      "repository": "https://github.com/mattermost/mattermost",
+      "commit": "613bb616cd62c584a606919e6978688e7b87d81e",
+      "paths": [
+        "server/channels/db/migrations/postgres/*.sql",
+        "server/channels/db/migrations/mysql/*.sql"
+      ],
+      "exclude": [],
+      "dialects": [
+        {
+          "glob": "server/channels/db/migrations/postgres/*.sql",
+          "dialect": "postgres"
+        },
+        {
+          "glob": "server/channels/db/migrations/mysql/*.sql",
+          "dialect": "mysql"
+        }
+      ]
+    },
+    {
+      "name": "anki",
+      "repository": "https://github.com/ankitects/anki",
+      "commit": "d52ca669f6deac5966b1c5035bc2dc77c78d3260",
+      "paths": [
+        "rslib/src/**/*.sql"
+      ],
+      "exclude": [],
+      "dialects": [
+        {
+          "glob": "rslib/src/**/*.sql",
+          "dialect": "sqlite"
+        }
+      ]
+    },
+    {
+      "name": "application-services",
+      "repository": "https://github.com/mozilla/application-services",
+      "commit": "c19ea2c24eb2f116dae170f5f82054d325e94a42",
+      "paths": [
+        "components/**/*.sql"
+      ],
+      "exclude": [],
+      "dialects": [
+        {
+          "glob": "components/**/*.sql",
+          "dialect": "sqlite"
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "sqlfluff",
+      "version": "4.4.0"
+    }
+  ],
+  "oracles": ".",
+  "rules": [
+    {
+      "id": "sqlfluff-al04-aliasing-unique-table",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "AL04"
+      },
+      "policy": "rules/sqlfluff-al04-aliasing-unique-table.json",
+      "capabilities": [
+        "syntax",
+        "names",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-al08-aliasing-unique-column",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "AL08"
+      },
+      "policy": "rules/sqlfluff-al08-aliasing-unique-column.json",
+      "capabilities": [
+        "syntax",
+        "names",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-al09-aliasing-self-alias-column",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "AL09"
+      },
+      "policy": "rules/sqlfluff-al09-aliasing-self-alias-column.json",
+      "capabilities": [
+        "syntax",
+        "names",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-am01-ambiguous-distinct",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "AM01"
+      },
+      "policy": "rules/sqlfluff-am01-ambiguous-distinct.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-am02-ambiguous-union",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "AM02"
+      },
+      "policy": "rules/sqlfluff-am02-ambiguous-union.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-am05-ambiguous-join",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "AM05"
+      },
+      "policy": "rules/sqlfluff-am05-ambiguous-join.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-am09-ambiguous-order-by-limit",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "AM09"
+      },
+      "policy": "rules/sqlfluff-am09-ambiguous-order-by-limit.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-cv02-convention-coalesce",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "CV02"
+      },
+      "policy": "rules/sqlfluff-cv02-convention-coalesce.json",
+      "capabilities": [
+        "syntax",
+        "names",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-cv04-convention-count-rows",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "CV04"
+      },
+      "policy": "rules/sqlfluff-cv04-convention-count-rows.json",
+      "capabilities": [
+        "syntax",
+        "values",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-cv05-convention-is-null",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "CV05"
+      },
+      "policy": "rules/sqlfluff-cv05-convention-is-null.json",
+      "capabilities": [
+        "syntax",
+        "values",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-cv08-convention-left-join",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "CV08"
+      },
+      "policy": "rules/sqlfluff-cv08-convention-left-join.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-pg01-postgres-excessive-locks",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "PG01"
+      },
+      "policy": "rules/sqlfluff-pg01-postgres-excessive-locks.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-pg02-postgres-not-valid-foreign-key",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "PG02"
+      },
+      "policy": "rules/sqlfluff-pg02-postgres-not-valid-foreign-key.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-rf04-references-keywords",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "RF04"
+      },
+      "policy": "rules/sqlfluff-rf04-references-keywords.json",
+      "capabilities": [
+        "syntax",
+        "names",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-rf05-references-special-chars",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "RF05"
+      },
+      "policy": "rules/sqlfluff-rf05-references-special-chars.json",
+      "capabilities": [
+        "names",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-rf06-references-quoting",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "RF06"
+      },
+      "policy": "rules/sqlfluff-rf06-references-quoting.json",
+      "capabilities": [
+        "names",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-st01-structure-else-null",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "ST01"
+      },
+      "policy": "rules/sqlfluff-st01-structure-else-null.json",
+      "capabilities": [
+        "syntax",
+        "values",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-st02-structure-simple-case",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "ST02"
+      },
+      "policy": "rules/sqlfluff-st02-structure-simple-case.json",
+      "capabilities": [
+        "syntax",
+        "values",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-st08-structure-distinct",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "ST08"
+      },
+      "policy": "rules/sqlfluff-st08-structure-distinct.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "sqlfluff-st10-structure-constant-expression",
+      "upstream": {
+        "tool": "sqlfluff",
+        "rule": "ST10"
+      },
+      "policy": "rules/sqlfluff-st10-structure-constant-expression.json",
+      "capabilities": [
+        "syntax",
+        "values",
+        "suppression"
+      ],
+      "match": "line+column"
+    }
+  ]
+}

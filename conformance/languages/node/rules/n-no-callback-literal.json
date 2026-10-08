@@ -1,0 +1,187 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-no-callback-literal",
+  "revision": 1,
+  "mode": "steer",
+  "description": "eslint-plugin-n 18.4.1 n/no-callback-literal: a call of an identifier named `callback` or `cb` (name only, no scope) whose first argument cannot be an error per upstream's couldBeError: a non-null literal, array, object or template literal, or an assignment/sequence/logical/conditional whose possible results all are.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "utils": {
+            "cannot-be-error": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "string"
+                    },
+                    {
+                      "kind": "number"
+                    },
+                    {
+                      "kind": "true"
+                    },
+                    {
+                      "kind": "false"
+                    },
+                    {
+                      "kind": "regex"
+                    },
+                    {
+                      "kind": "array"
+                    },
+                    {
+                      "kind": "object"
+                    },
+                    {
+                      "kind": "template_string"
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "matches": "cannot-be-error"
+                  }
+                },
+                {
+                  "kind": "assignment_expression",
+                  "has": {
+                    "field": "right",
+                    "matches": "cannot-be-error"
+                  }
+                },
+                {
+                  "kind": "sequence_expression",
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "reverse": true,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "matches": "cannot-be-error"
+                  }
+                },
+                {
+                  "kind": "binary_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "operator",
+                        "regex": "^(?:\\|\\||&&|\\?\\?)$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "left",
+                        "matches": "cannot-be-error"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "right",
+                        "matches": "cannot-be-error"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "ternary_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "consequence",
+                        "matches": "cannot-be-error"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "alternative",
+                        "matches": "cannot-be-error"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call_expression",
+            "not": {
+              "has": {
+                "field": "arguments",
+                "kind": "template_string"
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "kind": "identifier",
+                  "regex": "^(?:callback|cb)$"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "arguments",
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "matches": "cannot-be-error"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/no-callback-literal",
+        "message": "Unexpected literal in error position of callback.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/no-callback-literal"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+ "tool": "bladestan",
+ "version": "0.11.7",
+ "source": {
+  "kind": "fixtures",
+  "origin": "https://github.com/TomasVotruba/bladestan@ceb0823cd4b4f400b64a008cace0d91e786a2859",
+  "rules": [
+   "argument.sprintf",
+   "argument.type",
+   "array.duplicateKey",
+   "identical.alwaysTrue",
+   "if.alwaysFalse",
+   "if.alwaysTrue",
+   "missingType.return",
+   "variable.undefined"
+  ],
+  "files": [
+   "skeleton/resources/namespace/Test/namespacedView.blade.php",
+   "skeleton/resources/views/bar.blade.php",
+   "skeleton/resources/views/compile-error.blade.php",
+   "skeleton/resources/views/component.blade.php",
+   "skeleton/resources/views/components/component.blade.php",
+   "skeleton/resources/views/empty.blade.php",
+   "skeleton/resources/views/file_with_include.blade.php",
+   "skeleton/resources/views/file_with_recursive_include.blade.php",
+   "skeleton/resources/views/foo.blade.php",
+   "skeleton/resources/views/foreach-include.blade.php",
+   "skeleton/resources/views/include_with_parameters.blade.php",
+   "skeleton/resources/views/included_view.blade.php",
+   "skeleton/resources/views/missing-component.blade.php",
+   "skeleton/resources/views/missing-include.blade.php",
+   "skeleton/resources/views/nested-foreach.blade.php",
+   "skeleton/resources/views/once.blade.php",
+   "skeleton/resources/views/partials/filename.blade.php",
+   "skeleton/resources/views/partials/filename1.blade.php",
+   "skeleton/resources/views/partials/filename2.blade.php",
+   "skeleton/resources/views/partials/has_use.blade.php",
+   "skeleton/resources/views/php_directive_with_comment.blade.php",
+   "skeleton/resources/views/simple_variable.blade.php",
+   "skeleton/resources/views/static_content.blade.php",
+   "skeleton/resources/views/value-from-array.blade.php",
+   "skeleton/resources/views/view-render/render_form.blade.php",
+   "skeleton/resources/views/view-render/some_int.blade.php"
+  ]
+ },
+ "findings": [
+  {
+   "rule": "identical.alwaysTrue",
+   "path": "skeleton/resources/views/foo.blade.php",
+   "line": 3
+  },
+  {
+   "rule": "if.alwaysTrue",
+   "path": "skeleton/resources/views/include_with_parameters.blade.php",
+   "line": 2
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "skeleton/resources/views/bar.blade.php",
+   "line": 2
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "skeleton/resources/views/file_with_include.blade.php",
+   "line": 14
+  }
+ ]
+}

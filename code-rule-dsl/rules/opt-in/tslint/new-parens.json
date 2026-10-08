@@ -1,0 +1,58 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:new-parens",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of TSLint's `new-parens` rule with its default options (https://palantir.github.io/tslint/rules/new-parens/). Requires parentheses when invoking a constructor via the new keyword.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "new-without-args",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "new_expression"
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "arguments"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NEW_PARENS",
+        "message": "Parentheses are required when invoking a constructor"
+      }
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:typedef",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Requires type definitions for: object-destructuring.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "object-destructuring",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "object_pattern",
+            "not": {"follows": {"stopBy": "neighbor", "regex": "^=$"}},
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "variable_declarator",
+              "not": {"has": {"stopBy": "neighbor", "kind": "type_annotation"}}
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "TYPEDEF",
+        "message": "expected object-destructuring to have a typedef"
+      }
+    }
+  ]
+}
