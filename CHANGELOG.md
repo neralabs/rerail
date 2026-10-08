@@ -33,6 +33,7 @@ First release of Rerail as `@neralabs/rerail`, licensed under Apache-2.0.
 
 - A rule pack (`policies/rule-packs/<id>.json`) groups rules that already ship, with a title and a group for each rule and a match definition (file globs or `package.json` dependencies) that explains which repositories it fits; it adds no rules of its own. One pack ships: TSLint, the 74 golden TSLint ports.
 - `recommendRulePacks` matches a repository's files and manifests against each pack locally, with no model and no network, and returns each fitting pack with its rule count and the reason it matched. Read-only daemon operations and MCP tools `rule_packs_list` and `rule_packs_recommend`; listed rules carry `packId`. Packs are not attached to repositories yet. See `docs/rule-packs.md`.
+- Packs in their own packages under `packs/<id>/` ([pack format](docs/pack-format.md)): `pack.json` names each rule's `document`, and `package.json` declares core as a peer. `test/packs.test.ts` holds every pack to the validation contract: its rules are listed, match their documents and compile; each is proven by examples or a port; examples are caught or pass through the engine; ports agree with the tools' recordings outside declared divergences; the package publishes no validation material and its licence agrees with `licenses/`; every copied file is recorded. A rule for a language core does not read yet is reported `not supported yet` and does not fail. The Python pack (22 Ruff and Bandit ports) is the first to move there; it is not published yet.
 
 ### Rule catalog and database
 

@@ -63,6 +63,9 @@ A pack is one file, `policies/rule-packs/<id>.json`, kept apart from the rule do
   - `mode` (optional) is the rule mode the pack starts the rule in; without it the rule keeps its document's mode. The shipped pack sets none. Takes effect once packs are attached.
   - `on` (optional, default `true`) is whether the pack starts the rule on. Takes effect once packs are attached.
   - `examples` (optional) is one caught and one passing example, `{ "caught": { "path"?, "text" }, "passes": { … } }`, with a path for a file rule and none for a conversation rule. The shipped pack has none: the TSLint ports are proved by the conformance harness (`golden.json`).
+  - `document` (optional here) is the rule's code-rule document, `rules/<name>.json`, relative to the pack. A pack in
+    its own package under `packs/<id>/` must give it for every rule ([pack format](pack-format.md#packjson)); a pack
+    shipped inside core finds its rules among the bundled rules by id.
 
 `test/rule-packs.test.ts` holds the packs to this: TSLint lists exactly the golden ports, and every rule starts in its document's mode.
 

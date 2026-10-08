@@ -93,3 +93,125 @@ or names `runsOn`; when entries name different capabilities; when `runsOn` names
    names every place the engine must learn the language.
 4. Flip `status` to `supported`, and each capability to `supported` as its oracle suite passes; mark one the language
    will never have `refused`.
+
+## Start a pack
+
+A pack is a directory `packs/<id>/` that passes the [validation contract](pack-format.md#the-validation-contract).
+The models to copy: `packs/python/` (a ported pack, 22 rules), `test/fixtures/packs/valid/` (the smallest pack with
+an example-proven rule and a ported one) and `test/fixtures/packs/vue/` (a pack for a planned language).
+
+### A pack for a supported language
+
+A Laravel pack with one code rule proven by examples. The skeleton passes as written.
+
+```sh
+mkdir -p packs/laravel/rules
+cp LICENSE packs/laravel/LICENSE
+```
+
+`packs/laravel/package.json`:
+
+```json
+{
+  "name": "@neralabs/rerail-pack-laravel",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "files": ["pack.json", "rules", "LICENSE", "README.md"],
+  "peerDependencies": { "@neralabs/rerail": ">=0.1.0-0 <0.2.0" },
+  "peerDependenciesMeta": { "@neralabs/rerail": { "optional": true } },
+  "publishConfig": { "access": "restricted" }
+}
+```
+
+`packs/laravel/pack.json`:
+
+```json
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "laravel",
+  "name": "Laravel",
+  "category": "framework",
+  "covers": "Laravel conventions: no debugging helpers left in application code.",
+  "reason": "matches Laravel",
+  "match": { "any": [{ "files": ["artisan"], "label": "an artisan file" }] },
+  "rules": [
+    {
+      "id": "laravel:no-dd",
+      "document": "rules/no-dd.json",
+      "title": "No dd() or dump() calls",
+      "group": "Laravel",
+      "examples": {
+        "caught": { "path": "app/Http/Controllers/UserController.php", "text": "<?php\nfunction show($user) {\n    dd($user);\n}\n" },
+        "passes": { "path": "app/Http/Controllers/UserController.php", "text": "<?php\nfunction show($user) {\n    return view('user', ['user' => $user]);\n}\n" }
+      }
+    }
+  ]
+}
+```
+
+`packs/laravel/rules/no-dd.json`, a code rule (`rerail.policy/v1`, see the
+[code-rule DSL reference](code-rule-dsl-reference.html)) whose `id` is the one `pack.json` lists:
+
+```json
+{
+  "format": "rerail.policy/v1",
+  "id": "laravel:no-dd",
+  "revision": 1,
+  "mode": "steer",
+  "description": "A call to Laravel's dd() or dump() debugging helper.",
+  "scope": { "include": ["app/**/*.php", "routes/**/*.php"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "no-dd",
+      "forbid": { "ast": { "language": "php", "rule": { "kind": "function_call_expression", "has": { "field": "function", "regex": "^(dd|dump)$" } } } },
+      "violation": { "anchor": "witness.span", "code": "LARAVEL-NO-DD", "message": "Remove dd()/dump() before committing" }
+    }
+  ]
+}
+```
+
+Add a `README.md` saying what the pack covers, then record the new workspace and run the contract:
+
+```sh
+npm install --package-lock-only --ignore-scripts   # packs/* are npm workspaces: package-lock.json lists each
+npx vitest run test/packs.test.ts -t "pack laravel"
+```
+
+Each check and each rule is one test; a failure names the rule and the file, for example
+`laravel:no-dd: the caught example (app/Http/Controllers/UserController.php) produces no LARAVEL-NO-DD violation`.
+A rule needs proof: `examples` (one caught, one that passes, each with a `path` inside the rule's scope), or a port
+entry (below).
+
+### A pack for a planned language
+
+The same files, with rules whose `language` the registry lists as `planned` (`vue`, `rust`, `sql`), or that read a
+capability their language has `not-supported-yet`. The pack lands: its checks pass, and each such rule's test is
+skipped as `not supported yet` with the engine's reason, for example
+``/clauses/0/forbid/ast/language: `vue` is not supported yet``. Write its `examples` now; checks 3 and 4 run them
+once core reads the language, and any other compile error fails check 1 today. `test/fixtures/packs/vue/` is a
+complete example.
+
+### A ported pack
+
+A pack whose rules reproduce another tool's rules adds the validation material, which `files` never publishes:
+
+1. `conformance.json` ([schema](pack-format.md#conformancejson-divergencesjson-upstream)): the family, the
+   capabilities the pack declares, the pinned `tools` and `corpora`, and per ported rule its `upstream` tool and rule,
+   its `policy` (the same `rules/<name>.json` as the rule's `document`), how findings compare (`line` or
+   `line+column`) and the capabilities it exercises. A port's clauses report the upstream rule's code. Every declared
+   capability needs a ported rule or an `exemptCapabilities` entry with its evidence.
+2. `upstream/<tool>/`: the tool's tests copied into `fixtures/`, and `fixtures.expected.json`, what the pinned tool
+   reported on them (`recordingSchema` in `conformance/languages/pack.ts`), written by a recorder you keep beside it
+   (`packs/python/upstream/ruff/generate.py` is one). Optionally `corpus-<name>.expected.json` per pinned corpus.
+3. `licenses/<tool>/`: the tool's licence, verbatim, and `UPSTREAM.md` with a `License: <SPDX id>` line and a table
+   listing every copied file by its pack-relative path. Add the tool's licence to `package.json`'s `license`
+   (`Apache-2.0 AND MIT` for an MIT tool), and annotate the copied files in `REUSE.toml`.
+4. `divergences.json`: each line where Rerail and the tool disagree, with its kind and the evidence checked. Start
+   with `[]` and add an entry only for a disagreement you have checked.
+
+Then score one rule with every false positive and false negative listed, and run the contract:
+
+```sh
+node --import tsx conformance/languages/cli.ts --pack <id> --rule <port id> --fixtures
+npx vitest run test/packs.test.ts -t "pack <id>"
+```
