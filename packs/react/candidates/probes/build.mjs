@@ -1,13 +1,13 @@
-// Writes the React probe pack's policies, rerail-fixtures/react/probes/rules/<id>.json, from the specs below. The probe
-// pack's pack.json and its hand labels (probes/labels/fixtures.expected.json) are maintained by hand; this script
-// checks pack.json lists exactly these probes. Score: cd rerail && node --import tsx conformance/languages/cli.ts
-// --pack-dir ../rerail-fixtures/react/probes --fixtures
-// Usage: node rerail-fixtures/react/policies/probes.mjs
+// Writes the React probe pack's policies, packs/react/candidates/probes/rules/<id>.json, from the specs below. The
+// probe pack's conformance.json and its hand labels (labels/fixtures.expected.json) are maintained by hand; this
+// script checks conformance.json lists exactly these probes. Score: node --import tsx conformance/languages/cli.ts
+// --pack-dir packs/react/candidates/probes --fixtures
+// Usage: node packs/react/candidates/probes/build.mjs
 // Run offline by a maintainer, never in CI.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-const DIR = join(dirname(dirname(fileURLToPath(import.meta.url))), "probes");
+const DIR = dirname(fileURLToPath(import.meta.url));
 const EXT = ["ts", "mts", "cts", "tsx", "js", "jsx", "mjs", "cjs"].map(e => `**/*.${e}`);
 const HOOK_NAME = "^use(?:[A-Z0-9][\\s\\S]*)?$";
 const JSX = { any: [{ kind: "jsx_element" }, { kind: "jsx_self_closing_element" }] };
@@ -139,9 +139,9 @@ for (const probe of PROBES) {
   };
   writeFileSync(join(DIR, "rules", `${probe.id}.json`), `${JSON.stringify(document, null, 2)}\n`);
 }
-const listed = JSON.stringify(JSON.parse(readFileSync(join(DIR, "pack.json"), "utf8")).rules);
+const listed = JSON.stringify(JSON.parse(readFileSync(join(DIR, "conformance.json"), "utf8")).rules);
 const expected = JSON.stringify(
   PROBES.map(p => ({ id: p.id, upstream: { tool: "labels", rule: `react-probe/${p.id.replace(/^react-/, "")}` }, policy: `rules/${p.id}.json`, capabilities: p.capabilities, match: "line+column" })),
 );
-if (listed !== expected) throw new Error("probes/pack.json rules differ from the probe specs");
+if (listed !== expected) throw new Error("probes/conformance.json rules differ from the probe specs");
 console.log(`wrote ${PROBES.length} probes`);

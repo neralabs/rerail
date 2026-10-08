@@ -5,9 +5,9 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertCommit, corpusFiles, lint, pack, pinnedRequire, REPOSITORY, writeRecording } from "../../frameworks/eslint_record.mjs";
+import { assertCommit, corpusFiles, lint, pack, pinnedRequire, REPOSITORY, writeRecording } from "../../../conformance/recorders/eslint-record.mjs";
 
-export const RULES_DIRECTORY = dirname(fileURLToPath(import.meta.url));
+export const UPSTREAM_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 
 /** Exact versions every recording is made with (`.rerail/tools/react/package.json`). */
 export const PINS = {
@@ -198,20 +198,20 @@ export async function finishFixtures(require, tool, directory, cases, tools) {
 /** `licenses/<project>/LICENSE` (verbatim) and `UPSTREAM.md`: every copied file and every extracted fixture. */
 export function writeLicense(tool, upstream, copied, kept) {
   const meta = UPSTREAM[tool];
-  const directory = join(RULES_DIRECTORY, "..", "licenses", meta.project);
+  const directory = join(UPSTREAM_DIRECTORY, "..", "licenses", meta.project);
   mkdirSync(directory, { recursive: true });
   copyFileSync(join(upstream, "LICENSE"), join(directory, "LICENSE"));
   const rows = [
-    ...copied.map(entry => `| \`rules/${tool}/${entry.file}\` | \`${entry.upstream}\` | verbatim |`),
-    ...kept.map(entry => `| \`rules/${tool}/fixtures/${entry.path}\` | \`${entry.origin}\` | extracted (its \`code\`, verbatim) |`),
+    ...copied.map(entry => `| \`upstream/${tool}/${entry.file}\` | \`${entry.upstream}\` | verbatim |`),
+    ...kept.map(entry => `| \`upstream/${tool}/fixtures/${entry.path}\` | \`${entry.origin}\` | extracted (its \`code\`, verbatim) |`),
   ];
   const text = `# ${meta.title}
 
 Upstream: [${meta.repository.replace("https://github.com/", "")}](${meta.repository}/tree/${meta.commit}) at ${meta.reference} (commit \`${meta.commit}\`). License: ${meta.license}; [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at that commit.
 
-The files listed below are the upstream tests of the rules the React pack records (Rerail's \`conformance/languages/react/pack.json\`, \`rules/common.mjs\` \`RULES\`), and the test cases extracted from them, one case per file, and remain under ${meta.project}'s license. Every other file under \`rules/${tool}/\` is Rerail's, under the Apache License 2.0 (this repository's \`LICENSE\`): \`generate.mjs\` (with its stub RuleTester), \`../common.mjs\` and the recordings they write by running the pinned plugin.
+The files listed below are the upstream tests of the rules the React pack records (\`conformance.json\`, \`upstream/common.mjs\` \`RULES\`), and the test cases extracted from them, one case per file, and remain under ${meta.project}'s license. Every other file under \`upstream/${tool}/\` is Rerail's, under the Apache License 2.0 (the pack's \`LICENSE\`): \`generate.mjs\` (with its stub RuleTester), \`../common.mjs\` and the recordings they write by running the pinned plugin, as are the rule documents in \`rules/\`.
 
-Paths are relative to \`react/\`. \`<file> valid[i]\` / \`invalid[i]\` is the i-th case of the \`valid\` / \`invalid\` list the test file passes to \`RuleTester.run\`.
+Paths are relative to the pack directory, \`packs/react/\`. \`<file> valid[i]\` / \`invalid[i]\` is the i-th case of the \`valid\` / \`invalid\` list the test file passes to \`RuleTester.run\`.
 
 | File | Upstream path | Copy |
 |---|---|---|
