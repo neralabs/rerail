@@ -1,4 +1,4 @@
-"""Shared by the rules/<tool>/generate.py recorders: the Blade pack's corpora, their templates, and the recording
+"""Shared by the upstream/<tool>/generate.py recorders: the Blade pack's corpora, their templates, and the recording
 format `rerail/conformance/languages/pack.ts` reads (`recordingSchema`)."""
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ import pathlib
 import subprocess
 
 HERE = pathlib.Path(__file__).resolve().parent
-PACK = HERE.parents[2] / "conformance" / "languages" / "blade" / "pack.json"
+PACK = HERE.parent / "conformance.json"
 # The directories the runner never walks (rerail/src/code-rule-enforcer.ts, IGNORED_DIRECTORIES).
 IGNORED = {".git", ".hg", ".svn", ".rerail", ".venv", "__pycache__", "node_modules", "dist", "build", ".next",
            ".turbo", "coverage", "target", "vendor"}

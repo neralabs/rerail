@@ -1,5 +1,5 @@
 """Records Bladestan 0.11.7 (PHPStan 2.2.16 over the PHP illuminate/view 13.34.0 compiles a template to) for the
-Blade pack's ported PHPStan rules (rerail/conformance/languages/blade/pack.json). Run offline, never in CI, with
+Blade pack's ported PHPStan rules (rerail/packs/blade/conformance.json). Run offline, never in CI, with
 PHP 8.5.11, from a checkout of TomasVotruba/bladestan at tag 0.11.7 with its development dependencies installed and
 PHPStan pinned (`composer update && composer require --dev phpstan/phpstan:2.2.16 -W`; laravel/framework 13.34.0,
 larastan 3.12.3, livewire 4.4.7, orchestra/testbench 11.3.0, phpunit 12.5.38):
@@ -14,7 +14,7 @@ compiled template at its template file and line.
 
 `fixtures` runs every fixture of BladeRuleTest::provideData() and requires its errors to be the test's expectation
 (message and caller line, every one), so the recording is the upstream test's. It copies the test's templates
-(tests/skeleton/resources) to fixtures/skeleton/resources (licenses/bladestan/UPSTREAM.md lists them), one analysis
+(tests/skeleton/resources) to fixtures/skeleton/resources (the pack's licenses/bladestan/UPSTREAM.md lists them), one analysis
 unit each. `corpus` renders every template of a corpus alone, with no data (`view('<its path, dotted>')`, the corpus
 root a view location, as `view('once')` renders tests/skeleton/resources/views/once.blade.php): a variable no path of
 the template defines is then "might not be defined", which the ported rule does not claim, so Rerail's reading of view

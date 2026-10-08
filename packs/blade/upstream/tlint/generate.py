@@ -1,4 +1,4 @@
-"""Records tlint 9.7.0 for the Blade pack's ported lints (rerail/conformance/languages/blade/pack.json). Run offline,
+"""Records tlint 9.7.0 for the Blade pack's ported lints (rerail/packs/blade/conformance.json). Run offline,
 never in CI, with PHP 8.5.11:
 
     python3 generate.py fixtures <tighten/tlint checkout at tag v9.7.0> <composer project with tightenco/tlint 9.7.0>
@@ -7,7 +7,7 @@ never in CI, with PHP 8.5.11:
 `fixtures` runs each ported lint's own test (tests/Linting/Linters/<Lint>Test.php) with read_tests.php: every
 template the test hands `new <Lint>(...)` is captured, and every assertion the test makes is checked against tlint's
 output on it. Each template is written to fixtures/<Lint>Test/<n>.blade.php (n counts the test class's templates in
-method order; licenses/tlint/UPSTREAM.md lists them, and LICENSE.md is copied beside it). run.php then runs every
+method order; the pack's licenses/tlint/UPSTREAM.md lists them, and LICENSE.md is copied beside it). run.php then runs every
 ported lint over every copy, as `tlint lint` runs a file, and the recording on a lint's own copy is required to be
 exactly the lines its test asserts, in order (`$lints[0]->getNode()->getLine()`, `$lints[1]`, ...; none where it
 asserts `assertEmpty($lints)`): so the recording is the upstream test's expectation, and on the other lints' copies
@@ -94,15 +94,15 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path) -> None:
 def write_licenses(checkout: pathlib.Path, cases: list[tuple]) -> None:
     LICENSES.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(checkout / "LICENSE.md", LICENSES / "LICENSE.md")
-    rows = "".join(f"| `rules/tlint/fixtures/{file}` | `{test}` | the template test `{method}` passes to "
+    rows = "".join(f"| `upstream/tlint/fixtures/{file}` | `{test}` | the template test `{method}` passes to "
                    f"`new {lint}(...)`, captured verbatim |\n" for file, lint, test, method, _ in cases)
     (LICENSES / "UPSTREAM.md").write_text(f"""# tlint {VERSION}
 
 Upstream: [tighten/tlint](https://github.com/tighten/tlint/tree/{COMMIT}) at tag `v{VERSION}` (commit `{COMMIT}`). License: MIT (Copyright (c) Tighten Co.); [`LICENSE.md`](LICENSE.md) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the templates the tests of the lints the Blade pack ports (Rerail's `conformance/languages/blade/pack.json`) hand those lints, and remain under tlint's license. Every other file under `rules/tlint/` is Rerail's, under the Apache License 2.0 (this repository's `LICENSE`): `generate.py`, `read_tests.php`, `run.php` and the recordings they write by running tlint {VERSION}.
+The files listed below are the templates the tests of the lints the Blade pack ports (the pack's `conformance.json`) hand those lints, and remain under tlint's license. Every other file in this pack is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): the rule documents in `rules/`, the recorders `upstream/common.py`, `upstream/capture.php` and `upstream/tlint/` (`generate.py`, `read_tests.php`, `run.php`), and the recordings they write by running tlint {VERSION}.
 
-Paths are relative to `blade/`. Each fixture is written by `rules/tlint/generate.py fixtures`, which runs the test with the template captured as the linter receives it.
+Paths are relative to the pack directory, `packs/blade/`. Each fixture is written by `upstream/tlint/generate.py fixtures`, which runs the test with the template captured as the linter receives it.
 
 | File | Upstream path | Copy |
 |---|---|---|

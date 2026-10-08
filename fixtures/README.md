@@ -20,7 +20,6 @@ Rerail's `native/src/code_rule_dsl/` and `conformance/languages/`.
 | `python/` | Ruff 0.16.9, Pyflakes 3.4.0, Bandit 1.8.6, CPython 3.13, Jedi 0.19.2 | `calls`, `identifier`, `literal`, `scope`, `suppress`, `value` |
 | `ecma/` | ESLint 10.11.0, typescript-eslint 8.70.1, eslint-utils 4.10.1, natural-compare 1.4.0 | `lines`, `scope`, `suppress`, `value` |
 | `php/` | PHP 8.5.11, PHPStan 2.2.16, Psalm 6.19.1, PHP_CodeSniffer 4.0.4 and 3.13.6, nikic/php-parser 5.9.0, phpstan/phpdoc-parser 2.3.5 | `arguments`, `calls`, `compare`, `format_args`, `literal`, `rules`, `scope`, `suppress`, `value` |
-| `blade/` | illuminate/view 13.34.0, PHP 8.5.11, PHPStan 2.2.16, stillat/blade-parser 2.1.0, Bladestan 0.11.7, tlint 9.7.0 | `rules`, `view` |
 | `react/` | eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1, ESLint 9.39.5 | `candidates`, `policies`, `probes`, `rules` |
 | `vue/` | @vue/compiler-sfc 3.5.43, vue-eslint-parser 10.4.1, eslint-plugin-vue 10.11.1, ESLint 10.11.0 | `grammar`, `rules`, `view` |
 | `rust/` | rustc, clippy and rust-analyzer 1.99.0, tree-sitter-rust 0.24.2, syn 2 | `feasibility`, `grammar`, `literal`, `rules`, `suppress` |
@@ -57,9 +56,6 @@ upstream path and whether the copy is verbatim, derived or an excerpt. Those fil
 | `php/licenses/phpstan/` | PHPStan 2.2.16 | MIT |
 | `php/licenses/psalm/` | vimeo/psalm 6.19.1 | MIT |
 | `php/licenses/php_codesniffer/` | PHP_CodeSniffer 4.0.4 | BSD-3-Clause |
-| `blade/licenses/blade-parser/` | stillat/blade-parser 2.1.0 | MIT |
-| `blade/licenses/bladestan/` | Bladestan 0.11.7 | MIT |
-| `blade/licenses/tlint/` | tlint 9.7.0 | MIT |
 | `blade/licenses/bagisto/`, `bookstack/`, `filament/`, `livewire/` | directive closures excerpted into `blade/view/directives.php` | MIT |
 | `react/licenses/eslint-plugin-react/` | eslint-plugin-react 7.37.5 | MIT |
 | `react/licenses/react/` | facebook/react (eslint-plugin-react-hooks 7.1.1) | MIT |
