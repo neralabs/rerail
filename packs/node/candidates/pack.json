@@ -42,7 +42,7 @@
       "version": "18.4.1"
     }
   ],
-  "oracles": "../rules",
+  "oracles": "../upstream",
   "rules": [
     {
       "id": "n-no-deprecated-api",

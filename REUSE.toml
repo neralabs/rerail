@@ -172,6 +172,15 @@ path = [
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2015 Toru Nagashima"
+
+# Next.js 16.3.8 (next/licenses/next.js/UPSTREAM.md): verbatim
+[[annotations]]
+path = [
+  "fixtures/next/rules/eslint-plugin-next/fixtures/**",
+  "fixtures/next/rules/eslint-plugin-next/tests/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2025 Vercel, Inc."
 SPDX-License-Identifier = "MIT"
 
 # laravel/framework e5f3d6265f (php/licenses/laravel/UPSTREAM.md): derived or excerpted
@@ -750,4 +759,31 @@ path = [
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2025 Vercel, Inc."
+
+# packs/node
+
+# eslint-plugin-n 18.4.1 (packs/node/licenses/eslint-plugin-n/UPSTREAM.md): verbatim
+[[annotations]]
+path = [
+  "packs/node/upstream/eslint-plugin-n/fixtures/callback-return/**",
+  "packs/node/upstream/eslint-plugin-n/fixtures/exports-style/**",
+  "packs/node/upstream/eslint-plugin-n/fixtures/global-require/**",
+  "packs/node/upstream/eslint-plugin-n/fixtures/handle-callback-err/**",
+  "packs/node/upstream/eslint-plugin-n/fixtures/hashbang/**",
+  "packs/node/upstream/eslint-plugin-n/fixtures/no-callback-literal/**",
+  "packs/node/upstream/eslint-plugin-n/fixtures/no-deprecated-api/**",
+  "packs/node/upstream/eslint-plugin-n/fixtures/no-exports-assign/**",
+  "packs/node/upstream/eslint-plugin-n/fixtures/no-mixed-requires/**",
+  "packs/node/upstream/eslint-plugin-n/fixtures/no-new-require/**",
+  "packs/node/upstream/eslint-plugin-n/fixtures/no-path-concat/**",
+  "packs/node/upstream/eslint-plugin-n/fixtures/no-process-env/**",
+  "packs/node/upstream/eslint-plugin-n/fixtures/no-process-exit/**",
+  "packs/node/upstream/eslint-plugin-n/fixtures/no-sync/**",
+  "packs/node/upstream/eslint-plugin-n/fixtures/prefer-global/**",
+  "packs/node/upstream/eslint-plugin-n/fixtures/prefer-node-protocol/**",
+  "packs/node/upstream/eslint-plugin-n/fixtures/prefer-promises/**",
+  "packs/node/upstream/eslint-plugin-n/tests/lib/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2015 Toru Nagashima"
 SPDX-License-Identifier = "MIT"
