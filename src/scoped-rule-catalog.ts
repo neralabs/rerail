@@ -4,7 +4,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "./database.js";
 import { readStoredCodeRule, reportQuarantinedRule, storedDocumentDigest, type QuarantinedRule } from "./rule-quarantine.js";
-import { assertCodeRuleCompiles } from "./code-rule-compile.js";
+import { assertCodeRuleStorable } from "./code-rule-compile.js";
 import { codeRuleSchema, type CodeRule } from "./code-rule-schema.js";
 import { assertEngineRegexes } from "./rule-regexes.js";
 import { parseConversationRule, type ConversationRule } from "./rule-schema.js";
@@ -263,7 +263,7 @@ export class ScopedRuleCatalog {
   /** Validate against the schema, then compile in the engine, before storing; a rule the engine rejects is never written. */
   upsertCodeRule(input: unknown, options: ScopedRuleWriteOptions = {}): ScopedStoredRule {
     const rule = codeRuleSchema.parse(input);
-    assertCodeRuleCompiles(rule);
+    assertCodeRuleStorable(rule);
     return this.#upsert({ kind: "file", rule }, { ...options, revision: rule.revision });
   }
 

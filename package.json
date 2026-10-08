@@ -97,6 +97,7 @@
     "conformance:languages": "node --import tsx conformance/languages/cli.ts",
     "conformance:languages:check": "node --import tsx conformance/languages/cli.ts --check",
     "generate:schema": "node --import tsx scripts/generate-schema-sql.ts",
+    "generate:languages": "node --import tsx scripts/generate-language-registry.ts",
     "package:check": "npm run build && npm pack --dry-run",
     "prepack": "node scripts/stamp-plugin-versions.mjs stamp",
     "postpack": "node scripts/stamp-plugin-versions.mjs restore"

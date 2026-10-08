@@ -1,6 +1,6 @@
 import type { AuditFailure, AuditMode, AuditScope } from "./audit.js";
 import type { RuleMode } from "./rule-mode.js";
-import type { CodeRuleAstLanguage, CodeRuleDialectLabel } from "./code-rule-languages.js";
+import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
 
 export type CodeRuleDslScalar = boolean | number | string | null;
@@ -95,7 +95,7 @@ export interface CodeRuleDslDefineClause {
 
 export interface CodeRuleDslDefine {
   /** The language `utils` compile for; required with them. */
-  language?: CodeRuleAstLanguage;
+  language?: CodeRuleLanguageId;
   /**
    * Utilities every ast query of `language` in the document may name with `matches`, as if it listed them in its own
    * `utils` (an id may not be in both). Each compiles with the calling query's `languageOptions` and `transform`, and
@@ -189,7 +189,7 @@ export interface CodeRuleDslRegexQuery {
 
 export interface CodeRuleDslAstQuery {
   ast: {
-    language: CodeRuleAstLanguage;
+    language: CodeRuleLanguageId;
     rule: CodeRuleDslAstRule;
     /**
      * Named rules that `rule`, `constraints`, and other utilities reference with `matches` (ast-grep's local

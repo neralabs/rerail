@@ -2,19 +2,25 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadNativeBinding, type NativeBinding } from "./native.js";
+import { LANGUAGE_NOT_SUPPORTED, languageNotSupportedOf } from "./code-rule-language-support.js";
 import type { CodeRule } from "./code-rule-schema.js";
 import { stableJsonText } from "./stable-json.js";
+
+/** `language-not-supported`: the rule names a language or capability the engine does not read yet; anything else is `invalid-rule`. */
+export type CodeRuleCompileErrorCode = typeof LANGUAGE_NOT_SUPPORTED | "invalid-rule";
 
 /** The engine rejected a code-rule document that the TypeScript schema accepted. */
 export class CodeRuleCompileError extends Error {
   readonly ruleId: string;
   readonly reason: string;
+  readonly code: CodeRuleCompileErrorCode;
 
   constructor(ruleId: string, reason: string) {
     super(`policy rule ${ruleId} does not compile: ${reason}`);
     this.name = "PolicyCompileError";
     this.ruleId = ruleId;
     this.reason = reason;
+    this.code = languageNotSupportedOf(reason) === undefined ? "invalid-rule" : LANGUAGE_NOT_SUPPORTED;
   }
 }
 
@@ -60,5 +66,18 @@ export function assertCodeRuleCompiles(rule: CodeRule): void {
     binding.CodeRuleDslRuntime.compile(sourceText, "json", capabilities);
   } catch (error) {
     throw new CodeRuleCompileError(rule.id, error instanceof Error ? error.message : String(error));
+  }
+}
+
+/**
+ * `assertCodeRuleCompiles`, except that a rule refused only as `language-not-supported` passes: the catalog stores it,
+ * inactive, until the engine reads its language.
+ */
+export function assertCodeRuleStorable(rule: CodeRule): void {
+  try {
+    assertCodeRuleCompiles(rule);
+  } catch (error) {
+    if (error instanceof CodeRuleCompileError && error.code === LANGUAGE_NOT_SUPPORTED) return;
+    throw error;
   }
 }

@@ -68,15 +68,14 @@ pub(super) fn collect_defines<'a>(
         let language = body
             .get("language")
             .map(|language| {
-                language
-                    .as_str()
-                    .and_then(CodeRuleLanguage::parse)
+                let unknown = || {
+                    invalid(format!(
+                        "{define_path}/language must equal python, typescript, javascript or php"
+                    ))
+                };
+                let name = language.as_str().ok_or_else(unknown)?;
+                CodeRuleLanguage::read(name, &format!("{define_path}/language"), unknown)
                     .map(CodeRuleLanguage::name)
-                    .ok_or_else(|| {
-                        invalid(format!(
-                            "{define_path}/language must equal python, typescript, javascript or php"
-                        ))
-                    })
             })
             .transpose()?;
         // Options and their configuration were read before the document was resolved.
@@ -326,7 +325,7 @@ mod tests {
                 "/clauses/0/define/language is required: utilities compile for one language",
             ),
             (
-                json!([{ "id": "d", "define": { "language": "rust", "utils": {} } }, rule]),
+                json!([{ "id": "d", "define": { "language": "ruby", "utils": {} } }, rule]),
                 "/clauses/0/define/language must equal python, typescript, javascript or php",
             ),
             (

@@ -1090,7 +1090,7 @@ function zodKeys(schema, spec) {
 }
 
 /** Where an enum's named value list may be declared: the schema sources and the language tables they import. */
-const ENUM_SOURCES = [...SCHEMA_SOURCES, "src/code-rule-languages.ts", "src/code-rule-languages-semantic.ts", "src/rule-mode.ts"];
+const ENUM_SOURCES = [...SCHEMA_SOURCES, "src/code-rule-languages.ts", "src/code-rule-language-registry.generated.ts", "src/rule-mode.ts"];
 
 /** The string values of an array literal's source, its `...NAME` spreads resolved in `sources`. */
 function arrayValues(sources, list) {

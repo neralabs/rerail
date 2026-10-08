@@ -21,7 +21,9 @@ each pack lives in `packs/<id>/`:
 | `conformance.json`, `divergences.json`, `upstream/`, `candidates/` | For ported rules: the tools' recorded findings, their copied tests, declared divergences, ports under evaluation | no |
 
 A pack is data only: it never imports the core engine. Core runs its rules, and the repository's tests validate
-every pack against the contract.
+every pack against the contract. A pack may hold rules for a language core lists as `planned`: they are stored
+inactive and reported as `not supported yet` until core reads the language
+([language packs](../docs/language-packs.md)).
 
 ## Third-party material
 

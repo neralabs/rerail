@@ -98,6 +98,12 @@ them against the newest published core inside each pack's range.
 Checks 1 to 4 are today's `bundled-rules` and `language-conformance` tests, pointed at `packs/*` instead of
 `policies/` and `conformance/`. Check 6 is the repository's existing licence gate.
 
+**Languages not supported yet.** A pack may hold code rules for a language core's
+[language registry](language-packs.md) lists as `planned`, or rules that read a capability their language has
+`not-supported-yet`. Such a rule fails to compile with the code `language-not-supported`. The tests report it as
+`not supported yet` and do not fail: check 1 passes it, and checks 3 and 4 skip it until core reads the language. Any
+other compile error still fails check 1. So a pack for a planned language can land before the engine supports it.
+
 A public `rerail pack check` command, for packs written outside this repository, can wrap the same checks later; it
 is not part of this contract.
 

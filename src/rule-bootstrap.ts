@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
-import { assertCodeRuleCompiles, CodeRuleCompileError } from "./code-rule-compile.js";
+import { assertCodeRuleStorable, CodeRuleCompileError } from "./code-rule-compile.js";
 import { codeRuleSchema, CODE_RULE_FORMAT } from "./code-rule-schema.js";
 import { conversationRuleSchema } from "./rule-schema.js";
 import { RULE_APPLICABILITIES, RULE_KINDS, RULE_ORIGINS } from "./schema.js";
@@ -116,14 +116,15 @@ export function exportScopedRules(store: ScopedRuleCatalog, path: string, now = 
 
 /**
  * Compile every code rule of a dump in the engine before anything is written, so an import is all or nothing:
- * the error lists each rule the engine rejects, by dump index and id.
+ * the error lists each rule the engine rejects, by dump index and id. A rule whose language is not supported yet
+ * imports, inactive.
  */
 function assertDumpCompiles(path: string, documents: readonly RuleDocument[]): void {
   const problems: string[] = [];
   for (const [index, document] of documents.entries()) {
     if (document.kind !== "file") continue;
     try {
-      assertCodeRuleCompiles(document.rule);
+      assertCodeRuleStorable(document.rule);
     } catch (error) {
       if (!(error instanceof CodeRuleCompileError)) throw error;
       problems.push(`  rules[${index}] (${document.rule.id}): ${error.reason}`);
