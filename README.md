@@ -651,7 +651,8 @@ npm ci
 npm run build:native      # compile the native kernel into native/
 npm run build             # clean build: native kernel, runtime, host bundles, UI
 npm run check:all         # TypeScript, rustfmt + clippy, UI token and reference checks
-npm run test:all          # build, unit, reference, native, and integration suites
+npm run test:all          # build, unit, conformance, reference, native, and integration suites
+npm run test:conformance  # TSLint harness tests (fetches TSLint's tests first) and the language conformance gate
 npm run package:check     # build and dry-run the npm pack
 ```
 
@@ -665,7 +666,7 @@ Rerail's own toolchain is Node only. OMP remains an external Bun-hosted runtime;
 
 `scripts/prepare-model.py` reproduces the bundled INT8 artifact from the revision and checksums recorded in `model/manifest.json`.
 
-`npm run conformance:languages -- --pack <pack>` scores a language pack's ported linter rules (`conformance/languages/<pack>/`) through the production workspace against the upstream rule fixtures from `fixtures/` (or `RERAIL_FIXTURES_DIR`) and, with corpora checked out under `.rerail/corpora/<pack>/`, the linter's output on pinned corpora; `--write` saves the report under `.rerail/reports/`. `npm run conformance:languages:check` is the fixtures-only gate.
+`npm run conformance:languages -- --pack <pack>` scores a language pack's ported linter rules (`packs/<pack>/`) through the production workspace against the tool's recordings in the pack's `upstream/` and, with corpora checked out under `.rerail/corpora/<pack>/`, the linter's output on pinned corpora; `--write` saves the report under `.rerail/reports/`. `npm run conformance:languages:check` is the fixtures-only gate. Both it and the TSLint harness's tests (`conformance/tslint/*.test.ts`, which need TSLint's tests fetched into `tmp/tslint-fixtures/` and skip without them) run in `npm run test:conformance`, part of `test:all` in CI.
 
 ### Operational commands (`just`)
 

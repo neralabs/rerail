@@ -105,6 +105,9 @@ jobs:
       - name: Check
         run: npm run check:all
 
+      # test:all includes test:conformance: it fetches TSLint's rule tests at the pinned commit, runs the
+      # conformance harnesses' own tests (conformance/**/*.test.ts: the TSLint golden and rename gates) and
+      # npm run conformance:languages:check.
       - name: Build and test
         run: npm run test:all
 
