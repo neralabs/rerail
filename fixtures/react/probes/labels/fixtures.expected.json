@@ -1,0 +1,185 @@
+{
+ "tool": "labels",
+ "version": "1",
+ "source": {
+  "kind": "fixtures",
+  "origin": "hand-labelled",
+  "rules": [
+   "react-probe/component-function",
+   "react-probe/component-class",
+   "react-probe/component-wrapped",
+   "react-probe/hook-call",
+   "react-probe/custom-hook",
+   "react-probe/runtime-classic-unused-react",
+   "react-probe/runtime-automatic-unused-react",
+   "react-probe/jsx-pragma-comment"
+  ],
+  "files": [
+   "automatic.tsx",
+   "classes.jsx",
+   "classic.jsx",
+   "components.tsx",
+   "hooks.tsx",
+   "pragma.jsx",
+   "unused.ts"
+  ]
+ },
+ "findings": [
+  {
+   "rule": "react-probe/component-class",
+   "path": "classes.jsx",
+   "line": 3,
+   "column": 14
+  },
+  {
+   "rule": "react-probe/component-class",
+   "path": "components.tsx",
+   "line": 31,
+   "column": 14
+  },
+  {
+   "rule": "react-probe/component-class",
+   "path": "components.tsx",
+   "line": 37,
+   "column": 7
+  },
+  {
+   "rule": "react-probe/component-function",
+   "path": "automatic.tsx",
+   "line": 3,
+   "column": 17
+  },
+  {
+   "rule": "react-probe/component-function",
+   "path": "classic.jsx",
+   "line": 3,
+   "column": 17
+  },
+  {
+   "rule": "react-probe/component-function",
+   "path": "components.tsx",
+   "line": 4,
+   "column": 17
+  },
+  {
+   "rule": "react-probe/component-function",
+   "path": "components.tsx",
+   "line": 8,
+   "column": 14
+  },
+  {
+   "rule": "react-probe/component-function",
+   "path": "components.tsx",
+   "line": 10,
+   "column": 7
+  },
+  {
+   "rule": "react-probe/component-function",
+   "path": "hooks.tsx",
+   "line": 18,
+   "column": 17
+  },
+  {
+   "rule": "react-probe/component-function",
+   "path": "pragma.jsx",
+   "line": 4,
+   "column": 14
+  },
+  {
+   "rule": "react-probe/component-wrapped",
+   "path": "components.tsx",
+   "line": 23,
+   "column": 14
+  },
+  {
+   "rule": "react-probe/component-wrapped",
+   "path": "components.tsx",
+   "line": 27,
+   "column": 14
+  },
+  {
+   "rule": "react-probe/component-wrapped",
+   "path": "components.tsx",
+   "line": 29,
+   "column": 14
+  },
+  {
+   "rule": "react-probe/custom-hook",
+   "path": "hooks.tsx",
+   "line": 4,
+   "column": 17
+  },
+  {
+   "rule": "react-probe/custom-hook",
+   "path": "hooks.tsx",
+   "line": 12,
+   "column": 14
+  },
+  {
+   "rule": "react-probe/hook-call",
+   "path": "hooks.tsx",
+   "line": 5,
+   "column": 29
+  },
+  {
+   "rule": "react-probe/hook-call",
+   "path": "hooks.tsx",
+   "line": 6,
+   "column": 3
+  },
+  {
+   "rule": "react-probe/hook-call",
+   "path": "hooks.tsx",
+   "line": 12,
+   "column": 32
+  },
+  {
+   "rule": "react-probe/hook-call",
+   "path": "hooks.tsx",
+   "line": 19,
+   "column": 19
+  },
+  {
+   "rule": "react-probe/hook-call",
+   "path": "hooks.tsx",
+   "line": 20,
+   "column": 17
+  },
+  {
+   "rule": "react-probe/jsx-pragma-comment",
+   "path": "pragma.jsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "react-probe/runtime-automatic-unused-react",
+   "path": "automatic.tsx",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "react-probe/runtime-automatic-unused-react",
+   "path": "classes.jsx",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "react-probe/runtime-automatic-unused-react",
+   "path": "classic.jsx",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "react-probe/runtime-automatic-unused-react",
+   "path": "unused.ts",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "react-probe/runtime-classic-unused-react",
+   "path": "unused.ts",
+   "line": 1,
+   "column": 8
+  }
+ ]
+}

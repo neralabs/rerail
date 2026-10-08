@@ -1,0 +1,1 @@
+const self = foo(this);

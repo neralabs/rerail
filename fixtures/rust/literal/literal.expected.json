@@ -1,0 +1,1743 @@
+{
+ "tool": "rustc",
+ "version": "rustc 1.99.0 (b940084d7 2026-09-28)",
+ "source": {
+  "kind": "fixtures",
+  "origin": "Rerail-authored (MIT), rerail-fixtures/rust/literal/fixtures",
+  "edition": "2024"
+ },
+ "cases": [
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_zero",
+   "line": 8,
+   "source": "0",
+   "type": "i32",
+   "kind": "int",
+   "value": "0"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_decimal",
+   "line": 9,
+   "source": "123",
+   "type": "i32",
+   "kind": "int",
+   "value": "123"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_leading_zeros",
+   "line": 10,
+   "source": "007",
+   "type": "i32",
+   "kind": "int",
+   "value": "7"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_separators",
+   "line": 11,
+   "source": "1_000_000",
+   "type": "i32",
+   "kind": "int",
+   "value": "1000000"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_separators_odd",
+   "line": 12,
+   "source": "1__2_",
+   "type": "i32",
+   "kind": "int",
+   "value": "12"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_i32_max",
+   "line": 13,
+   "source": "2147483647",
+   "type": "i32",
+   "kind": "int",
+   "value": "2147483647"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_hex_lower",
+   "line": 15,
+   "source": "0xff",
+   "type": "i32",
+   "kind": "int",
+   "value": "255"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_hex_upper",
+   "line": 16,
+   "source": "0xFF",
+   "type": "i32",
+   "kind": "int",
+   "value": "255"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_hex_mixed",
+   "line": 17,
+   "source": "0xDEAD_beef_u32",
+   "type": "u32",
+   "kind": "int",
+   "value": "3735928559"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_hex_separator_first",
+   "line": 18,
+   "source": "0x_ff",
+   "type": "i32",
+   "kind": "int",
+   "value": "255"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_octal",
+   "line": 19,
+   "source": "0o777",
+   "type": "i32",
+   "kind": "int",
+   "value": "511"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_octal_separator_first",
+   "line": 20,
+   "source": "0o_7",
+   "type": "i32",
+   "kind": "int",
+   "value": "7"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_binary",
+   "line": 21,
+   "source": "0b1010",
+   "type": "i32",
+   "kind": "int",
+   "value": "10"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_binary_separators",
+   "line": 22,
+   "source": "0b_1_0",
+   "type": "i32",
+   "kind": "int",
+   "value": "2"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_u8_max",
+   "line": 24,
+   "source": "255u8",
+   "type": "u8",
+   "kind": "int",
+   "value": "255"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_i8_max",
+   "line": 25,
+   "source": "127i8",
+   "type": "i8",
+   "kind": "int",
+   "value": "127"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_u16",
+   "line": 26,
+   "source": "65535u16",
+   "type": "u16",
+   "kind": "int",
+   "value": "65535"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_i16",
+   "line": 27,
+   "source": "32767_i16",
+   "type": "i16",
+   "kind": "int",
+   "value": "32767"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_u32",
+   "line": 28,
+   "source": "4294967295u32",
+   "type": "u32",
+   "kind": "int",
+   "value": "4294967295"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_i64",
+   "line": 29,
+   "source": "9223372036854775807i64",
+   "type": "i64",
+   "kind": "int",
+   "value": "9223372036854775807"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_u64_max",
+   "line": 30,
+   "source": "18446744073709551615u64",
+   "type": "u64",
+   "kind": "int",
+   "value": "18446744073709551615"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_u128_max",
+   "line": 31,
+   "source": "340282366920938463463374607431768211455u128",
+   "type": "u128",
+   "kind": "int",
+   "value": "340282366920938463463374607431768211455"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_i128_max",
+   "line": 32,
+   "source": "170141183460469231731687303715884105727i128",
+   "type": "i128",
+   "kind": "int",
+   "value": "170141183460469231731687303715884105727"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_usize",
+   "line": 33,
+   "source": "1usize",
+   "type": "usize",
+   "kind": "int",
+   "value": "1"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_isize",
+   "line": 34,
+   "source": "1_isize",
+   "type": "isize",
+   "kind": "int",
+   "value": "1"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_binary_u8",
+   "line": 35,
+   "source": "0b1111_1111u8",
+   "type": "u8",
+   "kind": "int",
+   "value": "255"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_octal_u16",
+   "line": 36,
+   "source": "0o177777u16",
+   "type": "u16",
+   "kind": "int",
+   "value": "65535"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_hex_u128_max",
+   "line": 37,
+   "source": "0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffffu128",
+   "type": "u128",
+   "kind": "int",
+   "value": "340282366920938463463374607431768211455"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_hex_digits_f32",
+   "line": 39,
+   "source": "0x1f32",
+   "type": "i32",
+   "kind": "int",
+   "value": "7986"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_from_int_suffix_f32",
+   "line": 40,
+   "source": "1f32",
+   "type": "f32",
+   "kind": "float",
+   "value": "1.0",
+   "bits": "3f800000"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_from_int_suffix_f64",
+   "line": 41,
+   "source": "1_f64",
+   "type": "f64",
+   "kind": "float",
+   "value": "1.0",
+   "bits": "3ff0000000000000"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_context_u128",
+   "line": 43,
+   "source": "0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff",
+   "type": "u128",
+   "kind": "int",
+   "value": "340282366920938463463374607431768211455"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_context_u64",
+   "line": 44,
+   "source": "0o1777777777777777777777",
+   "type": "u64",
+   "kind": "int",
+   "value": "18446744073709551615"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "int_context_i8",
+   "line": 45,
+   "source": "0b0111_1111",
+   "type": "i8",
+   "kind": "int",
+   "value": "127"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_simple",
+   "line": 48,
+   "source": "1.0",
+   "type": "f64",
+   "kind": "float",
+   "value": "1.0",
+   "bits": "3ff0000000000000"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_trailing_dot",
+   "line": 49,
+   "source": "1.",
+   "type": "f64",
+   "kind": "float",
+   "value": "1.0",
+   "bits": "3ff0000000000000"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_tenth",
+   "line": 50,
+   "source": "0.1",
+   "type": "f64",
+   "kind": "float",
+   "value": "0.1",
+   "bits": "3fb999999999999a"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_tenth_f32",
+   "line": 51,
+   "source": "0.1f32",
+   "type": "f32",
+   "kind": "float",
+   "value": "0.1",
+   "bits": "3dcccccd"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_exponent",
+   "line": 52,
+   "source": "1e10",
+   "type": "f64",
+   "kind": "float",
+   "value": "10000000000.0",
+   "bits": "4202a05f20000000"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_exponent_upper",
+   "line": 53,
+   "source": "1E10",
+   "type": "f64",
+   "kind": "float",
+   "value": "10000000000.0",
+   "bits": "4202a05f20000000"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_exponent_plus",
+   "line": 54,
+   "source": "1e+10",
+   "type": "f64",
+   "kind": "float",
+   "value": "10000000000.0",
+   "bits": "4202a05f20000000"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_exponent_minus",
+   "line": 55,
+   "source": "1e-10",
+   "type": "f64",
+   "kind": "float",
+   "value": "1e-10",
+   "bits": "3ddb7cdfd9d7bdbb"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_fraction_exponent",
+   "line": 56,
+   "source": "1.5e3",
+   "type": "f64",
+   "kind": "float",
+   "value": "1500.0",
+   "bits": "4097700000000000"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_separators",
+   "line": 57,
+   "source": "1_000.000_1",
+   "type": "f64",
+   "kind": "float",
+   "value": "1000.0001",
+   "bits": "408f4000346dc5d6"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_exponent_separators",
+   "line": 58,
+   "source": "1e1_0",
+   "type": "f64",
+   "kind": "float",
+   "value": "10000000000.0",
+   "bits": "4202a05f20000000"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_exponent_separator_first",
+   "line": 59,
+   "source": "1e_3",
+   "type": "f64",
+   "kind": "float",
+   "value": "1000.0",
+   "bits": "408f400000000000"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_suffix_f32",
+   "line": 60,
+   "source": "2.5f32",
+   "type": "f32",
+   "kind": "float",
+   "value": "2.5",
+   "bits": "40200000"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_suffix_separator",
+   "line": 61,
+   "source": "2.5_f64",
+   "type": "f64",
+   "kind": "float",
+   "value": "2.5",
+   "bits": "4004000000000000"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_exponent_f32",
+   "line": 62,
+   "source": "1e3f32",
+   "type": "f32",
+   "kind": "float",
+   "value": "1000.0",
+   "bits": "447a0000"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_f64_max",
+   "line": 63,
+   "source": "1.7976931348623157e308",
+   "type": "f64",
+   "kind": "float",
+   "value": "1.7976931348623157e308",
+   "bits": "7fefffffffffffff"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_subnormal_min",
+   "line": 64,
+   "source": "5e-324",
+   "type": "f64",
+   "kind": "float",
+   "value": "5e-324",
+   "bits": "0000000000000001"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_round_half_even",
+   "line": 65,
+   "source": "9007199254740993.0",
+   "type": "f64",
+   "kind": "float",
+   "value": "9007199254740992.0",
+   "bits": "4340000000000000"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_f32_rounding",
+   "line": 66,
+   "source": "16777217.0f32",
+   "type": "f32",
+   "kind": "float",
+   "value": "16777216.0",
+   "bits": "4b800000"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "float_context_f32",
+   "line": 67,
+   "source": "0.1",
+   "type": "f32",
+   "kind": "float",
+   "value": "0.1",
+   "bits": "3dcccccd"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "char_plain",
+   "line": 70,
+   "source": "'a'",
+   "type": "char",
+   "kind": "char",
+   "value": "a",
+   "code_point": 97
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "char_latin",
+   "line": 71,
+   "source": "'é'",
+   "type": "char",
+   "kind": "char",
+   "value": "é",
+   "code_point": 233
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "char_astral",
+   "line": 72,
+   "source": "'😀'",
+   "type": "char",
+   "kind": "char",
+   "value": "😀",
+   "code_point": 128512
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "char_double_quote",
+   "line": 73,
+   "source": "'\"'",
+   "type": "char",
+   "kind": "char",
+   "value": "\"",
+   "code_point": 34
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "char_escape_newline",
+   "line": 74,
+   "source": "'\\n'",
+   "type": "char",
+   "kind": "char",
+   "value": "\n",
+   "code_point": 10
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "char_escape_return",
+   "line": 75,
+   "source": "'\\r'",
+   "type": "char",
+   "kind": "char",
+   "value": "\r",
+   "code_point": 13
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "char_escape_tab",
+   "line": 76,
+   "source": "'\\t'",
+   "type": "char",
+   "kind": "char",
+   "value": "\t",
+   "code_point": 9
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "char_escape_backslash",
+   "line": 77,
+   "source": "'\\\\'",
+   "type": "char",
+   "kind": "char",
+   "value": "\\",
+   "code_point": 92
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "char_escape_nul",
+   "line": 78,
+   "source": "'\\0'",
+   "type": "char",
+   "kind": "char",
+   "value": "\u0000",
+   "code_point": 0
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "char_escape_quote",
+   "line": 79,
+   "source": "'\\''",
+   "type": "char",
+   "kind": "char",
+   "value": "'",
+   "code_point": 39
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "char_escape_double_quote",
+   "line": 80,
+   "source": "'\\\"'",
+   "type": "char",
+   "kind": "char",
+   "value": "\"",
+   "code_point": 34
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "char_escape_hex_zero",
+   "line": 81,
+   "source": "'\\x00'",
+   "type": "char",
+   "kind": "char",
+   "value": "\u0000",
+   "code_point": 0
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "char_escape_hex_max",
+   "line": 82,
+   "source": "'\\x7F'",
+   "type": "char",
+   "kind": "char",
+   "value": "",
+   "code_point": 127
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "char_escape_unicode_zero",
+   "line": 83,
+   "source": "'\\u{0}'",
+   "type": "char",
+   "kind": "char",
+   "value": "\u0000",
+   "code_point": 0
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "char_escape_unicode",
+   "line": 84,
+   "source": "'\\u{1F600}'",
+   "type": "char",
+   "kind": "char",
+   "value": "😀",
+   "code_point": 128512
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "char_escape_unicode_max",
+   "line": 85,
+   "source": "'\\u{10FFFF}'",
+   "type": "char",
+   "kind": "char",
+   "value": "􏿿",
+   "code_point": 1114111
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "char_escape_unicode_padded",
+   "line": 86,
+   "source": "'\\u{0041}'",
+   "type": "char",
+   "kind": "char",
+   "value": "A",
+   "code_point": 65
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "char_escape_unicode_separators",
+   "line": 87,
+   "source": "'\\u{00_41}'",
+   "type": "char",
+   "kind": "char",
+   "value": "A",
+   "code_point": 65
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "byte_plain",
+   "line": 90,
+   "source": "b'a'",
+   "type": "u8",
+   "kind": "int",
+   "value": "97"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "byte_escape_newline",
+   "line": 91,
+   "source": "b'\\n'",
+   "type": "u8",
+   "kind": "int",
+   "value": "10"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "byte_escape_return",
+   "line": 92,
+   "source": "b'\\r'",
+   "type": "u8",
+   "kind": "int",
+   "value": "13"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "byte_escape_tab",
+   "line": 93,
+   "source": "b'\\t'",
+   "type": "u8",
+   "kind": "int",
+   "value": "9"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "byte_escape_backslash",
+   "line": 94,
+   "source": "b'\\\\'",
+   "type": "u8",
+   "kind": "int",
+   "value": "92"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "byte_escape_nul",
+   "line": 95,
+   "source": "b'\\0'",
+   "type": "u8",
+   "kind": "int",
+   "value": "0"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "byte_escape_quote",
+   "line": 96,
+   "source": "b'\\''",
+   "type": "u8",
+   "kind": "int",
+   "value": "39"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "byte_escape_double_quote",
+   "line": 97,
+   "source": "b'\"'",
+   "type": "u8",
+   "kind": "int",
+   "value": "34"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "byte_escape_hex_zero",
+   "line": 98,
+   "source": "b'\\x00'",
+   "type": "u8",
+   "kind": "int",
+   "value": "0"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "byte_escape_hex_high",
+   "line": 99,
+   "source": "b'\\xff'",
+   "type": "u8",
+   "kind": "int",
+   "value": "255"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "byte_escape_hex_upper",
+   "line": 100,
+   "source": "b'\\xAB'",
+   "type": "u8",
+   "kind": "int",
+   "value": "171"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "str_empty",
+   "line": 103,
+   "source": "\"\"",
+   "type": "&str",
+   "kind": "str",
+   "value": "",
+   "utf8": ""
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "str_plain",
+   "line": 104,
+   "source": "\"abc\"",
+   "type": "&str",
+   "kind": "str",
+   "value": "abc",
+   "utf8": "616263"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "str_non_ascii",
+   "line": 105,
+   "source": "\"é😀\"",
+   "type": "&str",
+   "kind": "str",
+   "value": "é😀",
+   "utf8": "c3a9f09f9880"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "str_escapes",
+   "line": 106,
+   "source": "\"\\n\\r\\t\\\\\\0\\'\\\"\"",
+   "type": "&str",
+   "kind": "str",
+   "value": "\n\r\t\\\u0000'\"",
+   "utf8": "0a0d095c002722"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "str_single_quote",
+   "line": 107,
+   "source": "\"'\"",
+   "type": "&str",
+   "kind": "str",
+   "value": "'",
+   "utf8": "27"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "str_escape_hex",
+   "line": 108,
+   "source": "\"\\x41\\x7f\"",
+   "type": "&str",
+   "kind": "str",
+   "value": "A",
+   "utf8": "417f"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "str_escape_unicode",
+   "line": 109,
+   "source": "\"\\u{1F600}\\u{0}\\u{10_FFFF}\"",
+   "type": "&str",
+   "kind": "str",
+   "value": "😀\u0000􏿿",
+   "utf8": "f09f988000f48fbfbf"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "str_continuation",
+   "line": 110,
+   "source": "\"a\\\n        b\"",
+   "type": "&str",
+   "kind": "str",
+   "value": "ab",
+   "utf8": "6162"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "str_continuation_keeps_escaped_space",
+   "line": 112,
+   "source": "\"a\\\n        \\x20b\"",
+   "type": "&str",
+   "kind": "str",
+   "value": "a b",
+   "utf8": "612062"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "str_literal_newline",
+   "line": 114,
+   "source": "\"a\nb\"",
+   "type": "&str",
+   "kind": "str",
+   "value": "a\nb",
+   "utf8": "610a62"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "str_continuation_at_end",
+   "line": 116,
+   "source": "\"a\\\n\"",
+   "type": "&str",
+   "kind": "str",
+   "value": "a",
+   "utf8": "61"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "raw_plain",
+   "line": 120,
+   "source": "r\"a\\nb\"",
+   "type": "&str",
+   "kind": "str",
+   "value": "a\\nb",
+   "utf8": "615c6e62"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "raw_empty",
+   "line": 121,
+   "source": "r\"\"",
+   "type": "&str",
+   "kind": "str",
+   "value": "",
+   "utf8": ""
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "raw_hash",
+   "line": 122,
+   "source": "r#\"a\"b\"#",
+   "type": "&str",
+   "kind": "str",
+   "value": "a\"b",
+   "utf8": "612262"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "raw_two_hashes",
+   "line": 123,
+   "source": "r##\"a\"#b\"##",
+   "type": "&str",
+   "kind": "str",
+   "value": "a\"#b",
+   "utf8": "61222362"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "raw_backslash_at_end",
+   "line": 124,
+   "source": "r\"a\\\"",
+   "type": "&str",
+   "kind": "str",
+   "value": "a\\",
+   "utf8": "615c"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "raw_newline",
+   "line": 125,
+   "source": "r\"a\nb\"",
+   "type": "&str",
+   "kind": "str",
+   "value": "a\nb",
+   "utf8": "610a62"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "bstr_plain",
+   "line": 129,
+   "source": "b\"abc\"",
+   "type": "&[u8; 3]",
+   "kind": "bytes",
+   "bytes": "616263"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "bstr_escapes",
+   "line": 130,
+   "source": "b\"\\xff\\x00\\n\\\\\\\"\"",
+   "type": "&[u8; 5]",
+   "kind": "bytes",
+   "bytes": "ff000a5c22"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "bstr_continuation",
+   "line": 131,
+   "source": "b\"a\\\n        b\"",
+   "type": "&[u8; 2]",
+   "kind": "bytes",
+   "bytes": "6162"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "bstr_raw",
+   "line": 133,
+   "source": "br\"a\\n\"",
+   "type": "&[u8; 3]",
+   "kind": "bytes",
+   "bytes": "615c6e"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "bstr_raw_hash",
+   "line": 134,
+   "source": "br#\"a\"b\"#",
+   "type": "&[u8; 3]",
+   "kind": "bytes",
+   "bytes": "612262"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "cstr_plain",
+   "line": 137,
+   "source": "c\"abc\"",
+   "type": "&core::ffi::c_str::CStr",
+   "kind": "cstr",
+   "bytes": "616263"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "cstr_escape_hex_high",
+   "line": 138,
+   "source": "c\"\\xff\"",
+   "type": "&core::ffi::c_str::CStr",
+   "kind": "cstr",
+   "bytes": "ff"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "cstr_escape_unicode",
+   "line": 139,
+   "source": "c\"\\u{1F600}\"",
+   "type": "&core::ffi::c_str::CStr",
+   "kind": "cstr",
+   "bytes": "f09f9880"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "cstr_non_ascii",
+   "line": 140,
+   "source": "c\"é\"",
+   "type": "&core::ffi::c_str::CStr",
+   "kind": "cstr",
+   "bytes": "c3a9"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "cstr_continuation",
+   "line": 141,
+   "source": "c\"a\\\n        b\"",
+   "type": "&core::ffi::c_str::CStr",
+   "kind": "cstr",
+   "bytes": "6162"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "cstr_raw",
+   "line": 143,
+   "source": "cr\"a\\n\"",
+   "type": "&core::ffi::c_str::CStr",
+   "kind": "cstr",
+   "bytes": "615c6e"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "cstr_raw_hash",
+   "line": 144,
+   "source": "cr#\"a\"b\"#",
+   "type": "&core::ffi::c_str::CStr",
+   "kind": "cstr",
+   "bytes": "612262"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "bool_true",
+   "line": 147,
+   "source": "true",
+   "type": "bool",
+   "kind": "bool",
+   "value": true
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "bool_false",
+   "line": 148,
+   "source": "false",
+   "type": "bool",
+   "kind": "bool",
+   "value": false
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "concat_mixed",
+   "line": 151,
+   "source": "concat!(\"a\", 'b', 1, 2.5, true, -3)",
+   "type": "&str",
+   "kind": "str",
+   "value": "ab12.5true-3",
+   "utf8": "616231322e35747275652d33"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "concat_float_exponent",
+   "line": 152,
+   "source": "concat!(1e3, 1.50, 2.0f32)",
+   "type": "&str",
+   "kind": "str",
+   "value": "1e31.502.0",
+   "utf8": "316533312e3530322e30"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "concat_int_suffix_and_base",
+   "line": 153,
+   "source": "concat!(1u8, 0x10, 0b11, 1_000)",
+   "type": "&str",
+   "kind": "str",
+   "value": "11631000",
+   "utf8": "3131363331303030"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "concat_escapes",
+   "line": 154,
+   "source": "concat!(\"\\x41\", '\\u{42}', r\"\\n\")",
+   "type": "&str",
+   "kind": "str",
+   "value": "AB\\n",
+   "utf8": "41425c6e"
+  },
+  {
+   "file": "fixtures/valid.rs",
+   "name": "stringify_literals",
+   "line": 155,
+   "source": "stringify!(0x1_0u8, \"a\\n\", 'c', r#\"x\"#, 1.5e3)",
+   "type": "&str",
+   "kind": "str",
+   "value": "0x1_0u8, \"a\\n\", 'c', r#\"x\"#, 1.5e3",
+   "utf8": "3078315f3075382c2022615c6e222c202763272c207223227822232c20312e356533"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "int_u8_overflow",
+   "line": 8,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "overflowing_literals",
+     "level": "error",
+     "line": 8,
+     "column": 31,
+     "message": "literal out of range for `u8`"
+    }
+   ],
+   "source": "256u8"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "int_i8_overflow",
+   "line": 9,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "overflowing_literals",
+     "level": "error",
+     "line": 9,
+     "column": 31,
+     "message": "literal out of range for `i8`"
+    }
+   ],
+   "source": "128i8"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "int_i8_hex_wraps",
+   "line": 10,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "overflowing_literals",
+     "level": "error",
+     "line": 10,
+     "column": 32,
+     "message": "literal out of range for `i8`"
+    }
+   ],
+   "source": "0xffi8"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "int_i32_default_overflow",
+   "line": 11,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "overflowing_literals",
+     "level": "error",
+     "line": 11,
+     "column": 40,
+     "message": "literal out of range for `i32`"
+    }
+   ],
+   "source": "2147483648"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "int_too_large_for_u128",
+   "line": 12,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 12,
+     "column": 38,
+     "message": "integer literal is too large"
+    }
+   ],
+   "source": "340282366920938463463374607431768211456"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "float_f64_overflow",
+   "line": 13,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "overflowing_literals",
+     "level": "error",
+     "line": 13,
+     "column": 34,
+     "message": "literal out of range for `f64`"
+    }
+   ],
+   "source": "1e309"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "float_f32_overflow",
+   "line": 14,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "overflowing_literals",
+     "level": "error",
+     "line": 14,
+     "column": 34,
+     "message": "literal out of range for `f32`"
+    }
+   ],
+   "source": "1e39f32"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "float_underflow_to_zero",
+   "line": 15,
+   "accepted": true,
+   "diagnostics": [],
+   "source": "1e-400",
+   "type": "f64",
+   "kind": "float",
+   "value": "0.0",
+   "bits": "0000000000000000"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "float_f32_subnormal",
+   "line": 16,
+   "accepted": true,
+   "diagnostics": [],
+   "source": "1e-45f32",
+   "type": "f32",
+   "kind": "float",
+   "value": "1e-45",
+   "bits": "00000001"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "int_binary_bad_digit",
+   "line": 19,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 19,
+     "column": 40,
+     "message": "invalid digit for a base 2 literal"
+    }
+   ],
+   "source": "0b102"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "int_octal_bad_digit",
+   "line": 20,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 20,
+     "column": 37,
+     "message": "invalid digit for a base 8 literal"
+    }
+   ],
+   "source": "0o8"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "int_hex_empty",
+   "line": 21,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "E0768",
+     "level": "error",
+     "line": 21,
+     "column": 29,
+     "message": "no valid digits found for number"
+    }
+   ],
+   "source": "0x"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "int_hex_only_separator",
+   "line": 22,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "E0768",
+     "level": "error",
+     "line": 22,
+     "column": 38,
+     "message": "no valid digits found for number"
+    }
+   ],
+   "source": "0x_"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "int_bad_suffix",
+   "line": 23,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 23,
+     "column": 30,
+     "message": "invalid width `7` for integer literal"
+    }
+   ],
+   "source": "1u7"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "int_float_suffix_on_hex",
+   "line": 24,
+   "accepted": true,
+   "diagnostics": [],
+   "source": "0x10f64",
+   "type": "i32",
+   "kind": "int",
+   "value": "69476"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "float_empty_exponent",
+   "line": 25,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 25,
+     "column": 36,
+     "message": "expected at least one digit in exponent"
+    }
+   ],
+   "source": "1e"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "float_hex",
+   "line": 26,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 26,
+     "column": 25,
+     "message": "hexadecimal float literal is not supported"
+    }
+   ],
+   "source": "0x1.0"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "float_binary_exponent",
+   "line": 27,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 27,
+     "column": 37,
+     "message": "binary float literal is not supported"
+    }
+   ],
+   "source": "0b1e2"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "float_int_suffix",
+   "line": 28,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 28,
+     "column": 32,
+     "message": "invalid suffix `u8` for float literal"
+    }
+   ],
+   "source": "1.0u8"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "float_f16_unstable",
+   "line": 29,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "E0658",
+     "level": "error",
+     "line": 29,
+     "column": 34,
+     "message": "the type `f16` is unstable"
+    }
+   ],
+   "source": "1.0f16"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "char_surrogate",
+   "line": 32,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 32,
+     "column": 31,
+     "message": "invalid unicode character escape"
+    }
+   ],
+   "source": "'\\u{D800}'"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "char_beyond_max",
+   "line": 33,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 33,
+     "column": 32,
+     "message": "invalid unicode character escape"
+    }
+   ],
+   "source": "'\\u{110000}'"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "char_empty_unicode",
+   "line": 34,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 34,
+     "column": 35,
+     "message": "empty unicode escape"
+    }
+   ],
+   "source": "'\\u{}'"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "char_long_unicode",
+   "line": 35,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 35,
+     "column": 34,
+     "message": "overlong unicode escape"
+    }
+   ],
+   "source": "'\\u{0000041}'"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "char_hex_above_7f",
+   "line": 36,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 36,
+     "column": 34,
+     "message": "out of range hex escape"
+    }
+   ],
+   "source": "'\\x80'"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "char_two_chars",
+   "line": 37,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 37,
+     "column": 30,
+     "message": "character literal may only contain one codepoint"
+    }
+   ],
+   "source": "'ab'"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "char_unknown_escape",
+   "line": 38,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 38,
+     "column": 37,
+     "message": "unknown character escape: `q`"
+    }
+   ],
+   "source": "'\\q'"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "byte_non_ascii",
+   "line": 39,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 39,
+     "column": 32,
+     "message": "non-ASCII character in byte literal"
+    }
+   ],
+   "source": "b'é'"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "byte_unicode_escape",
+   "line": 40,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 40,
+     "column": 37,
+     "message": "unicode escape in byte string"
+    }
+   ],
+   "source": "b'\\u{41}'"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "str_continuation_blank_lines",
+   "line": 42,
+   "accepted": true,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "warning",
+     "line": 42,
+     "column": 46,
+     "message": "multiple lines skipped by escaped newline"
+    }
+   ],
+   "source": "\"a\\\n\n        b\"",
+   "type": "&str",
+   "kind": "str",
+   "value": "ab",
+   "utf8": "6162"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "str_hex_above_7f",
+   "line": 45,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 45,
+     "column": 33,
+     "message": "out of range hex escape"
+    }
+   ],
+   "source": "\"\\x80\""
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "str_unknown_escape",
+   "line": 46,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 46,
+     "column": 36,
+     "message": "unknown character escape: `q`"
+    }
+   ],
+   "source": "\"\\q\""
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "bstr_non_ascii",
+   "line": 47,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 47,
+     "column": 32,
+     "message": "non-ASCII character in byte string literal"
+    }
+   ],
+   "source": "b\"é\""
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "cstr_nul_escape",
+   "line": 48,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 48,
+     "column": 34,
+     "message": "null characters in C string literals are not supported"
+    }
+   ],
+   "source": "c\"a\\0b\""
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "cstr_hex_nul",
+   "line": 49,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 49,
+     "column": 30,
+     "message": "null characters in C string literals are not supported"
+    }
+   ],
+   "source": "c\"\\x00\""
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "raw_unbalanced_hashes",
+   "line": 50,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 50,
+     "column": 43,
+     "message": "no rules expected `#`"
+    }
+   ],
+   "source": "r#\"a\"##"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "raw_too_few_hashes",
+   "line": 51,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "E0748",
+     "level": "error",
+     "line": 51,
+     "column": 34,
+     "message": "unterminated raw string"
+    }
+   ],
+   "source": "r##\"a\"#"
+  },
+  {
+   "file": "fixtures/edge.rs",
+   "name": "concat_byte_literal",
+   "line": 52,
+   "accepted": false,
+   "diagnostics": [
+    {
+     "code": "",
+     "level": "error",
+     "line": 52,
+     "column": 43,
+     "message": "cannot concatenate a byte string literal"
+    }
+   ],
+   "source": "concat!(b'a')"
+  }
+ ]
+}

@@ -1,0 +1,1 @@
+function f(NaN) { return x === NaN; }

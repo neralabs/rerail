@@ -1,0 +1,1 @@
+<template><div><div v-for="{x,y,z} in list" v-if="z.isActive"></div></div></template>

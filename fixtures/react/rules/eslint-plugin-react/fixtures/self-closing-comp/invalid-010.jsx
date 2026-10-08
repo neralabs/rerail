@@ -1,0 +1,1 @@
+var contentContainer = <div className="content"></div>;

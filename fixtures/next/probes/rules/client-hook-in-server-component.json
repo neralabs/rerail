@@ -1,0 +1,110 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-probe-client-hook-in-server-component",
+  "revision": 1,
+  "mode": "log",
+  "description": "Next pack probe. React (inherited) + file role + directive: a call of a client-only hook imported from react, in an app/ file without a \"use client\" directive.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "path": {
+              "regex": "^(?:src/)?app/"
+            }
+          },
+          "rule": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "import_specifier",
+                        "has": {
+                          "field": "name",
+                          "regex": "^(?:useState|useReducer|useEffect|useLayoutEffect|useInsertionEffect|useRef|useImperativeHandle|useSyncExternalStore|useTransition|useDeferredValue|useOptimistic|useActionState|useContext)$"
+                        },
+                        "inside": {
+                          "kind": "import_statement",
+                          "stopBy": "end",
+                          "has": {
+                            "field": "source",
+                            "value": {
+                              "eq": "react"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "program",
+                    "stopBy": "end",
+                    "has": {
+                      "kind": "expression_statement",
+                      "has": {
+                        "kind": "string",
+                        "value": {
+                          "eq": "use client"
+                        }
+                      },
+                      "inside": {
+                        "kind": "program"
+                      },
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "expression_statement",
+                                "has": {
+                                  "kind": "string"
+                                }
+                              },
+                              {
+                                "kind": "comment"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "next/client-hook-in-server-component",
+        "message": "React (inherited) + file role + directive: a call of a client-only hook imported from react, in an app/ file without a \"use client\" directive."
+      }
+    }
+  ]
+}

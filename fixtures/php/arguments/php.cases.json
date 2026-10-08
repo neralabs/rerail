@@ -1,0 +1,500 @@
+{
+ "cases": [
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": ""
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "1"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "1, 2"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "1, 2, 3"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "1, 2, 3, 4"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "'x', [1], null"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "a: 1"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "b: 2"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "c: 3, a: 1"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "1, c: 3"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "1, b: 2, c: 3"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "b: 2, a: 1"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "1, a: 2"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "a: 1, a: 2"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "a: 1, 2"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "1, 2, b: 3"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "A: 1"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "d: 4"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "1, d: 4, b: 2"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...[1, 2]"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...[1, 2, 3, 4]"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...['b' => 2]"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...['b' => 2, 'a' => 1]"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "1, ...['c' => 3]"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...[1], ...[2]"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...[1, 'c' => 3]"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...['a' => 1, 2]"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...[5 => 1, 7 => 2]"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...[]"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...['a' => 1], b: 2"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...['a' => 1], a: 2"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...[1, 2], c: 3"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...[1], 2"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "1, ...[], b: 2"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...['1' => 'x']"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...[true => 'x']"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...['0' => 'x', 'b' => 'y']"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...[1, 'a' => 2]"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...[[1]]"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "(1), (b: 2)"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...$x",
+   "prelude": "$x = [1, 2];",
+   "unknown": {
+    "a": "`...$x` may pass it",
+    "b": "`...$x` may pass it",
+    "c": "`...$x` may pass it"
+   }
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "1, ...$x",
+   "prelude": "$x = ['c' => 3];",
+   "unknown": {
+    "b": "`...$x` may pass it",
+    "c": "`...$x` may pass it"
+   }
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...$x, b: 2",
+   "prelude": "$x = [1];",
+   "unknown": {
+    "a": "`...$x` may pass it",
+    "b": "`...$x` may pass it by position, then `b: 2` is refused",
+    "c": "`...$x` may pass it"
+   }
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...$x",
+   "prelude": "$x = ['b' => 2];",
+   "unknown": {
+    "a": "`...$x` may pass it",
+    "b": "`...$x` may pass it",
+    "c": "`...$x` may pass it"
+   }
+  },
+  {
+   "signature": [
+    "x"
+   ],
+   "call": "x: 1"
+  },
+  {
+   "signature": [
+    "x"
+   ],
+   "call": "X: 1"
+  },
+  {
+   "signature": [
+    "x",
+    "y"
+   ],
+   "call": "1"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "1, 2, ...$x",
+   "prelude": "$x = [3];",
+   "unknown": {
+    "c": "`...$x` may pass it"
+   }
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "1, ...[2], ...$x",
+   "prelude": "$x = ['c' => 3];",
+   "unknown": {
+    "c": "`...$x` may pass it"
+   }
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "...[1], ...$x, ...['c' => 3]",
+   "prelude": "$x = [2];",
+   "unknown": {
+    "b": "`...$x` may pass it",
+    "c": "`...$x` may pass it by name, then `'c' => 3` is refused"
+   }
+  },
+  {
+   "signature": [
+    "a"
+   ],
+   "call": "a: 1, x: 2, x: 3"
+  },
+  {
+   "signature": [
+    "a"
+   ],
+   "call": "...['a' => 1, 'x' => 2], x: 3"
+  },
+  {
+   "signature": [
+    "a"
+   ],
+   "call": "...['x' => 1], ...['a' => 2, 'x' => 3]"
+  },
+  {
+   "signature": [
+    "a"
+   ],
+   "call": "...['x' => 1, 'a' => 2, 'x' => 3]"
+  },
+  {
+   "signature": [
+    "a",
+    "b"
+   ],
+   "call": "1, ...$x, x: 2, x: 3",
+   "prelude": "$x = [];"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "1, c: 3",
+   "callee": "new class"
+  },
+  {
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "call": "",
+   "callee": "new class"
+  },
+  {
+   "signature": [
+    "a",
+    "b"
+   ],
+   "call": "...[1], b: 2",
+   "callee": "new class"
+  },
+  {
+   "signature": [
+    "a"
+   ],
+   "call": "a: 1, a: 2",
+   "callee": "new class"
+  }
+ ]
+}

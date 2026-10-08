@@ -1,0 +1,16 @@
+const a = <a href='\x6Aavascript:void(0)' />;
+const b = <a href='&#106;avascript:void(0)' />;
+const c = <a href="JavaScript:x" />;
+const d = <a href={'\x6Aavascript:'} />;
+const e = <a href={`javascript:${x}`} />;
+const f = <a href={`javascript:`} />;
+const g = tag`javascript:`;
+const h = 'javascript:';
+const i = <a href='&#x6A;avascript:' />;
+const j = <a href='&#X6A;avascript:' />;
+const k = <a href="java&#x09;script:" />;
+const l = <a href="&nbsp;javascript:" />;
+const m = <a href="&#74;AVASCRIPT&#58;" />;
+const n = <a href='javascript&colon;' />;
+const o = <a href="\u006Aavascript:" />;
+const p = <a href={"\u006Aavascript:"} />;

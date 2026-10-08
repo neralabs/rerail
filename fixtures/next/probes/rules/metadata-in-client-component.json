@@ -1,0 +1,125 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-probe-metadata-in-client-component",
+  "revision": 1,
+  "mode": "log",
+  "description": "Next pack probe. Metadata export + directive: metadata, generateMetadata, viewport or generateViewport exported from a \"use client\" file (Next refuses it).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "export_statement",
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "function_declaration"
+                            },
+                            {
+                              "kind": "generator_function_declaration"
+                            }
+                          ],
+                          "has": {
+                            "field": "name",
+                            "regex": "^(?:metadata|generateMetadata|viewport|generateViewport)$"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "lexical_declaration"
+                            },
+                            {
+                              "kind": "variable_declaration"
+                            }
+                          ],
+                          "has": {
+                            "kind": "variable_declarator",
+                            "has": {
+                              "field": "name",
+                              "kind": "identifier",
+                              "regex": "^(?:metadata|generateMetadata|viewport|generateViewport)$"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "kind": "program"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "program",
+                  "stopBy": "end",
+                  "has": {
+                    "kind": "expression_statement",
+                    "has": {
+                      "kind": "string",
+                      "value": {
+                        "eq": "use client"
+                      }
+                    },
+                    "inside": {
+                      "kind": "program"
+                    },
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "expression_statement",
+                              "has": {
+                                "kind": "string"
+                              }
+                            },
+                            {
+                              "kind": "comment"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "next/metadata-in-client-component",
+        "message": "Metadata export + directive: metadata, generateMetadata, viewport or generateViewport exported from a \"use client\" file (Next refuses it)."
+      }
+    }
+  ]
+}

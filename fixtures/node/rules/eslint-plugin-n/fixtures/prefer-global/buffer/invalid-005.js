@@ -1,0 +1,1 @@
+var { Buffer } = process.getBuiltinModule('buffer'); var b = Buffer.alloc(10)

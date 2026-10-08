@@ -1,0 +1,1 @@
+@endComponentClass($some, $args)

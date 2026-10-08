@@ -1,0 +1,116 @@
+{
+ "tool": "ruff",
+ "version": "0.16.9",
+ "source": {
+  "kind": "corpus",
+  "name": "nera",
+  "repository": "https://github.com/neralabs/nera-landing",
+  "commit": "137e9bf7b9da512f90af8463c93c7d9554d49535",
+  "rules": [
+   "B011",
+   "B028",
+   "B905",
+   "E711",
+   "E722",
+   "F507",
+   "F523",
+   "F524",
+   "F601",
+   "F632",
+   "F722",
+   "F811",
+   "F821",
+   "F823",
+   "F841",
+   "PIE796",
+   "SIM222"
+  ],
+  "skipped": []
+ },
+ "findings": [
+  {
+   "rule": "B905",
+   "path": "api/nera_api/mcp_v2/tools.py",
+   "line": 9427,
+   "column": 55
+  },
+  {
+   "rule": "B905",
+   "path": "cue/tests/parity_diff.py",
+   "line": 142,
+   "column": 46
+  },
+  {
+   "rule": "B905",
+   "path": "workflows/code_discovery/routes.py",
+   "line": 150,
+   "column": 21
+  },
+  {
+   "rule": "B905",
+   "path": "workflows/process_meeting/tests/test_requirement_retrieval.py",
+   "line": 146,
+   "column": 27
+  },
+  {
+   "rule": "B905",
+   "path": "workflows/runtime/checkpoint_size_tally.py",
+   "line": 119,
+   "column": 58
+  },
+  {
+   "rule": "F821",
+   "path": "api/nera_api/asgi.py",
+   "line": 156,
+   "column": 32
+  },
+  {
+   "rule": "F821",
+   "path": "api/nera_api/tests/test_startup_followup.py",
+   "line": 286,
+   "column": 15
+  },
+  {
+   "rule": "F841",
+   "path": "cue/domain/structural_jobs.py",
+   "line": 68,
+   "column": 5
+  },
+  {
+   "rule": "F841",
+   "path": "cue/tests/test_artifact_flush_integration.py",
+   "line": 51,
+   "column": 9
+  },
+  {
+   "rule": "F841",
+   "path": "cue/tests/test_diagnostic_loop.py",
+   "line": 111,
+   "column": 5
+  },
+  {
+   "rule": "F841",
+   "path": "cue/tests/test_pipeline_e2e.py",
+   "line": 523,
+   "column": 9
+  },
+  {
+   "rule": "F841",
+   "path": "cue/tests/test_pipeline_e2e.py",
+   "line": 536,
+   "column": 9
+  },
+  {
+   "rule": "F841",
+   "path": "cue/tests/test_pipeline_e2e.py",
+   "line": 896,
+   "column": 13
+  },
+  {
+   "rule": "F841",
+   "path": "cue/tests/test_pipeline_e2e.py",
+   "line": 987,
+   "column": 13
+  }
+ ]
+}

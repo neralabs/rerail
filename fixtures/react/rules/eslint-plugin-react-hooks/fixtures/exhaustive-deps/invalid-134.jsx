@@ -1,0 +1,4 @@
+
+function Thing() {
+  useEffect(async () => {});
+}

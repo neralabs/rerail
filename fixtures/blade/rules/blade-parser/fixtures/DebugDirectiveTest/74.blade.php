@@ -1,0 +1,1 @@
+Lead @json($arg) Trail

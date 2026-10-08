@@ -1,0 +1,8 @@
+[
+ "const \\u0061 = 1, b\\u{62} = 2;\nconst o = { 'a\\u0062': 1, \\u{63}: 2, 'd': function d() {}, e: function \\u0065() {} };\n",
+ "import { 'x' as y, z as \\u007a2 } from 'm';\nexport { y as 'w', \\u0079 as v };\n",
+ "class C { #p = 1; \\u0071 = 2; m() { return this.#p; } 'n'() {} }\n",
+ "label: for (;;) { break label; }\nconst { a: \\u0061a, 'b': bb, ...rest } = o;\n",
+ "({ '\\u1885': function \\u1885() {}, '\\x41': 1, 'a\\\nb': 2, [`t`]: 3, 4: 4 });\nundefined;\n",
+ "type T = { k: string };\ninterface I { 'l': number }\nlet u = {} as T;\n"
+]

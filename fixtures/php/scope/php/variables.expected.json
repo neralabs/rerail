@@ -1,0 +1,480 @@
+{
+ "php": "8.5.11",
+ "phpstan": "PHPStan - PHP Static Analysis Tool 2.2.16",
+ "psalm": "Psalm 6.19.1@e2ca44251c1f1aa2e35452d426895746b47de64e",
+ "fixtures": {
+  "branches.php": {
+   "definedness": [
+    {
+     "line": 8,
+     "name": "a",
+     "kind": "maybe"
+    },
+    {
+     "line": 30,
+     "name": "f",
+     "kind": "maybe"
+    },
+    {
+     "line": 34,
+     "name": "j",
+     "kind": "maybe"
+    },
+    {
+     "line": 47,
+     "name": "s",
+     "kind": "maybe"
+    },
+    {
+     "line": 47,
+     "name": "s2",
+     "kind": "maybe"
+    },
+    {
+     "line": 52,
+     "name": "mv",
+     "kind": "maybe"
+    },
+    {
+     "line": 60,
+     "name": "y",
+     "kind": "maybe"
+    }
+   ],
+   "usage": []
+  },
+  "closures.php": {
+   "definedness": [
+    {
+     "line": 9,
+     "name": "missing",
+     "kind": "undefined"
+    },
+    {
+     "line": 17,
+     "name": "nope",
+     "kind": "undefined"
+    },
+    {
+     "line": 20,
+     "name": "this",
+     "kind": "undefined"
+    },
+    {
+     "line": 23,
+     "name": "a",
+     "kind": "undefined"
+    }
+   ],
+   "usage": [
+    {
+     "line": 3,
+     "name": "a",
+     "type": "UnusedParam"
+    }
+   ]
+  },
+  "edges.php": {
+   "definedness": [],
+   "usage": []
+  },
+  "loops.php": {
+   "definedness": [
+    {
+     "line": 6,
+     "name": "w",
+     "kind": "maybe"
+    },
+    {
+     "line": 9,
+     "name": "w",
+     "kind": "maybe"
+    },
+    {
+     "line": 13,
+     "name": "key",
+     "kind": "maybe"
+    },
+    {
+     "line": 13,
+     "name": "value",
+     "kind": "maybe"
+    },
+    {
+     "line": 26,
+     "name": "body",
+     "kind": "undefined"
+    },
+    {
+     "line": 42,
+     "name": "after",
+     "kind": "maybe"
+    }
+   ],
+   "usage": []
+  },
+  "more.php": {
+   "definedness": [
+    {
+     "line": 9,
+     "name": "a",
+     "kind": "undefined"
+    },
+    {
+     "line": 27,
+     "name": "two",
+     "kind": "maybe"
+    },
+    {
+     "line": 28,
+     "name": "one",
+     "kind": "maybe"
+    },
+    {
+     "line": 64,
+     "name": "missing",
+     "kind": "undefined"
+    },
+    {
+     "line": 70,
+     "name": "this",
+     "kind": "undefined"
+    },
+    {
+     "line": 95,
+     "name": "fallback",
+     "kind": "maybe"
+    },
+    {
+     "line": 113,
+     "name": "x",
+     "kind": "maybe"
+    }
+   ],
+   "usage": [
+    {
+     "line": 19,
+     "name": "one",
+     "type": "UnusedVariable"
+    },
+    {
+     "line": 25,
+     "name": "three",
+     "type": "UnusedVariable"
+    }
+   ]
+  },
+  "references.php": {
+   "definedness": [],
+   "usage": [
+    {
+     "line": 26,
+     "name": "only",
+     "type": "UnusedParam"
+    },
+    {
+     "line": 45,
+     "name": "array",
+     "type": "UnusedVariable"
+    },
+    {
+     "line": 57,
+     "name": "copy",
+     "type": "UnusedVariable"
+    },
+    {
+     "line": 63,
+     "name": "text",
+     "type": "UnusedVariable"
+    },
+    {
+     "line": 64,
+     "name": "text",
+     "type": "UnusedVariable"
+    },
+    {
+     "line": 65,
+     "name": "count",
+     "type": "UnusedVariable"
+    },
+    {
+     "line": 66,
+     "name": "count",
+     "type": "UnusedVariable"
+    }
+   ]
+  },
+  "special.php": {
+   "definedness": [
+    {
+     "line": 21,
+     "name": "stack",
+     "kind": "undefined"
+    },
+    {
+     "line": 23,
+     "name": "undefinedArgument",
+     "kind": "undefined"
+    },
+    {
+     "line": 32,
+     "name": "t",
+     "kind": "undefined"
+    },
+    {
+     "line": 38,
+     "name": "t",
+     "kind": "maybe"
+    },
+    {
+     "line": 55,
+     "name": "unknown",
+     "kind": "compact"
+    },
+    {
+     "line": 62,
+     "name": "dyn",
+     "kind": "undefined"
+    },
+    {
+     "line": 68,
+     "name": "source",
+     "kind": "undefined"
+    },
+    {
+     "line": 75,
+     "name": "maybe",
+     "kind": "undefined"
+    },
+    {
+     "line": 77,
+     "name": "empty",
+     "kind": "undefined"
+    },
+    {
+     "line": 79,
+     "name": "suppressed",
+     "kind": "undefined"
+    },
+    {
+     "line": 93,
+     "name": "fromExtract",
+     "kind": "maybe"
+    },
+    {
+     "line": 99,
+     "name": "e",
+     "kind": "undefined"
+    },
+    {
+     "line": 105,
+     "name": "fromInclude",
+     "kind": "maybe"
+    },
+    {
+     "line": 116,
+     "name": "out",
+     "kind": "undefined"
+    },
+    {
+     "line": 117,
+     "name": "out",
+     "kind": "undefined"
+    },
+    {
+     "line": 130,
+     "name": "argv",
+     "kind": "maybe"
+    },
+    {
+     "line": 131,
+     "name": "undefinedTop",
+     "kind": "maybe"
+    }
+   ],
+   "usage": [
+    {
+     "line": 110,
+     "name": "kept",
+     "type": "UnusedVariable"
+    }
+   ]
+  },
+  "straight.php": {
+   "definedness": [
+    {
+     "line": 7,
+     "name": "never",
+     "kind": "undefined"
+    },
+    {
+     "line": 8,
+     "name": "b",
+     "kind": "undefined"
+    },
+    {
+     "line": 12,
+     "name": "d",
+     "kind": "undefined"
+    },
+    {
+     "line": 13,
+     "name": "e",
+     "kind": "undefined"
+    },
+    {
+     "line": 25,
+     "name": "a",
+     "kind": "undefined"
+    },
+    {
+     "line": 29,
+     "name": "q",
+     "kind": "undefined"
+    },
+    {
+     "line": 30,
+     "name": "a",
+     "kind": "undefined"
+    },
+    {
+     "line": 32,
+     "name": "never2",
+     "kind": "undefined"
+    },
+    {
+     "line": 56,
+     "name": "this",
+     "kind": "undefined"
+    }
+   ],
+   "usage": [
+    {
+     "line": 9,
+     "name": "c",
+     "type": "UnusedVariable"
+    },
+    {
+     "line": 12,
+     "name": "d",
+     "type": "UnusedVariable"
+    },
+    {
+     "line": 13,
+     "name": "e",
+     "type": "UnusedVariable"
+    },
+    {
+     "line": 29,
+     "name": "q",
+     "type": "UnusedVariable"
+    },
+    {
+     "line": 62,
+     "name": "a",
+     "type": "UnusedVariable"
+    },
+    {
+     "line": 63,
+     "name": "b",
+     "type": "UnusedVariable"
+    },
+    {
+     "line": 65,
+     "name": "c",
+     "type": "UnusedVariable"
+    }
+   ]
+  },
+  "switches.php": {
+   "definedness": [
+    {
+     "line": 11,
+     "name": "second",
+     "kind": "undefined"
+    },
+    {
+     "line": 14,
+     "name": "second",
+     "kind": "maybe"
+    },
+    {
+     "line": 21,
+     "name": "fallthrough",
+     "kind": "maybe"
+    },
+    {
+     "line": 41,
+     "name": "http_response_header",
+     "kind": "undefined"
+    },
+    {
+     "line": 49,
+     "name": "http_response_header",
+     "kind": "undefined"
+    }
+   ],
+   "usage": []
+  },
+  "unused.php": {
+   "definedness": [],
+   "usage": [
+    {
+     "line": 6,
+     "name": "value",
+     "type": "UnusedForeachValue"
+    },
+    {
+     "line": 9,
+     "name": "item",
+     "type": "UnusedForeachValue"
+    },
+    {
+     "line": 12,
+     "name": "k",
+     "type": "UnusedVariable"
+    },
+    {
+     "line": 15,
+     "name": "second",
+     "type": "UnusedVariable"
+    },
+    {
+     "line": 18,
+     "name": "reference",
+     "type": "UnusedForeachValue"
+    },
+    {
+     "line": 22,
+     "name": "slot",
+     "type": "UnusedForeachValue"
+    },
+    {
+     "line": 25,
+     "name": "a",
+     "type": "UnusedVariable"
+    },
+    {
+     "line": 25,
+     "name": "unusedKey",
+     "type": "UnusedVariable"
+    },
+    {
+     "line": 33,
+     "name": "ignored",
+     "type": "UnusedClosureParam"
+    },
+    {
+     "line": 45,
+     "name": "x",
+     "type": "UnusedClosureParam"
+    },
+    {
+     "line": 50,
+     "name": "trailingUnused",
+     "type": "UnusedParam"
+    }
+   ]
+  }
+ }
+}

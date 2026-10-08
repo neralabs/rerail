@@ -1,0 +1,547 @@
+{
+ "python": "3.13.13",
+ "unicode": "15.1.0",
+ "modules": [
+  {
+   "name": "F821_28",
+   "source": "\"\"\"Test that unicode identifiers are NFKC-normalised\"\"\"\n\n𝒞 = 500\nprint(𝒞)\nprint(C + 𝒞)  # 2 references to the same variable due to NFKC normalization\nprint(C / 𝒞)\nprint(C == 𝑪 == 𝒞 == 𝓒 == 𝕮)\n\nprint(𝒟)  # F821\n",
+   "identifiers": [
+    {
+     "start": 57,
+     "end": 61,
+     "text": "𝒞",
+     "name": "C"
+    },
+    {
+     "start": 68,
+     "end": 73,
+     "text": "print",
+     "name": "print"
+    },
+    {
+     "start": 74,
+     "end": 78,
+     "text": "𝒞",
+     "name": "C"
+    },
+    {
+     "start": 80,
+     "end": 85,
+     "text": "print",
+     "name": "print"
+    },
+    {
+     "start": 86,
+     "end": 87,
+     "text": "C",
+     "name": "C"
+    },
+    {
+     "start": 90,
+     "end": 94,
+     "text": "𝒞",
+     "name": "C"
+    },
+    {
+     "start": 159,
+     "end": 164,
+     "text": "print",
+     "name": "print"
+    },
+    {
+     "start": 165,
+     "end": 166,
+     "text": "C",
+     "name": "C"
+    },
+    {
+     "start": 169,
+     "end": 173,
+     "text": "𝒞",
+     "name": "C"
+    },
+    {
+     "start": 175,
+     "end": 180,
+     "text": "print",
+     "name": "print"
+    },
+    {
+     "start": 181,
+     "end": 182,
+     "text": "C",
+     "name": "C"
+    },
+    {
+     "start": 186,
+     "end": 190,
+     "text": "𝑪",
+     "name": "C"
+    },
+    {
+     "start": 194,
+     "end": 198,
+     "text": "𝒞",
+     "name": "C"
+    },
+    {
+     "start": 202,
+     "end": 206,
+     "text": "𝓒",
+     "name": "C"
+    },
+    {
+     "start": 210,
+     "end": 214,
+     "text": "𝕮",
+     "name": "C"
+    },
+    {
+     "start": 217,
+     "end": 222,
+     "text": "print",
+     "name": "print"
+    },
+    {
+     "start": 223,
+     "end": 227,
+     "text": "𝒟",
+     "name": "D"
+    }
+   ],
+   "undefined": [
+    {
+     "start": 223,
+     "end": 227,
+     "text": "𝒟",
+     "name": "D"
+    }
+   ],
+   "run": {
+    "error": "NameError: name 'D' is not defined"
+   }
+  },
+  {
+   "name": "bindings",
+   "source": "𝒞 = 1\nprint(C, 𝑪, Ｃ)\nﬁle = 2\nprint(file)\n𝐟𝐨𝐫𝐦𝐚𝐭 = 3\nprint(format)\nprint(𝐥𝐞𝐧('ab'))\nprint(𝒟)\n",
+   "identifiers": [
+    {
+     "start": 0,
+     "end": 4,
+     "text": "𝒞",
+     "name": "C"
+    },
+    {
+     "start": 9,
+     "end": 14,
+     "text": "print",
+     "name": "print"
+    },
+    {
+     "start": 15,
+     "end": 16,
+     "text": "C",
+     "name": "C"
+    },
+    {
+     "start": 18,
+     "end": 22,
+     "text": "𝑪",
+     "name": "C"
+    },
+    {
+     "start": 24,
+     "end": 27,
+     "text": "Ｃ",
+     "name": "C"
+    },
+    {
+     "start": 29,
+     "end": 34,
+     "text": "ﬁle",
+     "name": "file"
+    },
+    {
+     "start": 39,
+     "end": 44,
+     "text": "print",
+     "name": "print"
+    },
+    {
+     "start": 45,
+     "end": 49,
+     "text": "file",
+     "name": "file"
+    },
+    {
+     "start": 51,
+     "end": 75,
+     "text": "𝐟𝐨𝐫𝐦𝐚𝐭",
+     "name": "format"
+    },
+    {
+     "start": 80,
+     "end": 85,
+     "text": "print",
+     "name": "print"
+    },
+    {
+     "start": 86,
+     "end": 92,
+     "text": "format",
+     "name": "format"
+    },
+    {
+     "start": 94,
+     "end": 99,
+     "text": "print",
+     "name": "print"
+    },
+    {
+     "start": 100,
+     "end": 112,
+     "text": "𝐥𝐞𝐧",
+     "name": "len"
+    },
+    {
+     "start": 120,
+     "end": 125,
+     "text": "print",
+     "name": "print"
+    },
+    {
+     "start": 126,
+     "end": 130,
+     "text": "𝒟",
+     "name": "D"
+    }
+   ],
+   "undefined": [
+    {
+     "start": 126,
+     "end": 130,
+     "text": "𝒟",
+     "name": "D"
+    }
+   ],
+   "run": {
+    "error": "NameError: name 'D' is not defined"
+   }
+  },
+  {
+   "name": "imports",
+   "source": "import 𝐨𝐬\nfrom 𝐨𝐬 import 𝐬𝐞𝐩 as 𝒮\nprint(os.sep, os.𝐩𝐚𝐭𝐡, S, sep)\n",
+   "identifiers": [
+    {
+     "start": 7,
+     "end": 15,
+     "text": "𝐨𝐬",
+     "name": "os"
+    },
+    {
+     "start": 21,
+     "end": 29,
+     "text": "𝐨𝐬",
+     "name": "os"
+    },
+    {
+     "start": 37,
+     "end": 49,
+     "text": "𝐬𝐞𝐩",
+     "name": "sep"
+    },
+    {
+     "start": 53,
+     "end": 57,
+     "text": "𝒮",
+     "name": "S"
+    },
+    {
+     "start": 58,
+     "end": 63,
+     "text": "print",
+     "name": "print"
+    },
+    {
+     "start": 64,
+     "end": 66,
+     "text": "os",
+     "name": "os"
+    },
+    {
+     "start": 67,
+     "end": 70,
+     "text": "sep",
+     "name": "sep"
+    },
+    {
+     "start": 72,
+     "end": 74,
+     "text": "os",
+     "name": "os"
+    },
+    {
+     "start": 75,
+     "end": 91,
+     "text": "𝐩𝐚𝐭𝐡",
+     "name": "path"
+    },
+    {
+     "start": 93,
+     "end": 94,
+     "text": "S",
+     "name": "S"
+    },
+    {
+     "start": 96,
+     "end": 99,
+     "text": "sep",
+     "name": "sep"
+    }
+   ],
+   "undefined": [
+    {
+     "start": 96,
+     "end": 99,
+     "text": "sep",
+     "name": "sep"
+    }
+   ],
+   "run": {
+    "error": "NameError: name 'sep' is not defined"
+   }
+  },
+  {
+   "name": "definitions",
+   "source": "def 𝐟(𝐤=1):\n    return k\nclass 𝒜:\n    pass\nprint(f(k=2), A, 𝒜, 𝐀)\n",
+   "identifiers": [
+    {
+     "start": 4,
+     "end": 8,
+     "text": "𝐟",
+     "name": "f"
+    },
+    {
+     "start": 9,
+     "end": 13,
+     "text": "𝐤",
+     "name": "k"
+    },
+    {
+     "start": 29,
+     "end": 30,
+     "text": "k",
+     "name": "k"
+    },
+    {
+     "start": 37,
+     "end": 41,
+     "text": "𝒜",
+     "name": "A"
+    },
+    {
+     "start": 52,
+     "end": 57,
+     "text": "print",
+     "name": "print"
+    },
+    {
+     "start": 58,
+     "end": 59,
+     "text": "f",
+     "name": "f"
+    },
+    {
+     "start": 60,
+     "end": 61,
+     "text": "k",
+     "name": "k"
+    },
+    {
+     "start": 66,
+     "end": 67,
+     "text": "A",
+     "name": "A"
+    },
+    {
+     "start": 69,
+     "end": 73,
+     "text": "𝒜",
+     "name": "A"
+    },
+    {
+     "start": 75,
+     "end": 79,
+     "text": "𝐀",
+     "name": "A"
+    }
+   ],
+   "undefined": [],
+   "run": {
+    "result": "ok"
+   }
+  },
+  {
+   "name": "dunder_all",
+   "source": "𝒞 = 1\n__𝐚𝐥𝐥__ = ['𝒞', 'C']\nprint(__all__)\n",
+   "identifiers": [
+    {
+     "start": 0,
+     "end": 4,
+     "text": "𝒞",
+     "name": "C"
+    },
+    {
+     "start": 9,
+     "end": 25,
+     "text": "__𝐚𝐥𝐥__",
+     "name": "__all__"
+    },
+    {
+     "start": 42,
+     "end": 47,
+     "text": "print",
+     "name": "print"
+    },
+    {
+     "start": 48,
+     "end": 55,
+     "text": "__all__",
+     "name": "__all__"
+    }
+   ],
+   "undefined": [],
+   "run": {
+    "result": "ok"
+   }
+  }
+ ],
+ "structures": [
+  {
+   "left": "𝒞 + 1",
+   "right": "C + 1",
+   "equal": true
+  },
+  {
+   "left": "𝒞 + 1",
+   "right": "𝓒 + 1",
+   "equal": true
+  },
+  {
+   "left": "𝒞 + 1",
+   "right": "D + 1",
+   "equal": false
+  },
+  {
+   "left": "x.𝐚𝐭𝐭𝐫",
+   "right": "x.attr",
+   "equal": true
+  },
+  {
+   "left": "f(𝐤=1)",
+   "right": "f(k=1)",
+   "equal": true
+  },
+  {
+   "left": "lambda 𝐱: x",
+   "right": "lambda x: 𝐱",
+   "equal": true
+  },
+  {
+   "left": "'𝒞'",
+   "right": "'C'",
+   "equal": false
+  },
+  {
+   "left": "{𝒞: 1}",
+   "right": "{C: 1}",
+   "equal": true
+  }
+ ],
+ "runs": [
+  {
+   "name": "keyword",
+   "source": "def f(k):\n    return k\nresult = f(𝐤=1)\n",
+   "outcome": {
+    "result": "1"
+   }
+  },
+  {
+   "name": "keyword_twice",
+   "source": "def f(k):\n    return k\nresult = f(k=1, 𝐤=2)\n",
+   "outcome": {
+    "error": "SyntaxError: keyword argument repeated: k (<case>, line 3)"
+   }
+  },
+  {
+   "name": "keyword_splat",
+   "source": "def f(k=0):\n    return k\nresult = f(**{'𝐤': 1})\n",
+   "outcome": {
+    "error": "TypeError: f() got an unexpected keyword argument '𝐤'"
+   }
+  },
+  {
+   "name": "attribute",
+   "source": "class A:\n    C = 1\nresult = A.𝒞\n",
+   "outcome": {
+    "result": "1"
+   }
+  },
+  {
+   "name": "getattr",
+   "source": "class A:\n    C = 1\nresult = getattr(A, '𝒞', 'missing')\n",
+   "outcome": {
+    "result": "'missing'"
+   }
+  },
+  {
+   "name": "import",
+   "source": "import 𝐨𝐬\nresult = os.sep == 𝐨𝐬.sep\n",
+   "outcome": {
+    "result": "True"
+   }
+  },
+  {
+   "name": "builtin",
+   "source": "result = 𝐥𝐞𝐧('ab')\n",
+   "outcome": {
+    "result": "2"
+   }
+  },
+  {
+   "name": "format_keyword",
+   "source": "result = '{C}'.format(𝒞=1)\n",
+   "outcome": {
+    "result": "'1'"
+   }
+  },
+  {
+   "name": "format_field",
+   "source": "result = '{𝒞}'.format(C=1)\n",
+   "outcome": {
+    "error": "KeyError: '𝒞'"
+   }
+  },
+  {
+   "name": "global",
+   "source": "def f():\n    global 𝒞\n    𝒞 = 1\nf()\nresult = C\n",
+   "outcome": {
+    "result": "1"
+   }
+  },
+  {
+   "name": "nonlocal",
+   "source": "def f():\n    C = 1\n    def g():\n        nonlocal 𝒞\n        𝒞 = 2\n    g()\n    return C\nresult = f()\n",
+   "outcome": {
+    "result": "2"
+   }
+  },
+  {
+   "name": "star_import",
+   "source": "import nfkc_module\nresult = nfkc_module.__all__\nfrom nfkc_module import *\n",
+   "outcome": {
+    "error": "AttributeError: module 'nfkc_module' has no attribute '𝒞'"
+   }
+  }
+ ]
+}

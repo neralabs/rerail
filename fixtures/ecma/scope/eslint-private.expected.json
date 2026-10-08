@@ -1,0 +1,691 @@
+{
+ "eslint": "10.11.0",
+ "rule": "no-unused-private-class-members",
+ "cases": [
+  {
+   "id": "valid/0",
+   "code": "class Foo {}",
+   "reports": []
+  },
+  {
+   "id": "valid/1",
+   "code": "class Foo {\n    publicMember = 42;\n}",
+   "reports": []
+  },
+  {
+   "id": "valid/2",
+   "code": "class Foo {\n    #usedMember = 42;\n    method() {\n        return this.#usedMember;\n    }\n}",
+   "reports": []
+  },
+  {
+   "id": "valid/3",
+   "code": "class Foo {\n    #usedMember = 42;\n    anotherMember = this.#usedMember;\n}",
+   "reports": []
+  },
+  {
+   "id": "valid/4",
+   "code": "class Foo {\n    #usedMember = 42;\n    foo() {\n        anotherMember = this.#usedMember;\n    }\n}",
+   "reports": []
+  },
+  {
+   "id": "valid/5",
+   "code": "class C {\n    #usedMember;\n\n    foo() {\n        bar(this.#usedMember += 1);\n    }\n}",
+   "reports": []
+  },
+  {
+   "id": "valid/6",
+   "code": "class Foo {\n    #usedMember = 42;\n    method() {\n        return someGlobalMethod(this.#usedMember);\n    }\n}",
+   "reports": []
+  },
+  {
+   "id": "valid/7",
+   "code": "class C {\n    #usedInOuterClass;\n\n    foo() {\n        return class {};\n    }\n\n    bar() {\n        return this.#usedInOuterClass;\n    }\n}",
+   "reports": []
+  },
+  {
+   "id": "valid/8",
+   "code": "class Foo {\n    #usedInForInLoop;\n    method() {\n        for (const bar in this.#usedInForInLoop) {\n\n        }\n    }\n}",
+   "reports": []
+  },
+  {
+   "id": "valid/9",
+   "code": "class Foo {\n    #usedInForOfLoop;\n    method() {\n        for (const bar of this.#usedInForOfLoop) {\n\n        }\n    }\n}",
+   "reports": []
+  },
+  {
+   "id": "valid/10",
+   "code": "class Foo {\n    #usedInAssignmentPattern;\n    method() {\n        [bar = 1] = this.#usedInAssignmentPattern;\n    }\n}",
+   "reports": []
+  },
+  {
+   "id": "valid/11",
+   "code": "class Foo {\n    #usedInArrayPattern;\n    method() {\n        [bar] = this.#usedInArrayPattern;\n    }\n}",
+   "reports": []
+  },
+  {
+   "id": "valid/12",
+   "code": "class Foo {\n    #usedInAssignmentPattern;\n    method() {\n        [bar] = this.#usedInAssignmentPattern;\n    }\n}",
+   "reports": []
+  },
+  {
+   "id": "valid/13",
+   "code": "class C {\n    #usedInObjectAssignment;\n\n    method() {\n        ({ [this.#usedInObjectAssignment]: a } = foo);\n    }\n}",
+   "reports": []
+  },
+  {
+   "id": "valid/14",
+   "code": "class C {\n    set #accessorWithSetterFirst(value) {\n        doSomething(value);\n    }\n    get #accessorWithSetterFirst() {\n        return something();\n    }\n    method() {\n        this.#accessorWithSetterFirst += 1;\n    }\n}",
+   "reports": []
+  },
+  {
+   "id": "valid/15",
+   "code": "class Foo {\n    set #accessorUsedInMemberAccess(value) {}\n\n    method(a) {\n        [this.#accessorUsedInMemberAccess] = a;\n    }\n}",
+   "reports": []
+  },
+  {
+   "id": "valid/16",
+   "code": "class C {\n    get #accessorWithGetterFirst() {\n        return something();\n    }\n    set #accessorWithGetterFirst(value) {\n        doSomething(value);\n    }\n    method() {\n        this.#accessorWithGetterFirst += 1;\n    }\n}",
+   "reports": []
+  },
+  {
+   "id": "valid/17",
+   "code": "class C {\n    #usedInInnerClass;\n\n    method(a) {\n        return class {\n            foo = a.#usedInInnerClass;\n        }\n    }\n}",
+   "reports": []
+  },
+  {
+   "id": "valid/18",
+   "code": "class Foo {\n    #usedMethod() {\n        return 42;\n    }\n    anotherMethod() {\n        return this.#usedMethod();\n    }\n}",
+   "reports": []
+  },
+  {
+   "id": "valid/19",
+   "code": "class C {\n    set #x(value) {\n        doSomething(value);\n    }\n\n    foo() {\n        this.#x = 1;\n    }\n}",
+   "reports": []
+  },
+  {
+   "id": "invalid/0",
+   "code": "class Foo {\n    #unusedMember = 5;\n}",
+   "reports": [
+    [
+     16,
+     29
+    ]
+   ]
+  },
+  {
+   "id": "invalid/1",
+   "code": "class Foo {\n    /** docs */\n    #unusedMember = 1;\n}",
+   "reports": [
+    [
+     32,
+     45
+    ]
+   ]
+  },
+  {
+   "id": "invalid/2",
+   "code": "class Foo {\n    // remove me\n    #unusedMember = 1;\n}",
+   "reports": [
+    [
+     33,
+     46
+    ]
+   ]
+  },
+  {
+   "id": "invalid/3",
+   "code": "class Foo {\n    /* remove */ #unusedMember = 1;\n}",
+   "reports": [
+    [
+     29,
+     42
+    ]
+   ]
+  },
+  {
+   "id": "invalid/4",
+   "code": "class Foo {\n    /* keep */ #unusedMember = 1; foo = 1\n}",
+   "reports": [
+    [
+     27,
+     40
+    ]
+   ]
+  },
+  {
+   "id": "invalid/5",
+   "code": "class C {\n    #unused1; /* keep */ foo;\n}",
+   "reports": [
+    [
+     14,
+     22
+    ]
+   ]
+  },
+  {
+   "id": "invalid/6",
+   "code": "class C {\n    bar; #unused2; // keep\n}",
+   "reports": [
+    [
+     19,
+     27
+    ]
+   ]
+  },
+  {
+   "id": "invalid/7",
+   "code": "class C {\n    // comment\n    #unused; foo;\n}",
+   "reports": [
+    [
+     29,
+     36
+    ]
+   ]
+  },
+  {
+   "id": "invalid/8",
+   "code": "class C {\n    // comment\n    #unused; /*\n    */ foo;\n}",
+   "reports": [
+    [
+     29,
+     36
+    ]
+   ]
+  },
+  {
+   "id": "invalid/9",
+   "code": "class Foo {\n    #unusedMember = 1; // trailing\n}",
+   "reports": [
+    [
+     16,
+     29
+    ]
+   ]
+  },
+  {
+   "id": "invalid/10",
+   "code": "class Foo {\n    foo = 1; /*\n    */ #unusedMember = 1;\n}",
+   "reports": [
+    [
+     35,
+     48
+    ]
+   ]
+  },
+  {
+   "id": "invalid/11",
+   "code": "class Foo {\n    foo = 1; // keep this\n    #unusedMember = 1;\n}",
+   "reports": [
+    [
+     42,
+     55
+    ]
+   ]
+  },
+  {
+   "id": "invalid/12",
+   "code": "class First {}\nclass Second {\n    #unusedMemberInSecondClass = 5;\n}",
+   "reports": [
+    [
+     34,
+     60
+    ]
+   ]
+  },
+  {
+   "id": "invalid/13",
+   "code": "class First {\n    #unusedMemberInFirstClass = 5;\n}\nclass Second {}",
+   "reports": [
+    [
+     18,
+     43
+    ]
+   ]
+  },
+  {
+   "id": "invalid/14",
+   "code": "class First {\n    #firstUnusedMemberInSameClass = 5;\n    #secondUnusedMemberInSameClass = 5;\n}",
+   "reports": [
+    [
+     18,
+     47
+    ],
+    [
+     57,
+     87
+    ]
+   ]
+  },
+  {
+   "id": "invalid/15",
+   "code": "class Foo {\n    #usedOnlyInWrite = 5;\n    method() {\n        this.#usedOnlyInWrite = 42;\n    }\n}",
+   "reports": [
+    [
+     16,
+     32
+    ]
+   ]
+  },
+  {
+   "id": "invalid/16",
+   "code": "class Foo {\n    #usedOnlyInWriteStatement = 5;\n    method() {\n        this.#usedOnlyInWriteStatement += 42;\n    }\n}",
+   "reports": [
+    [
+     16,
+     41
+    ]
+   ]
+  },
+  {
+   "id": "invalid/17",
+   "code": "class C {\n    #usedOnlyInIncrement;\n\n    foo() {\n        this.#usedOnlyInIncrement++;\n    }\n}",
+   "reports": [
+    [
+     14,
+     34
+    ]
+   ]
+  },
+  {
+   "id": "invalid/18",
+   "code": "class C {\n    #unusedInOuterClass;\n\n    foo() {\n        return class {\n            #unusedInOuterClass;\n\n            bar() {\n                return this.#unusedInOuterClass;\n            }\n        };\n    }\n}",
+   "reports": [
+    [
+     14,
+     33
+    ]
+   ]
+  },
+  {
+   "id": "invalid/19",
+   "code": "class C {\n    #unusedOnlyInSecondNestedClass;\n\n    foo() {\n        return class {\n            #unusedOnlyInSecondNestedClass;\n\n            bar() {\n                return this.#unusedOnlyInSecondNestedClass;\n            }\n        };\n    }\n\n    baz() {\n        return this.#unusedOnlyInSecondNestedClass;\n    }\n\n    bar() {\n        return class {\n            #unusedOnlyInSecondNestedClass;\n        }\n    }\n}",
+   "reports": [
+    [
+     357,
+     387
+    ]
+   ]
+  },
+  {
+   "id": "invalid/20",
+   "code": "class Foo {\n    #unusedMethod() {}\n}",
+   "reports": [
+    [
+     16,
+     29
+    ]
+   ]
+  },
+  {
+   "id": "invalid/21",
+   "code": "class Foo {\n    #unusedMethod() {}\n    #usedMethod() {\n        return 42;\n    }\n    publicMethod() {\n        return this.#usedMethod();\n    }\n}",
+   "reports": [
+    [
+     16,
+     29
+    ]
+   ]
+  },
+  {
+   "id": "invalid/22",
+   "code": "class Foo {\n    set #unusedSetter(value) {}\n}",
+   "reports": [
+    [
+     20,
+     33
+    ]
+   ]
+  },
+  {
+   "id": "invalid/23",
+   "code": "class Foo {\n    get #unusedAccessor() {\n        return 1;\n    }\n    set #unusedAccessor(value) {}\n}",
+   "reports": [
+    [
+     72,
+     87
+    ]
+   ]
+  },
+  {
+   "id": "invalid/24",
+   "code": "class Foo {\n    #unusedForInLoop;\n    method() {\n        for (this.#unusedForInLoop in bar) {\n\n        }\n    }\n}",
+   "reports": [
+    [
+     16,
+     32
+    ]
+   ]
+  },
+  {
+   "id": "invalid/25",
+   "code": "class Foo {\n    #unusedForOfLoop;\n    method() {\n        for (this.#unusedForOfLoop of bar) {\n\n        }\n    }\n}",
+   "reports": [
+    [
+     16,
+     32
+    ]
+   ]
+  },
+  {
+   "id": "invalid/26",
+   "code": "class Foo {\n    #unusedInDestructuring;\n    method() {\n        ({ x: this.#unusedInDestructuring } = bar);\n    }\n}",
+   "reports": [
+    [
+     16,
+     38
+    ]
+   ]
+  },
+  {
+   "id": "invalid/27",
+   "code": "class Foo {\n    #unusedInRestPattern;\n    method() {\n        [...this.#unusedInRestPattern] = bar;\n    }\n}",
+   "reports": [
+    [
+     16,
+     36
+    ]
+   ]
+  },
+  {
+   "id": "invalid/28",
+   "code": "class Foo {\n    #unusedInAssignmentPattern;\n    method() {\n        [this.#unusedInAssignmentPattern = 1] = bar;\n    }\n}",
+   "reports": [
+    [
+     16,
+     42
+    ]
+   ]
+  },
+  {
+   "id": "invalid/29",
+   "code": "class Foo {\n    #unusedInAssignmentPattern;\n    method() {\n        [this.#unusedInAssignmentPattern] = bar;\n    }\n}",
+   "reports": [
+    [
+     16,
+     42
+    ]
+   ]
+  },
+  {
+   "id": "invalid/30",
+   "code": "class Foo {\n    foo = 1\n    #unusedMethod() {}\n    [0]() {}\n}",
+   "reports": [
+    [
+     28,
+     41
+    ]
+   ]
+  },
+  {
+   "id": "invalid/31",
+   "code": "class Foo {\n    foo = 1\n    #unusedMethod() {}\n    *generator() {}\n}",
+   "reports": [
+    [
+     28,
+     41
+    ]
+   ]
+  },
+  {
+   "id": "invalid/32",
+   "code": "class Foo {\n    foo = 1\n    #unusedMethod() {}\n    in = 2\n}",
+   "reports": [
+    [
+     28,
+     41
+    ]
+   ]
+  },
+  {
+   "id": "invalid/33",
+   "code": "class Foo {\n    foo = 1\n    #unused\n    instanceof() {}\n}",
+   "reports": [
+    [
+     28,
+     35
+    ]
+   ]
+  },
+  {
+   "id": "invalid/34",
+   "code": "class C {\n    foo = () => {}\n    #unused\n    [bar]\n}",
+   "reports": [
+    [
+     33,
+     40
+    ]
+   ]
+  },
+  {
+   "id": "invalid/35",
+   "code": "class C {\n    foo\n    #unused\n    [bar]\n}",
+   "reports": [
+    [
+     22,
+     29
+    ]
+   ]
+  },
+  {
+   "id": "invalid/36",
+   "code": "class Foo {\n    foo = 1\n    /** docs */\n    #unusedMethod() {}\n    [0]() {}\n}",
+   "reports": [
+    [
+     44,
+     57
+    ]
+   ]
+  },
+  {
+   "id": "invalid/37",
+   "code": "class Foo {\n    // keep\n\n    /** remove */\n    #unusedMember = 1;\n}",
+   "reports": [
+    [
+     47,
+     60
+    ]
+   ]
+  },
+  {
+   "id": "invalid/38",
+   "code": "class Foo {\n    // keep one\n    // keep two\n\n    /** remove */\n    #unusedMember = 1;\n}",
+   "reports": [
+    [
+     67,
+     80
+    ]
+   ]
+  },
+  {
+   "id": "invalid/39",
+   "code": "class Foo {\n    // maybe unrelated\n\n    #unusedMember = 1;\n}",
+   "reports": [
+    [
+     40,
+     53
+    ]
+   ]
+  },
+  {
+   "id": "invalid/40",
+   "code": "class C {\n    #usedOnlyInTheSecondInnerClass;\n\n    method(a) {\n        return class {\n            #usedOnlyInTheSecondInnerClass;\n\n            method2(b) {\n                foo = b.#usedOnlyInTheSecondInnerClass;\n            }\n\n            method3(b) {\n                foo = b.#usedOnlyInTheSecondInnerClass;\n            }\n        }\n    }\n}",
+   "reports": [
+    [
+     14,
+     44
+    ]
+   ]
+  },
+  {
+   "id": "extra/in",
+   "code": "class A { #a; static has(o) { return #a in o; } }\n",
+   "reports": []
+  },
+  {
+   "id": "extra/logical-assignment",
+   "code": "class A { #a; m() { this.#a ||= 1; } }\n",
+   "reports": [
+    [
+     10,
+     12
+    ]
+   ]
+  },
+  {
+   "id": "extra/compound-read",
+   "code": "class A { #a = 0; m() { return this.#a += 1; } }\n",
+   "reports": []
+  },
+  {
+   "id": "extra/compound-sequence",
+   "code": "class A { #a = 0; m() { a, this.#a += 1; } }\n",
+   "reports": []
+  },
+  {
+   "id": "extra/parenthesized-write",
+   "code": "class A { #a; #b = 0; m() { (this.#a) = 1; (this.#b)++; } }\n",
+   "reports": [
+    [
+     10,
+     12
+    ],
+    [
+     14,
+     16
+    ]
+   ]
+  },
+  {
+   "id": "extra/parenthesized-compound",
+   "code": "class A { #a = 0; m() { (this.#a += 1); } }\n",
+   "reports": [
+    [
+     10,
+     12
+    ]
+   ]
+  },
+  {
+   "id": "extra/default-in-pattern",
+   "code": "class A { #a; #b; m() { [this.#a = 1] = []; ({ x: this.#b = 2 } = {}); } }\n",
+   "reports": [
+    [
+     10,
+     12
+    ],
+    [
+     14,
+     16
+    ]
+   ]
+  },
+  {
+   "id": "extra/member-of-member",
+   "code": "class A { #a = {}; m() { this.#a.b = 1; } }\n",
+   "reports": []
+  },
+  {
+   "id": "extra/optional",
+   "code": "class A { #a = 1; m() { return this?.#a; } }\n",
+   "reports": []
+  },
+  {
+   "id": "extra/nested-shadow",
+   "code": "class A { #a; m() { return class B { #a; n() { return this.#a; } }; } }\n",
+   "reports": [
+    [
+     10,
+     12
+    ]
+   ]
+  },
+  {
+   "id": "extra/nested-outer",
+   "code": "class A { #a; m() { return class B { n(o) { return o.#a; } }; } }\n",
+   "reports": []
+  },
+  {
+   "id": "extra/accessor-pair",
+   "code": "class A { get #a() { return 1; } set #a(v) {} }\n",
+   "reports": [
+    [
+     37,
+     39
+    ]
+   ]
+  },
+  {
+   "id": "extra/accessor-write",
+   "code": "class A { set #a(v) {} m() { this.#a = 1; } }\n",
+   "reports": []
+  },
+  {
+   "id": "extra/static",
+   "code": "class A { static #s() {} static #t = 1; static m() { return A.#t; } }\n",
+   "reports": [
+    [
+     17,
+     19
+    ]
+   ]
+  },
+  {
+   "id": "extra/computed-key",
+   "code": "class A { #a = 'k'; [this.#a] = 1; }\n",
+   "reports": []
+  },
+  {
+   "id": "extra/for-of",
+   "code": "class A { #a; m(xs) { for (this.#a of xs); } }\n",
+   "reports": [
+    [
+     10,
+     12
+    ]
+   ]
+  },
+  {
+   "id": "extra/rest",
+   "code": "class A { #a; m(xs) { [...this.#a] = xs; ({ ...this.#a } = xs); } }\n",
+   "reports": [
+    [
+     10,
+     12
+    ]
+   ]
+  },
+  {
+   "id": "extra/heritage",
+   "code": "class A { #a = 1; m() { return class extends (this.#a ? Object : Array) {}; } }\n",
+   "reports": []
+  },
+  {
+   "id": "extra/static-block",
+   "code": "class A { static #a = 1; static { A.#a; } }\n",
+   "reports": []
+  },
+  {
+   "id": "extra/ts-non-null-write",
+   "code": "class A { #a?: number; m() { this.#a! = 1; } }\n",
+   "typescript": true,
+   "reports": []
+  },
+  {
+   "id": "extra/ts-as-write",
+   "code": "class A { #a = 1; m() { (this.#a as number) = 2; } }\n",
+   "typescript": true,
+   "reports": []
+  },
+  {
+   "id": "extra/ts-typed",
+   "code": "class A { #a: number = 1; #b!: string; m(): number { return this.#a; } }\n",
+   "typescript": true,
+   "reports": [
+    [
+     26,
+     28
+    ]
+   ]
+  }
+ ]
+}

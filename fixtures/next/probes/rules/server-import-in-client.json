@@ -1,0 +1,84 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-probe-server-import-in-client",
+  "revision": 1,
+  "mode": "log",
+  "description": "Next pack probe. next/* import + directive: a \"use client\" file importing server-only, next/headers or next/server.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "import_statement",
+                "has": {
+                  "field": "source",
+                  "value": {
+                    "regex": "^(?:server-only|next/headers|next/server)$"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "program",
+                  "stopBy": "end",
+                  "has": {
+                    "kind": "expression_statement",
+                    "has": {
+                      "kind": "string",
+                      "value": {
+                        "eq": "use client"
+                      }
+                    },
+                    "inside": {
+                      "kind": "program"
+                    },
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "expression_statement",
+                              "has": {
+                                "kind": "string"
+                              }
+                            },
+                            {
+                              "kind": "comment"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "next/server-import-in-client",
+        "message": "next/* import + directive: a \"use client\" file importing server-only, next/headers or next/server."
+      }
+    }
+  ]
+}

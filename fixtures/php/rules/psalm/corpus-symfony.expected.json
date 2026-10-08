@@ -1,0 +1,3204 @@
+{
+ "tool": "psalm",
+ "version": "6.19.1",
+ "source": {
+  "kind": "corpus",
+  "name": "symfony",
+  "repository": "https://github.com/symfony/symfony",
+  "commit": "2c4011aa7edf6000d3d3ff98b2749c3dbf5e52b9",
+  "rules": [
+   "ForbiddenCode",
+   "UnusedVariable"
+  ],
+  "skipped": [
+   "src/Symfony/Bridge/PhpUnit/ConstraintTrait.php",
+   "src/Symfony/Bridge/PhpUnit/ExpectDeprecationTrait.php",
+   "src/Symfony/Bridge/PhpUnit/ExpectUserDeprecationMessageTrait.php",
+   "src/Symfony/Component/Cache/Traits/Redis62ProxyTrait.php",
+   "src/Symfony/Component/Cache/Traits/Redis63ProxyTrait.php",
+   "src/Symfony/Component/Cache/Traits/RedisCluster62ProxyTrait.php",
+   "src/Symfony/Component/Cache/Traits/RedisCluster63ProxyTrait.php",
+   "src/Symfony/Component/Cache/Traits/Relay/Relay20Trait.php",
+   "src/Symfony/Component/Cache/Traits/Relay/Relay21Trait.php",
+   "src/Symfony/Component/Cache/Traits/Relay/Relay22Trait.php",
+   "src/Symfony/Component/Cache/Traits/Relay/Relay30Trait.php",
+   "src/Symfony/Component/Cache/Traits/Relay/Relay40Trait.php",
+   "src/Symfony/Component/Cache/Traits/Relay/Relay502Trait.php",
+   "src/Symfony/Component/Cache/Traits/Relay/Relay50Trait.php",
+   "src/Symfony/Component/Cache/Traits/Relay/RelayCluster20Trait.php",
+   "src/Symfony/Component/Cache/Traits/Relay/RelayCluster21Trait.php",
+   "src/Symfony/Component/Cache/Traits/Relay/RelayCluster30Trait.php",
+   "src/Symfony/Component/Cache/Traits/Relay/RelayCluster40Trait.php",
+   "src/Symfony/Component/Cache/Traits/Relay/RelayCluster502Trait.php",
+   "src/Symfony/Component/Cache/Traits/Relay/RelayCluster50Trait.php",
+   "src/Symfony/Component/Config/Tests/Fixtures/ParseError.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/closure.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/custom_container_class_constructor_without_arguments.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/custom_container_class_with_optional_constructor_arguments.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/custom_container_class_without_constructor.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/lazy_autowire_attribute_with_intersection.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/named_closure_compiled.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services1-1.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services1.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services10.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services12.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services13.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services19.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services24.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services33.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services8.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services9_compiled.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_adawson.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_array_params.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_closure_argument_compiled.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_dedup_lazy.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_deprecated_parameters.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_env_in_id.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_inline_requires.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_new_in_initializer.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_non_shared_duplicates.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_non_shared_lazy.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_non_shared_lazy_ghost.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_non_shared_resettable.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_non_shared_resettable_as_arg.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_non_shared_resettable_multiple.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_nonempty_parameters.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_private_frozen.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_private_in_expression.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_subscriber.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_tsantos.php",
+   "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/static_constructor.php",
+   "src/Symfony/Component/HttpFoundation/Tests/Session/Storage/Handler/stubs/mongodb.php",
+   "src/Symfony/Component/HttpKernel/Attribute/Cache.php",
+   "src/Symfony/Component/Lock/Tests/Store/stubs/mongodb.php",
+   "src/Symfony/Component/Messenger/Bridge/MongoDb/Tests/Stubs/mongodb.php",
+   "src/Symfony/Component/String/AbstractString.php",
+   "src/Symfony/Component/String/AbstractUnicodeString.php",
+   "src/Symfony/Component/String/ByteString.php",
+   "src/Symfony/Component/String/CodePointString.php",
+   "src/Symfony/Component/String/TruncateMode.php",
+   "src/Symfony/Component/String/UnicodeString.php",
+   "src/Symfony/Component/TypeInfo/Tests/Fixtures/DummyWithTypeAliases.php",
+   "src/Symfony/Component/VarDumper/Tests/Dumper/CliDumperTest.php",
+   "src/Symfony/Component/VarDumper/Tests/Dumper/HtmlDumperTest.php"
+  ],
+  "unanalysed": [
+   {
+    "path": "src/Symfony/Bridge/Doctrine/Tests/ContainerAwareEventManagerTest.php",
+    "startLine": 152,
+    "endLine": 156
+   },
+   {
+    "path": "src/Symfony/Bridge/PhpUnit/DeprecationErrorHandler.php",
+    "startLine": 68,
+    "endLine": 94
+   },
+   {
+    "path": "src/Symfony/Bridge/PhpUnit/DeprecationErrorHandler.php",
+    "startLine": 96,
+    "endLine": 125
+   },
+   {
+    "path": "src/Symfony/Bridge/PhpUnit/DeprecationErrorHandler.php",
+    "startLine": 360,
+    "endLine": 404
+   },
+   {
+    "path": "src/Symfony/Bridge/PhpUnit/DeprecationErrorHandler/Configuration.php",
+    "startLine": 73,
+    "endLine": 155
+   },
+   {
+    "path": "src/Symfony/Bridge/PhpUnit/Legacy/SymfonyTestsListenerTrait.php",
+    "startLine": 52,
+    "endLine": 94
+   },
+   {
+    "path": "src/Symfony/Bridge/PhpUnit/Legacy/SymfonyTestsListenerTrait.php",
+    "startLine": 199,
+    "endLine": 250
+   },
+   {
+    "path": "src/Symfony/Bridge/Twig/Command/LintCommand.php",
+    "startLine": 137,
+    "endLine": 175
+   },
+   {
+    "path": "src/Symfony/Bridge/Twig/Tests/Extension/StopwatchExtensionTest.php",
+    "startLine": 32,
+    "endLine": 43
+   },
+   {
+    "path": "src/Symfony/Bridge/Twig/Validator/Constraints/TwigValidator.php",
+    "startLine": 32,
+    "endLine": 84
+   },
+   {
+    "path": "src/Symfony/Bundle/FrameworkBundle/Tests/Functional/CachePoolsTest.php",
+    "startLine": 30,
+    "endLine": 49
+   },
+   {
+    "path": "src/Symfony/Bundle/FrameworkBundle/Tests/Functional/CachePoolsTest.php",
+    "startLine": 51,
+    "endLine": 65
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Adapter/AbstractAdapter.php",
+    "startLine": 156,
+    "endLine": 169
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Adapter/RedisTagAwareAdapter.php",
+    "startLine": 65,
+    "endLine": 87
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Adapter/RedisTagAwareAdapter.php",
+    "startLine": 93,
+    "endLine": 171
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Adapter/RedisTagAwareAdapter.php",
+    "startLine": 224,
+    "endLine": 260
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Adapter/RedisTagAwareAdapter.php",
+    "startLine": 277,
+    "endLine": 368
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Adapter/RedisTagAwareAdapter.php",
+    "startLine": 312,
+    "endLine": 322
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Adapter/RedisTagAwareAdapter.php",
+    "startLine": 370,
+    "endLine": 403
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Adapter/RedisTagAwareAdapter.php",
+    "startLine": 405,
+    "endLine": 481
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Tests/Adapter/AdapterTestCase.php",
+    "startLine": 94,
+    "endLine": 112
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Tests/Adapter/RedisAdapterTest.php",
+    "startLine": 31,
+    "endLine": 41
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Tests/Adapter/RedisClusterAdapterTest.php",
+    "startLine": 38,
+    "endLine": 48
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Tests/Adapter/RedisTagAwareAdapterTest.php",
+    "startLine": 32,
+    "endLine": 42
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Tests/Adapter/RedisTagAwareArrayAdapterTest.php",
+    "startLine": 31,
+    "endLine": 41
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Tests/Adapter/RedisTagAwareClusterAdapterTest.php",
+    "startLine": 32,
+    "endLine": 42
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Tests/Adapter/RedisTagAwarePruneTestTrait.php",
+    "startLine": 18,
+    "endLine": 41
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Tests/Adapter/RedisTagAwarePruneTestTrait.php",
+    "startLine": 43,
+    "endLine": 61
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Tests/Adapter/RedisTagAwarePruneTestTrait.php",
+    "startLine": 63,
+    "endLine": 80
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Tests/Adapter/stubs/mongodb.php",
+    "startLine": 20,
+    "endLine": 35
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Tests/Adapter/stubs/mongodb.php",
+    "startLine": 39,
+    "endLine": 49
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Tests/Adapter/stubs/mongodb.php",
+    "startLine": 53,
+    "endLine": 82
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Tests/Adapter/stubs/mongodb.php",
+    "startLine": 111,
+    "endLine": 128
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Traits/RedisTrait.php",
+    "startLine": 266,
+    "endLine": 355
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Traits/RedisTrait.php",
+    "startLine": 532,
+    "endLine": 563
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Traits/RedisTrait.php",
+    "startLine": 570,
+    "endLine": 668
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Traits/RedisTrait.php",
+    "startLine": 670,
+    "endLine": 702
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Traits/RedisTrait.php",
+    "startLine": 732,
+    "endLine": 793
+   },
+   {
+    "path": "src/Symfony/Component/Cache/Traits/RedisTrait.php",
+    "startLine": 795,
+    "endLine": 819
+   },
+   {
+    "path": "src/Symfony/Component/Config/ResourceCheckerConfigCache.php",
+    "startLine": 148,
+    "endLine": 174
+   },
+   {
+    "path": "src/Symfony/Component/Config/Tests/Definition/ArrayNodeTest.php",
+    "startLine": 248,
+    "endLine": 287
+   },
+   {
+    "path": "src/Symfony/Component/Config/Tests/Definition/ScalarNodeTest.php",
+    "startLine": 46,
+    "endLine": 85
+   },
+   {
+    "path": "src/Symfony/Component/Config/Tests/Resource/ClassExistenceResourceTest.php",
+    "startLine": 60,
+    "endLine": 78
+   },
+   {
+    "path": "src/Symfony/Component/Console/Application.php",
+    "startLine": 786,
+    "endLine": 898
+   },
+   {
+    "path": "src/Symfony/Component/Console/Helper/QuestionHelper.php",
+    "startLine": 493,
+    "endLine": 531
+   },
+   {
+    "path": "src/Symfony/Component/Console/Tests/Command/InvokableCommandTest.php",
+    "startLine": 282,
+    "endLine": 303
+   },
+   {
+    "path": "src/Symfony/Component/Console/Tests/Command/InvokableCommandTest.php",
+    "startLine": 305,
+    "endLine": 322
+   },
+   {
+    "path": "src/Symfony/Component/DependencyInjection/Compiler/RegisterEnvVarProcessorsPass.php",
+    "startLine": 30,
+    "endLine": 61
+   },
+   {
+    "path": "src/Symfony/Component/DependencyInjection/Extension/Extension.php",
+    "startLine": 60,
+    "endLine": 84
+   },
+   {
+    "path": "src/Symfony/Component/DependencyInjection/Kernel/KernelTrait.php",
+    "startLine": 123,
+    "endLine": 271
+   },
+   {
+    "path": "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/custom_container_class_with_mandatory_constructor_arguments.php",
+    "startLine": 17,
+    "endLine": 37
+   },
+   {
+    "path": "src/Symfony/Component/DependencyInjection/Tests/Fixtures/php/services_locator.php",
+    "startLine": 15,
+    "endLine": 146
+   },
+   {
+    "path": "src/Symfony/Component/ErrorHandler/Tests/ErrorHandlerTest.php",
+    "startLine": 666,
+    "endLine": 690
+   },
+   {
+    "path": "src/Symfony/Component/ErrorHandler/Tests/ErrorHandlerTest.php",
+    "startLine": 692,
+    "endLine": 716
+   },
+   {
+    "path": "src/Symfony/Component/ErrorHandler/Tests/ErrorHandlerTest.php",
+    "startLine": 718,
+    "endLine": 742
+   },
+   {
+    "path": "src/Symfony/Component/ErrorHandler/Tests/ErrorHandlerTest.php",
+    "startLine": 744,
+    "endLine": 758
+   },
+   {
+    "path": "src/Symfony/Component/Finder/SplFileInfo.php",
+    "startLine": 66,
+    "endLine": 79
+   },
+   {
+    "path": "src/Symfony/Component/HttpClient/Response/CurlResponse.php",
+    "startLine": 43,
+    "endLine": 204
+   },
+   {
+    "path": "src/Symfony/Component/HttpClient/Tests/GuzzleHttpHandlerTest.php",
+    "startLine": 1122,
+    "endLine": 1128
+   },
+   {
+    "path": "src/Symfony/Component/HttpClient/Tests/GuzzleHttpHandlerTest.php",
+    "startLine": 1163,
+    "endLine": 1169
+   },
+   {
+    "path": "src/Symfony/Component/HttpClient/Tests/Psr18ClientTest.php",
+    "startLine": 78,
+    "endLine": 101
+   },
+   {
+    "path": "src/Symfony/Component/HttpClient/Tests/Response/HttplugPromiseTest.php",
+    "startLine": 22,
+    "endLine": 28
+   },
+   {
+    "path": "src/Symfony/Component/HttpFoundation/File/File.php",
+    "startLine": 85,
+    "endLine": 102
+   },
+   {
+    "path": "src/Symfony/Component/HttpFoundation/File/UploadedFile.php",
+    "startLine": 181,
+    "endLine": 223
+   },
+   {
+    "path": "src/Symfony/Component/HttpFoundation/Session/Storage/Handler/RedisSessionHandler.php",
+    "startLine": 104,
+    "endLine": 154
+   },
+   {
+    "path": "src/Symfony/Component/HttpFoundation/Session/Storage/Handler/SessionHandlerFactory.php",
+    "startLine": 26,
+    "endLine": 97
+   },
+   {
+    "path": "src/Symfony/Component/HttpFoundation/Session/Storage/NativeSessionStorage.php",
+    "startLine": 198,
+    "endLine": 235
+   },
+   {
+    "path": "src/Symfony/Component/HttpFoundation/Tests/Session/Storage/Handler/MongoDbSessionHandlerTest.php",
+    "startLine": 81,
+    "endLine": 91
+   },
+   {
+    "path": "src/Symfony/Component/HttpKernel/CacheWarmer/CacheWarmerAggregate.php",
+    "startLine": 48,
+    "endLine": 136
+   },
+   {
+    "path": "src/Symfony/Component/HttpKernel/Controller/ArgumentResolver/DateTimeValueResolver.php",
+    "startLine": 34,
+    "endLine": 86
+   },
+   {
+    "path": "src/Symfony/Component/HttpKernel/Controller/ArgumentResolver/QueryParameterValueResolver.php",
+    "startLine": 124,
+    "endLine": 134
+   },
+   {
+    "path": "src/Symfony/Component/HttpKernel/Tests/HttpKernelTest.php",
+    "startLine": 412,
+    "endLine": 428
+   },
+   {
+    "path": "src/Symfony/Component/HttpKernel/Tests/HttpKernelTest.php",
+    "startLine": 430,
+    "endLine": 444
+   },
+   {
+    "path": "src/Symfony/Component/HttpKernel/Tests/HttpKernelTest.php",
+    "startLine": 446,
+    "endLine": 478
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/array_shape.stream.php",
+    "startLine": 6,
+    "endLine": 17
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/dict.stream.php",
+    "startLine": 6,
+    "endLine": 17
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/iterable.stream.php",
+    "startLine": 6,
+    "endLine": 17
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/list.stream.php",
+    "startLine": 6,
+    "endLine": 17
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/nullable_object.php",
+    "startLine": 6,
+    "endLine": 22
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/nullable_object.stream.php",
+    "startLine": 6,
+    "endLine": 30
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/nullable_object_dict.php",
+    "startLine": 6,
+    "endLine": 30
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/nullable_object_dict.stream.php",
+    "startLine": 6,
+    "endLine": 39
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/nullable_object_list.php",
+    "startLine": 6,
+    "endLine": 30
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/nullable_object_list.stream.php",
+    "startLine": 6,
+    "endLine": 39
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object.php",
+    "startLine": 6,
+    "endLine": 13
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object.stream.php",
+    "startLine": 6,
+    "endLine": 20
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object_dict.php",
+    "startLine": 6,
+    "endLine": 21
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object_dict.stream.php",
+    "startLine": 6,
+    "endLine": 29
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object_in_object.php",
+    "startLine": 6,
+    "endLine": 23
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object_in_object.stream.php",
+    "startLine": 6,
+    "endLine": 45
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object_iterable.php",
+    "startLine": 6,
+    "endLine": 21
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object_iterable.stream.php",
+    "startLine": 6,
+    "endLine": 29
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object_list.php",
+    "startLine": 6,
+    "endLine": 21
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object_list.stream.php",
+    "startLine": 6,
+    "endLine": 29
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object_with_nullable_properties.php",
+    "startLine": 6,
+    "endLine": 25
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object_with_nullable_properties.stream.php",
+    "startLine": 6,
+    "endLine": 33
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object_with_synthetic_properties.php",
+    "startLine": 6,
+    "endLine": 13
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object_with_synthetic_properties.stream.php",
+    "startLine": 6,
+    "endLine": 18
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object_with_union.php",
+    "startLine": 6,
+    "endLine": 28
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object_with_union.stream.php",
+    "startLine": 6,
+    "endLine": 35
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object_with_value_object.php",
+    "startLine": 6,
+    "endLine": 28
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object_with_value_object.stream.php",
+    "startLine": 6,
+    "endLine": 37
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object_with_value_transformer.php",
+    "startLine": 6,
+    "endLine": 13
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/object_with_value_transformer.stream.php",
+    "startLine": 6,
+    "endLine": 22
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/union.php",
+    "startLine": 6,
+    "endLine": 36
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/union.stream.php",
+    "startLine": 6,
+    "endLine": 45
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_writer/object_with_nested_dict_self.php",
+    "startLine": 6,
+    "endLine": 28
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_writer/object_with_nested_list_self.php",
+    "startLine": 6,
+    "endLine": 28
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_writer/self_referencing_object.php",
+    "startLine": 6,
+    "endLine": 27
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_writer/self_referencing_object_dict.php",
+    "startLine": 6,
+    "endLine": 28
+   },
+   {
+    "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_writer/self_referencing_object_list.php",
+    "startLine": 6,
+    "endLine": 28
+   },
+   {
+    "path": "src/Symfony/Component/Lock/Store/FlockStore.php",
+    "startLine": 73,
+    "endLine": 121
+   },
+   {
+    "path": "src/Symfony/Component/Lock/Store/MongoDbStore.php",
+    "startLine": 99,
+    "endLine": 142
+   },
+   {
+    "path": "src/Symfony/Component/Lock/Store/RedisStore.php",
+    "startLine": 231,
+    "endLine": 307
+   },
+   {
+    "path": "src/Symfony/Component/Lock/Store/StoreFactory.php",
+    "startLine": 42,
+    "endLine": 172
+   },
+   {
+    "path": "src/Symfony/Component/Lock/Tests/Store/AbstractRedisStoreTestCase.php",
+    "startLine": 135,
+    "endLine": 150
+   },
+   {
+    "path": "src/Symfony/Component/Messenger/Bridge/Amqp/Transport/Connection.php",
+    "startLine": 806,
+    "endLine": 823
+   },
+   {
+    "path": "src/Symfony/Component/Messenger/Bridge/Beanstalkd/Tests/Transport/ConnectionTest.php",
+    "startLine": 742,
+    "endLine": 744
+   },
+   {
+    "path": "src/Symfony/Component/Messenger/Bridge/Beanstalkd/Tests/Transport/ConnectionTest.php",
+    "startLine": 786,
+    "endLine": 786
+   },
+   {
+    "path": "src/Symfony/Component/Messenger/Bridge/Doctrine/Tests/Transport/ConnectionTest.php",
+    "startLine": 813,
+    "endLine": 839
+   },
+   {
+    "path": "src/Symfony/Component/Messenger/Bridge/Doctrine/Transport/Connection.php",
+    "startLine": 398,
+    "endLine": 419
+   },
+   {
+    "path": "src/Symfony/Component/Messenger/Bridge/Redis/Transport/Connection.php",
+    "startLine": 75,
+    "endLine": 180
+   },
+   {
+    "path": "src/Symfony/Component/Messenger/Bridge/Redis/Transport/Connection.php",
+    "startLine": 343,
+    "endLine": 386
+   },
+   {
+    "path": "src/Symfony/Component/Messenger/Bridge/Redis/Transport/Connection.php",
+    "startLine": 816,
+    "endLine": 838
+   },
+   {
+    "path": "src/Symfony/Component/Messenger/Middleware/HandleMessageMiddleware.php",
+    "startLine": 51,
+    "endLine": 152
+   },
+   {
+    "path": "src/Symfony/Component/Messenger/Tests/Transport/Serialization/PhpSerializerTest.php",
+    "startLine": 1,
+    "endLine": 444
+   },
+   {
+    "path": "src/Symfony/Component/Messenger/Tests/Transport/Sync/SyncTransportTest.php",
+    "startLine": 302,
+    "endLine": 318
+   },
+   {
+    "path": "src/Symfony/Component/Messenger/Tests/Transport/Sync/SyncTransportTest.php",
+    "startLine": 320,
+    "endLine": 336
+   },
+   {
+    "path": "src/Symfony/Component/Messenger/Tests/WorkerTest.php",
+    "startLine": 662,
+    "endLine": 687
+   },
+   {
+    "path": "src/Symfony/Component/Messenger/Transport/Serialization/PhpSerializer.php",
+    "startLine": 230,
+    "endLine": 251
+   },
+   {
+    "path": "src/Symfony/Component/OptionsResolver/Tests/OptionsResolverTest.php",
+    "startLine": 1152,
+    "endLine": 1168
+   },
+   {
+    "path": "src/Symfony/Component/OptionsResolver/Tests/OptionsResolverTest.php",
+    "startLine": 1170,
+    "endLine": 1181
+   },
+   {
+    "path": "src/Symfony/Component/PasswordHasher/Hasher/PasswordHasherFactory.php",
+    "startLine": 69,
+    "endLine": 107
+   },
+   {
+    "path": "src/Symfony/Component/Process/Tests/ProcessTest.php",
+    "startLine": 203,
+    "endLine": 213
+   },
+   {
+    "path": "src/Symfony/Component/Process/Tests/ProcessTest.php",
+    "startLine": 215,
+    "endLine": 227
+   },
+   {
+    "path": "src/Symfony/Component/PropertyInfo/Util/PhpDocTypeHelper.php",
+    "startLine": 119,
+    "endLine": 249
+   },
+   {
+    "path": "src/Symfony/Component/Runtime/Runner/FrankenPhpWorkerRunner.php",
+    "startLine": 42,
+    "endLine": 85
+   },
+   {
+    "path": "src/Symfony/Component/Security/Core/Tests/Signature/SignatureHasherTest.php",
+    "startLine": 252,
+    "endLine": 254
+   },
+   {
+    "path": "src/Symfony/Component/Security/Http/Firewall/ContextListener.php",
+    "startLine": 150,
+    "endLine": 195
+   },
+   {
+    "path": "src/Symfony/Component/Security/Http/Firewall/ContextListener.php",
+    "startLine": 286,
+    "endLine": 311
+   },
+   {
+    "path": "src/Symfony/Component/Security/Http/Tests/EventListener/IsGrantedAttributeListenerTest.php",
+    "startLine": 226,
+    "endLine": 277
+   },
+   {
+    "path": "src/Symfony/Component/Security/Http/Tests/EventListener/IsGrantedAttributeWithClosureListenerTest.php",
+    "startLine": 216,
+    "endLine": 247
+   },
+   {
+    "path": "src/Symfony/Component/Semaphore/Store/RedisStore.php",
+    "startLine": 163,
+    "endLine": 241
+   },
+   {
+    "path": "src/Symfony/Component/Semaphore/Store/StoreFactory.php",
+    "startLine": 43,
+    "endLine": 72
+   },
+   {
+    "path": "src/Symfony/Component/Serializer/Encoder/XmlEncoder.php",
+    "startLine": 572,
+    "endLine": 586
+   },
+   {
+    "path": "src/Symfony/Component/Serializer/Normalizer/ArrayDenormalizer.php",
+    "startLine": 41,
+    "endLine": 102
+   },
+   {
+    "path": "src/Symfony/Component/Translation/Bridge/Lokalise/Tests/LokaliseProviderTest.php",
+    "startLine": 664,
+    "endLine": 755
+   },
+   {
+    "path": "src/Symfony/Component/Translation/Tests/Fixtures/extractor-ast/translation.html.php",
+    "startLine": 1,
+    "endLine": 177
+   },
+   {
+    "path": "src/Symfony/Component/Validator/Constraints/YamlValidator.php",
+    "startLine": 26,
+    "endLine": 64
+   },
+   {
+    "path": "src/Symfony/Component/VarExporter/Tests/LazyProxyTraitTest.php",
+    "startLine": 1,
+    "endLine": 427
+   },
+   {
+    "path": "src/Symfony/Component/VarExporter/Tests/VarExporterTest.php",
+    "startLine": 1,
+    "endLine": 513
+   },
+   {
+    "path": "src/Symfony/Component/Yaml/Command/LintCommand.php",
+    "startLine": 176,
+    "endLine": 222
+   },
+   {
+    "path": "src/Symfony/Contracts/HttpClient/Test/HttpClientTestCase.php",
+    "startLine": 153,
+    "endLine": 167
+   },
+   {
+    "path": "src/Symfony/Contracts/HttpClient/Test/HttpClientTestCase.php",
+    "startLine": 540,
+    "endLine": 556
+   },
+   {
+    "path": "src/Symfony/Contracts/Service/Test/ServiceLocatorTestCase.php",
+    "startLine": 72,
+    "endLine": 82
+   },
+   {
+    "path": "src/Symfony/Contracts/Service/Test/ServiceLocatorTestCase.php",
+    "startLine": 84,
+    "endLine": 96
+   }
+  ]
+ },
+ "findings": [
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Bridge/PhpUnit/bin/simple-phpunit.php",
+   "line": 171,
+   "column": 100
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Bridge/PhpUnit/bin/simple-phpunit.php",
+   "line": 171,
+   "column": 148
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Bridge/PhpUnit/bin/simple-phpunit.php",
+   "line": 172,
+   "column": 100
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Bridge/PhpUnit/bin/simple-phpunit.php",
+   "line": 172,
+   "column": 143
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Bridge/PhpUnit/bin/simple-phpunit.php",
+   "line": 173,
+   "column": 80
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Bridge/PhpUnit/bin/simple-phpunit.php",
+   "line": 173,
+   "column": 133
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Bridge/PhpUnit/bin/simple-phpunit.php",
+   "line": 205,
+   "column": 28
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Cursor.php",
+   "line": 191,
+   "column": 21
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Cursor.php",
+   "line": 192,
+   "column": 9
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Cursor.php",
+   "line": 198,
+   "column": 9
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Helper/FileInputHelper.php",
+   "line": 66,
+   "column": 17
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Helper/QuestionHelper.php",
+   "line": 277,
+   "column": 9
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Helper/QuestionHelper.php",
+   "line": 446,
+   "column": 31
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Helper/QuestionHelper.php",
+   "line": 461,
+   "column": 13
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Helper/TerminalInputHelper.php",
+   "line": 58,
+   "column": 38
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Helper/TerminalInputHelper.php",
+   "line": 105,
+   "column": 9
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Helper/TerminalInputHelper.php",
+   "line": 132,
+   "column": 33
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Helper/TerminalInputHelper.php",
+   "line": 133,
+   "column": 17
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Helper/TerminalInputHelper.php",
+   "line": 139,
+   "column": 21
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Terminal.php",
+   "line": 127,
+   "column": 38
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Tests/ApplicationTest.php",
+   "line": 2444,
+   "column": 29
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Tests/ApplicationTest.php",
+   "line": 2459,
+   "column": 33
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Tests/ApplicationTest.php",
+   "line": 2463,
+   "column": 49
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Tests/ApplicationTest.php",
+   "line": 2472,
+   "column": 21
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Tests/ApplicationTest.php",
+   "line": 2473,
+   "column": 9
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Tests/Fixtures/terminal_input_helper_bad_state.php",
+   "line": 19,
+   "column": 1
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Tests/Helper/TerminalInputHelperTest.php",
+   "line": 30,
+   "column": 29
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Tests/Helper/TerminalInputHelperTest.php",
+   "line": 46,
+   "column": 43
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Tests/Helper/TerminalInputHelperTest.php",
+   "line": 50,
+   "column": 9
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Console/Tests/TerminalTest.php",
+   "line": 81,
+   "column": 23
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/KeyManagement/Bridge/Flysystem/Tests/FlysystemKeyLoaderTest.php",
+   "line": 185,
+   "column": 9
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/KeyManagement/Bridge/GoogleCloudKms/Tests/ServiceAccountTokenProviderTest.php",
+   "line": 225,
+   "column": 9
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/KeyManagement/Tests/KeyMaterialTest.php",
+   "line": 54,
+   "column": 9
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Lock/Tests/Store/SemaphoreStoreTest.php",
+   "line": 90,
+   "column": 45
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Lock/Tests/Store/SemaphoreStoreTest.php",
+   "line": 98,
+   "column": 41
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Mime/FileBinaryMimeTypeGuesser.php",
+   "line": 49,
+   "column": 41
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Mime/FileBinaryMimeTypeGuesser.php",
+   "line": 63,
+   "column": 22
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Tui/Terminal/Terminal.php",
+   "line": 74,
+   "column": 48
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Tui/Terminal/Terminal.php",
+   "line": 82,
+   "column": 13
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Tui/Terminal/Terminal.php",
+   "line": 161,
+   "column": 13
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Tui/Terminal/Terminal.php",
+   "line": 250,
+   "column": 23
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/Tui/Terminal/Terminal.php",
+   "line": 319,
+   "column": 36
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/VarDumper/Tests/Caster/ReflectionCasterTest.php",
+   "line": 89,
+   "column": 53
+  },
+  {
+   "rule": "ForbiddenCode",
+   "path": "src/Symfony/Component/VarDumper/Tests/Cloner/VarClonerTest.php",
+   "line": 457,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Bridge/PhpUnit/DeprecationErrorHandler.php",
+   "line": 99,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Bridge/PhpUnit/DeprecationErrorHandler/Configuration.php",
+   "line": 127,
+   "column": 47
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Bridge/PhpUnit/Tests/DeprecationErrorHandler/ConfigurationTest.php",
+   "line": 577,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Bridge/PhpUnit/bin/simple-phpunit.php",
+   "line": 186,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Bridge/Twig/Command/DebugCommand.php",
+   "line": 213,
+   "column": 28
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Bridge/Twig/Command/LintCommand.php",
+   "line": 141,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Bridge/Twig/Tests/Extension/WorkflowExtensionTest.php",
+   "line": 32,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Bridge/Twig/Tests/Extension/WorkflowExtensionTest.php",
+   "line": 33,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Bridge/Twig/Validator/Constraints/TwigValidator.php",
+   "line": 54,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Bundle/SecurityBundle/DependencyInjection/SecurityExtension.php",
+   "line": 324,
+   "column": 16
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Bundle/SecurityBundle/Tests/DependencyInjection/CompleteConfigurationTestCase.php",
+   "line": 522,
+   "column": 15
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/AssetMapper/ImportMap/Resolver/JsDelivrEsmResolver.php",
+   "line": 113,
+   "column": 61
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/AssetMapper/ImportMap/Resolver/JsDelivrEsmResolver.php",
+   "line": 113,
+   "column": 75
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Cache/Adapter/AbstractTagAwareAdapter.php",
+   "line": 331,
+   "column": 57
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Cache/Adapter/AbstractTagAwareAdapter.php",
+   "line": 335,
+   "column": 60
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Cache/Adapter/PhpFilesAdapter.php",
+   "line": 79,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Cache/Adapter/PhpFilesAdapter.php",
+   "line": 116,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Cache/Adapter/PhpFilesAdapter.php",
+   "line": 144,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Cache/Adapter/PhpFilesAdapter.php",
+   "line": 190,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Cache/Adapter/TagAwareAdapter.php",
+   "line": 199,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Cache/Adapter/TagAwareAdapter.php",
+   "line": 299,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Cache/Adapter/TraceableAdapter.php",
+   "line": 282,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Cache/LockRegistry.php",
+   "line": 167,
+   "column": 21
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Cache/Tests/Adapter/ChainAdapterTest.php",
+   "line": 320,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Cache/Tests/Adapter/PredisReplicationAdapterTest.php",
+   "line": 23,
+   "column": 14
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Cache/Tests/Adapter/RedisAdapterTest.php",
+   "line": 48,
+   "column": 10
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Cache/Tests/Adapter/RedisAdapterTest.php",
+   "line": 90,
+   "column": 10
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Cache/Tests/Messenger/EarlyExpirationDispatcherTest.php",
+   "line": 43,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Cache/Traits/PdoTrait.php",
+   "line": 248,
+   "column": 29
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Config/Definition/Dumper/XmlReferenceDumper.php",
+   "line": 225,
+   "column": 25
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Config/Definition/Dumper/YamlReferenceDumper.php",
+   "line": 92,
+   "column": 61
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Config/Definition/Loader/DefinitionFileLoader.php",
+   "line": 47,
+   "column": 61
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Config/ResourceCheckerConfigCache.php",
+   "line": 154,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Config/Tests/Resource/ReflectionClassResourceTest.php",
+   "line": 187,
+   "column": 35
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Console/Application.php",
+   "line": 866,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Console/Helper/Helper.php",
+   "line": 105,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Console/Helper/QuestionHelper.php",
+   "line": 353,
+   "column": 25
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Console/Tests/Input/File/InputFileTest.php",
+   "line": 270,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Attribute/Autowire.php",
+   "line": 61,
+   "column": 50
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Compiler/AutowirePass.php",
+   "line": 737,
+   "column": 57
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Compiler/AutowirePass.php",
+   "line": 744,
+   "column": 61
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Compiler/AutowirePass.php",
+   "line": 750,
+   "column": 61
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Compiler/RegisterAutoconfigureAttributesPass.php",
+   "line": 33,
+   "column": 50
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Compiler/ResolveDecoratorStackPass.php",
+   "line": 168,
+   "column": 38
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/ContainerBuilder.php",
+   "line": 849,
+   "column": 40
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/ContainerBuilder.php",
+   "line": 1149,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/ContainerBuilder.php",
+   "line": 1473,
+   "column": 45
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/ContainerBuilder.php",
+   "line": 1743,
+   "column": 66
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Dumper/PhpDumper.php",
+   "line": 656,
+   "column": 53
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Dumper/YamlDumper.php",
+   "line": 299,
+   "column": 106
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Extension/ExtensionTrait.php",
+   "line": 49,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Kernel/KernelTrait.php",
+   "line": 178,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Kernel/KernelTrait.php",
+   "line": 231,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Kernel/KernelTrait.php",
+   "line": 601,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Loader/PhpFileLoader.php",
+   "line": 56,
+   "column": 67
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Loader/PhpFileLoader.php",
+   "line": 56,
+   "column": 79
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Loader/PhpFileLoader.php",
+   "line": 56,
+   "column": 88
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Loader/PhpFileLoader.php",
+   "line": 56,
+   "column": 99
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Tests/Compiler/DecoratorServicePassTest.php",
+   "line": 134,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Tests/Compiler/DecoratorServicePassTest.php",
+   "line": 153,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Tests/Compiler/RegisterAutoconfigureAttributesPassTest.php",
+   "line": 193,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Tests/Compiler/ResettableServicePassTest.php",
+   "line": 98,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Tests/Compiler/ResettableServicePassTest.php",
+   "line": 254,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Tests/ContainerBuilderTest.php",
+   "line": 835,
+   "column": 51
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Tests/ContainerTest.php",
+   "line": 543,
+   "column": 72
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Tests/ContainerTest.php",
+   "line": 550,
+   "column": 68
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/DependencyInjection/Tests/ContainerTest.php",
+   "line": 557,
+   "column": 80
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ErrorHandler/DebugClassLoader.php",
+   "line": 688,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ErrorHandler/ErrorEnhancer/UndefinedFunctionErrorEnhancer.php",
+   "line": 57,
+   "column": 45
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ErrorHandler/ErrorHandler.php",
+   "line": 601,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ErrorHandler/Tests/ErrorHandlerTest.php",
+   "line": 378,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ErrorHandler/Tests/ErrorHandlerTest.php",
+   "line": 379,
+   "column": 14
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ErrorHandler/Tests/ErrorHandlerTest.php",
+   "line": 392,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ErrorHandler/Tests/ErrorHandlerTest.php",
+   "line": 899,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ErrorHandler/Tests/HeaderMock.php",
+   "line": 30,
+   "column": 10
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/EventDispatcher/DependencyInjection/RegisterListenersPass.php",
+   "line": 339,
+   "column": 55
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/EventDispatcher/EventDispatcher.php",
+   "line": 304,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/EventDispatcher/EventDispatcher.php",
+   "line": 306,
+   "column": 21
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/EventDispatcher/EventDispatcher.php",
+   "line": 314,
+   "column": 21
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/EventDispatcher/Tests/ScopedEventDispatcherTest.php",
+   "line": 70,
+   "column": 31
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Form/DependencyInjection/FormPass.php",
+   "line": 114,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Form/Extension/DataCollector/FormDataCollector.php",
+   "line": 268,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Form/Extension/DependencyInjection/DependencyInjectionExtension.php",
+   "line": 85,
+   "column": 48
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Form/Form.php",
+   "line": 494,
+   "column": 21
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Form/Form.php",
+   "line": 500,
+   "column": 21
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Form/Tests/CompoundFormTest.php",
+   "line": 464,
+   "column": 20
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Form/Tests/CompoundFormTest.php",
+   "line": 465,
+   "column": 20
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Form/Tests/Extension/Core/DataMapper/DataMapperTest.php",
+   "line": 383,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpClient/EventSourceHttpClient.php",
+   "line": 75,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpClient/HttpClientTrait.php",
+   "line": 367,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpClient/HttpClientTrait.php",
+   "line": 453,
+   "column": 77
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpClient/HttpClientTrait.php",
+   "line": 470,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpClient/Response/CommonResponseTrait.php",
+   "line": 202,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpClient/Response/CurlResponse.php",
+   "line": 79,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpClient/Response/CurlResponse.php",
+   "line": 80,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpClient/Tests/EventSourceHttpClientTest.php",
+   "line": 143,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpClient/Tests/HttpClientTestCase.php",
+   "line": 402,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpClient/Tests/HttpClientTestCase.php",
+   "line": 725,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpClient/Tests/TestSocketServer.php",
+   "line": 55,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpClient/Tests/TraceableHttpClientTest.php",
+   "line": 92,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpFoundation/Session/Storage/Handler/IdentityMarshaller.php",
+   "line": 23,
+   "column": 29
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpFoundation/Session/Storage/Handler/SessionHandlerFactory.php",
+   "line": 35,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpFoundation/Session/Storage/NativeSessionStorage.php",
+   "line": 213,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpFoundation/Tests/Session/Storage/Handler/RedisClusterSessionHandlerTest.php",
+   "line": 25,
+   "column": 14
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpKernel/CacheWarmer/CacheWarmerAggregate.php",
+   "line": 52,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpKernel/EventListener/ControllerAttributesListener.php",
+   "line": 72,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpKernel/EventListener/ErrorListener.php",
+   "line": 238,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpKernel/EventListener/ProfilerListener.php",
+   "line": 118,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpKernel/EventListener/ProfilerListener.php",
+   "line": 118,
+   "column": 32
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpKernel/EventListener/ProfilerListener.php",
+   "line": 119,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpKernel/EventListener/ProfilerListener.php",
+   "line": 128,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpKernel/EventListener/RouterListener.php",
+   "line": 215,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpKernel/EventListener/RouterListener.php",
+   "line": 216,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpKernel/EventListener/RouterListener.php",
+   "line": 216,
+   "column": 20
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpKernel/Tests/DataCollector/DataCollectorTest.php",
+   "line": 56,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpKernel/Tests/DataCollector/DataCollectorTest.php",
+   "line": 82,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/HttpKernel/Tests/EventListener/SessionListenerTest.php",
+   "line": 952,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Intl/Currencies.php",
+   "line": 249,
+   "column": 54
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/JsonStreamer/Read/PhpGenerator.php",
+   "line": 241,
+   "column": 48
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/nullable_backed_enum.php",
+   "line": 10,
+   "column": 128
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/nullable_backed_enum.php",
+   "line": 10,
+   "column": 138
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/nullable_backed_enum.php",
+   "line": 10,
+   "column": 153
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/nullable_backed_enum.stream.php",
+   "line": 10,
+   "column": 148
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/nullable_backed_enum.stream.php",
+   "line": 10,
+   "column": 158
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/JsonStreamer/Tests/Fixtures/stream_reader/nullable_backed_enum.stream.php",
+   "line": 10,
+   "column": 173
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/JsonStreamer/Write/StreamWriterGenerator.php",
+   "line": 133,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/KeyManagement/Bridge/AwsKms/Tests/AwsKmsTest.php",
+   "line": 165,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/KeyManagement/Tests/Debug/TraceableEnvelopeEncrypterTest.php",
+   "line": 71,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Lock/Store/DoctrineDbalMysqlStore.php",
+   "line": 156,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Lock/Store/DoctrineDbalPostgreSqlStore.php",
+   "line": 92,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Lock/Store/DoctrineDbalPostgreSqlStore.php",
+   "line": 124,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Lock/Store/MysqlStore.php",
+   "line": 159,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Lock/Store/PostgreSqlStore.php",
+   "line": 80,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Lock/Store/PostgreSqlStore.php",
+   "line": 88,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Lock/Store/PostgreSqlStore.php",
+   "line": 113,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Lock/Store/PostgreSqlStore.php",
+   "line": 121,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Lock/Store/PostgreSqlStore.php",
+   "line": 242,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Lock/Store/PostgreSqlStore.php",
+   "line": 256,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Lock/Store/StoreFactory.php",
+   "line": 44,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mailer/Bridge/AhaSend/Tests/Transport/AhaSendSmtpTransportTest.php",
+   "line": 45,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mailer/Bridge/Scaleway/Tests/Webhook/ScalewayRequestParserSignatureTest.php",
+   "line": 233,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mailer/Tests/EventListener/MessageLoggerListenerTest.php",
+   "line": 45,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mailer/Transport/Smtp/EsmtpTransport.php",
+   "line": 240,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Messenger/Bridge/Redis/Transport/Connection.php",
+   "line": 345,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Messenger/Bridge/Redis/Transport/Connection.php",
+   "line": 355,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Messenger/Bridge/Redis/Transport/Connection.php",
+   "line": 864,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Messenger/Bridge/Redis/Transport/Connection.php",
+   "line": 897,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Messenger/Command/SetupTransportsCommand.php",
+   "line": 68,
+   "column": 37
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Messenger/Tests/FailureIntegrationTest.php",
+   "line": 910,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Messenger/Tests/FailureIntegrationTest.php",
+   "line": 911,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Messenger/Tests/FailureIntegrationTest.php",
+   "line": 916,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Messenger/Tests/Handler/RedispatchMessageHandlerTest.php",
+   "line": 174,
+   "column": 16
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Messenger/Tests/Middleware/HandleMessageMiddlewareTest.php",
+   "line": 613,
+   "column": 36
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Messenger/Tests/Transport/InMemory/InMemoryTransportTest.php",
+   "line": 96,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Messenger/Tests/Transport/Serialization/ClaimCheckSerializerTest.php",
+   "line": 95,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Messenger/Tests/Transport/Serialization/PhpSerializerTest.php",
+   "line": 32,
+   "column": 1
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Messenger/Tests/WorkerTest.php",
+   "line": 1305,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Messenger/Transport/Serialization/PhpSerializer.php",
+   "line": 237,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 372,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 372,
+   "column": 42
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 372,
+   "column": 54
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 381,
+   "column": 10
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 381,
+   "column": 42
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 381,
+   "column": 54
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 390,
+   "column": 10
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 390,
+   "column": 24
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 390,
+   "column": 35
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 390,
+   "column": 42
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 390,
+   "column": 54
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 401,
+   "column": 10
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 401,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 401,
+   "column": 42
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 401,
+   "column": 54
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 427,
+   "column": 42
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 427,
+   "column": 54
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 448,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 458,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 470,
+   "column": 10
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 470,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 470,
+   "column": 42
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 489,
+   "column": 10
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 489,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Mime/Tests/EmailTest.php",
+   "line": 489,
+   "column": 42
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Notifier/Tests/EventListener/NotificationLoggerListenerTest.php",
+   "line": 43,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 336,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 367,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 426,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 438,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 448,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 464,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 665,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 768,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 770,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 790,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 801,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 881,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 926,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 986,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1005,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1023,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1042,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1060,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1079,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1097,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1109,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1121,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1132,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1166,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1184,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1197,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1232,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1332,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1461,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1469,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1477,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1485,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1495,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1532,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1540,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1551,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1560,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1572,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1596,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1712,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1724,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1736,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1749,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1773,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1797,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperTest.php",
+   "line": 1819,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperWithEnumTest.php",
+   "line": 47,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperWithEnumTest.php",
+   "line": 68,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/ObjectMapper/Tests/ObjectMapperWithEnumTest.php",
+   "line": 82,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Process/Tests/ProcessTest.php",
+   "line": 693,
+   "column": 26
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/RateLimiter/Tests/RateLimiterFactoryTest.php",
+   "line": 96,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Routing/Loader/AttributeClassLoader.php",
+   "line": 204,
+   "column": 32
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Routing/Loader/PhpFileLoader.php",
+   "line": 50,
+   "column": 61
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Routing/Matcher/Dumper/CompiledUrlMatcherDumper.php",
+   "line": 382,
+   "column": 29
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Routing/Tests/Fixtures/with_define_path_variable.php",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Runtime/Tests/SymfonyRuntimeTest.php",
+   "line": 115,
+   "column": 14
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Runtime/Tests/SymfonyRuntimeTest.php",
+   "line": 149,
+   "column": 14
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Csrf/SameOriginCsrfListener.php",
+   "line": 67,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Csrf/SameOriginCsrfListener.php",
+   "line": 67,
+   "column": 58
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Csrf/SameOriginCsrfListener.php",
+   "line": 68,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Csrf/SameOriginCsrfListener.php",
+   "line": 70,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Csrf/SameOriginCsrfTokenManager.php",
+   "line": 152,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Csrf/SameOriginCsrfTokenManager.php",
+   "line": 152,
+   "column": 58
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Csrf/SameOriginCsrfTokenManager.php",
+   "line": 153,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Csrf/SameOriginCsrfTokenManager.php",
+   "line": 155,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Csrf/SameOriginCsrfTokenManager.php",
+   "line": 252,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Csrf/SameOriginCsrfTokenManager.php",
+   "line": 252,
+   "column": 58
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Csrf/SameOriginCsrfTokenManager.php",
+   "line": 253,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Csrf/SameOriginCsrfTokenManager.php",
+   "line": 255,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Http/Firewall/ContextListener.php",
+   "line": 90,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Http/Firewall/ContextListener.php",
+   "line": 90,
+   "column": 62
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Http/Firewall/ContextListener.php",
+   "line": 91,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Http/Firewall/ContextListener.php",
+   "line": 97,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Http/Firewall/ContextListener.php",
+   "line": 99,
+   "column": 17
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Http/Firewall/ContextListener.php",
+   "line": 290,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Http/Tests/Firewall/SwitchUserListenerTest.php",
+   "line": 163,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Security/Http/Tests/RememberMe/PersistentRememberMeHandlerTest.php",
+   "line": 390,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Serializer/DependencyInjection/AttributeMetadataPass.php",
+   "line": 49,
+   "column": 50
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Serializer/Encoder/XmlEncoder.php",
+   "line": 574,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Serializer/Normalizer/AbstractObjectNormalizer.php",
+   "line": 207,
+   "column": 38
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Serializer/Normalizer/DateTimeNormalizer.php",
+   "line": 95,
+   "column": 21
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Serializer/Normalizer/DateTimeNormalizer.php",
+   "line": 98,
+   "column": 21
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Serializer/Tests/Normalizer/Features/CallbacksTestTrait.php",
+   "line": 107,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Serializer/Tests/Normalizer/Features/CallbacksTestTrait.php",
+   "line": 109,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Serializer/Tests/Normalizer/FormErrorNormalizerTest.php",
+   "line": 120,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Serializer/Tests/Normalizer/UidNormalizerTest.php",
+   "line": 102,
+   "column": 31
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/String/Tests/LazyStringTest.php",
+   "line": 35,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Translation/DependencyInjection/LoggingTranslatorPass.php",
+   "line": 52,
+   "column": 43
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Translation/Dumper/IcuResFileDumper.php",
+   "line": 38,
+   "column": 45
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Translation/Loader/MoFileLoader.php",
+   "line": 76,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Translation/Resources/bin/translation-status.php",
+   "line": 83,
+   "column": 1
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Translation/Resources/bin/translation-status.php",
+   "line": 90,
+   "column": 5
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Translation/Tests/Fixtures/extractor-ast-limitations/variables.php",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Translation/Tests/Fixtures/extractor-ast/validator-constraints.php",
+   "line": 31,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Translation/Tests/Fixtures/extractor-ast/validator-constraints.php",
+   "line": 32,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Translation/Tests/Fixtures/extractor-ast/validator-constraints.php",
+   "line": 36,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Translation/Tests/Fixtures/extractor-ast/validator-constraints.php",
+   "line": 37,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Translation/Tests/Fixtures/extractor-ast/validator-constraints.php",
+   "line": 38,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Translation/Util/ArrayConverter.php",
+   "line": 39,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Ansi/TextWrapper.php",
+   "line": 207,
+   "column": 21
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Ansi/TextWrapper.php",
+   "line": 208,
+   "column": 21
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Render/LayoutEngine.php",
+   "line": 149,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Input/KeyParserTest.php",
+   "line": 131,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Render/ScreenWriterTest.php",
+   "line": 428,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Render/ScreenWriterTest.php",
+   "line": 762,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/StateDiff.php",
+   "line": 323,
+   "column": 36
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Widget/CancellableLoaderWidgetTest.php",
+   "line": 57,
+   "column": 19
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Widget/CancellableLoaderWidgetTest.php",
+   "line": 76,
+   "column": 19
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Widget/CancellableLoaderWidgetTest.php",
+   "line": 87,
+   "column": 19
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Widget/EditorTest.php",
+   "line": 500,
+   "column": 19
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Widget/EditorTest.php",
+   "line": 535,
+   "column": 19
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Widget/EditorTest.php",
+   "line": 553,
+   "column": 19
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Widget/EditorTest.php",
+   "line": 674,
+   "column": 19
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Widget/EditorTest.php",
+   "line": 698,
+   "column": 19
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Widget/EditorTest.php",
+   "line": 762,
+   "column": 19
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Widget/EditorTest.php",
+   "line": 797,
+   "column": 19
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Widget/EditorTest.php",
+   "line": 822,
+   "column": 19
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Widget/EditorTest.php",
+   "line": 842,
+   "column": 19
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Widget/EditorTest.php",
+   "line": 899,
+   "column": 19
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Widget/SettingsListTest.php",
+   "line": 42,
+   "column": 19
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Widget/SettingsListTest.php",
+   "line": 54,
+   "column": 19
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Widget/SettingsListTest.php",
+   "line": 99,
+   "column": 19
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Widget/SettingsListTest.php",
+   "line": 138,
+   "column": 19
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Tests/Widget/SettingsListTest.php",
+   "line": 191,
+   "column": 19
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Tui/Widget/Editor/EditorRenderer.php",
+   "line": 196,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Uid/UuidV7.php",
+   "line": 159,
+   "column": 25
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Uid/UuidV7.php",
+   "line": 161,
+   "column": 25
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Uid/UuidV7.php",
+   "line": 163,
+   "column": 25
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Validator/Constraints/UniqueValidator.php",
+   "line": 54,
+   "column": 79
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Validator/Constraints/YamlValidator.php",
+   "line": 45,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Validator/DependencyInjection/AttributeMetadataPass.php",
+   "line": 34,
+   "column": 50
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Validator/Tests/Constraints/FileTest.php",
+   "line": 98,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/VarDumper/Cloner/VarCloner.php",
+   "line": 31,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/VarDumper/Dumper/CliDumper.php",
+   "line": 164,
+   "column": 95
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/VarExporter/Internal/LazyObjectRegistry.php",
+   "line": 115,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/VarExporter/Tests/DeepCloneTest.php",
+   "line": 794,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/VarExporter/Tests/LazyProxyTraitTest.php",
+   "line": 34,
+   "column": 1
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/VarExporter/Tests/VarExporterTest.php",
+   "line": 33,
+   "column": 1
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/VarExporter/Tests/VarExporterTest.php",
+   "line": 308,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Workflow/Tests/Dumper/GraphvizDumperTest.php",
+   "line": 297,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Workflow/Tests/Dumper/GraphvizDumperTest.php",
+   "line": 299,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Workflow/Tests/Metadata/InMemoryMetadataStoreTest.php",
+   "line": 28,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Workflow/Tests/Metadata/InMemoryMetadataStoreTest.php",
+   "line": 31,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Workflow/Tests/WorkflowBuilderTrait.php",
+   "line": 22,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Workflow/Tests/WorkflowBuilderTrait.php",
+   "line": 24,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Workflow/Tests/WorkflowBuilderTrait.php",
+   "line": 57,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Workflow/Tests/WorkflowBuilderTrait.php",
+   "line": 59,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Workflow/Tests/WorkflowBuilderTrait.php",
+   "line": 62,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Workflow/Tests/WorkflowBuilderTrait.php",
+   "line": 65,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Workflow/Tests/WorkflowBuilderTrait.php",
+   "line": 92,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Workflow/Tests/WorkflowBuilderTrait.php",
+   "line": 94,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Workflow/Tests/WorkflowBuilderTrait.php",
+   "line": 100,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Workflow/Tests/WorkflowBuilderTrait.php",
+   "line": 155,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Workflow/Tests/WorkflowBuilderTrait.php",
+   "line": 157,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Workflow/Tests/WorkflowBuilderTrait.php",
+   "line": 160,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Component/Yaml/Command/LintCommand.php",
+   "line": 178,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Contracts/HttpClient/Test/HttpClientTestCase.php",
+   "line": 711,
+   "column": 9
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Contracts/HttpClient/Test/HttpClientTestCase.php",
+   "line": 803,
+   "column": 29
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Contracts/HttpClient/Test/HttpClientTestCase.php",
+   "line": 833,
+   "column": 29
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Contracts/HttpClient/Test/HttpClientTestCase.php",
+   "line": 883,
+   "column": 13
+  },
+  {
+   "rule": "UnusedVariable",
+   "path": "src/Symfony/Contracts/HttpClient/Test/HttpClientTestCase.php",
+   "line": 932,
+   "column": 9
+  }
+ ]
+}

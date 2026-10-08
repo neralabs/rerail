@@ -1,0 +1,1 @@
+<template><div><custom :attr_ff="prop"></custom></div></template>

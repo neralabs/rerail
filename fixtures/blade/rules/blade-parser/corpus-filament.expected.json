@@ -1,0 +1,20 @@
+{
+ "tool": "blade-parser",
+ "version": "2.1.0",
+ "source": {
+  "kind": "corpus",
+  "name": "filament",
+  "repository": "https://github.com/filamentphp/filament",
+  "commit": "ca4f55bb5e05df56ba1609595c082d44c2511620",
+  "rules": [
+   "ComponentShorthandVariableParameterValidator",
+   "DebugDirectiveValidator",
+   "DuplicateConditionExpressionsValidator",
+   "ForElseStructureValidator",
+   "NoArgumentsValidator",
+   "RequiredArgumentsValidator"
+  ],
+  "skipped": []
+ },
+ "findings": []
+}

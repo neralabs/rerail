@@ -1,0 +1,2058 @@
+{
+  "keys": [
+    {
+      "src": "<?php $o->foo;",
+      "at": "$o->foo"
+    },
+    {
+      "src": "<?php $o?->foo;",
+      "at": "$o?->foo"
+    },
+    {
+      "src": "<?php $o->Foo;",
+      "at": "$o->Foo"
+    },
+    {
+      "src": "<?php $o->foo;",
+      "at": "foo"
+    },
+    {
+      "src": "<?php $o->{'foo'};",
+      "at": "$o->{'foo'}"
+    },
+    {
+      "src": "<?php $o->{'foo'};",
+      "at": "'foo'"
+    },
+    {
+      "src": "<?php $o->{\"fo\" . 'o'};",
+      "at": "$o->{\"fo\" . 'o'}"
+    },
+    {
+      "src": "<?php $o->{1};",
+      "at": "$o->{1}"
+    },
+    {
+      "src": "<?php $o->{0};",
+      "at": "$o->{0}"
+    },
+    {
+      "src": "<?php $o->{1.5};",
+      "at": "$o->{1.5}"
+    },
+    {
+      "src": "<?php $o->{true};",
+      "at": "$o->{true}"
+    },
+    {
+      "src": "<?php $o->{null};",
+      "at": "$o->{null}"
+    },
+    {
+      "src": "<?php $o->{''};",
+      "at": "$o->{''}"
+    },
+    {
+      "src": "<?php $o->{\"\\0a\"};",
+      "at": "$o->{\"\\0a\"}"
+    },
+    {
+      "src": "<?php $o->{[1]};",
+      "at": "$o->{[1]}"
+    },
+    {
+      "src": "<?php $o->{'é'};",
+      "at": "$o->{'é'}"
+    },
+    {
+      "src": "<?php $o->{\"\\xff\"};",
+      "at": "$o->{\"\\xff\"}",
+      "unknown": "not UTF-8"
+    },
+    {
+      "src": "<?php $o->$x;",
+      "at": "$o->$x"
+    },
+    {
+      "src": "<?php $o->{$x};",
+      "at": "$o->{$x}"
+    },
+    {
+      "src": "<?php $o->{\"a$x\"};",
+      "at": "$o->{\"a$x\"}"
+    },
+    {
+      "src": "<?php $o->{PHP_EOL};",
+      "at": "$o->{PHP_EOL}",
+      "unknown": "a named constant's value needs PHP name resolution"
+    },
+    {
+      "src": "<?php $o->foo();",
+      "at": "$o->foo()"
+    },
+    {
+      "src": "<?php $o?->foo();",
+      "at": "$o?->foo()"
+    },
+    {
+      "src": "<?php $o->{'f' . 'oo'}();",
+      "at": "$o->{'f' . 'oo'}()"
+    },
+    {
+      "src": "<?php $o->{1}();",
+      "at": "$o->{1}()"
+    },
+    {
+      "src": "<?php $o->$m();",
+      "at": "$o->$m()"
+    },
+    {
+      "src": "<?php C::foo();",
+      "at": "C::foo()"
+    },
+    {
+      "src": "<?php C::{'foo'}();",
+      "at": "C::{'foo'}()"
+    },
+    {
+      "src": "<?php C::$foo;",
+      "at": "C::$foo"
+    },
+    {
+      "src": "<?php C::$foo;",
+      "at": "$foo"
+    },
+    {
+      "src": "<?php C::${'fo' . 'o'};",
+      "at": "C::${'fo' . 'o'}"
+    },
+    {
+      "src": "<?php C::${1};",
+      "at": "C::${1}"
+    },
+    {
+      "src": "<?php C::${[]};",
+      "at": "C::${[]}"
+    },
+    {
+      "src": "<?php C::$$x;",
+      "at": "C::$$x"
+    },
+    {
+      "src": "<?php C::FOO;",
+      "at": "C::FOO"
+    },
+    {
+      "src": "<?php C::FOO;",
+      "at": "FOO"
+    },
+    {
+      "src": "<?php self::FOO;",
+      "at": "self::FOO"
+    },
+    {
+      "src": "<?php C::class;",
+      "at": "C::class"
+    },
+    {
+      "src": "<?php C::{'FO' . 'O'};",
+      "at": "C::{'FO' . 'O'}"
+    },
+    {
+      "src": "<?php C::{1};",
+      "at": "C::{1}"
+    },
+    {
+      "src": "<?php C::{$c};",
+      "at": "C::{$c}"
+    },
+    {
+      "src": "<?php ['foo' => 1];",
+      "at": "'foo' => 1"
+    },
+    {
+      "src": "<?php ['foo' => 1];",
+      "at": "'foo'"
+    },
+    {
+      "src": "<?php [\"1\" => 1];",
+      "at": "\"1\" => 1"
+    },
+    {
+      "src": "<?php ['01' => 1];",
+      "at": "'01' => 1"
+    },
+    {
+      "src": "<?php ['-0' => 1];",
+      "at": "'-0' => 1"
+    },
+    {
+      "src": "<?php ['-5' => 1];",
+      "at": "'-5' => 1"
+    },
+    {
+      "src": "<?php [-5 => 1];",
+      "at": "-5 => 1"
+    },
+    {
+      "src": "<?php ['9223372036854775808' => 1];",
+      "at": "'9223372036854775808' => 1"
+    },
+    {
+      "src": "<?php [1.7 => 1];",
+      "at": "1.7 => 1"
+    },
+    {
+      "src": "<?php [1.7 => 1];",
+      "at": "1.7"
+    },
+    {
+      "src": "<?php [true => 1];",
+      "at": "true => 1"
+    },
+    {
+      "src": "<?php [false => 1];",
+      "at": "false => 1"
+    },
+    {
+      "src": "<?php [null => 1];",
+      "at": "null => 1"
+    },
+    {
+      "src": "<?php ['a' . 'b' => 1];",
+      "at": "'a' . 'b' => 1"
+    },
+    {
+      "src": "<?php [1 + 1 => 1];",
+      "at": "1 + 1 => 1"
+    },
+    {
+      "src": "<?php [[1] => 2];",
+      "at": "[1] => 2"
+    },
+    {
+      "src": "<?php [$k => 2];",
+      "at": "$k => 2"
+    },
+    {
+      "src": "<?php [<<<X\nk\nX => 1];",
+      "at": "<<<X\nk\nX => 1"
+    },
+    {
+      "src": "<?php [<<<'X'\nk\nX => 1];",
+      "at": "<<<'X'\nk\nX => 1"
+    },
+    {
+      "src": "<?php ['k' => &$v];",
+      "at": "'k' => &$v"
+    },
+    {
+      "src": "<?php $a['k'];",
+      "at": "$a['k']"
+    },
+    {
+      "src": "<?php $a[\"k\"];",
+      "at": "$a[\"k\"]"
+    },
+    {
+      "src": "<?php $a[1];",
+      "at": "$a[1]"
+    },
+    {
+      "src": "<?php $a['1'];",
+      "at": "$a['1']"
+    },
+    {
+      "src": "<?php $a[1.5];",
+      "at": "$a[1.5]"
+    },
+    {
+      "src": "<?php $a[true];",
+      "at": "$a[true]"
+    },
+    {
+      "src": "<?php $a[$i];",
+      "at": "$a[$i]"
+    },
+    {
+      "src": "<?php $a[] = 1;",
+      "at": "$a[]"
+    },
+    {
+      "src": "<?php $a['x']['y'];",
+      "at": "$a['x']['y']"
+    },
+    {
+      "src": "<?php f(foo: 1);",
+      "at": "foo: 1"
+    },
+    {
+      "src": "<?php f(foo: 1);",
+      "at": "foo"
+    },
+    {
+      "src": "<?php new C(Foo: 1);",
+      "at": "Foo: 1"
+    },
+    {
+      "src": "<?php f('x');",
+      "at": "'x'"
+    },
+    {
+      "src": "<?php f(1.0);",
+      "at": "1.0"
+    },
+    {
+      "src": "<?php class C { public function Foo() {} }",
+      "at": "public function Foo() {}"
+    },
+    {
+      "src": "<?php class C { public $bar = 1; }",
+      "at": "$bar = 1"
+    },
+    {
+      "src": "<?php class C { public $bar = 1; }",
+      "at": "$bar"
+    },
+    {
+      "src": "<?php class C { const X = 1; }",
+      "at": "X = 1"
+    },
+    {
+      "src": "<?php class C { const X = 1; }",
+      "at": "X"
+    },
+    {
+      "src": "<?php enum E { case A; }",
+      "at": "case A;"
+    },
+    {
+      "src": "<?php class C { function __construct(public int $x) {} }",
+      "at": "public int $x"
+    }
+  ],
+  "members": [
+    {
+      "src": "<?php $k = 'foo';\n$o->$k;",
+      "at": "$o->$k"
+    },
+    {
+      "src": "<?php $k = 'fo' . 'o';\n$o->{$k};",
+      "at": "$o->{$k}"
+    },
+    {
+      "src": "<?php $k = 'x';\n$k = 'y';\n$o->$k;",
+      "at": "$o->$k"
+    },
+    {
+      "src": "<?php $k = 1;\n$a[$k];",
+      "at": "$a[$k]"
+    },
+    {
+      "src": "<?php $k = '1';\n$a[$k];",
+      "at": "$a[$k]"
+    },
+    {
+      "src": "<?php $k = 1.5;\n$a[$k];",
+      "at": "$a[$k]"
+    },
+    {
+      "src": "<?php $m = 'run';\n$o->$m();",
+      "at": "$o->$m()"
+    },
+    {
+      "src": "<?php $m = 2;\n$o->$m();",
+      "at": "$o->$m()"
+    },
+    {
+      "src": "<?php $c = 'X';\nC::{$c};",
+      "at": "C::{$c}"
+    },
+    {
+      "src": "<?php $p = 'q';\nC::$$p;",
+      "at": "C::$$p"
+    },
+    {
+      "src": "<?php $k = 'a';\n[$k => 1];",
+      "at": "$k => 1"
+    },
+    {
+      "src": "<?php function f() { $k = 'in'; return $k; }\n$k = 'out';\n$o->$k;",
+      "at": "$o->$k"
+    },
+    {
+      "src": "<?php $o->{'lit'};",
+      "at": "$o->{'lit'}"
+    },
+    {
+      "src": "<?php $o->name;",
+      "at": "$o->name"
+    },
+    {
+      "src": "<?php $k = [1];\n$o->$k;",
+      "at": "$o->$k"
+    },
+    {
+      "src": "<?php if ($argc > 1) { $k = 'a'; } else { $k = 'b'; }\n$o->$k;",
+      "at": "$o->$k",
+      "unknown": "two bindings reach the read; $argc is known only at run time (1 where the oracle runs)"
+    }
+  ],
+  "names": {
+    "pairs": [
+      {
+        "src": "<?php function Foo() {}\nfoo();",
+        "left": [
+          "Foo",
+          0
+        ],
+        "right": [
+          "foo",
+          0
+        ],
+        "probe": "function Foo() { return 1; } echo json_encode(foo() === 1);"
+      },
+      {
+        "src": "<?php function foo() {}\nFOO();",
+        "left": [
+          "foo",
+          0
+        ],
+        "right": [
+          "FOO",
+          0
+        ],
+        "probe": "function foo() { return 1; } echo json_encode(FOO() === 1);"
+      },
+      {
+        "src": "<?php STRLEN('a');\nstrlen('a');",
+        "left": [
+          "STRLEN",
+          0
+        ],
+        "right": [
+          "strlen",
+          0
+        ],
+        "probe": "echo json_encode(STRLEN('a') === strlen('a'));"
+      },
+      {
+        "src": "<?php class Foo {}\nnew foo;",
+        "left": [
+          "Foo",
+          0
+        ],
+        "right": [
+          "foo",
+          0
+        ],
+        "probe": "class Foo {} echo json_encode(new foo instanceof Foo);"
+      },
+      {
+        "src": "<?php class Foo {}\n$x instanceof FOO;",
+        "left": [
+          "Foo",
+          0
+        ],
+        "right": [
+          "FOO",
+          0
+        ],
+        "probe": "class Foo {} echo json_encode(new Foo instanceof FOO);"
+      },
+      {
+        "src": "<?php class Foo {}\nclass Bar extends foo {}",
+        "left": [
+          "Foo",
+          0
+        ],
+        "right": [
+          "foo",
+          0
+        ],
+        "probe": "class Foo {} class Bar extends foo {} echo json_encode(get_parent_class(new Bar) === 'Foo');"
+      },
+      {
+        "src": "<?php interface Foo {}\nclass Bar implements foo {}",
+        "left": [
+          "Foo",
+          0
+        ],
+        "right": [
+          "foo",
+          0
+        ],
+        "probe": "interface Foo {} class Bar implements foo {} echo json_encode(new Bar instanceof Foo);"
+      },
+      {
+        "src": "<?php trait Foo {}\nclass Bar { use foo; }",
+        "left": [
+          "Foo",
+          0
+        ],
+        "right": [
+          "foo",
+          0
+        ],
+        "probe": "trait Foo { function t() { return 1; } } class Bar { use foo; } echo json_encode((new Bar)->t() === 1);"
+      },
+      {
+        "src": "<?php enum Foo {}\nfunction f(foo $x) {}",
+        "left": [
+          "Foo",
+          0
+        ],
+        "right": [
+          "foo",
+          0
+        ],
+        "probe": "enum Foo { case A; } function f(foo $x) { return 1; } echo json_encode(f(Foo::A) === 1);"
+      },
+      {
+        "src": "<?php class Foo {}\nFOO::bar();",
+        "left": [
+          "Foo",
+          0
+        ],
+        "right": [
+          "FOO",
+          0
+        ],
+        "probe": "class Foo { static function bar() { return 1; } } echo json_encode(FOO::bar() === 1);"
+      },
+      {
+        "src": "<?php class Foo {}\nFOO::$p;",
+        "left": [
+          "Foo",
+          0
+        ],
+        "right": [
+          "FOO",
+          0
+        ],
+        "probe": "class Foo { static $p = 1; } echo json_encode(FOO::$p === 1);"
+      },
+      {
+        "src": "<?php class Foo {}\nFOO::C;",
+        "left": [
+          "Foo",
+          0
+        ],
+        "right": [
+          "FOO",
+          0
+        ],
+        "probe": "class Foo { const C = 1; } echo json_encode(FOO::C === 1);"
+      },
+      {
+        "src": "<?php class C { function Run() {} }\n$o->run();",
+        "left": [
+          "Run",
+          0
+        ],
+        "right": [
+          "run",
+          0
+        ],
+        "probe": "class C { function Run() { return 1; } } echo json_encode((new C)->run() === 1);"
+      },
+      {
+        "src": "<?php class C { function Run() {} }\n$o?->RUN();",
+        "left": [
+          "Run",
+          0
+        ],
+        "right": [
+          "RUN",
+          0
+        ],
+        "probe": "class C { function Run() { return 1; } } $o = new C; echo json_encode($o?->RUN() === 1);"
+      },
+      {
+        "src": "<?php class C { static function Run() {} }\nC::run();",
+        "left": [
+          "Run",
+          0
+        ],
+        "right": [
+          "run",
+          0
+        ],
+        "probe": "class C { static function Run() { return 1; } } echo json_encode(C::run() === 1);"
+      },
+      {
+        "src": "<?php $Foo = 1;\n$foo;",
+        "left": [
+          "$Foo",
+          0
+        ],
+        "right": [
+          "$foo",
+          0
+        ],
+        "probe": "$Foo = 1; echo json_encode(isset($foo));"
+      },
+      {
+        "src": "<?php $foo = 1;\n$foo;",
+        "left": [
+          "$foo",
+          0
+        ],
+        "right": [
+          "$foo",
+          1
+        ],
+        "probe": "$foo = 1; echo json_encode(isset($foo));"
+      },
+      {
+        "src": "<?php $this;\n$THIS;",
+        "left": [
+          "$this",
+          0
+        ],
+        "right": [
+          "$THIS",
+          0
+        ],
+        "probe": "class C { function f() { return isset($THIS); } } echo json_encode((new C)->f());"
+      },
+      {
+        "src": "<?php const FOO = 1;\nfoo;",
+        "left": [
+          "FOO",
+          0
+        ],
+        "right": [
+          "foo",
+          0
+        ],
+        "probe": "const FOO = 1; echo json_encode(defined('foo'));"
+      },
+      {
+        "src": "<?php define('BAR', 1);\nBAR;\nBar;",
+        "left": [
+          "BAR",
+          1
+        ],
+        "right": [
+          "Bar",
+          0
+        ],
+        "probe": "define('BAR', 1); echo json_encode(defined('Bar'));"
+      },
+      {
+        "src": "<?php \\A\\FOO;\n\\a\\FOO;",
+        "left": [
+          "\\A\\FOO",
+          0
+        ],
+        "right": [
+          "\\a\\FOO",
+          0
+        ],
+        "probe": "namespace A { const FOO = 1; } namespace { echo json_encode(\\a\\FOO === 1); }"
+      },
+      {
+        "src": "<?php \\A\\FOO;\n\\A\\foo;",
+        "left": [
+          "\\A\\FOO",
+          0
+        ],
+        "right": [
+          "\\A\\foo",
+          0
+        ],
+        "probe": "namespace A { const FOO = 1; } namespace { echo json_encode(defined('A\\foo')); }"
+      },
+      {
+        "src": "<?php \\A\\Foo();\n\\a\\foo();",
+        "left": [
+          "\\A\\Foo",
+          0
+        ],
+        "right": [
+          "\\a\\foo",
+          0
+        ],
+        "probe": "namespace A { function Foo() { return 1; } } namespace { echo json_encode(\\a\\foo() === 1); }"
+      },
+      {
+        "src": "<?php new \\A\\Foo;\nnew \\a\\FOO;",
+        "left": [
+          "\\A\\Foo",
+          0
+        ],
+        "right": [
+          "\\a\\FOO",
+          0
+        ],
+        "probe": "namespace A { class Foo {} } namespace { echo json_encode(new \\a\\FOO instanceof \\A\\Foo); }"
+      },
+      {
+        "src": "<?php use Foo\\Bar;\nnew foo\\bar;",
+        "left": [
+          "Foo\\Bar",
+          0
+        ],
+        "right": [
+          "foo\\bar",
+          0
+        ],
+        "probe": "namespace Foo { class Bar {} } namespace { use Foo\\Bar; echo json_encode(new foo\\bar instanceof Bar); }"
+      },
+      {
+        "src": "<?php use const Foo\\BAR;\nuse const foo\\BAR;",
+        "left": [
+          "Foo\\BAR",
+          0
+        ],
+        "right": [
+          "foo\\BAR",
+          0
+        ],
+        "probe": "namespace Foo { const BAR = 1; } namespace { use const foo\\BAR; echo json_encode(BAR === 1); }"
+      },
+      {
+        "src": "<?php use const A\\{FOO, foo};",
+        "left": [
+          "FOO",
+          0
+        ],
+        "right": [
+          "foo",
+          0
+        ],
+        "probe": "namespace A { const FOO = 1; const foo = 2; } namespace { use const A\\{FOO, foo}; echo json_encode(FOO === foo); }"
+      },
+      {
+        "src": "<?php use const A\\{FOO as X, BAR as x};",
+        "left": [
+          "X",
+          0
+        ],
+        "right": [
+          "x",
+          0
+        ],
+        "probe": "namespace A { const FOO = 1; const BAR = 2; } namespace { use const A\\{FOO as X, BAR as x}; echo json_encode(X === x); }"
+      },
+      {
+        "src": "<?php use const A\\X, A\\FOO, A\\foo;",
+        "left": [
+          "A\\FOO",
+          0
+        ],
+        "right": [
+          "A\\foo",
+          0
+        ],
+        "probe": "namespace A { const X = 0; const FOO = 1; const foo = 2; } namespace { use const A\\X, A\\FOO, A\\foo; echo json_encode(FOO === foo); }"
+      },
+      {
+        "src": "<?php use const A\\X, A\\FOO as Y, A\\BAR as y;",
+        "left": [
+          "Y",
+          0
+        ],
+        "right": [
+          "y",
+          0
+        ],
+        "probe": "namespace A { const X = 0; const FOO = 1; const BAR = 2; } namespace { use const A\\X, A\\FOO as Y, A\\BAR as y; echo json_encode(Y === y); }"
+      },
+      {
+        "src": "<?php use const A\\X, A\\FOO as P, a\\FOO as Q;",
+        "left": [
+          "A\\FOO",
+          0
+        ],
+        "right": [
+          "a\\FOO",
+          0
+        ],
+        "probe": "namespace A { const X = 0; const FOO = 1; } namespace { use const A\\X, A\\FOO as P, a\\FOO as Q; echo json_encode(P === 1 && Q === 1); }"
+      },
+      {
+        "src": "<?php namespace Foo;\nnamespace FOO;",
+        "left": [
+          "Foo",
+          0
+        ],
+        "right": [
+          "FOO",
+          0
+        ],
+        "probe": "namespace Foo { function f() { return 1; } } namespace { echo json_encode(\\FOO\\f() === 1); }"
+      },
+      {
+        "src": "<?php class C { const X = 1; }\nC::x;",
+        "left": [
+          "X",
+          0
+        ],
+        "right": [
+          "x",
+          0
+        ],
+        "probe": "class C { const X = 1; } echo json_encode(defined('C::x'));"
+      },
+      {
+        "src": "<?php enum E { case A; }\nE::a;",
+        "left": [
+          "A",
+          0
+        ],
+        "right": [
+          "a",
+          0
+        ],
+        "probe": "enum E { case A; } echo json_encode(defined('E::a'));"
+      },
+      {
+        "src": "<?php class C { public $Bar; }\n$o->bar;",
+        "left": [
+          "$Bar",
+          0
+        ],
+        "right": [
+          "bar",
+          0
+        ],
+        "probe": "class C { public $Bar; } echo json_encode(property_exists('C', 'bar'));"
+      },
+      {
+        "src": "<?php $o->Bar;\n$o->bar;",
+        "left": [
+          "Bar",
+          0
+        ],
+        "right": [
+          "bar",
+          0
+        ],
+        "probe": "$o = new stdClass; $o->Bar = 1; echo json_encode(isset($o->bar));"
+      },
+      {
+        "src": "<?php class C { static $P; }\nC::$p;",
+        "left": [
+          "$P",
+          0
+        ],
+        "right": [
+          "$p",
+          0
+        ],
+        "probe": "class C { static $P = 1; } try { C::$p; echo 'true'; } catch (Error $e) { echo 'false'; }"
+      },
+      {
+        "src": "<?php function f($x) {}\nf(X: 1);",
+        "left": [
+          "$x",
+          0
+        ],
+        "right": [
+          "X",
+          0
+        ],
+        "probe": "function f($x) { return 1; } try { echo json_encode(f(X: 1) === 1); } catch (Error $e) { echo 'false'; }"
+      },
+      {
+        "src": "<?php function f($x) {}\nf(x: 1);",
+        "left": [
+          "$x",
+          0
+        ],
+        "right": [
+          "x",
+          1
+        ],
+        "probe": "function f($x) { return 1; } echo json_encode(f(x: 1) === 1);"
+      },
+      {
+        "src": "<?php goto End;\nend:",
+        "left": [
+          "End",
+          0
+        ],
+        "right": [
+          "end",
+          0
+        ],
+        "probe": "goto End; end: echo 'true';"
+      },
+      {
+        "src": "<?php SELF::X;\nself::X;",
+        "left": [
+          "SELF",
+          0
+        ],
+        "right": [
+          "self",
+          0
+        ],
+        "probe": "class C { const X = 1; static function f() { return SELF::X === self::X; } } echo json_encode(C::f());"
+      },
+      {
+        "src": "<?php #[Attr]\nfunction f() {}\nclass ATTR {}",
+        "left": [
+          "Attr",
+          0
+        ],
+        "right": [
+          "ATTR",
+          0
+        ],
+        "probe": "#[Attribute] class ATTR {} #[Attr] function f() {} echo json_encode((new ReflectionFunction('f'))->getAttributes()[0]->newInstance() instanceof ATTR);"
+      }
+    ],
+    "strings": [
+      {
+        "src": "<?php 'Foo';",
+        "at": "'Foo'"
+      },
+      {
+        "src": "<?php \"Foo\";",
+        "at": "\"Foo\""
+      },
+      {
+        "src": "<?php \"a\\tb\";",
+        "at": "\"a\\tb\""
+      },
+      {
+        "src": "<?php 'a\\'b';",
+        "at": "'a\\'b'"
+      },
+      {
+        "src": "<?php \"\\u{e9}\";",
+        "at": "\"\\u{e9}\""
+      },
+      {
+        "src": "<?php b'x';",
+        "at": "b'x'"
+      },
+      {
+        "src": "<?php <<<X\n  a\n  X;",
+        "at": "<<<X\n  a\n  X"
+      },
+      {
+        "src": "<?php <<<'X'\na\\n\nX;",
+        "at": "<<<'X'\na\\n\nX"
+      },
+      {
+        "src": "<?php \"a$b\";",
+        "at": "\"a$b\""
+      },
+      {
+        "src": "<?php 1;",
+        "at": "1"
+      },
+      {
+        "src": "<?php $a->b;",
+        "at": "$a->b"
+      }
+    ]
+  },
+  "references": [
+    [
+      "$a",
+      "$a"
+    ],
+    [
+      "$a",
+      "$b"
+    ],
+    [
+      "$a",
+      "$A"
+    ],
+    [
+      "$this",
+      "$this"
+    ],
+    [
+      "($a)",
+      "$a"
+    ],
+    [
+      "$a->b",
+      "$a->b"
+    ],
+    [
+      "$a->b",
+      "$a->B"
+    ],
+    [
+      "$a->b",
+      "$a?->b"
+    ],
+    [
+      "$a->b",
+      "($a)->b"
+    ],
+    [
+      "$a->b",
+      "$a->{'b'}"
+    ],
+    [
+      "$a->{'b'}",
+      "$a->{\"b\"}"
+    ],
+    [
+      "$a->{'b'}",
+      "$a->b"
+    ],
+    [
+      "$a->{1}",
+      "$a->{'1'}"
+    ],
+    [
+      "$a->{1}",
+      "$a->{1.0}"
+    ],
+    [
+      "$a->b",
+      "$c->b"
+    ],
+    [
+      "$a->$b",
+      "$a->$b"
+    ],
+    [
+      "$a->$b",
+      "$a->$c"
+    ],
+    [
+      "$a->b->c",
+      "$a->b->c"
+    ],
+    [
+      "$a->b->c",
+      "$a->{'b'}->c"
+    ],
+    [
+      "$a['k']",
+      "$a[\"k\"]"
+    ],
+    [
+      "$a['k']",
+      "$a['K']"
+    ],
+    [
+      "$a[1]",
+      "$a['1']"
+    ],
+    [
+      "$a[1]",
+      "$a[1.5]"
+    ],
+    [
+      "$a[1]",
+      "$a[true]"
+    ],
+    [
+      "$a[1]",
+      "$a['01']"
+    ],
+    [
+      "$a[null]",
+      "$a['']"
+    ],
+    [
+      "$a[$i]",
+      "$a[$i]"
+    ],
+    [
+      "$a[$i]",
+      "$a[$j]"
+    ],
+    [
+      "$a[0][1]",
+      "$a[0][1]"
+    ],
+    [
+      "$a[0]->b",
+      "$a['0']->b"
+    ],
+    [
+      "$a->b[0]",
+      "$a->b[0]"
+    ],
+    [
+      "$a[]",
+      "$a[]"
+    ],
+    [
+      "C::$x",
+      "C::$x"
+    ],
+    [
+      "C::$x",
+      "c::$x"
+    ],
+    [
+      "C::$x",
+      "C::$X"
+    ],
+    [
+      "C::$x",
+      "\\C::$x"
+    ],
+    [
+      "self::$x",
+      "static::$x"
+    ],
+    [
+      "self::$x",
+      "SELF::$x"
+    ],
+    [
+      "self::$x",
+      "self::${'x'}"
+    ],
+    [
+      "C::$$x",
+      "C::$$x"
+    ],
+    [
+      "$o::$x",
+      "$o::$x"
+    ],
+    [
+      "C::X",
+      "C::X"
+    ],
+    [
+      "C::X",
+      "C::x"
+    ],
+    [
+      "self::X",
+      "static::X"
+    ],
+    [
+      "parent::X",
+      "parent::X"
+    ],
+    [
+      "C::X",
+      "C::{'X'}"
+    ],
+    [
+      "C::class",
+      "C::class"
+    ],
+    [
+      "FOO",
+      "FOO"
+    ],
+    [
+      "FOO",
+      "foo"
+    ],
+    [
+      "\\A\\FOO",
+      "\\a\\FOO"
+    ],
+    [
+      "\\A\\FOO",
+      "\\A\\foo"
+    ],
+    [
+      "FOO",
+      "\\FOO"
+    ],
+    [
+      "$$a",
+      "$$a"
+    ],
+    [
+      "$$a",
+      "$$b"
+    ],
+    [
+      "${'a'}",
+      "${\"a\"}"
+    ],
+    [
+      "${'a'}",
+      "$a"
+    ],
+    [
+      "1",
+      "1"
+    ],
+    [
+      "1",
+      "1.0"
+    ],
+    [
+      "'a'",
+      "\"a\""
+    ],
+    [
+      "'1'",
+      "1"
+    ],
+    [
+      "true",
+      "TRUE"
+    ],
+    [
+      "null",
+      "NULL"
+    ],
+    [
+      "true",
+      "1"
+    ],
+    [
+      "0x10",
+      "16"
+    ],
+    [
+      "\"a$b\"",
+      "\"a$b\""
+    ],
+    [
+      "f()",
+      "f()"
+    ],
+    [
+      "$a->f()",
+      "$a->f()"
+    ],
+    [
+      "-1",
+      "-1"
+    ],
+    [
+      "new C",
+      "new C"
+    ]
+  ],
+  "structures": [
+    {
+      "left": "1",
+      "right": "1"
+    },
+    {
+      "left": "1",
+      "right": "0x1"
+    },
+    {
+      "left": "1",
+      "right": "0b1"
+    },
+    {
+      "left": "1",
+      "right": "01"
+    },
+    {
+      "left": "1_000",
+      "right": "1000"
+    },
+    {
+      "left": "1",
+      "right": "1.0"
+    },
+    {
+      "left": "1.0",
+      "right": "1."
+    },
+    {
+      "left": "1.0",
+      "right": "1e0"
+    },
+    {
+      "left": ".5",
+      "right": "0.5"
+    },
+    {
+      "left": "9223372036854775808",
+      "right": "9.223372036854775808e18"
+    },
+    {
+      "left": "9223372036854775807",
+      "right": "0x7FFFFFFFFFFFFFFF"
+    },
+    {
+      "left": "-1",
+      "right": "-1"
+    },
+    {
+      "left": "-1",
+      "right": "- 1"
+    },
+    {
+      "left": "'a'",
+      "right": "\"a\""
+    },
+    {
+      "left": "'a\\nb'",
+      "right": "\"a\\nb\""
+    },
+    {
+      "left": "'a'",
+      "right": "b'a'"
+    },
+    {
+      "left": "\"\\x41\"",
+      "right": "'A'"
+    },
+    {
+      "left": "'a'",
+      "right": "<<<X\na\nX"
+    },
+    {
+      "left": "'a'",
+      "right": "<<<'X'\n  a\n  X"
+    },
+    {
+      "left": "\"$a\"",
+      "right": "\"{$a}\""
+    },
+    {
+      "left": "\"$a\"",
+      "right": "\"${a}\""
+    },
+    {
+      "left": "\"x $a y\"",
+      "right": "\"x {$a} y\""
+    },
+    {
+      "left": "\"$a[0]\"",
+      "right": "\"{$a[0]}\""
+    },
+    {
+      "left": "\"$a[k]\"",
+      "right": "\"{$a['k']}\""
+    },
+    {
+      "left": "\"$a[01]\"",
+      "right": "\"{$a['01']}\""
+    },
+    {
+      "left": "\"$a[-1]\"",
+      "right": "\"{$a[-1]}\""
+    },
+    {
+      "left": "\"$a[$i]\"",
+      "right": "\"{$a[$i]}\""
+    },
+    {
+      "left": "\"$a->b\"",
+      "right": "\"{$a->b}\""
+    },
+    {
+      "left": "\"\\t$a\"",
+      "right": "\"\t{$a}\""
+    },
+    {
+      "left": "\"a$b\"",
+      "right": "\"a\" . $b"
+    },
+    {
+      "left": "`ls $a`",
+      "right": "`ls {$a}`"
+    },
+    {
+      "left": "`ls`",
+      "right": "'ls'"
+    },
+    {
+      "left": "true",
+      "right": "true"
+    },
+    {
+      "left": "true",
+      "right": "TRUE"
+    },
+    {
+      "left": "null",
+      "right": "NULL"
+    },
+    {
+      "left": "true",
+      "right": "\\true"
+    },
+    {
+      "left": "$a",
+      "right": "$a"
+    },
+    {
+      "left": "$a",
+      "right": "$A"
+    },
+    {
+      "left": "$a",
+      "right": "${'a'}"
+    },
+    {
+      "left": "$a",
+      "right": "($a)"
+    },
+    {
+      "left": "$a /* c */ + $b",
+      "right": "$a+$b"
+    },
+    {
+      "left": "$a + $b",
+      "right": "$b + $a"
+    },
+    {
+      "left": "$a + $b * $c",
+      "right": "($a + $b) * $c"
+    },
+    {
+      "left": "$a != $b",
+      "right": "$a <> $b"
+    },
+    {
+      "left": "$a != $b",
+      "right": "$a !== $b"
+    },
+    {
+      "left": "$a and $b",
+      "right": "$a AND $b"
+    },
+    {
+      "left": "$a and $b",
+      "right": "$a && $b"
+    },
+    {
+      "left": "$a or $b",
+      "right": "$a || $b"
+    },
+    {
+      "left": "!$a",
+      "right": "! $a"
+    },
+    {
+      "left": "++$a",
+      "right": "$a++"
+    },
+    {
+      "left": "$a += 1",
+      "right": "$a = $a + 1"
+    },
+    {
+      "left": "$a = &$b",
+      "right": "$a =& $b"
+    },
+    {
+      "left": "(int) $a",
+      "right": "(integer) $a"
+    },
+    {
+      "left": "(bool) $a",
+      "right": "(boolean) $a"
+    },
+    {
+      "left": "(float) $a",
+      "right": "(double) $a"
+    },
+    {
+      "left": "(string) $a",
+      "right": "(binary) $a"
+    },
+    {
+      "left": "(int) $a",
+      "right": "( INT ) $a"
+    },
+    {
+      "left": "(int) $a",
+      "right": "intval($a)"
+    },
+    {
+      "left": "[1, 2]",
+      "right": "array(1, 2)"
+    },
+    {
+      "left": "[1, 2]",
+      "right": "[1, 2,]"
+    },
+    {
+      "left": "[1, 2]",
+      "right": "ARRAY(1, 2)"
+    },
+    {
+      "left": "['a' => 1]",
+      "right": "array('a' => 1)"
+    },
+    {
+      "left": "[1]",
+      "right": "[0 => 1]"
+    },
+    {
+      "left": "[...$a]",
+      "right": "[...$a]"
+    },
+    {
+      "left": "[&$a]",
+      "right": "[$a]"
+    },
+    {
+      "left": "$a ? $b : $c",
+      "right": "$a ?$b: $c"
+    },
+    {
+      "left": "$a ?: $c",
+      "right": "$a ? $a : $c"
+    },
+    {
+      "left": "$a ?? $b",
+      "right": "isset($a) ? $a : $b"
+    },
+    {
+      "left": "foo()",
+      "right": "foo ()"
+    },
+    {
+      "left": "foo()",
+      "right": "Foo()"
+    },
+    {
+      "left": "foo()",
+      "right": "\\foo()"
+    },
+    {
+      "left": "foo(1, 2)",
+      "right": "foo(1, 2,)"
+    },
+    {
+      "left": "foo(a: 1)",
+      "right": "foo(a : 1)"
+    },
+    {
+      "left": "foo(...$a)",
+      "right": "foo(... $a)"
+    },
+    {
+      "left": "foo(...)",
+      "right": "foo(...)"
+    },
+    {
+      "left": "A\\foo()",
+      "right": "a\\foo()"
+    },
+    {
+      "left": "namespace\\foo()",
+      "right": "namespace\\foo()"
+    },
+    {
+      "left": "new Foo",
+      "right": "new Foo()"
+    },
+    {
+      "left": "new Foo",
+      "right": "new foo"
+    },
+    {
+      "left": "new Foo(1)",
+      "right": "new Foo (1)"
+    },
+    {
+      "left": "new class {}",
+      "right": "new class() {}"
+    },
+    {
+      "left": "$a->b",
+      "right": "$a -> b"
+    },
+    {
+      "left": "$a->b",
+      "right": "$a?->b"
+    },
+    {
+      "left": "$a->b()",
+      "right": "$a->b ()"
+    },
+    {
+      "left": "$a->{'b'}",
+      "right": "$a->b"
+    },
+    {
+      "left": "$a::b()",
+      "right": "$a::b()"
+    },
+    {
+      "left": "A::B",
+      "right": "A :: B"
+    },
+    {
+      "left": "A::$b",
+      "right": "A::$b"
+    },
+    {
+      "left": "self::B",
+      "right": "SELF::B"
+    },
+    {
+      "left": "static::B",
+      "right": "self::B"
+    },
+    {
+      "left": "$a[0]",
+      "right": "$a [0]"
+    },
+    {
+      "left": "$a[0]",
+      "right": "$a['0']"
+    },
+    {
+      "left": "exit",
+      "right": "exit()"
+    },
+    {
+      "left": "exit",
+      "right": "die"
+    },
+    {
+      "left": "exit(1)",
+      "right": "die(1)"
+    },
+    {
+      "left": "exit(1)",
+      "right": "exit (1)"
+    },
+    {
+      "left": "print $a",
+      "right": "print($a)"
+    },
+    {
+      "left": "clone $a",
+      "right": "clone($a)"
+    },
+    {
+      "left": "@$a",
+      "right": "@ $a"
+    },
+    {
+      "left": "isset($a, $b)",
+      "right": "isset($a,$b)"
+    },
+    {
+      "left": "empty($a)",
+      "right": "EMPTY($a)"
+    },
+    {
+      "left": "include 'a.php'",
+      "right": "include('a.php')"
+    },
+    {
+      "left": "include 'a.php'",
+      "right": "require 'a.php'"
+    },
+    {
+      "left": "$a instanceof B",
+      "right": "$a instanceof b"
+    },
+    {
+      "left": "fn($x) => $x",
+      "right": "fn ($x) => $x"
+    },
+    {
+      "left": "fn($x) => $x",
+      "right": "static fn($x) => $x"
+    },
+    {
+      "left": "fn(int $x): int => $x",
+      "right": "fn(INT $x): Int => $x"
+    },
+    {
+      "left": "function ($x) use ($y) { return $x; }",
+      "right": "function($x) use($y) { return $x; }"
+    },
+    {
+      "left": "function () { return; }",
+      "right": "function () { return null; }"
+    },
+    {
+      "left": "match ($a) { 1, 2 => 'x', default => 'y' }",
+      "right": "match($a) { 1, 2, => 'x', default => 'y', }"
+    },
+    {
+      "left": "yield $a",
+      "right": "yield $a"
+    },
+    {
+      "left": "yield from $a",
+      "right": "yield $a"
+    },
+    {
+      "left": "throw $e",
+      "right": "throw $e"
+    },
+    {
+      "left": "[$a, $b] = $c",
+      "right": "list($a, $b) = $c"
+    },
+    {
+      "left": "[$a, , $b] = $c",
+      "right": "list($a, , $b) = $c"
+    },
+    {
+      "left": "[$a, , $b] = $c",
+      "right": "[$a, $b] = $c"
+    },
+    {
+      "left": "[, $a] = $c",
+      "right": "[$a] = $c"
+    },
+    {
+      "left": "['k' => $a] = $c",
+      "right": "list('k' => $a) = $c"
+    },
+    {
+      "left": "[$a,] = $c",
+      "right": "[$a] = $c"
+    },
+    {
+      "left": "[$a, $b,] = $c",
+      "right": "list($a, $b) = $c"
+    },
+    {
+      "left": "[$a, ,] = $c",
+      "right": "[$a] = $c"
+    },
+    {
+      "left": "list($a,) = $c",
+      "right": "list($a) = $c"
+    },
+    {
+      "left": "list($a,) = $c",
+      "right": "[$a, ,] = $c"
+    },
+    {
+      "left": "[,] = $c",
+      "right": "list(,) = $c"
+    },
+    {
+      "left": "['k' => $a,] = $c",
+      "right": "list('k' => $a) = $c"
+    },
+    {
+      "left": "[[$a,], $b] = $c",
+      "right": "[[$a], $b] = $c"
+    },
+    {
+      "left": "1",
+      "right": "'1'"
+    },
+    {
+      "left": "1",
+      "right": "1.5"
+    },
+    {
+      "left": "1",
+      "right": "true"
+    },
+    {
+      "left": "0",
+      "right": "false"
+    },
+    {
+      "left": "null",
+      "right": "''"
+    },
+    {
+      "left": "'01'",
+      "right": "1"
+    },
+    {
+      "left": "'1'",
+      "right": "'1.0'"
+    },
+    {
+      "left": "-1",
+      "right": "'-1'"
+    },
+    {
+      "left": "'a' . 'b'",
+      "right": "'ab'"
+    },
+    {
+      "left": "1 + 1",
+      "right": "2"
+    },
+    {
+      "left": "PHP_INT_MAX",
+      "right": "9223372036854775807"
+    },
+    {
+      "left": "[1]",
+      "right": "[1]"
+    },
+    {
+      "left": "[1]",
+      "right": "array(1)"
+    },
+    {
+      "left": "$a",
+      "right": "1"
+    },
+    {
+      "left": "9223372036854775808",
+      "right": "9223372036854775807"
+    },
+    {
+      "left": "1e3",
+      "right": "1000"
+    },
+    {
+      "left": "if ($a) { b(); }",
+      "right": "if ($a) b();",
+      "statement": true
+    },
+    {
+      "left": "if ($a) { b(); }",
+      "right": "if ($a): b(); endif;",
+      "statement": true
+    },
+    {
+      "left": "if ($a) { b(); }",
+      "right": "IF ($a) { b(); }",
+      "statement": true
+    },
+    {
+      "left": "if ($a) { b(); } else { c(); }",
+      "right": "if ($a): b(); else: c(); endif;",
+      "statement": true
+    },
+    {
+      "left": "if ($a) { b(); } elseif ($c) { d(); }",
+      "right": "if ($a): b(); elseif ($c): d(); endif;",
+      "statement": true
+    },
+    {
+      "left": "if ($a) { b(); } elseif ($c) { d(); }",
+      "right": "if ($a) { b(); } else if ($c) { d(); }",
+      "statement": true
+    },
+    {
+      "left": "if ($a) { b(); }",
+      "right": "if ($a) { { b(); } }",
+      "statement": true
+    },
+    {
+      "left": "if ($a) { }",
+      "right": "if ($a) ;",
+      "statement": true
+    },
+    {
+      "left": "while ($a) { b(); }",
+      "right": "while ($a): b(); endwhile;",
+      "statement": true
+    },
+    {
+      "left": "while ($a) { b(); }",
+      "right": "while ($a) b();",
+      "statement": true
+    },
+    {
+      "left": "for ($i = 0; $i < 3; $i++) { b(); }",
+      "right": "for ($i = 0; $i < 3; $i++): b(); endfor;",
+      "statement": true
+    },
+    {
+      "left": "for ($i; ; ) {}",
+      "right": "for (; $i; ) {}",
+      "statement": true
+    },
+    {
+      "left": "for (;;) {}",
+      "right": "for ( ; ; ) {}",
+      "statement": true
+    },
+    {
+      "left": "foreach ($a as $k => $v) { b(); }",
+      "right": "foreach ($a as $k => $v): b(); endforeach;",
+      "statement": true
+    },
+    {
+      "left": "foreach ($a as $v) {}",
+      "right": "foreach ($a as &$v) {}",
+      "statement": true
+    },
+    {
+      "left": "do { b(); } while ($a);",
+      "right": "do b(); while ($a);",
+      "statement": true
+    },
+    {
+      "left": "switch ($a) { case 1: b(); break; default: c(); }",
+      "right": "switch ($a): case 1: b(); break; default: c(); endswitch;",
+      "statement": true
+    },
+    {
+      "left": "switch ($a) { case 1: b(); }",
+      "right": "switch ($a) { case 1; b(); }",
+      "statement": true
+    },
+    {
+      "left": "echo $a, $b;",
+      "right": "echo $a,$b;",
+      "statement": true
+    },
+    {
+      "left": "echo $a;",
+      "right": "print $a;",
+      "statement": true
+    },
+    {
+      "left": "echo $a;",
+      "right": "ECHO $a;",
+      "statement": true
+    },
+    {
+      "left": "exit;",
+      "right": "die();",
+      "statement": true
+    },
+    {
+      "left": "exit;",
+      "right": "exit();",
+      "statement": true
+    },
+    {
+      "left": "return;",
+      "right": "return null;",
+      "statement": true
+    },
+    {
+      "left": "global $a, $b;",
+      "right": "global $a,$b;",
+      "statement": true
+    },
+    {
+      "left": "static $a = 1;",
+      "right": "static $a=1;",
+      "statement": true
+    },
+    {
+      "left": "unset($a);",
+      "right": "unset($a, );",
+      "statement": true
+    },
+    {
+      "left": "try { a(); } catch (E $e) { b(); }",
+      "right": "try { a(); } catch (E $e) { b(); } ",
+      "statement": true
+    },
+    {
+      "left": "try { a(); } catch (E | F) { }",
+      "right": "try { a(); } catch (E|F) { }",
+      "statement": true
+    },
+    {
+      "left": "function f(int $a = 1, ...$b): ?int { return $a; }",
+      "right": "function f(int $a=1, ...$b) : ?int { return $a; }",
+      "statement": true
+    },
+    {
+      "left": "function f(int $a) {}",
+      "right": "function f(INT $a) {}",
+      "statement": true
+    },
+    {
+      "left": "function f(): void {}",
+      "right": "function f(): VOID {}",
+      "statement": true
+    },
+    {
+      "left": "function f() {}",
+      "right": "function F() {}",
+      "statement": true
+    },
+    {
+      "left": "function &f() {}",
+      "right": "function f() {}",
+      "statement": true
+    },
+    {
+      "left": "class C { public $a; }",
+      "right": "class C { PUBLIC $a; }",
+      "statement": true
+    },
+    {
+      "left": "class C { public $a; }",
+      "right": "class C { var $a; }",
+      "statement": true
+    },
+    {
+      "left": "class C { public static function f() {} }",
+      "right": "class C { static public function f() {} }",
+      "statement": true
+    },
+    {
+      "left": "class C extends D implements E {}",
+      "right": "class C extends D implements E { }",
+      "statement": true
+    },
+    {
+      "left": "abstract class C {}",
+      "right": "ABSTRACT class C {}",
+      "statement": true
+    },
+    {
+      "left": "class C { const A = 1, B = 2; }",
+      "right": "class C { const A = 1; const B = 2; }",
+      "statement": true
+    },
+    {
+      "left": "interface I { function f(); }",
+      "right": "interface I { function f() ; }",
+      "statement": true
+    },
+    {
+      "left": "enum E: string { case A = 'a'; }",
+      "right": "enum E : string { case A = 'a'; }",
+      "statement": true
+    },
+    {
+      "left": "use A\\B;",
+      "right": "use \\A\\B;",
+      "statement": true
+    },
+    {
+      "left": "use A\\B;",
+      "right": "use A\\B as B;",
+      "statement": true
+    },
+    {
+      "left": "use function A\\b;",
+      "right": "use const A\\b;",
+      "statement": true
+    },
+    {
+      "left": "namespace A;",
+      "right": "namespace A ;",
+      "statement": true
+    },
+    {
+      "left": "declare(strict_types=1);",
+      "right": "declare(strict_types = 1);",
+      "statement": true
+    },
+    {
+      "left": "declare(strict_types=1);",
+      "right": "declare(ticks=1);",
+      "statement": true
+    },
+    {
+      "left": "{ a(); }",
+      "right": "a();",
+      "statement": true
+    },
+    {
+      "left": "// c\na();",
+      "right": "a(/* c */);",
+      "statement": true
+    },
+    {
+      "left": "$a = 1;",
+      "right": "$a=1;",
+      "statement": true
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+export {foo as bar, baz as qux} from 'foo';

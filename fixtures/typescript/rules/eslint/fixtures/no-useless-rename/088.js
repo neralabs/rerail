@@ -1,0 +1,1 @@
+import {\u0061 as \u0061} from 'foo';

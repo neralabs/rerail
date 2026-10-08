@@ -1,0 +1,334 @@
+{
+ "oracle": "ruff F821 (ruff 0.16.9, --target-version py313)",
+ "builtins": [
+  "ArithmeticError",
+  "AssertionError",
+  "AttributeError",
+  "BaseException",
+  "BaseExceptionGroup",
+  "BlockingIOError",
+  "BrokenPipeError",
+  "BufferError",
+  "BytesWarning",
+  "ChildProcessError",
+  "ConnectionAbortedError",
+  "ConnectionError",
+  "ConnectionRefusedError",
+  "ConnectionResetError",
+  "DeprecationWarning",
+  "EOFError",
+  "Ellipsis",
+  "EncodingWarning",
+  "EnvironmentError",
+  "Exception",
+  "ExceptionGroup",
+  "False",
+  "FileExistsError",
+  "FileNotFoundError",
+  "FloatingPointError",
+  "FutureWarning",
+  "GeneratorExit",
+  "IOError",
+  "ImportError",
+  "ImportWarning",
+  "IndentationError",
+  "IndexError",
+  "InterruptedError",
+  "IsADirectoryError",
+  "KeyError",
+  "KeyboardInterrupt",
+  "LookupError",
+  "MemoryError",
+  "ModuleNotFoundError",
+  "NameError",
+  "None",
+  "NotADirectoryError",
+  "NotImplemented",
+  "NotImplementedError",
+  "OSError",
+  "OverflowError",
+  "PendingDeprecationWarning",
+  "PermissionError",
+  "ProcessLookupError",
+  "PythonFinalizationError",
+  "RecursionError",
+  "ReferenceError",
+  "ResourceWarning",
+  "RuntimeError",
+  "RuntimeWarning",
+  "StopAsyncIteration",
+  "StopIteration",
+  "SyntaxError",
+  "SyntaxWarning",
+  "SystemError",
+  "SystemExit",
+  "TabError",
+  "TimeoutError",
+  "True",
+  "TypeError",
+  "UnboundLocalError",
+  "UnicodeDecodeError",
+  "UnicodeEncodeError",
+  "UnicodeError",
+  "UnicodeTranslateError",
+  "UnicodeWarning",
+  "UserWarning",
+  "ValueError",
+  "Warning",
+  "ZeroDivisionError",
+  "_IncompleteInputError",
+  "__annotations__",
+  "__build_class__",
+  "__builtins__",
+  "__class__",
+  "__debug__",
+  "__dict__",
+  "__doc__",
+  "__file__",
+  "__import__",
+  "__loader__",
+  "__module__",
+  "__name__",
+  "__package__",
+  "__path__",
+  "__qualname__",
+  "__spec__",
+  "abs",
+  "aiter",
+  "all",
+  "anext",
+  "any",
+  "ascii",
+  "bin",
+  "bool",
+  "breakpoint",
+  "bytearray",
+  "bytes",
+  "callable",
+  "chr",
+  "classmethod",
+  "compile",
+  "complex",
+  "copyright",
+  "credits",
+  "delattr",
+  "dict",
+  "dir",
+  "divmod",
+  "enumerate",
+  "eval",
+  "exec",
+  "exit",
+  "filter",
+  "float",
+  "format",
+  "frozenset",
+  "getattr",
+  "globals",
+  "hasattr",
+  "hash",
+  "help",
+  "hex",
+  "id",
+  "input",
+  "int",
+  "isinstance",
+  "issubclass",
+  "iter",
+  "len",
+  "license",
+  "list",
+  "locals",
+  "map",
+  "max",
+  "memoryview",
+  "min",
+  "next",
+  "object",
+  "oct",
+  "open",
+  "ord",
+  "pow",
+  "print",
+  "property",
+  "quit",
+  "range",
+  "repr",
+  "reversed",
+  "round",
+  "set",
+  "setattr",
+  "slice",
+  "sorted",
+  "staticmethod",
+  "str",
+  "sum",
+  "super",
+  "tuple",
+  "type",
+  "vars",
+  "zip"
+ ],
+ "unresolved": [
+  {
+   "start": 91,
+   "name": "early_use"
+  },
+  {
+   "start": 101,
+   "name": "later_name"
+  },
+  {
+   "start": 217,
+   "name": "undefined_in_function"
+  },
+  {
+   "start": 372,
+   "name": "class_attr"
+  },
+  {
+   "start": 418,
+   "name": "class_attr"
+  },
+  {
+   "start": 541,
+   "name": "undefined_default"
+  },
+  {
+   "start": 614,
+   "name": "undefined_body"
+  },
+  {
+   "start": 662,
+   "name": "value_default"
+  },
+  {
+   "start": 687,
+   "name": "undefined_annotation"
+  },
+  {
+   "start": 765,
+   "name": "undefined_lambda_default"
+  },
+  {
+   "start": 805,
+   "name": "gamma_free"
+  },
+  {
+   "start": 964,
+   "name": "never_bound"
+  },
+  {
+   "start": 1272,
+   "name": "n"
+  },
+  {
+   "start": 1281,
+   "name": "open_ctx"
+  },
+  {
+   "start": 1320,
+   "name": "print_it"
+  },
+  {
+   "start": 1391,
+   "name": "print_it"
+  },
+  {
+   "start": 1440,
+   "name": "pairs"
+  },
+  {
+   "start": 1451,
+   "name": "print_it"
+  },
+  {
+   "start": 1509,
+   "name": "pairs"
+  },
+  {
+   "start": 1555,
+   "name": "print_it"
+  },
+  {
+   "start": 1597,
+   "name": "annotation_only"
+  },
+  {
+   "start": 1615,
+   "name": "counter"
+  },
+  {
+   "start": 1788,
+   "name": "print_it"
+  },
+  {
+   "start": 1797,
+   "name": "T"
+  },
+  {
+   "start": 1800,
+   "name": "U"
+  },
+  {
+   "start": 1803,
+   "name": "V"
+  },
+  {
+   "start": 1820,
+   "name": "subject"
+  },
+  {
+   "start": 1838,
+   "name": "Point"
+  },
+  {
+   "start": 1891,
+   "name": "print_it"
+  },
+  {
+   "start": 1994,
+   "name": "print_it"
+  },
+  {
+   "start": 2029,
+   "name": "Color"
+  },
+  {
+   "start": 2085,
+   "name": "print_it"
+  },
+  {
+   "start": 2110,
+   "name": "print_it"
+  },
+  {
+   "start": 2122,
+   "name": "fstring_name"
+  },
+  {
+   "start": 2138,
+   "name": "fstring_spec"
+  },
+  {
+   "start": 2158,
+   "name": "decorator_name"
+  },
+  {
+   "start": 2239,
+   "name": "print_it"
+  },
+  {
+   "start": 2248,
+   "name": "local_later"
+  },
+  {
+   "start": 2437,
+   "name": "print_it"
+  },
+  {
+   "start": 2492,
+   "name": "imported_name"
+  }
+ ]
+}

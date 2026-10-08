@@ -1,0 +1,9 @@
+SELECT
+  a,
+  b
+FROM tbl
+UNION DISTINCT
+SELECT
+  c,
+  d
+FROM tbl1

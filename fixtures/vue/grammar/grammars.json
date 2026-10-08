@@ -1,0 +1,56 @@
+[
+  {
+    "name": "tree-sitter-grammars/tree-sitter-vue",
+    "repository": "https://github.com/tree-sitter-grammars/tree-sitter-vue",
+    "commit": "ce8011a414fdf8091f4e4071752efc376f4afb08",
+    "release": "none (package.json 0.1.0); anomalyco/tree-sitter-vue v0.1.2 (3354771) tags the same src/",
+    "abi": 15,
+    "scanner": "C",
+    "checkout": "tree-sitter-grammars-tree-sitter-vue",
+    "maintenance": {
+      "readOn": "2026-10-05",
+      "stars": 26,
+      "openIssues": 2,
+      "openPullRequests": 4,
+      "lastPush": "2026-09-13T07:53:47Z",
+      "lastCommitOnDefaultBranch": "2026-01-24",
+      "releases": "no GitHub releases or tags; branches fork, native-dsl-translation and update are unmerged"
+    }
+  },
+  {
+    "name": "ikatyang/tree-sitter-vue",
+    "repository": "https://github.com/ikatyang/tree-sitter-vue",
+    "commit": "91fe2754796cd8fba5f229505a23fa08f3546c06",
+    "release": "v0.2.1 (npm tree-sitter-vue 0.2.1, 2021-03-21)",
+    "abi": 13,
+    "scanner": "C++",
+    "checkout": "ikatyang-tree-sitter-vue",
+    "maintenance": {
+      "readOn": "2026-10-05",
+      "stars": 89,
+      "openIssues": 15,
+      "openPullRequests": 10,
+      "lastPush": "2024-02-09T16:35:37Z",
+      "lastCommitOnDefaultBranch": "2021-04-04",
+      "releases": "tag v0.2.1 (2021-03-21), no GitHub release; unmaintained (open PRs since 2021)"
+    }
+  },
+  {
+    "name": "xiaoxin-sky/tree-sitter-vue",
+    "repository": "https://github.com/xiaoxin-sky/tree-sitter-vue",
+    "commit": "8bbcd4cbd59c03b895d226c272e3c835f4329eef",
+    "release": "crate tree-sitter-vue3 0.0.4 (2022-09-24)",
+    "abi": 14,
+    "scanner": "C++",
+    "checkout": "xiaoxin-sky-tree-sitter-vue",
+    "maintenance": {
+      "readOn": "2026-10-05",
+      "stars": 2,
+      "openIssues": 0,
+      "openPullRequests": 0,
+      "lastPush": "2022-09-24T03:48:23Z",
+      "lastCommitOnDefaultBranch": "2022-09-24",
+      "releases": "crates.io tree-sitter-vue3 0.0.4 only"
+    }
+  }
+]

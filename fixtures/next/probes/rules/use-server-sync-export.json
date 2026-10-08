@@ -1,0 +1,116 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-probe-use-server-sync-export",
+  "revision": 1,
+  "mode": "log",
+  "description": "Next pack probe. Directive + exports: in a \"use server\" file, an exported name that is not an async function (Next allows only async functions there).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "identifier",
+            "all": [
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "kind": "function_declaration",
+                      "not": {
+                        "regex": "^async\\s"
+                      },
+                      "inside": {
+                        "kind": "export_statement"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "variable_declarator",
+                      "not": {
+                        "has": {
+                          "field": "value",
+                          "any": [
+                            {
+                              "kind": "arrow_function"
+                            },
+                            {
+                              "kind": "function_expression"
+                            }
+                          ],
+                          "regex": "^async\\s"
+                        }
+                      },
+                      "inside": {
+                        "kind": "lexical_declaration",
+                        "inside": {
+                          "kind": "export_statement"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "program",
+                  "has": {
+                    "kind": "expression_statement",
+                    "has": {
+                      "kind": "string",
+                      "value": {
+                        "eq": "use server"
+                      }
+                    },
+                    "inside": {
+                      "kind": "program"
+                    },
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "expression_statement",
+                              "has": {
+                                "kind": "string"
+                              }
+                            },
+                            {
+                              "kind": "comment"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "next/use-server-sync-export",
+        "message": "Directive + exports: in a \"use server\" file, an exported name that is not an async function (Next allows only async functions there)."
+      }
+    }
+  ]
+}

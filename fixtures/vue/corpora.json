@@ -1,0 +1,26 @@
+[
+  {
+    "name": "element-plus",
+    "repository": "https://github.com/element-plus/element-plus",
+    "commit": "88f4a8ed77ac6c985177d112300a36ea98bc8f97",
+    "license": "MIT",
+    "paths": ["packages", "docs", "ssr-testing", "play"],
+    "exclude": ["**/node_modules/**", "**/dist/**"]
+  },
+  {
+    "name": "vue-vben-admin",
+    "repository": "https://github.com/vbenjs/vue-vben-admin",
+    "commit": "50f4ede309d4450c7dd417399cb8d5c02346d2d2",
+    "license": "MIT",
+    "paths": ["apps", "docs", "internal", "packages", "playground", "scripts"],
+    "exclude": ["**/node_modules/**", "**/dist/**"]
+  },
+  {
+    "name": "hoppscotch",
+    "repository": "https://github.com/hoppscotch/hoppscotch",
+    "commit": "63273f8e599e73f0fb38c0739314e8d46b6bc83d",
+    "license": "MIT",
+    "paths": ["packages"],
+    "exclude": ["**/node_modules/**", "**/dist/**"]
+  }
+]

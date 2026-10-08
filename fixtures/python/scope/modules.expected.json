@@ -1,0 +1,140 @@
+{
+ "oracle": "ruff 0.16.9 TID251 banned-api and B008 extend-immutable-calls, --target-version py313",
+ "banned": [
+  "contextlib.Box.open",
+  "fn.contextlib.Box.open",
+  "pkg.E.z",
+  "pkg.__init__.E.z",
+  "pkg.mod.C.x",
+  "pkg.sub.mod.C.x",
+  "pkg.sub.mod.D.y",
+  "pkg.sub.mod.f.D.y",
+  "pkg.sub.sibling.attr",
+  "pkg.top.attr",
+  "beyond.attr",
+  "far.attr",
+  "pkg.sub.sibling.thing.attr",
+  "mod.C.x",
+  "pkg.loose.mod.C.x",
+  "sibling.attr"
+ ],
+ "immutableCalls": [
+  "contextlib.suppress",
+  "contextlib.Box",
+  "pkg.__init__.E",
+  "pkg.E",
+  "pkg.mod.C",
+  "pkg.sub.sibling.make",
+  "pkg.sub.mod.f",
+  "pkg.sub.mod.C",
+  "mod.C",
+  "sibling"
+ ],
+ "files": [
+  {
+   "path": "fn/contextlib.py",
+   "module": null,
+   "banned": [
+    {
+     "start": 104,
+     "name": "contextlib.Box.open"
+    },
+    {
+     "start": 178,
+     "name": "contextlib.Box.open"
+    }
+   ],
+   "immutable": [
+    123,
+    137
+   ],
+   "mutable": [
+    217
+   ]
+  },
+  {
+   "path": "pkg/__init__.py",
+   "module": "pkg.__init__",
+   "banned": [
+    {
+     "start": 21,
+     "name": "pkg.__init__.E.z"
+    },
+    {
+     "start": 44,
+     "name": "pkg.mod.C.x"
+    },
+    {
+     "start": 85,
+     "name": "pkg.sub.mod.C.x"
+    }
+   ],
+   "immutable": [
+    107,
+    114
+   ],
+   "mutable": []
+  },
+  {
+   "path": "pkg/loose/mod.py",
+   "module": null,
+   "banned": [
+    {
+     "start": 21,
+     "name": "mod.C.x"
+    }
+   ],
+   "immutable": [
+    71
+   ],
+   "mutable": [
+    78
+   ]
+  },
+  {
+   "path": "pkg/sub/__init__.py",
+   "module": "pkg.sub.__init__",
+   "banned": [],
+   "immutable": [],
+   "mutable": []
+  },
+  {
+   "path": "pkg/sub/mod.py",
+   "module": "pkg.sub.mod",
+   "banned": [
+    {
+     "start": 21,
+     "name": "pkg.sub.mod.C.x"
+    },
+    {
+     "start": 68,
+     "name": "pkg.sub.mod.D.y"
+    },
+    {
+     "start": 97,
+     "name": "pkg.sub.sibling.attr"
+    },
+    {
+     "start": 130,
+     "name": "pkg.top.attr"
+    },
+    {
+     "start": 163,
+     "name": "beyond.attr"
+    },
+    {
+     "start": 240,
+     "name": "pkg.sub.sibling.thing.attr"
+    }
+   ],
+   "immutable": [
+    261,
+    271,
+    278
+   ],
+   "mutable": [
+    285
+   ]
+  }
+ ]
+}

@@ -1,0 +1,65 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-probe-route-handler",
+  "revision": 1,
+  "mode": "log",
+  "description": "Next pack probe. Route handler: an exported HTTP-method function or const in an app-router route file.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "path": {
+              "regex": "^(?:src/)?app/(?:.*/)?route\\.(?:js|ts)$"
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "regex": "^(?:GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$",
+            "any": [
+              {
+                "inside": {
+                  "kind": "function_declaration",
+                  "inside": {
+                    "kind": "export_statement"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "variable_declarator",
+                  "inside": {
+                    "kind": "lexical_declaration",
+                    "inside": {
+                      "kind": "export_statement"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "next/route-handler",
+        "message": "Route handler: an exported HTTP-method function or const in an app-router route file."
+      }
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+<template><my-component v-slot="{ Iteration }"><div><Iteration v-for="i in items" :key="i" /></div></my-component></template>

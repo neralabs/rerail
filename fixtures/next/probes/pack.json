@@ -1,0 +1,160 @@
+{
+  "pack": "next-probes",
+  "family": "ecma",
+  "ticket": "NER-1698",
+  "capabilities": [
+    "syntax",
+    "scope",
+    "value"
+  ],
+  "corpora": [],
+  "tools": [
+    {
+      "name": "labels",
+      "version": "1"
+    }
+  ],
+  "oracles": ".",
+  "rules": [
+    {
+      "id": "next-probe-app-route-file",
+      "upstream": {
+        "tool": "labels",
+        "rule": "next/app-route-file"
+      },
+      "policy": "rules/app-route-file.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "next-probe-pages-special-file",
+      "upstream": {
+        "tool": "labels",
+        "rule": "next/pages-special-file"
+      },
+      "policy": "rules/pages-special-file.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "next-probe-middleware-file",
+      "upstream": {
+        "tool": "labels",
+        "rule": "next/middleware-file"
+      },
+      "policy": "rules/middleware-file.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "next-probe-use-client-directive",
+      "upstream": {
+        "tool": "labels",
+        "rule": "next/use-client-directive"
+      },
+      "policy": "rules/use-client-directive.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "next-probe-inline-server-action",
+      "upstream": {
+        "tool": "labels",
+        "rule": "next/inline-server-action"
+      },
+      "policy": "rules/inline-server-action.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "next-probe-route-handler",
+      "upstream": {
+        "tool": "labels",
+        "rule": "next/route-handler"
+      },
+      "policy": "rules/route-handler.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "next-probe-metadata-in-client-component",
+      "upstream": {
+        "tool": "labels",
+        "rule": "next/metadata-in-client-component"
+      },
+      "policy": "rules/metadata-in-client-component.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "next-probe-invalid-segment-config",
+      "upstream": {
+        "tool": "labels",
+        "rule": "next/invalid-segment-config"
+      },
+      "policy": "rules/invalid-segment-config.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "next-probe-server-import-in-client",
+      "upstream": {
+        "tool": "labels",
+        "rule": "next/server-import-in-client"
+      },
+      "policy": "rules/server-import-in-client.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "next-probe-client-hook-in-server-component",
+      "upstream": {
+        "tool": "labels",
+        "rule": "next/client-hook-in-server-component"
+      },
+      "policy": "rules/client-hook-in-server-component.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "next-probe-use-server-sync-export",
+      "upstream": {
+        "tool": "labels",
+        "rule": "next/use-server-sync-export"
+      },
+      "policy": "rules/use-server-sync-export.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    }
+  ]
+}

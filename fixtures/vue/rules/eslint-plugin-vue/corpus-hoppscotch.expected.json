@@ -1,0 +1,673 @@
+{
+ "tool": "eslint-plugin-vue",
+ "version": "10.11.1",
+ "versions": {
+  "eslint": "10.11.0",
+  "eslint-plugin-vue": "10.11.1",
+  "vue-eslint-parser": "10.4.1",
+  "@typescript-eslint/parser": "8.70.1",
+  "typescript": "6.0.3"
+ },
+ "source": {
+  "kind": "corpus",
+  "name": "hoppscotch",
+  "repository": "https://github.com/hoppscotch/hoppscotch",
+  "commit": "63273f8e599e73f0fb38c0739314e8d46b6bc83d",
+  "rules": [
+   "vue/require-v-for-key",
+   "vue/no-use-v-if-with-v-for",
+   "vue/no-duplicate-attributes",
+   "vue/no-v-html",
+   "vue/no-child-content",
+   "vue/no-deprecated-v-on-native-modifier",
+   "vue/valid-v-for",
+   "vue/no-v-text-v-html-on-component",
+   "vue/v-on-event-hyphenation",
+   "vue/attribute-hyphenation",
+   "vue/no-dupe-v-else-if",
+   "vue/no-unused-vars",
+   "vue/no-template-shadow",
+   "vue/no-unused-refs",
+   "vue/no-ref-as-operand",
+   "vue/no-mutating-props",
+   "vue/no-dupe-keys",
+   "vue/return-in-computed-property",
+   "vue/no-async-in-computed-properties",
+   "vue/no-side-effects-in-computed-properties",
+   "vue/no-export-in-script-setup",
+   "vue/no-setup-props-reactivity-loss",
+   "vue/no-watch-after-await",
+   "vue/require-valid-default-prop"
+  ],
+  "files": 407,
+  "manifestSha256": "10b84e77c2cc0915fa962ef17287452dd2ceed8a9be3247751fc320acadf07e3",
+  "skipped": [],
+  "skippedReasons": []
+ },
+ "findings": [
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/aiexperiments/ModifyBodyModal.vue",
+   "line": 28,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/aiexperiments/ModifyPreRequestModal.vue",
+   "line": 151,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/aiexperiments/ModifyTestScriptModal.vue",
+   "line": 151,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "packages/hoppscotch-common/src/components/app/Markdown.vue",
+   "line": 2,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/collections/documentation/CollectionStructure.vue",
+   "line": 117,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/hoppscotch-common/src/components/collections/documentation/index.vue",
+   "line": 91,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/collections/documentation/LazyDocumentationItem.vue",
+   "line": 31,
+   "column": 27
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/collections/documentation/MarkdownEditor.vue",
+   "line": 79,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/collections/documentation/PublishDocModal.vue",
+   "line": 145,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/collections/documentation/PublishDocModal.vue",
+   "line": 146,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/collections/documentation/PublishDocModal.vue",
+   "line": 147,
+   "column": 18
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/collections/documentation/PublishDocModal.vue",
+   "line": 148,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/collections/documentation/PublishDocModal.vue",
+   "line": 149,
+   "column": 31
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/collections/documentation/RequestPreview.vue",
+   "line": 218,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "packages/hoppscotch-common/src/components/collections/documentation/sections/CurlView.vue",
+   "line": 106,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/hoppscotch-common/src/components/collections/graphql/ImportExport.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/hoppscotch-common/src/components/collections/ImportExport.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/collections/Properties.vue",
+   "line": 377,
+   "column": 1
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/collections/Properties.vue",
+   "line": 380,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/collections/Properties.vue",
+   "line": 394,
+   "column": 1
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/collections/Properties.vue",
+   "line": 397,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/hoppscotch-common/src/components/collections/Variables.vue",
+   "line": 35,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/embeds/index.vue",
+   "line": 52,
+   "column": 27
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/environments/Add.vue",
+   "line": 137,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/environments/Add.vue",
+   "line": 138,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/hoppscotch-common/src/components/environments/ImportExport.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/environments/my/Details.vue",
+   "line": 399,
+   "column": 57
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/gql/Response.vue",
+   "line": 217,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/graphql/SchemaDocumentation.vue",
+   "line": 64,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/graphql/SchemaDocumentation.vue",
+   "line": 65,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/graphql/SchemaDocumentation.vue",
+   "line": 66,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/graphql/SchemaDocumentation.vue",
+   "line": 67,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/hoppscotch-common/src/components/history/Personal.vue",
+   "line": 29,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/history/Personal.vue",
+   "line": 241,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/http/authorization/OAuth2.vue",
+   "line": 607,
+   "column": 14
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/http/BodyBinary.vue",
+   "line": 26,
+   "column": 1
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/hoppscotch-common/src/components/http/ImportCurl.vue",
+   "line": 49,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/http/InheritedScriptsModal.vue",
+   "line": 116,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/importExport/Base.vue",
+   "line": 197,
+   "column": 1
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/importExport/Base.vue",
+   "line": 203,
+   "column": 1
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/importExport/ImportExportSteps/ImportSummary.vue",
+   "line": 232,
+   "column": 1
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/AudioLensRenderer.vue",
+   "line": 112,
+   "column": 44
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/AudioLensRenderer.vue",
+   "line": 115,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/HTMLLensRenderer.vue",
+   "line": 148,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/HTMLLensRenderer.vue",
+   "line": 178,
+   "column": 30
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/HTMLLensRenderer.vue",
+   "line": 223,
+   "column": 1
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/HTMLLensRenderer.vue",
+   "line": 226,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/ImageLensRenderer.vue",
+   "line": 106,
+   "column": 44
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/ImageLensRenderer.vue",
+   "line": 109,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/ImageLensRenderer.vue",
+   "line": 114,
+   "column": 1
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/JSONLensRenderer.vue",
+   "line": 325,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/JSONLensRenderer.vue",
+   "line": 387,
+   "column": 30
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/JSONLensRenderer.vue",
+   "line": 532,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/JSONLensRenderer.vue",
+   "line": 535,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/PDFLensRenderer.vue",
+   "line": 92,
+   "column": 18
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/RawLensRenderer.vue",
+   "line": 138,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/RawLensRenderer.vue",
+   "line": 145,
+   "column": 30
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/RawLensRenderer.vue",
+   "line": 220,
+   "column": 1
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/RawLensRenderer.vue",
+   "line": 223,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/VideoLensRenderer.vue",
+   "line": 112,
+   "column": 44
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/VideoLensRenderer.vue",
+   "line": 115,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/XMLLensRenderer.vue",
+   "line": 125,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/XMLLensRenderer.vue",
+   "line": 152,
+   "column": 30
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/XMLLensRenderer.vue",
+   "line": 212,
+   "column": 1
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/lenses/renderers/XMLLensRenderer.vue",
+   "line": 215,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/mockServer/EditMockServer.vue",
+   "line": 202,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/mockServer/EditMockServer.vue",
+   "line": 203,
+   "column": 18
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/mockServer/EditMockServer.vue",
+   "line": 204,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/mockServer/EditMockServer.vue",
+   "line": 205,
+   "column": 18
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/mockServer/LogSection.vue",
+   "line": 71,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/realtime/LogEntry.vue",
+   "line": 248,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/realtime/LogEntry.vue",
+   "line": 249,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/realtime/LogEntry.vue",
+   "line": 316,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/share/CustomizeGQLModal.vue",
+   "line": 380,
+   "column": 37
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/share/CustomizeModal.vue",
+   "line": 378,
+   "column": 37
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/smart/EnvInput.vue",
+   "line": 156,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/smart/EnvInput.vue",
+   "line": 168,
+   "column": 18
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/smart/EnvInput.vue",
+   "line": 170,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/teams/Edit.vue",
+   "line": 242,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/teams/Edit.vue",
+   "line": 258,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/teams/Invite.vue",
+   "line": 492,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-common/src/components/teams/Invite.vue",
+   "line": 498,
+   "column": 14
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/hoppscotch-sh-admin/src/components/app/Header.vue",
+   "line": 64,
+   "column": 32
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "packages/hoppscotch-sh-admin/src/components/onboarding/AuthSetup.vue",
+   "line": 94,
+   "column": 17
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "packages/hoppscotch-sh-admin/src/components/onboarding/AuthSetup.vue",
+   "line": 95,
+   "column": 17
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "packages/hoppscotch-sh-admin/src/components/onboarding/AuthSetup.vue",
+   "line": 96,
+   "column": 17
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "packages/hoppscotch-sh-admin/src/components/onboarding/AuthSetup.vue",
+   "line": 114,
+   "column": 17
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "packages/hoppscotch-sh-admin/src/components/onboarding/AuthSetup.vue",
+   "line": 115,
+   "column": 17
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "packages/hoppscotch-sh-admin/src/components/onboarding/CompleteScreen.vue",
+   "line": 29,
+   "column": 9
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "packages/hoppscotch-sh-admin/src/components/settings/OAuthProviderConfigurations.vue",
+   "line": 16,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-sh-admin/src/components/settings/ServerRestart.vue",
+   "line": 73,
+   "column": 5
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "packages/hoppscotch-sh-admin/src/components/teams/Members.vue",
+   "line": 151,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "packages/hoppscotch-sh-admin/src/components/teams/Members.vue",
+   "line": 213,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-sh-admin/src/components/ui/AutoResetIcon.vue",
+   "line": 38,
+   "column": 14
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-sh-admin/src/components/users/Details.vue",
+   "line": 137,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-sh-admin/src/components/users/SharedRequests.vue",
+   "line": 126,
+   "column": 5
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/hoppscotch-sh-admin/src/components/users/Teams.vue",
+   "line": 78,
+   "column": 5
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "packages/hoppscotch-sh-admin/src/pages/settings.vue",
+   "line": 84,
+   "column": 5
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "packages/hoppscotch-sh-admin/src/pages/teams/index.vue",
+   "line": 41,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/hoppscotch-sh-admin/src/pages/teams/index.vue",
+   "line": 110,
+   "column": 27
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "packages/hoppscotch-sh-admin/src/pages/teams/index.vue",
+   "line": 139,
+   "column": 5
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "packages/hoppscotch-sh-admin/src/pages/users/index.vue",
+   "line": 51,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/hoppscotch-sh-admin/src/pages/users/index.vue",
+   "line": 124,
+   "column": 27
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "packages/hoppscotch-sh-admin/src/pages/users/index.vue",
+   "line": 222,
+   "column": 7
+  }
+ ]
+}

@@ -1,0 +1,274 @@
+{
+  "tool": "typescript-eslint",
+  "version": "8.70.1",
+  "source": {
+    "kind": "corpus",
+    "name": "nera",
+    "repository": "https://github.com/neralabs/nera-landing",
+    "commit": "137e9bf7b9da512f90af8463c93c7d9554d49535",
+    "rules": [
+      "@typescript-eslint/no-duplicate-enum-values",
+      "@typescript-eslint/no-namespace",
+      "@typescript-eslint/no-non-null-assertion",
+      "@typescript-eslint/no-this-alias",
+      "@typescript-eslint/no-unsafe-function-type",
+      "@typescript-eslint/no-wrapper-object-types",
+      "@typescript-eslint/prefer-as-const"
+    ],
+    "skipped": []
+  },
+  "findings": [
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/api/artifacts.ts",
+      "line": 25,
+      "column": 10
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/api/artifacts.ts",
+      "line": 118,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/api/artifacts.ts",
+      "line": 133,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/api/artifacts.ts",
+      "line": 173,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/api/artifacts.ts",
+      "line": 187,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/api/artifacts.ts",
+      "line": 206,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/api/artifacts.ts",
+      "line": 225,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/api/artifacts.ts",
+      "line": 244,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/api/artifacts.ts",
+      "line": 263,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/api/artifacts.ts",
+      "line": 282,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/api/artifacts.ts",
+      "line": 310,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/api/generated/client/client.gen.ts",
+      "line": 99,
+      "column": 22
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/api/generated/core/params.gen.ts",
+      "line": 128,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/api/uploads.ts",
+      "line": 29,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/check-for-drift/checkForDriftAdapter.test.ts",
+      "line": 264,
+      "column": 10
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/document-codebase/CodeDiscoveryPage.tsx",
+      "line": 391,
+      "column": 53
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/document-codebase/CodeDiscoveryPage.tsx",
+      "line": 403,
+      "column": 49
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/document-codebase/CodeDiscoveryPage.tsx",
+      "line": 410,
+      "column": 45
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/document-codebase/CodeDiscoveryPage.tsx",
+      "line": 419,
+      "column": 42
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/document-codebase/CodeDiscoveryPage.tsx",
+      "line": 461,
+      "column": 33
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/document-codebase/CodeDiscoveryPage.tsx",
+      "line": 482,
+      "column": 46
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/document-codebase/CodeDiscoveryPage.tsx",
+      "line": 496,
+      "column": 46
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/home/components/TeamspaceHome/HomeScreen.tsx",
+      "line": 464,
+      "column": 53
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/knowledge/observations/ObservationPeekPanel.tsx",
+      "line": 68,
+      "column": 65
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/knowledge/requirements/RequirementEvidenceTab.tsx",
+      "line": 182,
+      "column": 52
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/knowledge/requirements/RequirementsTab.tsx",
+      "line": 171,
+      "column": 63
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/knowledge/requirements/RequirementsTab.tsx",
+      "line": 172,
+      "column": 61
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/knowledge/requirements/RequirementsTab.tsx",
+      "line": 178,
+      "column": 61
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/knowledge/requirements/RequirementsTab.tsx",
+      "line": 184,
+      "column": 63
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/knowledge/requirements/RequirementsTab.tsx",
+      "line": 185,
+      "column": 61
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/knowledge/requirements/RequirementsTab.tsx",
+      "line": 201,
+      "column": 65
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/knowledge/requirements/RequirementsTab.tsx",
+      "line": 202,
+      "column": 64
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/notion/NotionPagesPage.tsx",
+      "line": 30,
+      "column": 26
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/notion/NotionPagesPage.tsx",
+      "line": 39,
+      "column": 26
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/settings/useApiCredentialManager.ts",
+      "line": 49,
+      "column": 39
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/update-intent/UpdateIntentSummaryTab.tsx",
+      "line": 51,
+      "column": 46
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/update-intent/updateIntentReviewCounts.ts",
+      "line": 57,
+      "column": 48
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/update-intent/updateIntentRunDetail.ts",
+      "line": 92,
+      "column": 46
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/features/update-intent/updateIntentRunDetail.ts",
+      "line": 115,
+      "column": 7
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/lib/tiptap-utils.ts",
+      "line": 248,
+      "column": 50
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/lib/tiptap-utils.ts",
+      "line": 250,
+      "column": 21
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "web/src/main.tsx",
+      "line": 45,
+      "column": 12
+    }
+  ]
+}

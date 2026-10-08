@@ -1,0 +1,120 @@
+// Shared by the framework packs' recorders (rerail-fixtures/{react,node,next}/rules/<tool>/generate.mjs): pins, the
+// corpus file set the conformance runner scores, and ESLint's findings in the recording format
+// `rerail/conformance/languages/pack.ts` reads (`recordingSchema`).
+// Run offline by a maintainer, never in CI.
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join, matchesGlob, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+
+export const ORACLES = dirname(dirname(fileURLToPath(import.meta.url)));
+export const REPOSITORY = dirname(ORACLES);
+
+/** The host's ignored directories (`IGNORED_DIRECTORIES`, rerail/src/executable-policy-enforcer.ts). */
+const IGNORED = new Set([".git", ".hg", ".svn", ".rerail", ".nera", ".venv", "__pycache__", "node_modules", "dist", "build", ".next", ".turbo", "coverage", "target", "vendor"]);
+/** The ecma family's extensions (`POLICY_DIALECTS`, rerail/src/policy-languages.ts). */
+export const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
+
+/** The pack manifest `rerail/conformance/languages/<pack>/pack.json`. */
+export function pack(name) {
+  return JSON.parse(readFileSync(join(REPOSITORY, "rerail", "conformance", "languages", name, "pack.json"), "utf8"));
+}
+
+/** `require` resolving from a tools directory (`.nera/tools/<pack>`), after checking every pinned package's version. */
+export function pinnedRequire(tools, pins) {
+  const require = createRequire(join(tools, "package.json"));
+  for (const [name, version] of Object.entries(pins)) {
+    const found = JSON.parse(readFileSync(join(tools, "node_modules", name, "package.json"), "utf8")).version;
+    if (found !== version) throw new Error(`${name} ${found} under ${tools}; this recorder pins ${version}`);
+  }
+  return require;
+}
+
+export function gitHead(directory) {
+  return execFileSync("git", ["-C", directory, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+}
+
+export function assertCommit(directory, commit) {
+  const head = gitHead(directory);
+  if (head !== commit) throw new Error(`${directory} is at ${head}; pinned ${commit}`);
+}
+
+function walk(root, path, files) {
+  if (!existsSync(path)) throw new Error(`${path} does not exist`);
+  if (!statSync(path).isDirectory()) {
+    files.push(relative(root, path).split(sep).join("/"));
+    return;
+  }
+  for (const entry of readdirSync(path, { withFileTypes: true })) {
+    if (entry.isSymbolicLink()) continue;
+    const child = join(path, entry.name);
+    if (entry.isDirectory()) {
+      if (!IGNORED.has(entry.name)) walk(root, child, files);
+    } else if (entry.isFile()) files.push(relative(root, child).split(sep).join("/"));
+  }
+}
+
+/** The corpus-relative files the conformance runner scores: the pack's paths, ecma extensions, minus `exclude`. */
+export function corpusFiles(root, corpus) {
+  assertCommit(root, corpus.commit);
+  const files = [];
+  for (const path of corpus.paths) walk(root, join(root, path), files);
+  return [...new Set(files)]
+    .filter(file => ECMA_EXTENSIONS.some(extension => file.endsWith(extension)))
+    .filter(file => !corpus.exclude.some(pattern => matchesGlob(file, pattern)))
+    .sort();
+}
+
+/** ESLint's line terminators; the ecma family's lines are ESLint's. */
+const LINE_BREAK = /\r\n|[\r\n\u2028\u2029]/u;
+
+/** ESLint's 1-based UTF-16 column → 1-based Unicode code points from the start of the line. */
+export function codePointColumn(text, line, column) {
+  const lineText = text.split(LINE_BREAK)[line - 1] ?? "";
+  return [...lineText.slice(0, column - 1)].length + 1;
+}
+
+/**
+ * One file's ESLint messages → findings of the listed rules, and whether ESLint could not parse it (a fatal
+ * message: such a file is skipped, never scored).
+ */
+export function findingsOf(result, text, path, rules) {
+  const fatal = result.messages.find(message => message.fatal);
+  if (fatal !== undefined) return { fatal: `${fatal.line}:${fatal.column} ${fatal.message}`, findings: [] };
+  const findings = result.messages
+    .filter(message => rules.includes(message.ruleId))
+    .map(message => ({ rule: message.ruleId, path, line: message.line, column: codePointColumn(text, message.line, message.column) }));
+  return { fatal: undefined, findings };
+}
+
+/** Writes a recording as php/rules/common.py does: findings sorted, one-space indent. */
+export function writeRecording(path, tool, version, source, findings) {
+  const sorted = [...findings].sort(
+    (a, b) => (a.rule < b.rule ? -1 : a.rule > b.rule ? 1 : 0) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) || a.line - b.line || (a.column ?? 0) - (b.column ?? 0),
+  );
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify({ tool, version, source, findings: sorted }, null, 1)}\n`);
+}
+
+/**
+ * Lints `files` (relative to `cwd`) with exactly `config` (a flat config array; no config file is read) and returns
+ * the recording's findings for `rules` plus the files ESLint could not parse.
+ */
+export async function lint(ESLint, cwd, config, files, rules) {
+  const eslint = new ESLint({ cwd, overrideConfigFile: true, overrideConfig: config, ignore: false, warnIgnored: false, errorOnUnmatchedPattern: false });
+  const findings = [];
+  const skipped = [];
+  const batch = 200;
+  for (let index = 0; index < files.length; index += batch) {
+    const results = await eslint.lintFiles(files.slice(index, index + batch).map(file => join(cwd, file)));
+    for (const result of results) {
+      const path = relative(cwd, result.filePath).split(sep).join("/");
+      const text = readFileSync(result.filePath, "utf8");
+      const outcome = findingsOf(result, text, path, rules);
+      if (outcome.fatal !== undefined) skipped.push({ path, reason: outcome.fatal });
+      findings.push(...outcome.findings);
+    }
+  }
+  return { findings, skipped };
+}

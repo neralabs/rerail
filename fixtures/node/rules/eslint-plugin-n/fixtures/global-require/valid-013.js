@@ -1,0 +1,1 @@
+var someFunc = require('./someFunc'); someFunc(function(require) { return('bananas'); });

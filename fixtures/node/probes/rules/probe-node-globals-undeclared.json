@@ -1,0 +1,51 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "probe-node-globals-undeclared",
+  "revision": 1,
+  "mode": "steer",
+  "description": "The same names without Node's globals (plain ESLint module defaults): every unshadowed use is unresolved, so a pack must contribute them as data.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "reference",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "sourceType": "module"
+          },
+          "rule": {
+            "kind": "identifier",
+            "regex": "^(?:process|Buffer|global|setImmediate|clearImmediate|queueMicrotask|structuredClone)$",
+            "not": {
+              "inside": {
+                "kind": "member_expression",
+                "field": "property"
+              }
+            },
+            "resolves": {
+              "unresolved": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "probe-node-globals-undeclared",
+        "message": "undeclared without Node globals"
+      }
+    }
+  ]
+}

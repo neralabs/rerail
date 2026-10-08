@@ -1,0 +1,1 @@
+<template><div><custom :_attrKk="prop"></custom></div></template>

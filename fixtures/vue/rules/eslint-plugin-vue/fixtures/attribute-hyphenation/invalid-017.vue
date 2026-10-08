@@ -1,0 +1,1 @@
+<template><div><custom :attr_Gg="prop"></custom></div></template>

@@ -1,0 +1,39 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-jsx-pragma-comment",
+  "revision": 1,
+  "mode": "log",
+  "description": "Fact: a file-level JSX pragma directive (`@jsx X` in a comment). Detectable; its name cannot be bound to a rule's pragma (jsxPragma is fixed per query). Reported at the comment.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "comment",
+            "regex": "@jsx\\s+\\S"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-probe/jsx-pragma-comment",
+        "message": "Fact"
+      }
+    }
+  ]
+}

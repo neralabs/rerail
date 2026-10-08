@@ -1,0 +1,350 @@
+{
+ "tool": "phpstan",
+ "version": "2.2.16",
+ "source": {
+  "kind": "corpus",
+  "name": "laravel",
+  "repository": "https://github.com/laravel/framework",
+  "commit": "e5f3d6265f4b9d3d9efc466de83f79c54e14dd5d",
+  "rules": [
+   "argument.sprintf",
+   "argument.sscanf",
+   "argument.type",
+   "array.duplicateKey",
+   "if.alwaysFalse",
+   "if.alwaysTrue",
+   "missingType.return",
+   "variable.undefined"
+  ],
+  "skipped": [
+   "tests/Foundation/Fixtures/bad-syntax-strategy.php"
+  ]
+ },
+ "findings": [
+  {
+   "rule": "if.alwaysFalse",
+   "path": "src/Illuminate/Container/Container.php",
+   "line": 1370
+  },
+  {
+   "rule": "if.alwaysFalse",
+   "path": "src/Illuminate/Foundation/Bootstrap/HandleExceptions.php",
+   "line": 351
+  },
+  {
+   "rule": "if.alwaysTrue",
+   "path": "src/Illuminate/Auth/Access/Gate.php",
+   "line": 499
+  },
+  {
+   "rule": "if.alwaysTrue",
+   "path": "src/Illuminate/Auth/AuthenticationException.php",
+   "line": 68
+  },
+  {
+   "rule": "if.alwaysTrue",
+   "path": "src/Illuminate/Auth/Middleware/Authenticate.php",
+   "line": 116
+  },
+  {
+   "rule": "if.alwaysTrue",
+   "path": "src/Illuminate/Bus/Batchable.php",
+   "line": 33
+  },
+  {
+   "rule": "if.alwaysTrue",
+   "path": "src/Illuminate/Bus/PendingBatch.php",
+   "line": 403
+  },
+  {
+   "rule": "if.alwaysTrue",
+   "path": "src/Illuminate/Database/Eloquent/Prunable.php",
+   "line": 36
+  },
+  {
+   "rule": "if.alwaysTrue",
+   "path": "src/Illuminate/Foundation/Http/FormRequest.php",
+   "line": 95
+  },
+  {
+   "rule": "if.alwaysTrue",
+   "path": "src/Illuminate/Foundation/Http/Kernel.php",
+   "line": 306
+  },
+  {
+   "rule": "if.alwaysTrue",
+   "path": "src/Illuminate/Foundation/Testing/Concerns/InteractsWithTestCaseLifecycle.php",
+   "line": 128
+  },
+  {
+   "rule": "if.alwaysTrue",
+   "path": "src/Illuminate/Foundation/Testing/Concerns/InteractsWithTestCaseLifecycle.php",
+   "line": 183
+  },
+  {
+   "rule": "if.alwaysTrue",
+   "path": "src/Illuminate/Mail/Mailable.php",
+   "line": 379
+  },
+  {
+   "rule": "if.alwaysTrue",
+   "path": "src/Illuminate/Queue/Worker.php",
+   "line": 990
+  },
+  {
+   "rule": "if.alwaysTrue",
+   "path": "src/Illuminate/Routing/UrlGenerator.php",
+   "line": 671
+  },
+  {
+   "rule": "if.alwaysTrue",
+   "path": "src/Illuminate/Routing/UrlGenerator.php",
+   "line": 675
+  },
+  {
+   "rule": "if.alwaysTrue",
+   "path": "src/Illuminate/Routing/UrlGenerator.php",
+   "line": 885
+  },
+  {
+   "rule": "if.alwaysTrue",
+   "path": "src/Illuminate/Session/Middleware/AuthenticateSession.php",
+   "line": 156
+  },
+  {
+   "rule": "if.alwaysTrue",
+   "path": "src/Illuminate/Support/DateFactory.php",
+   "line": 222
+  },
+  {
+   "rule": "missingType.return",
+   "path": "tests/Container/ContainerCallTest.php",
+   "line": 316
+  },
+  {
+   "rule": "missingType.return",
+   "path": "tests/Integration/Database/Fixtures/EloquentPivotWithoutTimestamp/Models.php",
+   "line": 63
+  },
+  {
+   "rule": "missingType.return",
+   "path": "tests/Integration/Routing/PrecognitionTest.php",
+   "line": 21
+  },
+  {
+   "rule": "missingType.return",
+   "path": "tests/Support/OnceTest.php",
+   "line": 378
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Console/resources/views/components/alert.php",
+   "line": 2
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Console/resources/views/components/bullet-list.php",
+   "line": 2
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Console/resources/views/components/line.php",
+   "line": 1
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Console/resources/views/components/line.php",
+   "line": 2
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Console/resources/views/components/line.php",
+   "line": 2
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Console/resources/views/components/line.php",
+   "line": 2
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Console/resources/views/components/line.php",
+   "line": 3
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Console/resources/views/components/line.php",
+   "line": 6
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Console/resources/views/components/two-column-detail.php",
+   "line": 3
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Console/resources/views/components/two-column-detail.php",
+   "line": 6
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Database/Console/DbCommand.php",
+   "line": 63
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Foundation/Testing/LazilyRefreshDatabase.php (in context of class Illuminate\\Tests\\Foundation\\Cloud\\ExceptionReportingTest)",
+   "line": 36
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Foundation/Testing/LazilyRefreshDatabase.php (in context of class Illuminate\\Tests\\Foundation\\Testing\\LazilyRefreshDatabaseTest)",
+   "line": 36
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Foundation/Testing/LazilyRefreshDatabase.php (in context of class Illuminate\\Tests\\Integration\\Cache\\DatabaseCacheFunnelTest)",
+   "line": 36
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Foundation/Testing/LazilyRefreshDatabase.php (in context of class Illuminate\\Tests\\Integration\\Cache\\RepositoryTest)",
+   "line": 36
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Foundation/Testing/LazilyRefreshDatabase.php (in context of class Illuminate\\Tests\\Integration\\Events\\EventFakeTest)",
+   "line": 36
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Foundation/Testing/LazilyRefreshDatabase.php (in context of class Illuminate\\Tests\\Integration\\Http\\Resources\\JsonApi\\TestCase)",
+   "line": 36
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Foundation/Testing/LazilyRefreshDatabase.php (in context of class Illuminate\\Tests\\Integration\\Log\\ContextIntegrationTest)",
+   "line": 36
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Foundation/Testing/LazilyRefreshDatabase.php (in context of class Illuminate\\Tests\\Integration\\Log\\ContextTest)",
+   "line": 36
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Foundation/Testing/LazilyRefreshDatabase.php (in context of class Illuminate\\Tests\\Integration\\Mail\\MailableWithSecuredEncodingTest)",
+   "line": 36
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Foundation/Testing/LazilyRefreshDatabase.php (in context of class Illuminate\\Tests\\Integration\\Mail\\MailableWithoutSecuredEncodingTest)",
+   "line": 36
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "src/Illuminate/Foundation/Testing/LazilyRefreshDatabase.php (in context of class Illuminate\\Tests\\Integration\\Mail\\SentMessageMailTest)",
+   "line": 36
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/Database/DatabaseConnectorTest.php",
+   "line": 463
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/Database/DatabaseConnectorTest.php",
+   "line": 468
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/Database/DatabaseConnectorTest.php",
+   "line": 468
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/Database/DatabaseConnectorTest.php",
+   "line": 470
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/Database/DatabaseConnectorTest.php",
+   "line": 474
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/Database/DatabaseConnectorTest.php",
+   "line": 474
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/Foundation/Cloud/QueueTest.php",
+   "line": 1879
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/Foundation/Cloud/QueueTest.php",
+   "line": 1982
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/Integration/Console/CommandManualFailTest.php",
+   "line": 50
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/Integration/Database/EloquentWhereTest.php",
+   "line": 290
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/Integration/Foundation/Configuration/Fixtures/console.php",
+   "line": 7
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/Routing/Fixtures/routes.php",
+   "line": 3
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/View/Fixtures/component.php",
+   "line": 1
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/View/Fixtures/component.php",
+   "line": 1
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/View/Fixtures/component.php",
+   "line": 1
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/View/Fixtures/component.php",
+   "line": 1
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/View/Fixtures/nested/child.php",
+   "line": 1
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/View/Fixtures/section-exception-layout.php",
+   "line": 3
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/View/Fixtures/section-exception.php",
+   "line": 1
+  },
+  {
+   "rule": "variable.undefined",
+   "path": "tests/View/Fixtures/section-exception.php",
+   "line": 2
+  }
+ ]
+}

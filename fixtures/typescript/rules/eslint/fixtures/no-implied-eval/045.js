@@ -1,0 +1,1 @@
+setInterval(1, 10)

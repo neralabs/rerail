@@ -1,0 +1,165 @@
+{
+ "tool": "labels",
+ "version": "1",
+ "source": {
+  "kind": "fixtures",
+  "origin": "hand-labelled",
+  "rules": [
+   "next/app-route-file",
+   "next/pages-special-file",
+   "next/middleware-file",
+   "next/use-client-directive",
+   "next/inline-server-action",
+   "next/route-handler",
+   "next/metadata-in-client-component",
+   "next/invalid-segment-config",
+   "next/server-import-in-client",
+   "next/client-hook-in-server-component",
+   "next/use-server-sync-export"
+  ],
+  "files": [
+   "app/(shop)/[id]/loading.js",
+   "app/actions.ts",
+   "app/api/users/route.ts",
+   "app/components/form.tsx",
+   "app/dashboard/page.tsx",
+   "app/layout.tsx",
+   "app/page.tsx",
+   "components/client-button.tsx",
+   "lib/late-directive.ts",
+   "middleware.ts",
+   "pages/_app.tsx",
+   "pages/_document.tsx",
+   "pages/api/hello.ts",
+   "pages/index.tsx"
+  ]
+ },
+ "findings": [
+  {
+   "rule": "next/app-route-file",
+   "path": "app/(shop)/[id]/loading.js",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "next/app-route-file",
+   "path": "app/api/users/route.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "next/app-route-file",
+   "path": "app/dashboard/page.tsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "next/app-route-file",
+   "path": "app/layout.tsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "next/app-route-file",
+   "path": "app/page.tsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "next/client-hook-in-server-component",
+   "path": "app/page.tsx",
+   "line": 7,
+   "column": 19
+  },
+  {
+   "rule": "next/inline-server-action",
+   "path": "app/components/form.tsx",
+   "line": 3,
+   "column": 5
+  },
+  {
+   "rule": "next/invalid-segment-config",
+   "path": "app/(shop)/[id]/loading.js",
+   "line": 1,
+   "column": 27
+  },
+  {
+   "rule": "next/invalid-segment-config",
+   "path": "app/api/users/route.ts",
+   "line": 1,
+   "column": 24
+  },
+  {
+   "rule": "next/metadata-in-client-component",
+   "path": "app/dashboard/page.tsx",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "next/middleware-file",
+   "path": "middleware.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "next/pages-special-file",
+   "path": "pages/_app.tsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "next/pages-special-file",
+   "path": "pages/_document.tsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "next/pages-special-file",
+   "path": "pages/api/hello.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "next/route-handler",
+   "path": "app/api/users/route.ts",
+   "line": 3,
+   "column": 23
+  },
+  {
+   "rule": "next/route-handler",
+   "path": "app/api/users/route.ts",
+   "line": 7,
+   "column": 14
+  },
+  {
+   "rule": "next/server-import-in-client",
+   "path": "app/dashboard/page.tsx",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "next/use-client-directive",
+   "path": "app/dashboard/page.tsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "next/use-client-directive",
+   "path": "components/client-button.tsx",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "next/use-server-sync-export",
+   "path": "app/actions.ts",
+   "line": 7,
+   "column": 17
+  },
+  {
+   "rule": "next/use-server-sync-export",
+   "path": "app/actions.ts",
+   "line": 9,
+   "column": 14
+  }
+ ]
+}

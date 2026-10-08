@@ -1,0 +1,46 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-runtime-classic-unused-react",
+  "revision": 1,
+  "mode": "log",
+  "description": "Fact: the classic JSX runtime (languageOptions.jsxPragma \"React\", the default): JSX reads the `React` binding, so an imported React is unused only in a file without JSX. Reported at the import's name.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "jsxPragma": "React"
+          },
+          "rule": {
+            "kind": "identifier",
+            "regex": "^React$",
+            "binds": {
+              "form": "import",
+              "used": false
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-probe/runtime-classic-unused-react",
+        "message": "Fact"
+      }
+    }
+  ]
+}

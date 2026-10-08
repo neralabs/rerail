@@ -1,0 +1,1 @@
+var Hello = ReactDOM.render(<div />, document.body);

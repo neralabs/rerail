@@ -1,0 +1,22 @@
+# Measurement tool for the Rust pack feasibility study (docs/design/rerail-pack-rust.md).
+# Build offline, never in CI, with the target dir outside the repository:
+#   CARGO_TARGET_DIR=<checkout>/.nera/tools/rust/feasibility/target \
+#     cargo +1.99.0 build --release --manifest-path rerail-fixtures/rust/feasibility/Cargo.toml
+# `generate.py` beside this file builds and drives it.
+[package]
+name = "rerail-rust-feasibility"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[[bin]]
+name = "rerail-rust-feasibility"
+path = "main.rs"
+
+[dependencies]
+proc-macro2 = { version = "=1.0.107", features = ["span-locations"] }
+serde_json = "=1.0.151"
+syn = { version = "=2.0.119", features = ["full", "visit", "parsing", "printing"] }
+
+[workspace]

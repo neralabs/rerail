@@ -1,0 +1,21 @@
+# Duplicate set items: Ruff compares literal items (not tuples, not signed numbers) by hash.
+s1 = {1, 1.0}
+s2 = {1, True}
+s3 = {"a", "a"}
+s4 = {1, 1}
+s5 = {-1, -1}
+s6 = {(1,), (1,)}
+s7 = {x, x}
+s8 = {1 + 1, 2}
+s9 = {"\x61", "a"}
+s10 = {0.0, -0.0}
+s11 = {1j, 1j}
+s12 = {None, None}
+s13 = {b"a", b"a"}
+s14 = {1, x, 1}
+s15 = {"a", "a" "", 'a'}
+s16 = {f"a", "a"}
+s17 = {False, 0, 0.0}
+s18 = {..., ...}
+s19 = {b"a", "a"}
+s20 = {*xs, 1, 1}

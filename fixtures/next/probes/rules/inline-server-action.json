@@ -1,0 +1,92 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-probe-inline-server-action",
+  "revision": 1,
+  "mode": "log",
+  "description": "Next pack probe. Directive: a \"use server\" directive opening a function body (an inline Server Action).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "expression_statement",
+            "all": [
+              {
+                "has": {
+                  "kind": "string",
+                  "value": {
+                    "eq": "use server"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "statement_block",
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "method_definition"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "expression_statement",
+                          "has": {
+                            "kind": "string"
+                          }
+                        },
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "regex": "^\\{$"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "next/inline-server-action",
+        "message": "Directive: a \"use server\" directive opening a function body (an inline Server Action)."
+      }
+    }
+  ]
+}

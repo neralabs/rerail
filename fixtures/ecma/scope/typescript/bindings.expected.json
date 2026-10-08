@@ -1,0 +1,1029 @@
+{
+ "oracle": "@typescript-eslint/parser 8.70.1 scope manager (lib: [])",
+ "builtins": [],
+ "unresolved": [
+  {
+   "start": 270,
+   "name": "undefinedExport"
+  },
+  {
+   "start": 327,
+   "name": "undefinedCall"
+  },
+  {
+   "start": 508,
+   "name": "undefinedDefault"
+  },
+  {
+   "start": 529,
+   "name": "undefinedSource"
+  },
+  {
+   "start": 558,
+   "name": "b"
+  },
+  {
+   "start": 774,
+   "name": "blockLet"
+  },
+  {
+   "start": 784,
+   "name": "blockFunction"
+  },
+  {
+   "start": 836,
+   "name": "outerArrow"
+  },
+  {
+   "start": 919,
+   "name": "self"
+  },
+  {
+   "start": 962,
+   "name": "Base"
+  },
+  {
+   "start": 981,
+   "name": "Iface"
+  },
+  {
+   "start": 1025,
+   "name": "undefinedInMethod"
+  },
+  {
+   "start": 1049,
+   "name": "Inner"
+  },
+  {
+   "start": 1200,
+   "name": "U"
+  },
+  {
+   "start": 1203,
+   "name": "staticVar"
+  },
+  {
+   "start": 1253,
+   "name": "Undefined"
+  },
+  {
+   "start": 1368,
+   "name": "inside"
+  },
+  {
+   "start": 1547,
+   "name": "augmented"
+  },
+  {
+   "start": 1558,
+   "name": "ambientConst"
+  },
+  {
+   "start": 1614,
+   "name": "Array"
+  },
+  {
+   "start": 1641,
+   "name": "Missing"
+  },
+  {
+   "start": 1688,
+   "name": "Item"
+  },
+  {
+   "start": 1701,
+   "name": "V"
+  },
+  {
+   "start": 1740,
+   "name": "Return"
+  },
+  {
+   "start": 1878,
+   "name": "K"
+  },
+  {
+   "start": 1881,
+   "name": "arg"
+  },
+  {
+   "start": 1886,
+   "name": "sig"
+  },
+  {
+   "start": 1891,
+   "name": "key"
+  },
+  {
+   "start": 1896,
+   "name": "n"
+  },
+  {
+   "start": 1930,
+   "name": "fnParam"
+  },
+  {
+   "start": 1989,
+   "name": "MissingSpace"
+  },
+  {
+   "start": 2012,
+   "name": "undefinedThrow"
+  },
+  {
+   "start": 2075,
+   "name": "message"
+  },
+  {
+   "start": 2155,
+   "name": "loose"
+  },
+  {
+   "start": 2164,
+   "name": "obj"
+  },
+  {
+   "start": 2206,
+   "name": "assignA"
+  },
+  {
+   "start": 2215,
+   "name": "assignB"
+  },
+  {
+   "start": 2226,
+   "name": "undefinedPair"
+  },
+  {
+   "start": 2244,
+   "name": "assignC"
+  },
+  {
+   "start": 2256,
+   "name": "undefinedObject"
+  },
+  {
+   "start": 2302,
+   "name": "missingShorthand"
+  },
+  {
+   "start": 2321,
+   "name": "computedKey"
+  },
+  {
+   "start": 2406,
+   "name": "inSwitch"
+  },
+  {
+   "start": 2424,
+   "name": "undefined"
+  },
+  {
+   "start": 2436,
+   "name": "decorator"
+  },
+  {
+   "start": 2465,
+   "name": "member"
+  },
+  {
+   "start": 2505,
+   "name": "ParameterDecorator"
+  },
+  {
+   "start": 2607,
+   "name": "missingDecorator"
+  },
+  {
+   "start": 2733,
+   "name": "missingDefault"
+  }
+ ],
+ "constants": [
+  {
+   "start": 249,
+   "name": "renamed",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 341,
+   "name": "Default",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 350,
+   "name": "renamed",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 359,
+   "name": "namespaceImport",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 376,
+   "name": "required",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 387,
+   "name": "hoisted",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 446,
+   "name": "topVar",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 462,
+   "name": "topLet",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 471,
+   "name": "topVar",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 487,
+   "name": "a",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 494,
+   "name": "c",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 500,
+   "name": "d",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 504,
+   "name": "e",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 546,
+   "name": "a",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 549,
+   "name": "c",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 552,
+   "name": "d",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 555,
+   "name": "e",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 614,
+   "name": "p3",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 619,
+   "name": "p1",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 650,
+   "name": "p1",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 664,
+   "name": "hoistedVar",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 688,
+   "name": "blockLet",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 748,
+   "name": "p2",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 752,
+   "name": "p3",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 756,
+   "name": "rest",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 762,
+   "name": "hoistedVar",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 809,
+   "name": "arrow",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 832,
+   "name": "x",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 854,
+   "name": "single",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 868,
+   "name": "y",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 877,
+   "name": "named",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 910,
+   "name": "self",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 931,
+   "name": "Klass",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 967,
+   "name": "T",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 997,
+   "name": "Inner",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1014,
+   "name": "T",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1092,
+   "name": "staticVar",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 1146,
+   "name": "U",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1164,
+   "name": "U",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1190,
+   "name": "Declared",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1241,
+   "name": "Red",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1321,
+   "name": "inside",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 1361,
+   "name": "Space",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1572,
+   "name": "declaredConst",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1604,
+   "name": "V",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1634,
+   "name": "Item",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1663,
+   "name": "Alias",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1736,
+   "name": "W",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1786,
+   "name": "Iface2",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1793,
+   "name": "W",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1849,
+   "name": "Iface2",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1866,
+   "name": "K",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 1957,
+   "name": "topLet",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 1972,
+   "name": "Space",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 2054,
+   "name": "message",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 2097,
+   "name": "key2",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 2105,
+   "name": "topLet",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 2113,
+   "name": "key2",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 2128,
+   "name": "i",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 2135,
+   "name": "i",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 2142,
+   "name": "i",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 2147,
+   "name": "i",
+   "constant": false,
+   "mutated": true
+  },
+  {
+   "start": 2280,
+   "name": "shorthand",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 2294,
+   "name": "topLet",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 2358,
+   "name": "topLet",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 2380,
+   "name": "inSwitch",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 2394,
+   "name": "inSwitch",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 2420,
+   "name": "u",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 2490,
+   "name": "decorate",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 2577,
+   "name": "decorate",
+   "constant": true,
+   "mutated": false
+  },
+  {
+   "start": 2650,
+   "name": "decorate",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 2661,
+   "name": "other",
+   "constant": false,
+   "mutated": false
+  },
+  {
+   "start": 2704,
+   "name": "ExportedType",
+   "constant": false,
+   "mutated": false
+  }
+ ],
+ "variables": [
+  {
+   "start": 99,
+   "name": "Default",
+   "references": 1
+  },
+  {
+   "start": 119,
+   "name": "renamed",
+   "references": 2
+  },
+  {
+   "start": 133,
+   "name": "TypeOnly",
+   "references": 0
+  },
+  {
+   "start": 171,
+   "name": "namespaceImport",
+   "references": 1
+  },
+  {
+   "start": 208,
+   "name": "required",
+   "references": 1
+  },
+  {
+   "start": 407,
+   "name": "hoisted",
+   "references": 1
+  },
+  {
+   "start": 446,
+   "name": "topVar",
+   "references": 2
+  },
+  {
+   "start": 462,
+   "name": "topLet",
+   "references": 5
+  },
+  {
+   "start": 487,
+   "name": "a",
+   "references": 2
+  },
+  {
+   "start": 494,
+   "name": "c",
+   "references": 2
+  },
+  {
+   "start": 500,
+   "name": "d",
+   "references": 2
+  },
+  {
+   "start": 504,
+   "name": "e",
+   "references": 3
+  },
+  {
+   "start": 571,
+   "name": "params",
+   "references": 0
+  },
+  {
+   "start": 578,
+   "name": "p1",
+   "references": 2
+  },
+  {
+   "start": 592,
+   "name": "p2",
+   "references": 1
+  },
+  {
+   "start": 614,
+   "name": "p3",
+   "references": 2
+  },
+  {
+   "start": 626,
+   "name": "rest",
+   "references": 1
+  },
+  {
+   "start": 664,
+   "name": "hoistedVar",
+   "references": 2
+  },
+  {
+   "start": 688,
+   "name": "blockLet",
+   "references": 1
+  },
+  {
+   "start": 715,
+   "name": "blockFunction",
+   "references": 0
+  },
+  {
+   "start": 809,
+   "name": "arrow",
+   "references": 1
+  },
+  {
+   "start": 818,
+   "name": "x",
+   "references": 1
+  },
+  {
+   "start": 854,
+   "name": "single",
+   "references": 1
+  },
+  {
+   "start": 863,
+   "name": "y",
+   "references": 1
+  },
+  {
+   "start": 877,
+   "name": "named",
+   "references": 1
+  },
+  {
+   "start": 894,
+   "name": "self",
+   "references": 1
+  },
+  {
+   "start": 931,
+   "name": "Klass",
+   "references": 1
+  },
+  {
+   "start": 945,
+   "name": "Inner",
+   "references": 1
+  },
+  {
+   "start": 951,
+   "name": "T",
+   "references": 2
+  },
+  {
+   "start": 1063,
+   "name": "Declared",
+   "references": 1
+  },
+  {
+   "start": 1063,
+   "name": "Declared",
+   "references": 0
+  },
+  {
+   "start": 1072,
+   "name": "U",
+   "references": 2
+  },
+  {
+   "start": 1092,
+   "name": "staticVar",
+   "references": 1
+  },
+  {
+   "start": 1140,
+   "name": "prop",
+   "references": 0
+  },
+  {
+   "start": 1220,
+   "name": "Color",
+   "references": 0
+  },
+  {
+   "start": 1228,
+   "name": "Red",
+   "references": 1
+  },
+  {
+   "start": 1233,
+   "name": "Green",
+   "references": 0
+  },
+  {
+   "start": 1246,
+   "name": "Blue",
+   "references": 0
+  },
+  {
+   "start": 1275,
+   "name": "Space",
+   "references": 2
+  },
+  {
+   "start": 1300,
+   "name": "Inner",
+   "references": 0
+  },
+  {
+   "start": 1321,
+   "name": "inside",
+   "references": 1
+  },
+  {
+   "start": 1347,
+   "name": "T",
+   "references": 0
+  },
+  {
+   "start": 1486,
+   "name": "ambientConst",
+   "references": 0
+  },
+  {
+   "start": 1524,
+   "name": "declaredConst",
+   "references": 1
+  },
+  {
+   "start": 1593,
+   "name": "Alias",
+   "references": 1
+  },
+  {
+   "start": 1599,
+   "name": "V",
+   "references": 1
+  },
+  {
+   "start": 1626,
+   "name": "Item",
+   "references": 1
+  },
+  {
+   "start": 1654,
+   "name": "aliased",
+   "references": 0
+  },
+  {
+   "start": 1682,
+   "name": "item",
+   "references": 0
+  },
+  {
+   "start": 1698,
+   "name": "v",
+   "references": 0
+  },
+  {
+   "start": 1714,
+   "name": "Iface2",
+   "references": 2
+  },
+  {
+   "start": 1721,
+   "name": "W",
+   "references": 2
+  },
+  {
+   "start": 1731,
+   "name": "arg",
+   "references": 0
+  },
+  {
+   "start": 1749,
+   "name": "sig",
+   "references": 0
+  },
+  {
+   "start": 1774,
+   "name": "n",
+   "references": 0
+  },
+  {
+   "start": 1827,
+   "name": "mapped",
+   "references": 0
+  },
+  {
+   "start": 1838,
+   "name": "K",
+   "references": 1
+  },
+  {
+   "start": 1875,
+   "name": "k",
+   "references": 0
+  },
+  {
+   "start": 1904,
+   "name": "Fn",
+   "references": 0
+  },
+  {
+   "start": 1910,
+   "name": "fnParam",
+   "references": 0
+  },
+  {
+   "start": 1943,
+   "name": "typed",
+   "references": 0
+  },
+  {
+   "start": 1969,
+   "name": "q",
+   "references": 0
+  },
+  {
+   "start": 1985,
+   "name": "qq",
+   "references": 0
+  },
+  {
+   "start": 2041,
+   "name": "message",
+   "references": 1
+  },
+  {
+   "start": 2097,
+   "name": "key2",
+   "references": 2
+  },
+  {
+   "start": 2128,
+   "name": "i",
+   "references": 4
+  },
+  {
+   "start": 2280,
+   "name": "shorthand",
+   "references": 1
+  },
+  {
+   "start": 2380,
+   "name": "inSwitch",
+   "references": 2
+  },
+  {
+   "start": 2420,
+   "name": "u",
+   "references": 1
+  },
+  {
+   "start": 2452,
+   "name": "Decorated",
+   "references": 0
+  },
+  {
+   "start": 2452,
+   "name": "Decorated",
+   "references": 0
+  },
+  {
+   "start": 2490,
+   "name": "decorate",
+   "references": 2
+  },
+  {
+   "start": 2543,
+   "name": "WithParameterDecorators",
+   "references": 0
+  },
+  {
+   "start": 2543,
+   "name": "WithParameterDecorators",
+   "references": 0
+  },
+  {
+   "start": 2588,
+   "name": "decorate",
+   "references": 1
+  },
+  {
+   "start": 2626,
+   "name": "other",
+   "references": 1
+  },
+  {
+   "start": 2677,
+   "name": "ExportedType",
+   "references": 1
+  }
+ ]
+}

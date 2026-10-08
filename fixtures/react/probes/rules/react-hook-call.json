@@ -1,0 +1,65 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-hook-call",
+  "revision": 1,
+  "mode": "log",
+  "description": "Fact: a hook call: a call whose callee is `use`, `useX` (X an upper-case letter or digit) or `Namespace.useX` with a PascalCase namespace (rules-of-hooks' isHook). Reported at the call.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$"
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^[A-Z]"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "regex": "^use(?:[A-Z0-9][\\s\\S]*)?$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-probe/hook-call",
+        "message": "Fact"
+      }
+    }
+  ]
+}

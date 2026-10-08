@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<!-- The PHP pack's ported PHP_CodeSniffer 4.0.4 sniffs, each with its own default properties. Referencing the
+     Generic and Squiz standards instead would apply Squiz's ruleset overrides (it extends ForbiddenFunctions'
+     list with print, is_null and create_function). -->
+<ruleset name="RerailPhpPack">
+    <rule ref="Generic.CodeAnalysis.EmptyStatement"/>
+    <rule ref="Generic.PHP.BacktickOperator"/>
+    <rule ref="Generic.PHP.DeprecatedFunctions"/>
+    <rule ref="Generic.PHP.ForbiddenFunctions"/>
+    <rule ref="Generic.PHP.LowerCaseConstant"/>
+    <rule ref="Generic.PHP.NoSilencedErrors"/>
+    <rule ref="Squiz.PHP.DisallowSizeFunctionsInLoops"/>
+    <rule ref="Squiz.PHP.Eval"/>
+</ruleset>

@@ -1,0 +1,1 @@
+<template><div><template v-for="xin list"><div></div></template></div></template>

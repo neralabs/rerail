@@ -1,0 +1,45 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-hashbang",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Candidate for eslint-plugin-n 18.4.1 n/hashbang: reports every shebang line (\"This file needs no shebang.\"). Upstream decides per file whether a shebang is required from the nearest package.json's `bin` (convertPath, npmignore and additionalExecutables included) and also reports a missing or non-node shebang, BOM and CRLF in bin files; Rerail cannot read package.json, so bin files are FPs (shebang present) and FNs (shebang missing).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "needs-no-shebang",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "hash_bang_line"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/hashbang",
+        "message": "This file needs no shebang.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/hashbang"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+ "tool": "eslint-plugin-react-hooks",
+ "version": "7.1.1",
+ "source": {
+  "kind": "corpus",
+  "name": "nera-web",
+  "repository": "https://github.com/neralabs/nera-landing",
+  "commit": "10f5f49d3af5acedb5c4b24b8e2c3b820faaed28",
+  "rules": [
+   "react-hooks/rules-of-hooks",
+   "react-hooks/exhaustive-deps"
+  ],
+  "skipped": []
+ },
+ "findings": []
+}

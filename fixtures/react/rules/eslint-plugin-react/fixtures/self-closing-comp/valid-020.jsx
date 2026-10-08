@@ -1,0 +1,1 @@
+var HelloJohn = <div> </div>;

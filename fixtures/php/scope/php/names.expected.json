@@ -1,0 +1,3746 @@
+{
+    "php": "8.5.11",
+    "phpParser": "v5.9.0",
+    "extensions": [
+        "Core",
+        "FFI",
+        "PDO",
+        "PDO_ODBC",
+        "Phar",
+        "Reflection",
+        "SPL",
+        "SimpleXML",
+        "Zend OPcache",
+        "bcmath",
+        "bz2",
+        "calendar",
+        "ctype",
+        "curl",
+        "date",
+        "dba",
+        "dom",
+        "exif",
+        "fileinfo",
+        "filter",
+        "ftp",
+        "gd",
+        "gettext",
+        "gmp",
+        "hash",
+        "iconv",
+        "intl",
+        "json",
+        "ldap",
+        "lexbor",
+        "libxml",
+        "mbstring",
+        "mysqli",
+        "mysqlnd",
+        "odbc",
+        "openssl",
+        "pcntl",
+        "pcre",
+        "pdo_dblib",
+        "pdo_mysql",
+        "pdo_pgsql",
+        "pdo_sqlite",
+        "pgsql",
+        "posix",
+        "random",
+        "readline",
+        "session",
+        "shmop",
+        "snmp",
+        "soap",
+        "sockets",
+        "sodium",
+        "sqlite3",
+        "standard",
+        "sysvmsg",
+        "sysvsem",
+        "sysvshm",
+        "tidy",
+        "tokenizer",
+        "uri",
+        "xml",
+        "xmlreader",
+        "xmlwriter",
+        "xsl",
+        "zip",
+        "zlib"
+    ],
+    "files": {
+        "braced_namespaces.php": [
+            {
+                "start": 249,
+                "end": 253,
+                "text": "Item",
+                "kind": "class",
+                "resolved": "Shop\\Cart\\Item"
+            },
+            {
+                "start": 299,
+                "end": 309,
+                "text": "Calculator",
+                "kind": "class",
+                "resolved": "Shop\\Pricing\\Calculator"
+            },
+            {
+                "start": 321,
+                "end": 332,
+                "text": "round_price",
+                "kind": "function",
+                "resolved": "Shop\\Pricing\\round_price"
+            },
+            {
+                "start": 364,
+                "end": 372,
+                "text": "add_item",
+                "kind": "function",
+                "namespaced": "Shop\\Cart\\add_item",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 389,
+                "end": 400,
+                "text": "remove_item",
+                "kind": "function",
+                "namespaced": "Shop\\Cart\\remove_item",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 417,
+                "end": 426,
+                "text": "array_map",
+                "kind": "function",
+                "namespaced": "Shop\\Cart\\array_map",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 453,
+                "end": 461,
+                "text": "CURRENCY",
+                "kind": "constant",
+                "resolved": "Shop\\Pricing\\CURRENCY"
+            },
+            {
+                "start": 463,
+                "end": 471,
+                "text": "TAX_RATE",
+                "kind": "constant",
+                "namespaced": "Shop\\Cart\\TAX_RATE",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 473,
+                "end": 485,
+                "text": "PHP_INT_SIZE",
+                "kind": "constant",
+                "namespaced": "Shop\\Cart\\PHP_INT_SIZE",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 487,
+                "end": 497,
+                "text": "CART_LIMIT",
+                "kind": "constant",
+                "namespaced": "Shop\\Cart\\CART_LIMIT",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 537,
+                "end": 543,
+                "text": "define",
+                "kind": "function",
+                "namespaced": "Shop\\Cart\\define",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 623,
+                "end": 633,
+                "text": "Calculator",
+                "kind": "class",
+                "resolved": "Shop\\Checkout\\Calculator"
+            },
+            {
+                "start": 641,
+                "end": 652,
+                "text": "round_price",
+                "kind": "function",
+                "namespaced": "Shop\\Checkout\\round_price",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 663,
+                "end": 671,
+                "text": "add_item",
+                "kind": "function",
+                "namespaced": "Shop\\Checkout\\add_item",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 672,
+                "end": 676,
+                "text": "null",
+                "kind": "constant",
+                "namespaced": "Shop\\Checkout\\null",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 683,
+                "end": 702,
+                "text": "\\Shop\\Cart\\add_item",
+                "kind": "function",
+                "resolved": "Shop\\Cart\\add_item"
+            },
+            {
+                "start": 703,
+                "end": 707,
+                "text": "null",
+                "kind": "constant",
+                "namespaced": "Shop\\Checkout\\null",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 719,
+                "end": 727,
+                "text": "CURRENCY",
+                "kind": "constant",
+                "namespaced": "Shop\\Checkout\\CURRENCY",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 729,
+                "end": 739,
+                "text": "CART_LIMIT",
+                "kind": "constant",
+                "namespaced": "Shop\\Checkout\\CART_LIMIT",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 741,
+                "end": 749,
+                "text": "TAX_RATE",
+                "kind": "constant",
+                "namespaced": "Shop\\Checkout\\TAX_RATE",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 751,
+                "end": 755,
+                "text": "M_PI",
+                "kind": "constant",
+                "namespaced": "Shop\\Checkout\\M_PI",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 813,
+                "end": 817,
+                "text": "Item",
+                "kind": "class",
+                "resolved": "Shop\\Cart\\Item"
+            },
+            {
+                "start": 825,
+                "end": 833,
+                "text": "add_item",
+                "kind": "function",
+                "resolved": "add_item"
+            },
+            {
+                "start": 846,
+                "end": 864,
+                "text": "Shop\\Cart\\add_item",
+                "kind": "function",
+                "resolved": "Shop\\Cart\\add_item"
+            },
+            {
+                "start": 882,
+                "end": 902,
+                "text": "Shop\\Cart\\CART_LIMIT",
+                "kind": "constant",
+                "resolved": "Shop\\Cart\\CART_LIMIT"
+            },
+            {
+                "start": 904,
+                "end": 914,
+                "text": "CART_LIMIT",
+                "kind": "constant",
+                "resolved": "CART_LIMIT"
+            },
+            {
+                "start": 916,
+                "end": 922,
+                "text": "PHP_OS",
+                "kind": "constant",
+                "resolved": "PHP_OS"
+            },
+            {
+                "start": 940,
+                "end": 948,
+                "text": "DateTime",
+                "kind": "class",
+                "resolved": "DateTime"
+            }
+        ],
+        "constructs.php": [
+            {
+                "start": 188,
+                "end": 203,
+                "text": "namespace\\Local",
+                "kind": "class",
+                "resolved": "Constructs\\Local"
+            },
+            {
+                "start": 205,
+                "end": 213,
+                "text": "T\\Marker",
+                "kind": "class",
+                "resolved": "Library\\Tools\\Marker"
+            },
+            {
+                "start": 321,
+                "end": 327,
+                "text": "PREFIX",
+                "kind": "constant",
+                "namespaced": "Constructs\\PREFIX",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 398,
+                "end": 408,
+                "text": "strtoupper",
+                "kind": "function",
+                "namespaced": "Constructs\\strtoupper",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 748,
+                "end": 772,
+                "text": "__COMPILER_HALT_OFFSET__",
+                "kind": "constant",
+                "namespaced": "Constructs\\__COMPILER_HALT_OFFSET__",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 798,
+                "end": 801,
+                "text": "KEY",
+                "kind": "constant",
+                "namespaced": "Constructs\\KEY",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 819,
+                "end": 828,
+                "text": "OTHER_KEY",
+                "kind": "constant",
+                "namespaced": "Constructs\\OTHER_KEY",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 858,
+                "end": 865,
+                "text": "REMOVED",
+                "kind": "constant",
+                "namespaced": "Constructs\\REMOVED",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 977,
+                "end": 982,
+                "text": "VALUE",
+                "kind": "constant",
+                "namespaced": "Constructs\\VALUE",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 1023,
+                "end": 1027,
+                "text": "FLAG",
+                "kind": "constant",
+                "namespaced": "Constructs\\FLAG",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 1139,
+                "end": 1145,
+                "text": "static",
+                "kind": "class",
+                "resolved": "static",
+                "special": true
+            },
+            {
+                "start": 1155,
+                "end": 1156,
+                "text": "T",
+                "kind": "class",
+                "resolved": "Library\\Tools"
+            },
+            {
+                "start": 1185,
+                "end": 1186,
+                "text": "T",
+                "kind": "class",
+                "resolved": "Library\\Tools"
+            },
+            {
+                "start": 1220,
+                "end": 1221,
+                "text": "T",
+                "kind": "class",
+                "resolved": "Library\\Tools"
+            },
+            {
+                "start": 1373,
+                "end": 1376,
+                "text": "KEY",
+                "kind": "constant",
+                "namespaced": "Constructs\\KEY",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 1380,
+                "end": 1385,
+                "text": "VALUE",
+                "kind": "constant",
+                "namespaced": "Constructs\\VALUE",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 1410,
+                "end": 1417,
+                "text": "T\\items",
+                "kind": "function",
+                "resolved": "Library\\Tools\\items"
+            },
+            {
+                "start": 1462,
+                "end": 1474,
+                "text": "LIBRARY_PATH",
+                "kind": "constant",
+                "namespaced": "Constructs\\LIBRARY_PATH",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 1555,
+                "end": 1562,
+                "text": "MESSAGE",
+                "kind": "constant",
+                "namespaced": "Constructs\\MESSAGE",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 1628,
+                "end": 1640,
+                "text": "array_filter",
+                "kind": "function",
+                "namespaced": "Constructs\\array_filter",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 1665,
+                "end": 1669,
+                "text": "null",
+                "kind": "constant",
+                "namespaced": "Constructs\\null",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 1677,
+                "end": 1697,
+                "text": "ARRAY_FILTER_USE_KEY",
+                "kind": "constant",
+                "namespaced": "Constructs\\ARRAY_FILTER_USE_KEY",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 1728,
+                "end": 1739,
+                "text": "SHELL_INDEX",
+                "kind": "constant",
+                "namespaced": "Constructs\\SHELL_INDEX",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 1911,
+                "end": 1915,
+                "text": "true",
+                "kind": "constant",
+                "namespaced": "Constructs\\true",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 1949,
+                "end": 1956,
+                "text": "T\\Thing",
+                "kind": "class",
+                "resolved": "Library\\Tools\\Thing"
+            },
+            {
+                "start": 1960,
+                "end": 1967,
+                "text": "T\\Thing",
+                "kind": "class",
+                "resolved": "Library\\Tools\\Thing"
+            },
+            {
+                "start": 2016,
+                "end": 2031,
+                "text": "\\LogicException",
+                "kind": "class",
+                "resolved": "LogicException"
+            },
+            {
+                "start": 2032,
+                "end": 2039,
+                "text": "MESSAGE",
+                "kind": "constant",
+                "namespaced": "Constructs\\MESSAGE",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 2101,
+                "end": 2108,
+                "text": "T\\LIMIT",
+                "kind": "constant",
+                "resolved": "Library\\Tools\\LIMIT"
+            },
+            {
+                "start": 2173,
+                "end": 2181,
+                "text": "Contract",
+                "kind": "class",
+                "resolved": "Constructs\\Contract"
+            },
+            {
+                "start": 2276,
+                "end": 2280,
+                "text": "Suit",
+                "kind": "class",
+                "resolved": "Constructs\\Suit"
+            },
+            {
+                "start": 2292,
+                "end": 2295,
+                "text": "RED",
+                "kind": "constant",
+                "namespaced": "Constructs\\RED",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 2309,
+                "end": 2313,
+                "text": "self",
+                "kind": "class",
+                "resolved": "self",
+                "special": true
+            },
+            {
+                "start": 2325,
+                "end": 2330,
+                "text": "BLACK",
+                "kind": "constant",
+                "namespaced": "Constructs\\BLACK",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 2369,
+                "end": 2373,
+                "text": "Suit",
+                "kind": "class",
+                "resolved": "Constructs\\Suit"
+            },
+            {
+                "start": 2391,
+                "end": 2398,
+                "text": "T\\Other",
+                "kind": "class",
+                "resolved": "Library\\Tools\\Other"
+            },
+            {
+                "start": 2442,
+                "end": 2451,
+                "text": "exit_code",
+                "kind": "function",
+                "namespaced": "Constructs\\exit_code",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 2458,
+                "end": 2474,
+                "text": "\\Constructs\\enum",
+                "kind": "function",
+                "resolved": "Constructs\\enum"
+            },
+            {
+                "start": 2482,
+                "end": 2490,
+                "text": "DIE_CODE",
+                "kind": "constant",
+                "namespaced": "Constructs\\DIE_CODE",
+                "declared": false,
+                "builtin": false
+            }
+        ],
+        "declarations_case.php": [
+            {
+                "start": 218,
+                "end": 224,
+                "text": "define",
+                "kind": "function",
+                "namespaced": "Mixed\\Case\\define",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 257,
+                "end": 263,
+                "text": "define",
+                "kind": "function",
+                "namespaced": "Mixed\\Case\\define",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 297,
+                "end": 305,
+                "text": "declared",
+                "kind": "function",
+                "namespaced": "Mixed\\Case\\declared",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 309,
+                "end": 317,
+                "text": "DECLARED",
+                "kind": "function",
+                "namespaced": "Mixed\\Case\\DECLARED",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 321,
+                "end": 329,
+                "text": "Declared",
+                "kind": "function",
+                "namespaced": "Mixed\\Case\\Declared",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 338,
+                "end": 355,
+                "text": "Declared_Constant",
+                "kind": "constant",
+                "namespaced": "Mixed\\Case\\Declared_Constant",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 357,
+                "end": 374,
+                "text": "DECLARED_CONSTANT",
+                "kind": "constant",
+                "namespaced": "Mixed\\Case\\DECLARED_CONSTANT",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 376,
+                "end": 393,
+                "text": "declared_constant",
+                "kind": "constant",
+                "namespaced": "Mixed\\Case\\declared_constant",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 400,
+                "end": 413,
+                "text": "Defined_Lower",
+                "kind": "constant",
+                "namespaced": "Mixed\\Case\\Defined_Lower",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 415,
+                "end": 428,
+                "text": "defined_lower",
+                "kind": "constant",
+                "namespaced": "Mixed\\Case\\defined_lower",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 430,
+                "end": 443,
+                "text": "DEFINED_UPPER",
+                "kind": "constant",
+                "namespaced": "Mixed\\Case\\DEFINED_UPPER",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 445,
+                "end": 458,
+                "text": "Defined_Upper",
+                "kind": "constant",
+                "namespaced": "Mixed\\Case\\Defined_Upper",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 465,
+                "end": 494,
+                "text": "\\Mixed\\Case\\Declared_Constant",
+                "kind": "constant",
+                "resolved": "Mixed\\Case\\Declared_Constant"
+            },
+            {
+                "start": 496,
+                "end": 525,
+                "text": "\\MIXED\\CASE\\Declared_Constant",
+                "kind": "constant",
+                "resolved": "MIXED\\CASE\\Declared_Constant"
+            },
+            {
+                "start": 527,
+                "end": 547,
+                "text": "\\mixed\\case\\declared",
+                "kind": "function",
+                "resolved": "mixed\\case\\declared"
+            },
+            {
+                "start": 551,
+                "end": 571,
+                "text": "\\Mixed\\Case\\Declared",
+                "kind": "function",
+                "resolved": "Mixed\\Case\\Declared"
+            }
+        ],
+        "define_alias.php": [
+            {
+                "start": 214,
+                "end": 217,
+                "text": "def",
+                "kind": "function",
+                "resolved": "define"
+            },
+            {
+                "start": 237,
+                "end": 240,
+                "text": "DEF",
+                "kind": "function",
+                "resolved": "define"
+            },
+            {
+                "start": 266,
+                "end": 272,
+                "text": "define",
+                "kind": "function",
+                "resolved": "Other\\define"
+            },
+            {
+                "start": 299,
+                "end": 306,
+                "text": "ALIASED",
+                "kind": "constant",
+                "namespaced": "App\\ALIASED",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 308,
+                "end": 321,
+                "text": "ALIASED_UPPER",
+                "kind": "constant",
+                "namespaced": "App\\ALIASED_UPPER",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 323,
+                "end": 331,
+                "text": "SHADOWED",
+                "kind": "constant",
+                "namespaced": "App\\SHADOWED",
+                "declared": false,
+                "builtin": false
+            }
+        ],
+        "fallback.php": [
+            {
+                "start": 297,
+                "end": 301,
+                "text": "true",
+                "kind": "constant",
+                "namespaced": "App\\true",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 431,
+                "end": 437,
+                "text": "define",
+                "kind": "function",
+                "namespaced": "App\\define",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 457,
+                "end": 463,
+                "text": "define",
+                "kind": "function",
+                "namespaced": "App\\define",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 490,
+                "end": 497,
+                "text": "\\define",
+                "kind": "function",
+                "resolved": "define"
+            },
+            {
+                "start": 517,
+                "end": 523,
+                "text": "define",
+                "kind": "function",
+                "namespaced": "App\\define",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 547,
+                "end": 553,
+                "text": "define",
+                "kind": "function",
+                "namespaced": "App\\define",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 576,
+                "end": 582,
+                "text": "define",
+                "kind": "function",
+                "namespaced": "App\\define",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 594,
+                "end": 600,
+                "text": "define",
+                "kind": "function",
+                "namespaced": "App\\define",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 625,
+                "end": 631,
+                "text": "define",
+                "kind": "function",
+                "namespaced": "App\\define",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 672,
+                "end": 676,
+                "text": "exec",
+                "kind": "function",
+                "namespaced": "App\\exec",
+                "declared": true,
+                "builtin": true
+            },
+            {
+                "start": 684,
+                "end": 688,
+                "text": "EXEC",
+                "kind": "function",
+                "namespaced": "App\\EXEC",
+                "declared": true,
+                "builtin": true
+            },
+            {
+                "start": 696,
+                "end": 702,
+                "text": "helper",
+                "kind": "function",
+                "namespaced": "App\\helper",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 706,
+                "end": 719,
+                "text": "nested_helper",
+                "kind": "function",
+                "namespaced": "App\\nested_helper",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 723,
+                "end": 741,
+                "text": "conditional_helper",
+                "kind": "function",
+                "namespaced": "App\\conditional_helper",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 745,
+                "end": 751,
+                "text": "system",
+                "kind": "function",
+                "namespaced": "App\\system",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 759,
+                "end": 769,
+                "text": "shell_exec",
+                "kind": "function",
+                "namespaced": "App\\shell_exec",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 777,
+                "end": 785,
+                "text": "passthru",
+                "kind": "function",
+                "namespaced": "App\\passthru",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 793,
+                "end": 799,
+                "text": "STRLEN",
+                "kind": "function",
+                "namespaced": "App\\STRLEN",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 808,
+                "end": 824,
+                "text": "missing_function",
+                "kind": "function",
+                "namespaced": "App\\missing_function",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 828,
+                "end": 835,
+                "text": "Closure",
+                "kind": "class",
+                "resolved": "App\\Closure"
+            },
+            {
+                "start": 865,
+                "end": 873,
+                "text": "APP_NAME",
+                "kind": "constant",
+                "namespaced": "App\\APP_NAME",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 875,
+                "end": 880,
+                "text": "FIRST",
+                "kind": "constant",
+                "namespaced": "App\\FIRST",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 882,
+                "end": 888,
+                "text": "SECOND",
+                "kind": "constant",
+                "namespaced": "App\\SECOND",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 890,
+                "end": 897,
+                "text": "DEFINED",
+                "kind": "constant",
+                "namespaced": "App\\DEFINED",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 899,
+                "end": 912,
+                "text": "DEFINED_UPPER",
+                "kind": "constant",
+                "namespaced": "App\\DEFINED_UPPER",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 914,
+                "end": 921,
+                "text": "LEADING",
+                "kind": "constant",
+                "namespaced": "App\\LEADING",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 923,
+                "end": 932,
+                "text": "ELSEWHERE",
+                "kind": "constant",
+                "namespaced": "App\\ELSEWHERE",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 934,
+                "end": 948,
+                "text": "GLOBAL_DEFINED",
+                "kind": "constant",
+                "namespaced": "App\\GLOBAL_DEFINED",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 950,
+                "end": 956,
+                "text": "CONCAT",
+                "kind": "constant",
+                "namespaced": "App\\CONCAT",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 963,
+                "end": 970,
+                "text": "PHP_EOL",
+                "kind": "constant",
+                "namespaced": "App\\PHP_EOL",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 972,
+                "end": 979,
+                "text": "php_eol",
+                "kind": "constant",
+                "namespaced": "App\\php_eol",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 981,
+                "end": 986,
+                "text": "E_ALL",
+                "kind": "constant",
+                "namespaced": "App\\E_ALL",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 988,
+                "end": 992,
+                "text": "M_PI",
+                "kind": "constant",
+                "namespaced": "App\\M_PI",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 994,
+                "end": 1013,
+                "text": "DIRECTORY_SEPARATOR",
+                "kind": "constant",
+                "namespaced": "App\\DIRECTORY_SEPARATOR",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 1015,
+                "end": 1026,
+                "text": "PHP_INT_MAX",
+                "kind": "constant",
+                "namespaced": "App\\PHP_INT_MAX",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 1028,
+                "end": 1039,
+                "text": "SORT_STRING",
+                "kind": "constant",
+                "namespaced": "App\\SORT_STRING",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 1046,
+                "end": 1062,
+                "text": "MISSING_CONSTANT",
+                "kind": "constant",
+                "namespaced": "App\\MISSING_CONSTANT",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 1064,
+                "end": 1072,
+                "text": "app_name",
+                "kind": "constant",
+                "namespaced": "App\\app_name",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 1074,
+                "end": 1079,
+                "text": "NAMED",
+                "kind": "constant",
+                "namespaced": "App\\NAMED",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 1086,
+                "end": 1090,
+                "text": "true",
+                "kind": "constant",
+                "namespaced": "App\\true",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 1092,
+                "end": 1096,
+                "text": "TRUE",
+                "kind": "constant",
+                "namespaced": "App\\TRUE",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 1098,
+                "end": 1103,
+                "text": "false",
+                "kind": "constant",
+                "namespaced": "App\\false",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 1105,
+                "end": 1109,
+                "text": "null",
+                "kind": "constant",
+                "namespaced": "App\\null",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 1111,
+                "end": 1115,
+                "text": "Null",
+                "kind": "constant",
+                "namespaced": "App\\Null",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 1180,
+                "end": 1184,
+                "text": "exec",
+                "kind": "function",
+                "namespaced": "App\\exec",
+                "declared": true,
+                "builtin": true
+            },
+            {
+                "start": 1227,
+                "end": 1233,
+                "text": "static",
+                "kind": "class",
+                "resolved": "static",
+                "special": true
+            },
+            {
+                "start": 1272,
+                "end": 1276,
+                "text": "exec",
+                "kind": "function",
+                "namespaced": "App\\Sub\\exec",
+                "declared": true,
+                "builtin": true
+            },
+            {
+                "start": 1284,
+                "end": 1290,
+                "text": "helper",
+                "kind": "function",
+                "namespaced": "App\\Sub\\helper",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 1299,
+                "end": 1307,
+                "text": "APP_NAME",
+                "kind": "constant",
+                "namespaced": "App\\Sub\\APP_NAME",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 1309,
+                "end": 1316,
+                "text": "DEFINED",
+                "kind": "constant",
+                "namespaced": "App\\Sub\\DEFINED",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 1318,
+                "end": 1325,
+                "text": "PHP_EOL",
+                "kind": "constant",
+                "namespaced": "App\\Sub\\PHP_EOL",
+                "declared": false,
+                "builtin": true
+            }
+        ],
+        "global.php": [
+            {
+                "start": 341,
+                "end": 347,
+                "text": "Client",
+                "kind": "class",
+                "resolved": "Vendor\\Package\\Client"
+            },
+            {
+                "start": 364,
+                "end": 374,
+                "text": "HttpClient",
+                "kind": "class",
+                "resolved": "Vendor\\Package\\Client"
+            },
+            {
+                "start": 391,
+                "end": 396,
+                "text": "Plain",
+                "kind": "class",
+                "resolved": "Plain"
+            },
+            {
+                "start": 412,
+                "end": 434,
+                "text": "\\Vendor\\Package\\Server",
+                "kind": "class",
+                "resolved": "Vendor\\Package\\Server"
+            },
+            {
+                "start": 455,
+                "end": 467,
+                "text": "Tools\\Hammer",
+                "kind": "class",
+                "resolved": "Vendor\\Tools\\Hammer"
+            },
+            {
+                "start": 488,
+                "end": 494,
+                "text": "CLIENT",
+                "kind": "class",
+                "resolved": "Vendor\\Package\\Client"
+            },
+            {
+                "start": 514,
+                "end": 529,
+                "text": "namespace\\Local",
+                "kind": "class",
+                "resolved": "Local"
+            },
+            {
+                "start": 547,
+                "end": 562,
+                "text": "Some\\Deep\\Thing",
+                "kind": "class",
+                "resolved": "Some\\Deep\\Thing"
+            },
+            {
+                "start": 567,
+                "end": 571,
+                "text": "exec",
+                "kind": "function",
+                "resolved": "exec"
+            },
+            {
+                "start": 579,
+                "end": 584,
+                "text": "\\exec",
+                "kind": "function",
+                "resolved": "exec"
+            },
+            {
+                "start": 593,
+                "end": 597,
+                "text": "EXEC",
+                "kind": "function",
+                "resolved": "EXEC"
+            },
+            {
+                "start": 605,
+                "end": 611,
+                "text": "strlen",
+                "kind": "function",
+                "resolved": "strlen"
+            },
+            {
+                "start": 620,
+                "end": 626,
+                "text": "render",
+                "kind": "function",
+                "resolved": "Vendor\\Helpers\\render"
+            },
+            {
+                "start": 636,
+                "end": 642,
+                "text": "RENDER",
+                "kind": "function",
+                "resolved": "Vendor\\Helpers\\render"
+            },
+            {
+                "start": 653,
+                "end": 662,
+                "text": "my_helper",
+                "kind": "function",
+                "resolved": "my_helper"
+            },
+            {
+                "start": 666,
+                "end": 678,
+                "text": "Tools\\helper",
+                "kind": "function",
+                "resolved": "Vendor\\Tools\\helper"
+            },
+            {
+                "start": 682,
+                "end": 704,
+                "text": "namespace\\local_helper",
+                "kind": "function",
+                "resolved": "local_helper"
+            },
+            {
+                "start": 708,
+                "end": 730,
+                "text": "\\Vendor\\Helpers\\render",
+                "kind": "function",
+                "resolved": "Vendor\\Helpers\\render"
+            },
+            {
+                "start": 746,
+                "end": 753,
+                "text": "PHP_EOL",
+                "kind": "constant",
+                "resolved": "PHP_EOL"
+            },
+            {
+                "start": 760,
+                "end": 768,
+                "text": "\\PHP_EOL",
+                "kind": "constant",
+                "resolved": "PHP_EOL"
+            },
+            {
+                "start": 775,
+                "end": 780,
+                "text": "LEVEL",
+                "kind": "constant",
+                "resolved": "Vendor\\Config\\LEVEL"
+            },
+            {
+                "start": 787,
+                "end": 792,
+                "text": "level",
+                "kind": "constant",
+                "resolved": "level"
+            },
+            {
+                "start": 799,
+                "end": 810,
+                "text": "MY_CONSTANT",
+                "kind": "constant",
+                "resolved": "MY_CONSTANT"
+            },
+            {
+                "start": 817,
+                "end": 828,
+                "text": "Tools\\LIMIT",
+                "kind": "constant",
+                "resolved": "Vendor\\Tools\\LIMIT"
+            },
+            {
+                "start": 835,
+                "end": 856,
+                "text": "namespace\\LOCAL_LIMIT",
+                "kind": "constant",
+                "resolved": "LOCAL_LIMIT"
+            },
+            {
+                "start": 863,
+                "end": 868,
+                "text": "E_ALL",
+                "kind": "constant",
+                "resolved": "E_ALL"
+            },
+            {
+                "start": 871,
+                "end": 879,
+                "text": "E_STRICT",
+                "kind": "constant",
+                "resolved": "E_STRICT"
+            },
+            {
+                "start": 881,
+                "end": 889,
+                "text": "var_dump",
+                "kind": "function",
+                "resolved": "var_dump"
+            },
+            {
+                "start": 890,
+                "end": 894,
+                "text": "true",
+                "kind": "constant",
+                "resolved": "true"
+            },
+            {
+                "start": 896,
+                "end": 901,
+                "text": "false",
+                "kind": "constant",
+                "resolved": "false"
+            },
+            {
+                "start": 903,
+                "end": 907,
+                "text": "null",
+                "kind": "constant",
+                "resolved": "null"
+            },
+            {
+                "start": 909,
+                "end": 913,
+                "text": "TRUE",
+                "kind": "constant",
+                "resolved": "TRUE"
+            },
+            {
+                "start": 915,
+                "end": 920,
+                "text": "False",
+                "kind": "constant",
+                "resolved": "False"
+            },
+            {
+                "start": 922,
+                "end": 926,
+                "text": "NULL",
+                "kind": "constant",
+                "resolved": "NULL"
+            },
+            {
+                "start": 928,
+                "end": 933,
+                "text": "\\true",
+                "kind": "constant",
+                "resolved": "true"
+            },
+            {
+                "start": 935,
+                "end": 940,
+                "text": "\\null",
+                "kind": "constant",
+                "resolved": "null"
+            },
+            {
+                "start": 969,
+                "end": 975,
+                "text": "Client",
+                "kind": "class",
+                "resolved": "Vendor\\Package\\Client"
+            },
+            {
+                "start": 981,
+                "end": 986,
+                "text": "Plain",
+                "kind": "class",
+                "resolved": "Plain"
+            },
+            {
+                "start": 1006,
+                "end": 1018,
+                "text": "Tools\\Wrench",
+                "kind": "class",
+                "resolved": "Vendor\\Tools\\Wrench"
+            },
+            {
+                "start": 1024,
+                "end": 1034,
+                "text": "HttpClient",
+                "kind": "class",
+                "resolved": "Vendor\\Package\\Client"
+            },
+            {
+                "start": 1085,
+                "end": 1096,
+                "text": "PHP_INT_MAX",
+                "kind": "constant",
+                "resolved": "PHP_INT_MAX"
+            },
+            {
+                "start": 1122,
+                "end": 1128,
+                "text": "Client",
+                "kind": "class",
+                "resolved": "Vendor\\Package\\Client"
+            },
+            {
+                "start": 1151,
+                "end": 1163,
+                "text": "\\Other\\Thing",
+                "kind": "class",
+                "resolved": "Other\\Thing"
+            },
+            {
+                "start": 1171,
+                "end": 1177,
+                "text": "Client",
+                "kind": "class",
+                "resolved": "Vendor\\Package\\Client"
+            },
+            {
+                "start": 1193,
+                "end": 1199,
+                "text": "Client",
+                "kind": "class",
+                "resolved": "Vendor\\Package\\Client"
+            },
+            {
+                "start": 1216,
+                "end": 1221,
+                "text": "Tools",
+                "kind": "class",
+                "resolved": "Vendor\\Tools"
+            },
+            {
+                "start": 1241,
+                "end": 1247,
+                "text": "Client",
+                "kind": "class",
+                "resolved": "Vendor\\Package\\Client"
+            },
+            {
+                "start": 1256,
+                "end": 1278,
+                "text": "\\Vendor\\Package\\Client",
+                "kind": "class",
+                "resolved": "Vendor\\Package\\Client"
+            }
+        ],
+        "positions.php": [
+            {
+                "start": 241,
+                "end": 246,
+                "text": "Route",
+                "kind": "class",
+                "resolved": "Framework\\Attributes\\Route"
+            },
+            {
+                "start": 253,
+                "end": 281,
+                "text": "\\Framework\\Attributes\\Cached",
+                "kind": "class",
+                "resolved": "Framework\\Attributes\\Cached"
+            },
+            {
+                "start": 285,
+                "end": 295,
+                "text": "Deprecated",
+                "kind": "class",
+                "resolved": "Positions\\Deprecated"
+            },
+            {
+                "start": 328,
+                "end": 332,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Framework\\Base"
+            },
+            {
+                "start": 344,
+                "end": 353,
+                "text": "Arrayable",
+                "kind": "class",
+                "resolved": "Framework\\Contracts\\Arrayable"
+            },
+            {
+                "start": 355,
+                "end": 372,
+                "text": "\\JsonSerializable",
+                "kind": "class",
+                "resolved": "JsonSerializable"
+            },
+            {
+                "start": 374,
+                "end": 389,
+                "text": "Contracts\\Local",
+                "kind": "class",
+                "resolved": "Positions\\Contracts\\Local"
+            },
+            {
+                "start": 400,
+                "end": 409,
+                "text": "HasEvents",
+                "kind": "class",
+                "resolved": "Framework\\Traits\\HasEvents"
+            },
+            {
+                "start": 411,
+                "end": 420,
+                "text": "HasMacros",
+                "kind": "class",
+                "resolved": "Framework\\Traits\\HasMacros"
+            },
+            {
+                "start": 431,
+                "end": 440,
+                "text": "HasEvents",
+                "kind": "class",
+                "resolved": "Framework\\Traits\\HasEvents"
+            },
+            {
+                "start": 457,
+                "end": 466,
+                "text": "HasMacros",
+                "kind": "class",
+                "resolved": "Framework\\Traits\\HasMacros"
+            },
+            {
+                "start": 476,
+                "end": 485,
+                "text": "HasMacros",
+                "kind": "class",
+                "resolved": "Framework\\Traits\\HasMacros"
+            },
+            {
+                "start": 562,
+                "end": 578,
+                "text": "Concerns\\Logging",
+                "kind": "class",
+                "resolved": "Positions\\Concerns\\Logging"
+            },
+            {
+                "start": 610,
+                "end": 623,
+                "text": "DEFAULT_LIMIT",
+                "kind": "constant",
+                "namespaced": "Positions\\DEFAULT_LIMIT",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 643,
+                "end": 647,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Framework\\Base"
+            },
+            {
+                "start": 659,
+                "end": 663,
+                "text": "null",
+                "kind": "constant",
+                "namespaced": "Positions\\null",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 671,
+                "end": 679,
+                "text": "Constant",
+                "kind": "class",
+                "resolved": "Positions\\Constant"
+            },
+            {
+                "start": 708,
+                "end": 717,
+                "text": "Arrayable",
+                "kind": "class",
+                "resolved": "Framework\\Contracts\\Arrayable"
+            },
+            {
+                "start": 726,
+                "end": 734,
+                "text": "Jsonable",
+                "kind": "class",
+                "resolved": "Framework\\Contracts\\Jsonable"
+            },
+            {
+                "start": 745,
+                "end": 753,
+                "text": "SORT_ASC",
+                "kind": "constant",
+                "namespaced": "Positions\\SORT_ASC",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 763,
+                "end": 769,
+                "text": "Inject",
+                "kind": "class",
+                "resolved": "Positions\\Inject"
+            },
+            {
+                "start": 783,
+                "end": 792,
+                "text": "Arrayable",
+                "kind": "class",
+                "resolved": "Framework\\Contracts\\Arrayable"
+            },
+            {
+                "start": 802,
+                "end": 806,
+                "text": "null",
+                "kind": "constant",
+                "namespaced": "Positions\\null",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 822,
+                "end": 831,
+                "text": "Arrayable",
+                "kind": "class",
+                "resolved": "Framework\\Contracts\\Arrayable"
+            },
+            {
+                "start": 832,
+                "end": 840,
+                "text": "Jsonable",
+                "kind": "class",
+                "resolved": "Framework\\Contracts\\Jsonable"
+            },
+            {
+                "start": 861,
+                "end": 870,
+                "text": "Arrayable",
+                "kind": "class",
+                "resolved": "Framework\\Contracts\\Arrayable"
+            },
+            {
+                "start": 871,
+                "end": 879,
+                "text": "Jsonable",
+                "kind": "class",
+                "resolved": "Framework\\Contracts\\Jsonable"
+            },
+            {
+                "start": 881,
+                "end": 885,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Framework\\Base"
+            },
+            {
+                "start": 898,
+                "end": 902,
+                "text": "null",
+                "kind": "constant",
+                "namespaced": "Positions\\null",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 922,
+                "end": 926,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Framework\\Base"
+            },
+            {
+                "start": 987,
+                "end": 996,
+                "text": "Sensitive",
+                "kind": "class",
+                "resolved": "Positions\\Sensitive"
+            },
+            {
+                "start": 1015,
+                "end": 1019,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Framework\\Base"
+            },
+            {
+                "start": 1042,
+                "end": 1051,
+                "text": "Arrayable",
+                "kind": "class",
+                "resolved": "Framework\\Contracts\\Arrayable"
+            },
+            {
+                "start": 1068,
+                "end": 1073,
+                "text": "LIMIT",
+                "kind": "constant",
+                "namespaced": "Positions\\LIMIT",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 1083,
+                "end": 1091,
+                "text": "Jsonable",
+                "kind": "class",
+                "resolved": "Framework\\Contracts\\Jsonable"
+            },
+            {
+                "start": 1123,
+                "end": 1128,
+                "text": "Route",
+                "kind": "class",
+                "resolved": "Framework\\Attributes\\Route"
+            },
+            {
+                "start": 1174,
+                "end": 1178,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Framework\\Base"
+            },
+            {
+                "start": 1187,
+                "end": 1191,
+                "text": "null",
+                "kind": "constant",
+                "namespaced": "Positions\\null",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 1206,
+                "end": 1218,
+                "text": "MODE_DEFAULT",
+                "kind": "constant",
+                "namespaced": "Positions\\MODE_DEFAULT",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 1222,
+                "end": 1230,
+                "text": "Jsonable",
+                "kind": "class",
+                "resolved": "Framework\\Contracts\\Jsonable"
+            },
+            {
+                "start": 1320,
+                "end": 1324,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Framework\\Base"
+            },
+            {
+                "start": 1341,
+                "end": 1347,
+                "text": "COLUMN",
+                "kind": "constant",
+                "namespaced": "Positions\\COLUMN",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 1388,
+                "end": 1397,
+                "text": "Arrayable",
+                "kind": "class",
+                "resolved": "Framework\\Contracts\\Arrayable"
+            },
+            {
+                "start": 1413,
+                "end": 1417,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Framework\\Base"
+            },
+            {
+                "start": 1447,
+                "end": 1451,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Framework\\Base"
+            },
+            {
+                "start": 1495,
+                "end": 1503,
+                "text": "Jsonable",
+                "kind": "class",
+                "resolved": "Framework\\Contracts\\Jsonable"
+            },
+            {
+                "start": 1509,
+                "end": 1518,
+                "text": "Arrayable",
+                "kind": "class",
+                "resolved": "Framework\\Contracts\\Arrayable"
+            },
+            {
+                "start": 1569,
+                "end": 1573,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Framework\\Base"
+            },
+            {
+                "start": 1584,
+                "end": 1588,
+                "text": "self",
+                "kind": "class",
+                "resolved": "self",
+                "special": true
+            },
+            {
+                "start": 1628,
+                "end": 1637,
+                "text": "Anonymous",
+                "kind": "class",
+                "resolved": "Positions\\Anonymous"
+            },
+            {
+                "start": 1659,
+                "end": 1663,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Framework\\Base"
+            },
+            {
+                "start": 1675,
+                "end": 1684,
+                "text": "Arrayable",
+                "kind": "class",
+                "resolved": "Framework\\Contracts\\Arrayable"
+            },
+            {
+                "start": 1737,
+                "end": 1745,
+                "text": "Jsonable",
+                "kind": "class",
+                "resolved": "Framework\\Contracts\\Jsonable"
+            },
+            {
+                "start": 1768,
+                "end": 1779,
+                "text": "\\Stringable",
+                "kind": "class",
+                "resolved": "Stringable"
+            },
+            {
+                "start": 1878,
+                "end": 1887,
+                "text": "STATUS_OK",
+                "kind": "constant",
+                "namespaced": "Positions\\STATUS_OK",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 1889,
+                "end": 1908,
+                "text": "Http\\STATUS_CREATED",
+                "kind": "constant",
+                "resolved": "Positions\\Http\\STATUS_CREATED"
+            },
+            {
+                "start": 1916,
+                "end": 1924,
+                "text": "Response",
+                "kind": "class",
+                "resolved": "Positions\\Response"
+            },
+            {
+                "start": 1955,
+                "end": 1959,
+                "text": "null",
+                "kind": "constant",
+                "namespaced": "Positions\\null",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 1993,
+                "end": 2001,
+                "text": "NotFound",
+                "kind": "class",
+                "resolved": "Positions\\NotFound"
+            },
+            {
+                "start": 2004,
+                "end": 2021,
+                "text": "\\RuntimeException",
+                "kind": "class",
+                "resolved": "RuntimeException"
+            },
+            {
+                "start": 2048,
+                "end": 2054,
+                "text": "report",
+                "kind": "function",
+                "namespaced": "Positions\\report",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 2085,
+                "end": 2095,
+                "text": "\\Throwable",
+                "kind": "class",
+                "resolved": "Throwable"
+            },
+            {
+                "start": 2121,
+                "end": 2138,
+                "text": "Exceptions\\Failed",
+                "kind": "class",
+                "resolved": "Positions\\Exceptions\\Failed"
+            },
+            {
+                "start": 2149,
+                "end": 2153,
+                "text": "null",
+                "kind": "constant",
+                "namespaced": "Positions\\null",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 2206,
+                "end": 2216,
+                "text": "FIRST_CASE",
+                "kind": "constant",
+                "namespaced": "Positions\\FIRST_CASE",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 2266,
+                "end": 2270,
+                "text": "null",
+                "kind": "constant",
+                "namespaced": "Positions\\null",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 2314,
+                "end": 2320,
+                "text": "static",
+                "kind": "class",
+                "resolved": "static",
+                "special": true
+            },
+            {
+                "start": 2346,
+                "end": 2352,
+                "text": "static",
+                "kind": "class",
+                "resolved": "static",
+                "special": true
+            },
+            {
+                "start": 2393,
+                "end": 2397,
+                "text": "self",
+                "kind": "class",
+                "resolved": "self",
+                "special": true
+            },
+            {
+                "start": 2398,
+                "end": 2404,
+                "text": "parent",
+                "kind": "class",
+                "resolved": "parent",
+                "special": true
+            },
+            {
+                "start": 2430,
+                "end": 2436,
+                "text": "parent",
+                "kind": "class",
+                "resolved": "parent",
+                "special": true
+            },
+            {
+                "start": 2437,
+                "end": 2441,
+                "text": "self",
+                "kind": "class",
+                "resolved": "self",
+                "special": true
+            },
+            {
+                "start": 2450,
+                "end": 2456,
+                "text": "static",
+                "kind": "class",
+                "resolved": "static",
+                "special": true
+            },
+            {
+                "start": 2465,
+                "end": 2471,
+                "text": "parent",
+                "kind": "class",
+                "resolved": "parent",
+                "special": true
+            },
+            {
+                "start": 2516,
+                "end": 2525,
+                "text": "Arrayable",
+                "kind": "class",
+                "resolved": "Framework\\Contracts\\Arrayable"
+            },
+            {
+                "start": 2527,
+                "end": 2537,
+                "text": "\\Countable",
+                "kind": "class",
+                "resolved": "Countable"
+            },
+            {
+                "start": 2567,
+                "end": 2574,
+                "text": "Request",
+                "kind": "class",
+                "resolved": "Positions\\Request"
+            },
+            {
+                "start": 2586,
+                "end": 2594,
+                "text": "Response",
+                "kind": "class",
+                "resolved": "Positions\\Response"
+            },
+            {
+                "start": 2652,
+                "end": 2656,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Framework\\Base"
+            },
+            {
+                "start": 2663,
+                "end": 2673,
+                "text": "Enumerated",
+                "kind": "class",
+                "resolved": "Positions\\Enumerated"
+            },
+            {
+                "start": 2706,
+                "end": 2715,
+                "text": "Arrayable",
+                "kind": "class",
+                "resolved": "Framework\\Contracts\\Arrayable"
+            },
+            {
+                "start": 2717,
+                "end": 2725,
+                "text": "HasLabel",
+                "kind": "class",
+                "resolved": "Positions\\HasLabel"
+            },
+            {
+                "start": 2736,
+                "end": 2745,
+                "text": "HasEvents",
+                "kind": "class",
+                "resolved": "Framework\\Traits\\HasEvents"
+            },
+            {
+                "start": 2754,
+                "end": 2759,
+                "text": "Label",
+                "kind": "class",
+                "resolved": "Positions\\Label"
+            },
+            {
+                "start": 2808,
+                "end": 2822,
+                "text": "DEFAULT_STATUS",
+                "kind": "constant",
+                "namespaced": "Positions\\DEFAULT_STATUS",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 2843,
+                "end": 2847,
+                "text": "self",
+                "kind": "class",
+                "resolved": "self",
+                "special": true
+            },
+            {
+                "start": 2873,
+                "end": 2877,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Framework\\Base"
+            },
+            {
+                "start": 2890,
+                "end": 2894,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Framework\\Base"
+            },
+            {
+                "start": 2911,
+                "end": 2919,
+                "text": "FLAG_ONE",
+                "kind": "constant",
+                "namespaced": "Positions\\FLAG_ONE",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 2922,
+                "end": 2931,
+                "text": "\\FLAG_TWO",
+                "kind": "constant",
+                "resolved": "FLAG_TWO"
+            },
+            {
+                "start": 2955,
+                "end": 2958,
+                "text": "KEY",
+                "kind": "constant",
+                "namespaced": "Positions\\KEY",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 2962,
+                "end": 2967,
+                "text": "VALUE",
+                "kind": "constant",
+                "namespaced": "Positions\\VALUE",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 2978,
+                "end": 2982,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Framework\\Base"
+            },
+            {
+                "start": 3003,
+                "end": 3013,
+                "text": "CONSTANT_A",
+                "kind": "constant",
+                "namespaced": "Positions\\CONSTANT_A",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 3016,
+                "end": 3026,
+                "text": "CONSTANT_B",
+                "kind": "constant",
+                "namespaced": "Positions\\CONSTANT_B",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 3029,
+                "end": 3039,
+                "text": "constant_c",
+                "kind": "function",
+                "namespaced": "Positions\\constant_c",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 3055,
+                "end": 3061,
+                "text": "helper",
+                "kind": "function",
+                "namespaced": "Positions\\helper",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 3069,
+                "end": 3077,
+                "text": "ARGUMENT",
+                "kind": "constant",
+                "namespaced": "Positions\\ARGUMENT",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 3096,
+                "end": 3102,
+                "text": "strlen",
+                "kind": "function",
+                "namespaced": "Positions\\strlen",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 3128,
+                "end": 3132,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Framework\\Base"
+            },
+            {
+                "start": 3144,
+                "end": 3147,
+                "text": "ARG",
+                "kind": "constant",
+                "namespaced": "Positions\\ARG",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 3163,
+                "end": 3167,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Framework\\Base"
+            },
+            {
+                "start": 3211,
+                "end": 3216,
+                "text": "INDEX",
+                "kind": "constant",
+                "namespaced": "Positions\\INDEX",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 3274,
+                "end": 3287,
+                "text": "HEREDOC_INDEX",
+                "kind": "constant",
+                "namespaced": "Positions\\HEREDOC_INDEX",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 3455,
+                "end": 3459,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Framework\\Base"
+            },
+            {
+                "start": 3462,
+                "end": 3474,
+                "text": "DYNAMIC_NAME",
+                "kind": "constant",
+                "namespaced": "Positions\\DYNAMIC_NAME",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 3492,
+                "end": 3497,
+                "text": "count",
+                "kind": "function",
+                "namespaced": "Positions\\count",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 3507,
+                "end": 3513,
+                "text": "\\count",
+                "kind": "function",
+                "resolved": "count"
+            },
+            {
+                "start": 3531,
+                "end": 3542,
+                "text": "INSIDE_ECHO",
+                "kind": "constant",
+                "namespaced": "Positions\\INSIDE_ECHO",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 3554,
+                "end": 3561,
+                "text": "PRINTED",
+                "kind": "constant",
+                "namespaced": "Positions\\PRINTED",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 3572,
+                "end": 3581,
+                "text": "EXIT_CODE",
+                "kind": "constant",
+                "namespaced": "Positions\\EXIT_CODE",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 3631,
+                "end": 3644,
+                "text": "CACHE_DEFAULT",
+                "kind": "constant",
+                "namespaced": "Positions\\CACHE_DEFAULT",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 3751,
+                "end": 3756,
+                "text": "Point",
+                "kind": "class",
+                "resolved": "Positions\\Point"
+            },
+            {
+                "start": 3771,
+                "end": 3776,
+                "text": "Point",
+                "kind": "class",
+                "resolved": "Positions\\Point"
+            },
+            {
+                "start": 3777,
+                "end": 3785,
+                "text": "ORIGIN_X",
+                "kind": "constant",
+                "namespaced": "Positions\\ORIGIN_X",
+                "declared": false,
+                "builtin": false
+            }
+        ],
+        "property_hooks.php": [
+            {
+                "start": 237,
+                "end": 241,
+                "text": "true",
+                "kind": "constant",
+                "namespaced": "App\\Hooks\\true",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 280,
+                "end": 284,
+                "text": "null",
+                "kind": "constant",
+                "namespaced": "App\\Hooks\\null",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 318,
+                "end": 324,
+                "text": "\\false",
+                "kind": "constant",
+                "resolved": "false"
+            },
+            {
+                "start": 359,
+                "end": 364,
+                "text": "LIMIT",
+                "kind": "constant",
+                "namespaced": "App\\Hooks\\LIMIT",
+                "declared": true,
+                "builtin": false
+            },
+            {
+                "start": 397,
+                "end": 408,
+                "text": "PHP_INT_MAX",
+                "kind": "constant",
+                "namespaced": "App\\Hooks\\PHP_INT_MAX",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 450,
+                "end": 467,
+                "text": "DEFINED_ELSEWHERE",
+                "kind": "constant",
+                "namespaced": "App\\Hooks\\DEFINED_ELSEWHERE",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 509,
+                "end": 529,
+                "text": "Config\\DEFAULT_LABEL",
+                "kind": "constant",
+                "resolved": "App\\Hooks\\Config\\DEFAULT_LABEL"
+            },
+            {
+                "start": 564,
+                "end": 568,
+                "text": "true",
+                "kind": "constant",
+                "namespaced": "App\\Hooks\\true",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 610,
+                "end": 616,
+                "text": "\\count",
+                "kind": "function",
+                "resolved": "count"
+            },
+            {
+                "start": 659,
+                "end": 662,
+                "text": "max",
+                "kind": "function",
+                "namespaced": "App\\Hooks\\max",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 671,
+                "end": 676,
+                "text": "LIMIT",
+                "kind": "constant",
+                "namespaced": "App\\Hooks\\LIMIT",
+                "declared": true,
+                "builtin": false
+            }
+        ],
+        "special_names.php": [
+            {
+                "start": 176,
+                "end": 180,
+                "text": "Base",
+                "kind": "class",
+                "resolved": "Special\\Base"
+            },
+            {
+                "start": 207,
+                "end": 211,
+                "text": "self",
+                "kind": "class",
+                "resolved": "self",
+                "special": true
+            },
+            {
+                "start": 248,
+                "end": 252,
+                "text": "self",
+                "kind": "class",
+                "resolved": "self",
+                "special": true
+            },
+            {
+                "start": 262,
+                "end": 268,
+                "text": "parent",
+                "kind": "class",
+                "resolved": "parent",
+                "special": true
+            },
+            {
+                "start": 277,
+                "end": 283,
+                "text": "static",
+                "kind": "class",
+                "resolved": "static",
+                "special": true
+            },
+            {
+                "start": 307,
+                "end": 311,
+                "text": "self",
+                "kind": "class",
+                "resolved": "self",
+                "special": true
+            },
+            {
+                "start": 332,
+                "end": 338,
+                "text": "static",
+                "kind": "class",
+                "resolved": "static",
+                "special": true
+            },
+            {
+                "start": 359,
+                "end": 365,
+                "text": "parent",
+                "kind": "class",
+                "resolved": "parent",
+                "special": true
+            },
+            {
+                "start": 382,
+                "end": 386,
+                "text": "self",
+                "kind": "class",
+                "resolved": "self",
+                "special": true
+            },
+            {
+                "start": 395,
+                "end": 401,
+                "text": "static",
+                "kind": "class",
+                "resolved": "static",
+                "special": true
+            },
+            {
+                "start": 410,
+                "end": 416,
+                "text": "parent",
+                "kind": "class",
+                "resolved": "parent",
+                "special": true
+            },
+            {
+                "start": 437,
+                "end": 443,
+                "text": "static",
+                "kind": "class",
+                "resolved": "static",
+                "special": true
+            },
+            {
+                "start": 456,
+                "end": 460,
+                "text": "self",
+                "kind": "class",
+                "resolved": "self",
+                "special": true
+            },
+            {
+                "start": 473,
+                "end": 479,
+                "text": "parent",
+                "kind": "class",
+                "resolved": "parent",
+                "special": true
+            },
+            {
+                "start": 503,
+                "end": 507,
+                "text": "self",
+                "kind": "class",
+                "resolved": "self",
+                "special": true
+            },
+            {
+                "start": 519,
+                "end": 525,
+                "text": "static",
+                "kind": "class",
+                "resolved": "static",
+                "special": true
+            },
+            {
+                "start": 537,
+                "end": 543,
+                "text": "parent",
+                "kind": "class",
+                "resolved": "parent",
+                "special": true
+            },
+            {
+                "start": 584,
+                "end": 588,
+                "text": "self",
+                "kind": "class",
+                "resolved": "self",
+                "special": true
+            },
+            {
+                "start": 610,
+                "end": 616,
+                "text": "static",
+                "kind": "class",
+                "resolved": "static",
+                "special": true
+            },
+            {
+                "start": 638,
+                "end": 644,
+                "text": "parent",
+                "kind": "class",
+                "resolved": "parent",
+                "special": true
+            },
+            {
+                "start": 663,
+                "end": 671,
+                "text": "Parental",
+                "kind": "class",
+                "resolved": "Other\\Self_"
+            },
+            {
+                "start": 692,
+                "end": 696,
+                "text": "SELF",
+                "kind": "class",
+                "resolved": "SELF",
+                "special": true
+            },
+            {
+                "start": 713,
+                "end": 717,
+                "text": "Self",
+                "kind": "class",
+                "resolved": "Self",
+                "special": true
+            },
+            {
+                "start": 780,
+                "end": 784,
+                "text": "self",
+                "kind": "class",
+                "resolved": "self",
+                "special": true
+            },
+            {
+                "start": 785,
+                "end": 793,
+                "text": "Parental",
+                "kind": "class",
+                "resolved": "Other\\Self_"
+            }
+        ],
+        "statement_namespaces.php": [
+            {
+                "start": 309,
+                "end": 313,
+                "text": "User",
+                "kind": "class",
+                "resolved": "App\\Models\\User"
+            },
+            {
+                "start": 329,
+                "end": 333,
+                "text": "Post",
+                "kind": "class",
+                "resolved": "App\\Models\\Post"
+            },
+            {
+                "start": 351,
+                "end": 357,
+                "text": "Remark",
+                "kind": "class",
+                "resolved": "App\\Models\\Comment"
+            },
+            {
+                "start": 379,
+                "end": 389,
+                "text": "Controller",
+                "kind": "class",
+                "resolved": "App\\Http\\Controller"
+            },
+            {
+                "start": 407,
+                "end": 424,
+                "text": "Controllers\\Admin",
+                "kind": "class",
+                "resolved": "App\\Http\\Controllers\\Admin"
+            },
+            {
+                "start": 450,
+                "end": 462,
+                "text": "User\\Profile",
+                "kind": "class",
+                "resolved": "App\\Models\\User\\Profile"
+            },
+            {
+                "start": 482,
+                "end": 498,
+                "text": "namespace\\Kernel",
+                "kind": "class",
+                "resolved": "App\\Http\\Kernel"
+            },
+            {
+                "start": 515,
+                "end": 533,
+                "text": "\\DateTimeImmutable",
+                "kind": "class",
+                "resolved": "DateTimeImmutable"
+            },
+            {
+                "start": 538,
+                "end": 549,
+                "text": "format_date",
+                "kind": "function",
+                "resolved": "App\\Support\\format_date"
+            },
+            {
+                "start": 558,
+                "end": 562,
+                "text": "slug",
+                "kind": "function",
+                "resolved": "App\\Support\\slugify"
+            },
+            {
+                "start": 569,
+                "end": 573,
+                "text": "SLUG",
+                "kind": "function",
+                "resolved": "App\\Support\\slugify"
+            },
+            {
+                "start": 580,
+                "end": 586,
+                "text": "strlen",
+                "kind": "function",
+                "namespaced": "App\\Http\\strlen",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 595,
+                "end": 599,
+                "text": "exec",
+                "kind": "function",
+                "namespaced": "App\\Http\\exec",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 607,
+                "end": 623,
+                "text": "unknown_function",
+                "kind": "function",
+                "namespaced": "App\\Http\\unknown_function",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 627,
+                "end": 647,
+                "text": "Controllers\\dispatch",
+                "kind": "function",
+                "resolved": "App\\Http\\Controllers\\dispatch"
+            },
+            {
+                "start": 651,
+                "end": 665,
+                "text": "namespace\\boot",
+                "kind": "function",
+                "resolved": "App\\Http\\boot"
+            },
+            {
+                "start": 669,
+                "end": 674,
+                "text": "\\exec",
+                "kind": "function",
+                "resolved": "exec"
+            },
+            {
+                "start": 689,
+                "end": 698,
+                "text": "MAX_ITEMS",
+                "kind": "constant",
+                "resolved": "App\\Support\\MAX_ITEMS"
+            },
+            {
+                "start": 700,
+                "end": 705,
+                "text": "FLOOR",
+                "kind": "constant",
+                "resolved": "App\\Support\\MIN_ITEMS"
+            },
+            {
+                "start": 707,
+                "end": 712,
+                "text": "floor",
+                "kind": "function",
+                "namespaced": "App\\Http\\floor",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 724,
+                "end": 733,
+                "text": "max_items",
+                "kind": "constant",
+                "namespaced": "App\\Http\\max_items",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 740,
+                "end": 751,
+                "text": "PHP_VERSION",
+                "kind": "constant",
+                "namespaced": "App\\Http\\PHP_VERSION",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 758,
+                "end": 774,
+                "text": "UNKNOWN_CONSTANT",
+                "kind": "constant",
+                "namespaced": "App\\Http\\UNKNOWN_CONSTANT",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 781,
+                "end": 798,
+                "text": "Controllers\\LIMIT",
+                "kind": "constant",
+                "resolved": "App\\Http\\Controllers\\LIMIT"
+            },
+            {
+                "start": 805,
+                "end": 820,
+                "text": "namespace\\LIMIT",
+                "kind": "constant",
+                "resolved": "App\\Http\\LIMIT"
+            },
+            {
+                "start": 827,
+                "end": 839,
+                "text": "\\PHP_VERSION",
+                "kind": "constant",
+                "resolved": "PHP_VERSION"
+            },
+            {
+                "start": 841,
+                "end": 849,
+                "text": "var_dump",
+                "kind": "function",
+                "namespaced": "App\\Http\\var_dump",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 850,
+                "end": 854,
+                "text": "true",
+                "kind": "constant",
+                "namespaced": "App\\Http\\true",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 856,
+                "end": 860,
+                "text": "null",
+                "kind": "constant",
+                "namespaced": "App\\Http\\null",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 862,
+                "end": 867,
+                "text": "FALSE",
+                "kind": "constant",
+                "namespaced": "App\\Http\\FALSE",
+                "declared": false,
+                "builtin": true
+            },
+            {
+                "start": 907,
+                "end": 911,
+                "text": "User",
+                "kind": "class",
+                "resolved": "App\\Console\\User"
+            },
+            {
+                "start": 930,
+                "end": 937,
+                "text": "Command",
+                "kind": "class",
+                "resolved": "App\\Console\\Command"
+            },
+            {
+                "start": 941,
+                "end": 952,
+                "text": "format_date",
+                "kind": "function",
+                "namespaced": "App\\Console\\format_date",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 961,
+                "end": 970,
+                "text": "MAX_ITEMS",
+                "kind": "constant",
+                "namespaced": "App\\Console\\MAX_ITEMS",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 972,
+                "end": 978,
+                "text": "strlen",
+                "kind": "function",
+                "namespaced": "App\\Console\\strlen",
+                "declared": false,
+                "builtin": true
+            }
+        ],
+        "use_forms.php": [
+            {
+                "start": 484,
+                "end": 487,
+                "text": "One",
+                "kind": "class",
+                "resolved": "Alpha\\One"
+            },
+            {
+                "start": 495,
+                "end": 498,
+                "text": "one",
+                "kind": "class",
+                "resolved": "Alpha\\One"
+            },
+            {
+                "start": 506,
+                "end": 515,
+                "text": "ONE\\Child",
+                "kind": "class",
+                "resolved": "Alpha\\One\\Child"
+            },
+            {
+                "start": 523,
+                "end": 527,
+                "text": "Deux",
+                "kind": "class",
+                "resolved": "Alpha\\Two"
+            },
+            {
+                "start": 535,
+                "end": 545,
+                "text": "deux\\Child",
+                "kind": "class",
+                "resolved": "Alpha\\Two\\Child"
+            },
+            {
+                "start": 553,
+                "end": 558,
+                "text": "Three",
+                "kind": "class",
+                "resolved": "Beta\\Three"
+            },
+            {
+                "start": 566,
+                "end": 570,
+                "text": "Five",
+                "kind": "class",
+                "resolved": "Beta\\Four\\Five"
+            },
+            {
+                "start": 578,
+                "end": 586,
+                "text": "Five\\Six",
+                "kind": "class",
+                "resolved": "Beta\\Four\\Five\\Six"
+            },
+            {
+                "start": 594,
+                "end": 599,
+                "text": "Sechs",
+                "kind": "class",
+                "resolved": "Beta\\Six"
+            },
+            {
+                "start": 607,
+                "end": 612,
+                "text": "Seven",
+                "kind": "class",
+                "resolved": "Gamma\\Seven"
+            },
+            {
+                "start": 620,
+                "end": 624,
+                "text": "Zeta",
+                "kind": "class",
+                "resolved": "Zeta"
+            },
+            {
+                "start": 632,
+                "end": 640,
+                "text": "Zeta\\Eta",
+                "kind": "class",
+                "resolved": "Zeta\\Eta"
+            },
+            {
+                "start": 648,
+                "end": 655,
+                "text": "Sixteen",
+                "kind": "class",
+                "resolved": "Epsilon\\Sixteen"
+            },
+            {
+                "start": 660,
+                "end": 665,
+                "text": "eight",
+                "kind": "function",
+                "resolved": "Gamma\\eight"
+            },
+            {
+                "start": 669,
+                "end": 674,
+                "text": "EIGHT",
+                "kind": "function",
+                "resolved": "Gamma\\eight"
+            },
+            {
+                "start": 678,
+                "end": 683,
+                "text": "tenth",
+                "kind": "function",
+                "resolved": "Gamma\\ten"
+            },
+            {
+                "start": 687,
+                "end": 692,
+                "text": "Tenth",
+                "kind": "function",
+                "resolved": "Gamma\\ten"
+            },
+            {
+                "start": 696,
+                "end": 702,
+                "text": "twelve",
+                "kind": "function",
+                "resolved": "Delta\\twelve"
+            },
+            {
+                "start": 706,
+                "end": 714,
+                "text": "dreizehn",
+                "kind": "function",
+                "resolved": "Delta\\thirteen"
+            },
+            {
+                "start": 718,
+                "end": 726,
+                "text": "Dreizehn",
+                "kind": "function",
+                "resolved": "Delta\\thirteen"
+            },
+            {
+                "start": 730,
+                "end": 738,
+                "text": "thirteen",
+                "kind": "function",
+                "namespaced": "Library\\thirteen",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 742,
+                "end": 752,
+                "text": "One\\helper",
+                "kind": "function",
+                "resolved": "Alpha\\One\\helper"
+            },
+            {
+                "start": 762,
+                "end": 766,
+                "text": "NINE",
+                "kind": "constant",
+                "resolved": "Gamma\\NINE"
+            },
+            {
+                "start": 768,
+                "end": 772,
+                "text": "Nine",
+                "kind": "constant",
+                "namespaced": "Library\\Nine",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 774,
+                "end": 778,
+                "text": "nine",
+                "kind": "constant",
+                "namespaced": "Library\\nine",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 785,
+                "end": 791,
+                "text": "Eleven",
+                "kind": "constant",
+                "resolved": "Gamma\\ELEVEN"
+            },
+            {
+                "start": 793,
+                "end": 799,
+                "text": "ELEVEN",
+                "kind": "constant",
+                "namespaced": "Library\\ELEVEN",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 806,
+                "end": 814,
+                "text": "FOURTEEN",
+                "kind": "constant",
+                "resolved": "Delta\\FOURTEEN"
+            },
+            {
+                "start": 816,
+                "end": 824,
+                "text": "fourteen",
+                "kind": "constant",
+                "namespaced": "Library\\fourteen",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 831,
+                "end": 838,
+                "text": "Fifteen",
+                "kind": "constant",
+                "resolved": "Delta\\FIFTEEN"
+            },
+            {
+                "start": 840,
+                "end": 847,
+                "text": "FIFTEEN",
+                "kind": "constant",
+                "namespaced": "Library\\FIFTEEN",
+                "declared": false,
+                "builtin": false
+            },
+            {
+                "start": 854,
+                "end": 866,
+                "text": "One\\CONSTANT",
+                "kind": "constant",
+                "resolved": "Alpha\\One\\CONSTANT"
+            },
+            {
+                "start": 868,
+                "end": 880,
+                "text": "one\\CONSTANT",
+                "kind": "constant",
+                "resolved": "Alpha\\One\\CONSTANT"
+            },
+            {
+                "start": 887,
+                "end": 892,
+                "text": "Eight",
+                "kind": "constant",
+                "namespaced": "Library\\Eight",
+                "declared": false,
+                "builtin": false
+            }
+        ],
+        "use_groups.php": [
+            {
+                "start": 467,
+                "end": 474,
+                "text": "slugify",
+                "kind": "function",
+                "resolved": "Util\\Strings\\slugify"
+            },
+            {
+                "start": 481,
+                "end": 484,
+                "text": "cut",
+                "kind": "function",
+                "resolved": "Util\\Strings\\truncate"
+            },
+            {
+                "start": 499,
+                "end": 504,
+                "text": "DEBUG",
+                "kind": "constant",
+                "resolved": "Config\\DEBUG"
+            },
+            {
+                "start": 506,
+                "end": 515,
+                "text": "MAX_ITEMS",
+                "kind": "constant",
+                "resolved": "Config\\Limits\\MAX_ITEMS"
+            },
+            {
+                "start": 521,
+                "end": 526,
+                "text": "Order",
+                "kind": "class",
+                "resolved": "Domain\\Order"
+            },
+            {
+                "start": 534,
+                "end": 543,
+                "text": "OrderLine",
+                "kind": "class",
+                "resolved": "Domain\\Order\\Line"
+            },
+            {
+                "start": 551,
+                "end": 556,
+                "text": "Buyer",
+                "kind": "class",
+                "resolved": "Domain\\Customer"
+            },
+            {
+                "start": 564,
+                "end": 571,
+                "text": "Address",
+                "kind": "class",
+                "resolved": "Domain\\Address"
+            }
+        ]
+    },
+    "imports": {
+        "braced_namespaces.php": [
+            {
+                "start": 121,
+                "end": 144,
+                "text": "Shop\\Pricing\\Calculator",
+                "kind": "class",
+                "imported": "Shop\\Pricing\\Calculator"
+            },
+            {
+                "start": 163,
+                "end": 187,
+                "text": "Shop\\Pricing\\round_price",
+                "kind": "function",
+                "imported": "Shop\\Pricing\\round_price"
+            },
+            {
+                "start": 203,
+                "end": 224,
+                "text": "Shop\\Pricing\\CURRENCY",
+                "kind": "constant",
+                "imported": "Shop\\Pricing\\CURRENCY"
+            },
+            {
+                "start": 780,
+                "end": 794,
+                "text": "Shop\\Cart\\Item",
+                "kind": "class",
+                "imported": "Shop\\Cart\\Item"
+            }
+        ],
+        "constructs.php": [
+            {
+                "start": 165,
+                "end": 178,
+                "text": "Library\\Tools",
+                "kind": "class",
+                "imported": "Library\\Tools"
+            }
+        ],
+        "declarations_case.php": [],
+        "define_alias.php": [
+            {
+                "start": 171,
+                "end": 177,
+                "text": "define",
+                "kind": "function",
+                "imported": "define"
+            },
+            {
+                "start": 199,
+                "end": 211,
+                "text": "Other\\define",
+                "kind": "function",
+                "imported": "Other\\define"
+            }
+        ],
+        "fallback.php": [],
+        "global.php": [
+            {
+                "start": 177,
+                "end": 198,
+                "text": "Vendor\\Package\\Client",
+                "kind": "class",
+                "imported": "Vendor\\Package\\Client"
+            },
+            {
+                "start": 204,
+                "end": 225,
+                "text": "Vendor\\Package\\Client",
+                "kind": "class",
+                "imported": "Vendor\\Package\\Client"
+            },
+            {
+                "start": 245,
+                "end": 257,
+                "text": "Vendor\\Tools",
+                "kind": "class",
+                "imported": "Vendor\\Tools"
+            },
+            {
+                "start": 272,
+                "end": 293,
+                "text": "Vendor\\Helpers\\render",
+                "kind": "function",
+                "imported": "Vendor\\Helpers\\render"
+            },
+            {
+                "start": 305,
+                "end": 324,
+                "text": "Vendor\\Config\\LEVEL",
+                "kind": "constant",
+                "imported": "Vendor\\Config\\LEVEL"
+            }
+        ],
+        "positions.php": [
+            {
+                "start": 98,
+                "end": 124,
+                "text": "Framework\\Attributes\\Route",
+                "kind": "class",
+                "imported": "Framework\\Attributes\\Route"
+            },
+            {
+                "start": 151,
+                "end": 160,
+                "text": "Arrayable",
+                "kind": "class",
+                "imported": "Framework\\Contracts\\Arrayable"
+            },
+            {
+                "start": 162,
+                "end": 170,
+                "text": "Jsonable",
+                "kind": "class",
+                "imported": "Framework\\Contracts\\Jsonable"
+            },
+            {
+                "start": 195,
+                "end": 204,
+                "text": "HasEvents",
+                "kind": "class",
+                "imported": "Framework\\Traits\\HasEvents"
+            },
+            {
+                "start": 206,
+                "end": 215,
+                "text": "HasMacros",
+                "kind": "class",
+                "imported": "Framework\\Traits\\HasMacros"
+            },
+            {
+                "start": 222,
+                "end": 236,
+                "text": "Framework\\Base",
+                "kind": "class",
+                "imported": "Framework\\Base"
+            }
+        ],
+        "property_hooks.php": [],
+        "special_names.php": [
+            {
+                "start": 130,
+                "end": 141,
+                "text": "Other\\Self_",
+                "kind": "class",
+                "imported": "Other\\Self_"
+            }
+        ],
+        "statement_namespaces.php": [
+            {
+                "start": 125,
+                "end": 140,
+                "text": "App\\Models\\User",
+                "kind": "class",
+                "imported": "App\\Models\\User"
+            },
+            {
+                "start": 158,
+                "end": 162,
+                "text": "Post",
+                "kind": "class",
+                "imported": "App\\Models\\Post"
+            },
+            {
+                "start": 164,
+                "end": 171,
+                "text": "Comment",
+                "kind": "class",
+                "imported": "App\\Models\\Comment"
+            },
+            {
+                "start": 210,
+                "end": 221,
+                "text": "format_date",
+                "kind": "function",
+                "imported": "App\\Support\\format_date"
+            },
+            {
+                "start": 223,
+                "end": 230,
+                "text": "slugify",
+                "kind": "function",
+                "imported": "App\\Support\\slugify"
+            },
+            {
+                "start": 264,
+                "end": 273,
+                "text": "MAX_ITEMS",
+                "kind": "constant",
+                "imported": "App\\Support\\MAX_ITEMS"
+            },
+            {
+                "start": 275,
+                "end": 284,
+                "text": "MIN_ITEMS",
+                "kind": "constant",
+                "imported": "App\\Support\\MIN_ITEMS"
+            }
+        ],
+        "use_forms.php": [
+            {
+                "start": 173,
+                "end": 182,
+                "text": "Alpha\\One",
+                "kind": "class",
+                "imported": "Alpha\\One"
+            },
+            {
+                "start": 184,
+                "end": 193,
+                "text": "Alpha\\Two",
+                "kind": "class",
+                "imported": "Alpha\\Two"
+            },
+            {
+                "start": 213,
+                "end": 218,
+                "text": "Three",
+                "kind": "class",
+                "imported": "Beta\\Three"
+            },
+            {
+                "start": 220,
+                "end": 229,
+                "text": "Four\\Five",
+                "kind": "class",
+                "imported": "Beta\\Four\\Five"
+            },
+            {
+                "start": 231,
+                "end": 234,
+                "text": "Six",
+                "kind": "class",
+                "imported": "Beta\\Six"
+            },
+            {
+                "start": 257,
+                "end": 262,
+                "text": "Seven",
+                "kind": "class",
+                "imported": "Gamma\\Seven"
+            },
+            {
+                "start": 273,
+                "end": 278,
+                "text": "eight",
+                "kind": "function",
+                "imported": "Gamma\\eight"
+            },
+            {
+                "start": 286,
+                "end": 290,
+                "text": "NINE",
+                "kind": "constant",
+                "imported": "Gamma\\NINE"
+            },
+            {
+                "start": 301,
+                "end": 304,
+                "text": "ten",
+                "kind": "function",
+                "imported": "Gamma\\ten"
+            },
+            {
+                "start": 321,
+                "end": 327,
+                "text": "ELEVEN",
+                "kind": "constant",
+                "imported": "Gamma\\ELEVEN"
+            },
+            {
+                "start": 353,
+                "end": 365,
+                "text": "Delta\\twelve",
+                "kind": "function",
+                "imported": "Delta\\twelve"
+            },
+            {
+                "start": 367,
+                "end": 381,
+                "text": "Delta\\thirteen",
+                "kind": "function",
+                "imported": "Delta\\thirteen"
+            },
+            {
+                "start": 405,
+                "end": 419,
+                "text": "Delta\\FOURTEEN",
+                "kind": "constant",
+                "imported": "Delta\\FOURTEEN"
+            },
+            {
+                "start": 421,
+                "end": 434,
+                "text": "Delta\\FIFTEEN",
+                "kind": "constant",
+                "imported": "Delta\\FIFTEEN"
+            },
+            {
+                "start": 451,
+                "end": 467,
+                "text": "\\Epsilon\\Sixteen",
+                "kind": "class",
+                "imported": "Epsilon\\Sixteen"
+            },
+            {
+                "start": 473,
+                "end": 477,
+                "text": "Zeta",
+                "kind": "class",
+                "imported": "Zeta"
+            }
+        ],
+        "use_groups.php": [
+            {
+                "start": 303,
+                "end": 310,
+                "text": "slugify",
+                "kind": "function",
+                "imported": "Util\\Strings\\slugify"
+            },
+            {
+                "start": 312,
+                "end": 320,
+                "text": "truncate",
+                "kind": "function",
+                "imported": "Util\\Strings\\truncate"
+            },
+            {
+                "start": 348,
+                "end": 353,
+                "text": "DEBUG",
+                "kind": "constant",
+                "imported": "Config\\DEBUG"
+            },
+            {
+                "start": 355,
+                "end": 371,
+                "text": "Limits\\MAX_ITEMS",
+                "kind": "constant",
+                "imported": "Config\\Limits\\MAX_ITEMS"
+            },
+            {
+                "start": 386,
+                "end": 391,
+                "text": "Order",
+                "kind": "class",
+                "imported": "Domain\\Order"
+            },
+            {
+                "start": 393,
+                "end": 403,
+                "text": "Order\\Line",
+                "kind": "class",
+                "imported": "Domain\\Order\\Line"
+            },
+            {
+                "start": 423,
+                "end": 438,
+                "text": "Domain\\Customer",
+                "kind": "class",
+                "imported": "Domain\\Customer"
+            },
+            {
+                "start": 449,
+                "end": 464,
+                "text": "\\Domain\\Address",
+                "kind": "class",
+                "imported": "Domain\\Address"
+            }
+        ]
+    }
+}

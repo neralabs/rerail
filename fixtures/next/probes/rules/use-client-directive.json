@@ -1,0 +1,71 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-probe-use-client-directive",
+  "revision": 1,
+  "mode": "log",
+  "description": "Next pack probe. Directive: a \"use client\" statement in the file's directive prologue (a later one is no directive).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "expression_statement",
+                "has": {
+                  "kind": "string",
+                  "value": {
+                    "eq": "use client"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "program"
+                },
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "expression_statement",
+                          "has": {
+                            "kind": "string"
+                          }
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "next/use-client-directive",
+        "message": "Directive: a \"use client\" statement in the file's directive prologue (a later one is no directive)."
+      }
+    }
+  ]
+}

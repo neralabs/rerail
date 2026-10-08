@@ -1,0 +1,225 @@
+{
+ "tool": "sqlite3",
+ "version": "3.50.4",
+ "cases": [
+  {
+   "literal": "1",
+   "type": "integer",
+   "quote": "1"
+  },
+  {
+   "literal": "-1",
+   "type": "integer",
+   "quote": "-1"
+  },
+  {
+   "literal": "- 2",
+   "type": "integer",
+   "quote": "-2"
+  },
+  {
+   "literal": "+5",
+   "type": "integer",
+   "quote": "5"
+  },
+  {
+   "literal": "1.5",
+   "type": "real",
+   "quote": "1.5"
+  },
+  {
+   "literal": ".5",
+   "type": "real",
+   "quote": "0.5"
+  },
+  {
+   "literal": "5.",
+   "type": "real",
+   "quote": "5.0"
+  },
+  {
+   "literal": "1e3",
+   "type": "real",
+   "quote": "1000.0"
+  },
+  {
+   "literal": "1.5E-3",
+   "type": "real",
+   "quote": "0.0015"
+  },
+  {
+   "literal": "1e400",
+   "type": "real",
+   "quote": "9.0e+999"
+  },
+  {
+   "literal": "00012",
+   "type": "integer",
+   "quote": "12"
+  },
+  {
+   "literal": "0x1F",
+   "type": "integer",
+   "quote": "31"
+  },
+  {
+   "literal": "0X1f",
+   "type": "integer",
+   "quote": "31"
+  },
+  {
+   "literal": "0x7FFFFFFFFFFFFFFF",
+   "type": "integer",
+   "quote": "9223372036854775807"
+  },
+  {
+   "literal": "0xFFFFFFFFFFFFFFFF",
+   "type": "integer",
+   "quote": "-1"
+  },
+  {
+   "literal": "0x1FFFFFFFFFFFFFFFF",
+   "error": "hex literal too big: 0x1FFFFFFFFFFFFFFFF"
+  },
+  {
+   "literal": "9223372036854775807",
+   "type": "integer",
+   "quote": "9223372036854775807"
+  },
+  {
+   "literal": "9223372036854775808",
+   "type": "real",
+   "quote": "9.22337203685477581e+18"
+  },
+  {
+   "literal": "-9223372036854775808",
+   "type": "integer",
+   "quote": "-9223372036854775808"
+  },
+  {
+   "literal": "1_000",
+   "type": "integer",
+   "quote": "1000"
+  },
+  {
+   "literal": "1__0",
+   "error": "unrecognized token: \"1__0\""
+  },
+  {
+   "literal": "0b101",
+   "error": "unrecognized token: \"0b101\""
+  },
+  {
+   "literal": "0o17",
+   "error": "unrecognized token: \"0o17\""
+  },
+  {
+   "literal": "'a''b'",
+   "type": "text",
+   "quote": "'a''b'"
+  },
+  {
+   "literal": "'a\\nb'",
+   "type": "text",
+   "quote": "'a\\nb'"
+  },
+  {
+   "literal": "'ünïcödé'",
+   "type": "text",
+   "quote": "'ünïcödé'"
+  },
+  {
+   "literal": "'😀'",
+   "type": "text",
+   "quote": "'😀'"
+  },
+  {
+   "literal": "''",
+   "type": "text",
+   "quote": "''"
+  },
+  {
+   "literal": "X'1F'",
+   "type": "blob",
+   "quote": "X'1F'"
+  },
+  {
+   "literal": "x'0a0B'",
+   "type": "blob",
+   "quote": "X'0A0B'"
+  },
+  {
+   "literal": "X'1'",
+   "error": "unrecognized token: \"X'1'\""
+  },
+  {
+   "literal": "x''",
+   "type": "blob",
+   "quote": "X''"
+  },
+  {
+   "literal": "NULL",
+   "type": "null",
+   "quote": "NULL"
+  },
+  {
+   "literal": "null",
+   "type": "null",
+   "quote": "NULL"
+  },
+  {
+   "literal": "TRUE",
+   "type": "integer",
+   "quote": "1"
+  },
+  {
+   "literal": "false",
+   "type": "integer",
+   "quote": "0"
+  },
+  {
+   "literal": "\"a\"",
+   "type": "text",
+   "quote": "'column a'"
+  },
+  {
+   "literal": "\"b\"",
+   "type": "text",
+   "quote": "'b'"
+  },
+  {
+   "literal": "[a]",
+   "type": "text",
+   "quote": "'column a'"
+  },
+  {
+   "literal": "`a`",
+   "type": "text",
+   "quote": "'column a'"
+  },
+  {
+   "literal": "N'nat'",
+   "error": "near \"'nat'\": syntax error"
+  },
+  {
+   "literal": "E'a'",
+   "error": "near \"'a'\": syntax error"
+  },
+  {
+   "literal": "B'1010'",
+   "error": "near \"'1010'\": syntax error"
+  },
+  {
+   "literal": "$$x$$",
+   "error": "Incorrect number of bindings supplied. The current statement uses 1, and there are 0 supplied."
+  },
+  {
+   "literal": "'a' 'b'",
+   "error": "near \"'b'\": syntax error"
+  },
+  {
+   "literal": "'a'\n'b'",
+   "error": "near \"'b'\": syntax error"
+  }
+ ]
+}

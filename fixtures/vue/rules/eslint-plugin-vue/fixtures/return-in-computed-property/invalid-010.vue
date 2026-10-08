@@ -1,0 +1,9 @@
+<script>
+
+      export default {
+        'computed': {
+          foo() {
+          }
+        }
+      }
+</script>

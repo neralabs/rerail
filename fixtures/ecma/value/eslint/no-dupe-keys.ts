@@ -1,0 +1,13 @@
+const o1 = { a: 1, a: 2 };
+const o2 = { [a]: 1, [a]: 2 };
+const o3 = { [a]: 1, a: 2, 'a': 3 };
+const o4 = { [`b`]: 1, b: 2, ['b']: 3 };
+const o5 = { 0x1: 1, 1: 2, '1': 3 };
+const o6 = { [/re/]: 1, '/re/': 2 };
+const o7 = { [x + y]: 1, [x + y]: 2 };
+const o8 = { c, c: 1, c() {} };
+const o9 = { [`${d}`]: 1, [`${d}`]: 2, d: 3 };
+const o10 = { e: 1, [(`e`)]: 2, [`e`]: 3 };
+const o11 = { f: { f: 1 }, g: 2, [`g`]: 3 };
+const o12 = { 1e21: 1, ['1e+21']: 2, [0.1]: 3, '0.1': 4 };
+const o13 = { [true]: 1, true: 2, [null]: 3, null: 4 };

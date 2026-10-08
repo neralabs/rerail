@@ -1,0 +1,62 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "probe-node-globals",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Node fact: process, Buffer, global, setImmediate, clearImmediate, queueMicrotask and structuredClone are Node globals (globals 17.13.0 `node`); declared through languageOptions.globals, a reference resolves to them unless shadowed.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "reference",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "sourceType": "commonjs",
+            "globals": {
+              "process": "readonly",
+              "Buffer": "readonly",
+              "global": "readonly",
+              "setImmediate": "readonly",
+              "clearImmediate": "readonly",
+              "queueMicrotask": "readonly",
+              "structuredClone": "readonly"
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "regex": "^(?:process|Buffer|global|setImmediate|clearImmediate|queueMicrotask|structuredClone)$",
+            "resolves": {
+              "global": [
+                "process",
+                "Buffer",
+                "global",
+                "setImmediate",
+                "clearImmediate",
+                "queueMicrotask",
+                "structuredClone"
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "probe-node-globals",
+        "message": "Node global"
+      }
+    }
+  ]
+}

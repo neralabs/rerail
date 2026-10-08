@@ -1,0 +1,125 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-component-function",
+  "revision": 1,
+  "mode": "log",
+  "description": "Fact: a function component: a PascalCase function declaration, or a PascalCase declarator whose value is a function, that returns JSX (a return of JSX in its own body, or an arrow whose body is JSX). Reported at the name.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "identifier",
+            "regex": "^[A-Z]",
+            "any": [
+              {
+                "inside": {
+                  "field": "name",
+                  "kind": "function_declaration",
+                  "matches": "returns-jsx"
+                }
+              },
+              {
+                "inside": {
+                  "field": "name",
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "value",
+                    "any": [
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "function_expression"
+                      }
+                    ],
+                    "matches": "returns-jsx"
+                  }
+                }
+              }
+            ]
+          },
+          "utils": {
+            "jsx-or-parens": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "jsx_element"
+                    },
+                    {
+                      "kind": "jsx_self_closing_element"
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "jsx-or-parens"
+                  }
+                }
+              ]
+            },
+            "returns-jsx": {
+              "any": [
+                {
+                  "has": {
+                    "field": "body",
+                    "matches": "jsx-or-parens"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "body",
+                    "has": {
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "function_declaration"
+                          },
+                          {
+                            "kind": "function_expression"
+                          },
+                          {
+                            "kind": "arrow_function"
+                          },
+                          {
+                            "kind": "method_definition"
+                          }
+                        ]
+                      },
+                      "kind": "return_statement",
+                      "has": {
+                        "matches": "jsx-or-parens"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-probe/component-function",
+        "message": "Fact"
+      }
+    }
+  ]
+}

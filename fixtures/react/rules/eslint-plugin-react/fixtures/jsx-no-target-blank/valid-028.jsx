@@ -1,0 +1,1 @@
+<a target={targetValue} href="/absolute/path"></a>

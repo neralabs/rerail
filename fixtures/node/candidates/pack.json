@@ -1,0 +1,77 @@
+{
+  "pack": "node-candidates",
+  "family": "ecma",
+  "ticket": "NER-1698",
+  "capabilities": [
+    "syntax",
+    "scope",
+    "value",
+    "suppression"
+  ],
+  "corpora": [
+    {
+      "name": "fastify",
+      "repository": "https://github.com/fastify/fastify",
+      "commit": "0d945819bebc08f4ca666d8283c03a26ed9706a0",
+      "paths": [
+        "fastify.js",
+        "fastify.d.ts",
+        "lib",
+        "test",
+        "examples",
+        "build",
+        "integration",
+        "scripts",
+        "types"
+      ],
+      "exclude": []
+    },
+    {
+      "name": "prettier",
+      "repository": "https://github.com/prettier/prettier",
+      "commit": "5927216227411bc2cdaf30d50559e0a475ab4832",
+      "paths": [
+        "src",
+        "scripts"
+      ],
+      "exclude": []
+    }
+  ],
+  "tools": [
+    {
+      "name": "eslint-plugin-n",
+      "version": "18.4.1"
+    }
+  ],
+  "oracles": "../rules",
+  "rules": [
+    {
+      "id": "n-no-deprecated-api",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-deprecated-api"
+      },
+      "policy": "rules/n-no-deprecated-api.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-hashbang",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/hashbang"
+      },
+      "policy": "rules/n-hashbang.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    }
+  ]
+}

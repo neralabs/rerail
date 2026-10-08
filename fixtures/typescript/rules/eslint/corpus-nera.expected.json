@@ -1,0 +1,167 @@
+{
+  "tool": "eslint",
+  "version": "10.11.0",
+  "source": {
+    "kind": "corpus",
+    "name": "nera",
+    "repository": "https://github.com/neralabs/nera-landing",
+    "commit": "137e9bf7b9da512f90af8463c93c7d9554d49535",
+    "rules": [
+      "eqeqeq",
+      "no-compare-neg-zero",
+      "no-debugger",
+      "no-dupe-keys",
+      "no-duplicate-case",
+      "no-implied-eval",
+      "no-new-wrappers",
+      "no-script-url",
+      "no-self-compare",
+      "no-template-curly-in-string",
+      "no-unused-private-class-members",
+      "no-useless-rename",
+      "radix",
+      "use-isnan"
+    ],
+    "skipped": []
+  },
+  "findings": [
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/components/core/FolderSelection/types.ts",
+      "line": 156,
+      "column": 29
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/components/core/decision-card/DecisionCard.tsx",
+      "line": 100,
+      "column": 32
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/components/tiptap-ui-primitive/tooltip/tooltip.tsx",
+      "line": 96,
+      "column": 29
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/components/tiptap-ui-primitive/tooltip/tooltip.tsx",
+      "line": 102,
+      "column": 29
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/components/tiptap-ui-primitive/tooltip/tooltip.tsx",
+      "line": 125,
+      "column": 15
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/features/check-for-drift/checkForDriftAdapter.ts",
+      "line": 413,
+      "column": 9
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/features/check-for-drift/checkForDriftAdapter.ts",
+      "line": 426,
+      "column": 73
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/features/check-for-drift/specDriftReviewUtils.ts",
+      "line": 496,
+      "column": 19
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/features/check-for-drift/specDriftReviewUtils.ts",
+      "line": 529,
+      "column": 18
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/features/check-for-drift/useSpecDriftReview.ts",
+      "line": 291,
+      "column": 25
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/features/knowledge/knowledgeFormatting.ts",
+      "line": 25,
+      "column": 13
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/features/knowledge/observations/ObservationPeekPanel.tsx",
+      "line": 47,
+      "column": 9
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/features/requirements/requirementPeekApi.ts",
+      "line": 61,
+      "column": 21
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/features/requirements/requirementPeekApi.ts",
+      "line": 61,
+      "column": 43
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/features/requirements/requirementPeekApi.ts",
+      "line": 61,
+      "column": 65
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/features/streams/run/runDebugRows.ts",
+      "line": 34,
+      "column": 32
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/features/streams/run/runDebugRows.ts",
+      "line": 42,
+      "column": 13
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/features/streams/run/runDebugRows.ts",
+      "line": 43,
+      "column": 32
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/features/update-intent/observationEvidence.ts",
+      "line": 8,
+      "column": 15
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/features/update-intent/updateIntentAdapter.ts",
+      "line": 261,
+      "column": 27
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/features/update-intent/updateIntentAdapter.ts",
+      "line": 273,
+      "column": 15
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/utils/dateUtils.ts",
+      "line": 11,
+      "column": 13
+    },
+    {
+      "rule": "eqeqeq",
+      "path": "web/src/utils/dateUtils.ts",
+      "line": 139,
+      "column": 13
+    }
+  ]
+}

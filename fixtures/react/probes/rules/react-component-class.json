@@ -1,0 +1,96 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-component-class",
+  "revision": 1,
+  "mode": "log",
+  "description": "Fact: a class component: a class whose superclass is Component / PureComponent / React.Component / React.PureComponent (eslint-plugin-react's isES6Component). Reported at the class name.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "type_identifier"
+              }
+            ],
+            "inside": {
+              "field": "name",
+              "kind": "class_declaration",
+              "has": {
+                "kind": "class_heritage",
+                "any": [
+                  {
+                    "has": {
+                      "matches": "component-superclass"
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "extends_clause",
+                      "has": {
+                        "field": "value",
+                        "matches": "component-superclass"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "utils": {
+            "component-superclass": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:Pure)?Component$"
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^React$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "regex": "^(?:Pure)?Component$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-probe/component-class",
+        "message": "Fact"
+      }
+    }
+  ]
+}
