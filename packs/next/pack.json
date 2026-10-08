@@ -1,0 +1,153 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "next",
+  "name": "Next.js",
+  "category": "framework",
+  "covers": "19 @next/eslint-plugin-next rules ported to Rerail, each scored against the plugin's own recorded findings on its rule tests.",
+  "reason": "matches Next.js",
+  "match": {
+    "any": [
+      {
+        "npmDependencies": [
+          "next"
+        ]
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "next-no-img-element",
+      "document": "rules/next-no-img-element.json",
+      "title": "No img element",
+      "group": "Next.js",
+      "examples": {
+        "caught": {
+          "path": "app/page.tsx",
+          "text": "export default function Page() {\n  return <img src=\"/hero.png\" alt=\"Hero\" />;\n}\n"
+        },
+        "passes": {
+          "path": "app/page.tsx",
+          "text": "import Image from \"next/image\";\n\nexport default function Page() {\n  return <Image src=\"/hero.png\" alt=\"Hero\" width={640} height={320} />;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "next-no-head-element",
+      "document": "rules/next-no-head-element.json",
+      "title": "No head element",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-no-sync-scripts",
+      "document": "rules/next-no-sync-scripts.json",
+      "title": "No sync scripts",
+      "group": "Next.js",
+      "examples": {
+        "caught": {
+          "path": "pages/index.tsx",
+          "text": "export default function Home() {\n  return <script src=\"https://example.com/widget.js\" />;\n}\n"
+        },
+        "passes": {
+          "path": "pages/index.tsx",
+          "text": "export default function Home() {\n  return <script src=\"https://example.com/widget.js\" async />;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "next-no-css-tags",
+      "document": "rules/next-no-css-tags.json",
+      "title": "No css tags",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-google-font-preconnect",
+      "document": "rules/next-google-font-preconnect.json",
+      "title": "Google font preconnect",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-next-script-for-ga",
+      "document": "rules/next-next-script-for-ga.json",
+      "title": "Next script for ga",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-no-unwanted-polyfillio",
+      "document": "rules/next-no-unwanted-polyfillio.json",
+      "title": "No unwanted polyfillio",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-no-assign-module-variable",
+      "document": "rules/next-no-assign-module-variable.json",
+      "title": "No assign module variable",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-no-document-import-in-page",
+      "document": "rules/next-no-document-import-in-page.json",
+      "title": "No document import in page",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-no-head-import-in-document",
+      "document": "rules/next-no-head-import-in-document.json",
+      "title": "No head import in document",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-no-styled-jsx-in-document",
+      "document": "rules/next-no-styled-jsx-in-document.json",
+      "title": "No styled jsx in document",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-no-title-in-document-head",
+      "document": "rules/next-no-title-in-document-head.json",
+      "title": "No title in document head",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-no-script-component-in-head",
+      "document": "rules/next-no-script-component-in-head.json",
+      "title": "No script component in head",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-inline-script-id",
+      "document": "rules/next-inline-script-id.json",
+      "title": "Inline script id",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-no-async-client-component",
+      "document": "rules/next-no-async-client-component.json",
+      "title": "No async client component",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-no-before-interactive-script-outside-document",
+      "document": "rules/next-no-before-interactive-script-outside-document.json",
+      "title": "No before interactive script outside document",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-no-duplicate-head",
+      "document": "rules/next-no-duplicate-head.json",
+      "title": "No duplicate head",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-no-typos",
+      "document": "rules/next-no-typos.json",
+      "title": "No typos",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-no-location-assign-relative-destination",
+      "document": "rules/next-no-location-assign-relative-destination.json",
+      "title": "No location assign relative destination",
+      "group": "Next.js"
+    }
+  ]
+}
