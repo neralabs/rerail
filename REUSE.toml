@@ -103,27 +103,6 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2010-2025 Webkul Software", "2015-2026 Dan Brown and the BookStack project contributors", "Filament", "Caleb Porzio", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
-# stillat/blade-parser 2.1.0 (blade/licenses/blade-parser/UPSTREAM.md): verbatim
-[[annotations]]
-path = "fixtures/blade/rules/blade-parser/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = "Johnathon Koster"
-SPDX-License-Identifier = "MIT"
-
-# Bladestan 0.11.7 (blade/licenses/bladestan/UPSTREAM.md): verbatim
-[[annotations]]
-path = "fixtures/blade/rules/bladestan/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = "2023-present Tomas Votruba"
-SPDX-License-Identifier = "MIT"
-
-# tlint 9.7.0 (blade/licenses/tlint/UPSTREAM.md): verbatim
-[[annotations]]
-path = "fixtures/blade/rules/tlint/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = "Tighten Co. <hello@tighten.co>"
-SPDX-License-Identifier = "MIT"
-
 # @eslint-community/eslint-utils 4.10.1 (ecma/licenses/eslint-utils/UPSTREAM.md): derived or excerpted
 [[annotations]]
 path = "fixtures/ecma/scope/generate_typescript.mjs"
@@ -747,4 +726,26 @@ path = [
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2022 Charles Marsh"
+SPDX-License-Identifier = "MIT"
+
+# packs/blade
+# stillat/blade-parser 2.1.0 (packs/blade/licenses/blade-parser/UPSTREAM.md): verbatim
+[[annotations]]
+path = "packs/blade/upstream/blade-parser/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = "Johnathon Koster"
+SPDX-License-Identifier = "MIT"
+
+# Bladestan 0.11.7 (packs/blade/licenses/bladestan/UPSTREAM.md): verbatim
+[[annotations]]
+path = "packs/blade/upstream/bladestan/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2023-present Tomas Votruba"
+SPDX-License-Identifier = "MIT"
+
+# tlint 9.7.0 (packs/blade/licenses/tlint/UPSTREAM.md): verbatim
+[[annotations]]
+path = "packs/blade/upstream/tlint/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = "Tighten Co. <hello@tighten.co>"
 SPDX-License-Identifier = "MIT"

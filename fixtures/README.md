@@ -20,7 +20,7 @@ Rerail's `native/src/code_rule_dsl/` and `conformance/languages/`.
 | `python/` | Ruff 0.16.9, Pyflakes 3.4.0, Bandit 1.8.6, CPython 3.13, Jedi 0.19.2 | `calls`, `identifier`, `literal`, `scope`, `suppress`, `value` |
 | `ecma/` | ESLint 10.11.0, typescript-eslint 8.70.1, eslint-utils 4.10.1, natural-compare 1.4.0 | `lines`, `scope`, `suppress`, `value` |
 | `php/` | PHP 8.5.11, PHPStan 2.2.16, Psalm 6.19.1, PHP_CodeSniffer 4.0.4 and 3.13.6, nikic/php-parser 5.9.0, phpstan/phpdoc-parser 2.3.5 | `arguments`, `calls`, `compare`, `format_args`, `literal`, `rules`, `scope`, `suppress`, `value` |
-| `blade/` | illuminate/view 13.34.0, PHP 8.5.11, PHPStan 2.2.16, stillat/blade-parser 2.1.0, Bladestan 0.11.7, tlint 9.7.0 | `rules`, `view` |
+| `blade/` | illuminate/view 13.34.0, PHP 8.5.11, PHPStan 2.2.16 | `view` |
 | `typescript/` | ESLint 10.11.0, typescript-eslint 8.70.1, TypeScript 5.9.3 | `rules` |
 | `next/` | @next/eslint-plugin-next 16.3.8, ESLint 10.11.0, typescript-eslint 8.70.1 | `candidates`, `policies`, `probes`, `rules` |
 | `node/` | eslint-plugin-n 18.4.1, ESLint 10.11.0, globals 17.13.0 | `candidates`, `policies`, `probes`, `rules` |
@@ -60,9 +60,6 @@ upstream path and whether the copy is verbatim, derived or an excerpt. Those fil
 | `php/licenses/phpstan/` | PHPStan 2.2.16 | MIT |
 | `php/licenses/psalm/` | vimeo/psalm 6.19.1 | MIT |
 | `php/licenses/php_codesniffer/` | PHP_CodeSniffer 4.0.4 | BSD-3-Clause |
-| `blade/licenses/blade-parser/` | stillat/blade-parser 2.1.0 | MIT |
-| `blade/licenses/bladestan/` | Bladestan 0.11.7 | MIT |
-| `blade/licenses/tlint/` | tlint 9.7.0 | MIT |
 | `blade/licenses/bagisto/`, `bookstack/`, `filament/`, `livewire/` | directive closures excerpted into `blade/view/directives.php` | MIT |
 | `typescript/licenses/eslint/` | ESLint 10.11.0 | MIT |
 | `typescript/licenses/typescript-eslint/` | typescript-eslint 8.70.1 | MIT |

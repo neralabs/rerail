@@ -1,5 +1,5 @@
 <?php
-// Shared by rules/tlint/read_tests.php and rules/blade-parser/read_tests.php. rerail_rewrite() rewrites an upstream
+// Shared by upstream/tlint/read_tests.php and upstream/blade-parser/read_tests.php. rerail_rewrite() rewrites an upstream
 // test file so that the first argument of every call handing the tool a template (`new <Lint>(...)`,
 // `Document::fromText(...)`) passes through rerail_capture() first. Running the rewritten test then records each
 // template the test feeds the tool, exactly as the tool receives it, under the running test (and dataset row).
