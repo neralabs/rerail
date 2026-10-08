@@ -252,7 +252,7 @@ export async function runSetupCommand(args: readonly string[], context: SetupCon
       { home, packageRoot: activeRoot },
       {
         dev: false,
-        // The daemon's page lists the repository it starts in: the project, when one was named.
+        // The daemon serves every repository; it starts in the project, when one was named.
         ...(parsed.projectDir === undefined ? {} : { cwd: parsed.projectDir }),
         ...(port === undefined ? {} : { port }),
       },

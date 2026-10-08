@@ -1,25 +1,32 @@
 import { realpath } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { ADAPTER_CAPABILITIES, type AdapterDelivery, type RerailHost } from "./adapter-contract.js";
-import { presentationDaemonSchema, presentationResponseSchema, type sessionResponseSchema } from "./api/session-contracts.js";
+import { ADAPTER_CAPABILITIES, type AdapterDelivery, type AdapterSession, type RerailHost } from "./adapter-contract.js";
+import {
+  presentationDaemonSchema,
+  presentationResponseSchema,
+  rulesDashboardUrl,
+  type RulesDashboardScope,
+  type sessionResponseSchema,
+} from "./api/session-contracts.js";
+import { repositoryContextSchema } from "./api/repository-contracts.js";
 import { withinCheckout } from "./checkout-control.js";
 import { DAEMON_STATE_FILE, processAlive, readDaemonState } from "./daemon-control.js";
 import type { DaemonState } from "./daemon.js";
-import { readRepositoryId } from "./repository-identity.js";
-import type { RepositoryStartState } from "./repository-start.js";
+import type { RepositoryStartState } from "./repository-model.js";
 import type { PresentationPresence } from "./schema.js";
-import { linkSteers, sessionPageUrl } from "./rerail-steer.js";
+import { linkSteers, sessionPageUrl, type SessionNoteRules } from "./rerail-steer.js";
 import { RERAIL_BRAND_FOREGROUND } from "./terminal-brand.generated.js";
 import { defaultRerailHome } from "./rerail-home.js";
 
 export type { PresentationPresence } from "./schema.js";
 
 /**
- * The footer's state (design A1f): on here, not on here (never started or stopped in this repo), not
- * running (no live daemon), or on but missing what it needs to count (an unknown session).
+ * The footer's state (design A1f): on here, not on here (stopped in this checkout), not set up (started,
+ * but the repository has no rules configured yet), not running (no live daemon), or on but missing what
+ * it needs to count (an unknown session).
  */
-export type PresentationStatus = "on" | "not-on-here" | "not-running" | "unavailable";
+export type PresentationStatus = "on" | "not-on-here" | "not-set-up" | "not-running" | "unavailable";
 
 export interface PresentationCounts {
   /** Rules on for this session; null when coverage is unknown. */
@@ -62,18 +69,11 @@ export interface RulesDashboardRequest {
 
 export type RulesDashboard = { url: string; reason: null } | { url: null; reason: string };
 
-/** `<origin>/#rules` — the rules view of the daemon page. */
-export function rulesDashboardUrl(origin: URL): string {
-  const url = new URL(origin);
-  url.hash = "rules";
-  return url.href;
-}
-
 const READ_TIMEOUT_MS = 2_000;
 const MAX_RESPONSE_BYTES = 1_048_576;
 const terminalText = (value: string): string => value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
 
-const STATUS_MARKS: Record<PresentationStatus, string> = { on: "●", unavailable: "●", "not-on-here": "○", "not-running": "✕" };
+const STATUS_MARKS: Record<PresentationStatus, string> = { on: "●", unavailable: "●", "not-on-here": "○", "not-set-up": "○", "not-running": "✕" };
 /** Between the footer's items; the brand and its mark lead with single spaces. */
 const ITEM_SEPARATOR = "  ·  ";
 
@@ -147,12 +147,16 @@ async function get<Schema extends z.ZodType>(origin: URL, path: string, schema: 
 
 /** `Rerail ● 26 rules`, with `steered N×` only once Rerail has steered in this session (A1f). */
 function onPresentation(
-  origin: URL, { session, hud }: z.infer<typeof sessionResponseSchema>, presence: PresentationPresence, health: string[],
+  origin: URL,
+  { session, hud }: z.infer<typeof sessionResponseSchema>,
+  scope: RulesDashboardScope | null,
+  presence: PresentationPresence,
+  health: string[],
 ): SessionPresentation {
   const sessionUrl = sessionPageUrl(origin.href, session.host, session.sessionId);
   const ruleNoun = hud.activeRuleCount === 1 ? "rule" : "rules";
   const items: SessionPresentation["parts"] = [
-    { text: hud.activeRuleCount === null ? "rules unavailable" : `${hud.activeRuleCount} ${ruleNoun}`, url: rulesDashboardUrl(origin) },
+    { text: hud.activeRuleCount === null ? "rules unavailable" : `${hud.activeRuleCount} ${ruleNoun}`, url: rulesDashboardUrl(origin, scope) },
   ];
   if (hud.steeringCount === null) items.push({ text: "steering unavailable", url: sessionUrl });
   else if (hud.steeringCount > 0) items.push({ text: `steered ${hud.steeringCount}×`, url: sessionUrl });
@@ -179,12 +183,35 @@ export async function dashboardOrigin(cwd: string): Promise<string | undefined> 
 }
 
 /**
- * Deliveries with their steers' `Why?` links made absolute for `cwd`'s dashboard. The runtime keeps
+ * Deliveries with their steers' `Why?` links made absolute for `cwd`'s dashboard, scoped to its repository. The runtime keeps
  * links relative; each coding agent's adapter links them as it hands them over.
  */
 export async function linkDeliveries(deliveries: readonly AdapterDelivery[], cwd: string | undefined): Promise<AdapterDelivery[]> {
-  const origin = cwd === undefined ? undefined : await dashboardOrigin(cwd);
-  return deliveries.map(delivery => ({ ...delivery, content: linkSteers(delivery.content, origin) }));
+  const dashboard = cwd === undefined ? undefined : await steerDashboard(cwd);
+  return deliveries.map(delivery => ({ ...delivery, content: linkSteers(delivery.content, dashboard) }));
+}
+
+/**
+ * The dashboard `Why?` links point into for `cwd`: the origin scoped to `cwd`'s repository and checkout
+ * (`?repository=&checkout=`) when the daemon names them, else the bare origin. Never starts anything.
+ */
+export async function steerDashboard(cwd: string): Promise<string | undefined> {
+  try {
+    const daemon = await verifyDaemon(cwd);
+    if (typeof daemon === "string") return undefined;
+    const url = new URL(rulesDashboardUrl(daemon.origin, await dashboardScope(daemon)));
+    url.hash = "";
+    return url.href;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The repository and checkout the daemon records for the verified checkout; null when it cannot say. */
+async function dashboardScope(daemon: VerifiedDaemon): Promise<RulesDashboardScope | null> {
+  return get(daemon.origin, `/api/repository?${new URLSearchParams({ checkout: daemon.workspace })}`, repositoryContextSchema)
+    .then(context => ({ repositoryKey: context.repository.repositoryKey, checkoutPath: context.checkout?.checkoutPath ?? null }))
+    .catch(() => null);
 }
 
 /** What is wrong with the Engine or the latest audit of this checkout; nothing when both are fine. */
@@ -212,6 +239,18 @@ const healthSchema = presentationDaemonSchema.extend({ status: z.literal("ok") }
 
 /** The footer in a repository where Rerail is not started, or was stopped. */
 const NOT_ON_HERE = "not on here";
+
+/** The footer in a started checkout whose repository has no rule configuration yet, so no rules run. */
+const NOT_SET_UP = "not set up";
+const SET_UP_HINT = "rerail start";
+
+/** `Rerail ○ not set up  ·  rerail start`: the rules link opens this repository's rules page to set it up. */
+function notSetUpPresentation(origin: URL, scope: RulesDashboardScope | null, presence: PresentationPresence): SessionPresentation {
+  return presentation({
+    status: "not-set-up", items: [{ text: NOT_SET_UP, url: rulesDashboardUrl(origin, scope) }, { text: SET_UP_HINT, url: null }],
+    presence, repositoryState: "not-set-up",
+  });
+}
 
 /** The footer for a session whose host already knows Rerail is off here; no daemon is asked. */
 export function notOnHerePresentation(): SessionPresentation {
@@ -250,10 +289,10 @@ async function verifyDaemon(cwd: string): Promise<VerifiedDaemon | string> {
 }
 
 /**
- * The rules page of the live daemon serving `cwd`'s checkout, or the reason there is none.
- * Probes before answering: a URL a caller is about to open must point at something running.
- * The page edits the rules of the daemon's repository, so a daemon that cannot show it was
- * started in this checkout's repository is refused rather than handed out. Passive: never starts a daemon.
+ * The rules page of the live daemon serving `cwd`'s checkout, or the reason there is none, scoped to the
+ * repository and checkout `cwd` is in when the daemon knows them (else the page opens on its repository picker).
+ * Probes before answering: a URL a caller is about to open must point at something running. Passive: never
+ * starts a daemon and never records the checkout.
  */
 export async function readRulesDashboard({ cwd }: RulesDashboardRequest): Promise<RulesDashboard> {
   if (typeof cwd !== "string" || !isAbsolute(cwd)) return { url: null, reason: "daemon unavailable" };
@@ -262,9 +301,7 @@ export async function readRulesDashboard({ cwd }: RulesDashboardRequest): Promis
     if (typeof daemon === "string") return { url: null, reason: daemon };
     const health = await liveHealth(daemon.origin, daemon.state.pid);
     if (health === undefined) return { url: null, reason: "daemon unavailable" };
-    const repositoryId = readRepositoryId(daemon.workspace);
-    if (repositoryId === undefined || health.repositoryId !== repositoryId) return { url: null, reason: "daemon serves another repository" };
-    return { url: rulesDashboardUrl(daemon.origin), reason: null };
+    return { url: rulesDashboardUrl(daemon.origin, await dashboardScope(daemon)), reason: null };
   } catch {
     return { url: null, reason: "unavailable" };
   }
@@ -300,9 +337,11 @@ async function withoutDaemon(startState: PresentationRequest["startState"], pres
   } catch {
     state = undefined;
   }
-  return state === undefined || state === "started"
-    ? unavailable("not-running", NOT_RUNNING, presence)
-    : unavailable("not-on-here", NOT_ON_HERE, presence, state);
+  if (state === undefined || state === "started") return unavailable("not-running", NOT_RUNNING, presence);
+  if (state === "not-set-up") return presentation({
+    status: "not-set-up", items: [{ text: NOT_SET_UP, url: null }, { text: SET_UP_HINT, url: null }], presence, repositoryState: state,
+  });
+  return unavailable("not-on-here", NOT_ON_HERE, presence, state);
 }
 
 /**
@@ -344,7 +383,9 @@ export async function readPresentation({ sessionId, host, cwd, onDemand = false,
     presence = response.presence;
     if (presence === "silent" && !onDemand) return silent(presence, response.repositoryState);
     // A session in a repository where Rerail is not started is never recorded, so this comes first.
-    if (response.repositoryState !== "started") return unavailable("not-on-here", NOT_ON_HERE, presence, response.repositoryState);
+    if (response.repositoryState === "stopped") return unavailable("not-on-here", NOT_ON_HERE, presence, "stopped");
+    // A started checkout that is not set up records its sessions, but no rules run there until it is set up.
+    if (response.repositoryState === "not-set-up") return notSetUpPresentation(origin, response.scope ?? null, presence);
     if (context.session === null) return unavailable("unavailable", "session unavailable", presence, "started");
     const { session } = context.session;
     // The host may sit below its launch root; the session's canonical cwd stays the identity.
@@ -353,9 +394,16 @@ export async function readPresentation({ sessionId, host, cwd, onDemand = false,
       return unavailable("unavailable", "session unavailable", presence, "started");
     }
     // History failure must not discard already verified session counters.
-    return onPresentation(origin, context.session, presence, await healthItems(context.session, context.daemon.native.ok, root));
+    const health = await healthItems(context.session, context.daemon.native.ok, root);
+    return onPresentation(origin, context.session, response.scope ?? null, presence, health);
   } catch {
     // The locator named a live process, but nothing answered as the daemon.
     return answered ? unavailable("not-running", NOT_RUNNING, presence) : await withoutDaemon(startState, presence);
   }
+}
+
+/** What the session-start note says about the session's rules, as the daemon presents them (hosts that cannot open the database). */
+export async function presentedSessionNoteRules(session: AdapterSession): Promise<SessionNoteRules> {
+  const presentation = await readPresentation({ sessionId: session.sessionId, host: session.host, cwd: session.cwd });
+  return presentation.status === "not-set-up" ? { setUp: false } : { setUp: true, ruleCount: presentation.counts?.rules ?? null };
 }

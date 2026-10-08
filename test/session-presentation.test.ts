@@ -5,12 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dashboardOrigin, formatTerminalStatus, linkDeliveries, readPresentation, readRepositoryState, readRulesDashboard, readSummaryState } from "../src/session-presentation.js";
-import type { RepositoryStartState } from "../src/repository-start.js";
+import type { RepositoryStartState } from "../src/repository-model.js";
 import { steerBlock } from "../src/rerail-steer.js";
 import type { presentationResponseSchema, sessionResponseSchema } from "../src/api/session-contracts.js";
 import type { z } from "zod";
-import { openRerailDatabase } from "../src/database.js";
-import { hookRerailStarted, startRepository } from "../src/repository-start.js";
+import { hookRerailStarted } from "../src/repository-start.js";
+import { startTestRepository } from "./support/started-repository.js";
 
 let home: string;
 let cwd: string;
@@ -68,7 +68,13 @@ describe("installed session presentation", () => {
     expect(session.searchParams.get("host")).toBe("claude-code");
     expect(session.hash).toBe("#sessions");
     expect(result.parts[2]!.url).toBe(session.href);
+    // Without a scope from the daemon the rules link opens the repository picker; with one it opens that repository.
     expect(new URL(result.parts[1]!.url!).hash).toBe("#rules");
+    expect(new URL(result.parts[1]!.url!).search).toBe("");
+    response.scope = { repositoryKey: "remote:github.com/acme/app", checkoutPath: cwd };
+    const rules = new URL((await read()).parts[1]!.url!);
+    expect(Object.fromEntries(rules.searchParams)).toEqual({ repository: "remote:github.com/acme/app", checkout: cwd });
+    expect(rules.hash).toBe("#rules");
     const rendered = formatTerminalStatus(result);
     expect(rendered.split("\u001b]8;;http")).toHaveLength(4);
   });
@@ -118,25 +124,30 @@ describe("installed session presentation", () => {
     expect((await read()).text).toBe("Rerail ● rules unavailable  ·  steering unavailable");
   });
 
-  it("reports not on here, with the state the daemon gave, where Rerail is stopped or was never started", async () => {
+  it("reports not on here only where Rerail is stopped, and Not set up with the start command where no rules are configured", async () => {
     response.repositoryState = "stopped";
     const stopped = await read();
     expect(stopped).toMatchObject({ status: "not-on-here", text: "Rerail ○ not on here", repositoryState: "stopped" });
     expect(stopped.parts.every(part => part.url === null)).toBe(true);
-    // A new session in a repository that was never started has no recorded session at all.
-    response.repositoryState = "never";
-    response.context!.session = null;
-    expect(await read()).toMatchObject({ text: "Rerail ○ not on here", repositoryState: "never" });
-    expect((await read(true)).repositoryState).toBe("never");
     response.presence = "silent";
-    expect(await read()).toMatchObject({ parts: [], repositoryState: "never" });
+    expect(await read()).toMatchObject({ parts: [], repositoryState: "stopped" });
+    response.presence = "compact";
+    response.repositoryState = "not-set-up";
+    const notSetUp = await read();
+    expect(notSetUp).toMatchObject({ status: "not-set-up", text: "Rerail ○ not set up  ·  rerail start", repositoryState: "not-set-up" });
+    // Recorded or not, the footer says why nothing runs, linking the scoped rules page.
+    response.context!.session = null;
+    response.scope = { repositoryKey: "remote:github.com/acme/app", checkoutPath: cwd };
+    const unrecorded = await read();
+    expect(unrecorded.text).toBe(notSetUp.text);
+    expect(new URL(unrecorded.parts[1]!.url!).searchParams.get("repository")).toBe("remote:github.com/acme/app");
   });
 
-  it("with no daemon, is not on here unless the caller's start state says the checkout is started", async () => {
+  it("with no daemon, follows the caller's start state: not on here, not set up, or not running where started", async () => {
     await rm(join(home, "daemon.json"));
     const withState = (startState: () => RepositoryStartState) => readPresentation({ sessionId, host: "claude-code", cwd, startState });
-    expect(await withState(() => "never")).toMatchObject({ status: "not-on-here", text: "Rerail ○ not on here", repositoryState: "never" });
-    expect(await withState(() => "stopped")).toMatchObject({ status: "not-on-here", repositoryState: "stopped" });
+    expect(await withState(() => "stopped")).toMatchObject({ status: "not-on-here", text: "Rerail ○ not on here", repositoryState: "stopped" });
+    expect(await withState(() => "not-set-up")).toMatchObject({ status: "not-set-up", text: "Rerail ○ not set up  ·  rerail start" });
     expect(await withState(() => "started")).toMatchObject({ status: "not-running", text: "Rerail ✕ not running" });
     expect(await withState(() => { throw new Error("database unreadable"); })).toMatchObject({ status: "not-running" });
     expect(await read()).toMatchObject({ status: "not-running" });
@@ -145,7 +156,7 @@ describe("installed session presentation", () => {
 
   it("summarizes a repository without a session from the daemon first, else the local state", async () => {
     await rm(join(home, "daemon.json"));
-    expect(await readSummaryState(cwd, "cursor", () => "never")).toBe("never");
+    expect(await readSummaryState(cwd, "cursor", () => "stopped")).toBe("stopped");
     expect(await readSummaryState(cwd, "cursor", () => "started")).toBeNull();
   });
 
@@ -204,6 +215,9 @@ describe("dashboard links", () => {
 describe("rules page", () => {
   let stub: Server | undefined;
   let health: Record<string, unknown>;
+  /** Whether the stub daemon has recorded the checkout, so `GET /api/repository?checkout=` answers. */
+  let knownCheckout: boolean;
+  const repositoryKey = "remote:github.com/acme/app";
 
   const stop = async (): Promise<void> => {
     const server = stub;
@@ -211,14 +225,28 @@ describe("rules page", () => {
     if (server !== undefined) await new Promise<void>(resolve => server.close(() => resolve()));
   };
 
+  const repositoryContext = (checkoutPath: string) => ({
+    repository: { repositoryKey, name: "app", aliases: [], setUp: true, configuredAt: 1, started: true, state: "started", checkoutCount: 1 },
+    clones: [],
+    checkout: { checkoutPath, folder: "", state: "started" },
+  });
+
   /** Liveness is only provable over the wire, so these fixtures answer `/healthz` from a real listener. */
   const listen = async (pid: number = process.pid): Promise<number> => {
     vi.unstubAllGlobals();
-    health = { status: "ok", pid, database: { path: database, exists: true }, native: { ok: true }, repositoryId: "repository-under-test" };
+    knownCheckout = true;
+    health = { status: "ok", pid, database: { path: database, exists: true }, native: { ok: true } };
+    const checkoutPath = await realpath(cwd);
     stub = createServer((request, response) => {
-      const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
-      response.writeHead(path === "/healthz" || path === "/api/presentation" ? 200 : 404, { "content-type": "application/json" });
-      response.end(JSON.stringify(path === "/api/presentation" ? { presence: "compact", repositoryState: "stopped" } : health));
+      const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      const answers: Record<string, unknown> = {
+        "/healthz": health,
+        "/api/presentation": { presence: "compact", repositoryState: "stopped" },
+        ...(knownCheckout && url.searchParams.get("checkout") === checkoutPath ? { "/api/repository": repositoryContext(checkoutPath) } : {}),
+      };
+      const body = answers[url.pathname];
+      response.writeHead(body === undefined ? 404 : 200, { "content-type": "application/json" });
+      response.end(JSON.stringify(body ?? { error: "checkout-not-found" }));
     });
     await new Promise<void>(resolve => stub!.listen(0, "127.0.0.1", () => resolve()));
     return (stub!.address() as AddressInfo).port;
@@ -229,16 +257,34 @@ describe("rules page", () => {
     await writeFile(file, JSON.stringify(state));
   };
 
+  const scoped = async (origin: string): Promise<string> =>
+    `${origin}/?${new URLSearchParams({ repository: repositoryKey, checkout: await realpath(cwd) })}#rules`;
+
   afterEach(stop);
 
-  it("links the rules view of the daemon that answers as itself", async () => {
+  it("links the rules view scoped to the checkout's repository, from the daemon that answers as itself", async () => {
     const port = await listen();
     await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
-    expect(await readRulesDashboard({ cwd })).toEqual({ url: `http://127.0.0.1:${port}/#rules`, reason: null });
-    health.repositoryId = "another-repository";
-    expect(await readRulesDashboard({ cwd })).toEqual({ url: null, reason: "daemon serves another repository" });
+    expect(await readRulesDashboard({ cwd })).toEqual({ url: await scoped(`http://127.0.0.1:${port}`), reason: null });
     await rm(join(home, "daemon.json"));
     expect(await readRulesDashboard({ cwd })).toEqual({ url: null, reason: "daemon unavailable" });
+  });
+
+  it("links the repository picker when the daemon has not seen the checkout, whichever repository it started in", async () => {
+    const port = await listen();
+    await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
+    knownCheckout = false;
+    expect(await readRulesDashboard({ cwd })).toEqual({ url: `http://127.0.0.1:${port}/#rules`, reason: null });
+  });
+
+  it("scopes steers' Why? links to the checkout's repository when the daemon knows it", async () => {
+    const port = await listen();
+    await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
+    const steer = { sessionId: "s", requested: "steer" as const, mechanism: "additional-context" as const, content: steerBlock("a:b", "Fix it."), ruleIds: ["a:b"] };
+    const rulePage = (await scoped(`http://127.0.0.1:${port}`)).replace("#rules", "#rule/a%3Ab");
+    expect((await linkDeliveries([steer], cwd))[0]?.content).toContain(`Why? → ${rulePage}`);
+    knownCheckout = false;
+    expect((await linkDeliveries([steer], cwd))[0]?.content).toContain(`Why? → http://127.0.0.1:${port}/#rule/a%3Ab`);
   });
 
   it("reads the repository's start state from a live daemon, and nothing from a dead one", async () => {
@@ -250,26 +296,13 @@ describe("rules page", () => {
   });
 
   it("lets a live daemon's answer decide the hook start check, and reads the database only once none answers", async () => {
-    const store = openRerailDatabase(database);
-    startRepository(store, "repository-under-test");
-    store.$client.close();
+    startTestRepository(cwd, database);
     const port = await listen();
     await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
     // The daemon says stopped; this process's database, which says started, is not read.
     expect(await hookRerailStarted("claude-code", cwd)).toBe(false);
     await record(join(home, "daemon.json"), { pid: 999_999 });
     expect(await hookRerailStarted("claude-code", cwd)).toBe(true);
-  });
-
-  it("refuses to link the rules view unless both the daemon and the checkout name the same repository", async () => {
-    const port = await listen();
-    await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
-    delete health.repositoryId;
-    expect(await readRulesDashboard({ cwd })).toEqual({ url: null, reason: "daemon serves another repository" });
-    await rm(join(cwd, ".rerail", "repository-id"));
-    expect(await readRulesDashboard({ cwd })).toEqual({ url: null, reason: "daemon serves another repository" });
-    health.repositoryId = "repository-under-test";
-    expect(await readRulesDashboard({ cwd })).toEqual({ url: null, reason: "daemon serves another repository" });
   });
 
   it("refuses a recorded daemon whose pid is gone or whose port is vacant", async () => {

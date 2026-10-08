@@ -7,7 +7,7 @@ const rule = {
   definition: "{}",
   digest: "saved-rule",
   updatedAt: "1",
-  enabled: true,
+  source: "library" as const,
 };
 
 function generatedPair() {
