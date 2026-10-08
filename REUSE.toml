@@ -221,10 +221,7 @@ SPDX-License-Identifier = "MIT AND Apache-2.0"
 
 # Bandit 1.8.6 (python/licenses/bandit/UPSTREAM.md): verbatim
 [[annotations]]
-path = [
-  "fixtures/python/rules/bandit/fixtures/**",
-  "fixtures/python/value/bandit/**",
-]
+path = "fixtures/python/value/bandit/**"
 precedence = "override"
 SPDX-FileCopyrightText = "2014 Hewlett-Packard Development Company, L.P."
 SPDX-License-Identifier = "Apache-2.0"
@@ -279,7 +276,6 @@ path = [
   "fixtures/python/literal/ruff/F842.py",
   "fixtures/python/literal/ruff/project/**",
   "fixtures/python/literal/ruff/typing_modules.py",
-  "fixtures/python/rules/ruff/fixtures/pyflakes/**",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = ["2022 Charles Marsh", "2005-2011 Divmod, Inc.", "2013-2014 Florent Xicluna"]
@@ -287,13 +283,7 @@ SPDX-License-Identifier = "MIT"
 
 # Ruff 0.16.9 (python/licenses/ruff/UPSTREAM.md): verbatim
 [[annotations]]
-path = [
-  "fixtures/python/rules/ruff/fixtures/flake8_bugbear/**",
-  "fixtures/python/rules/ruff/fixtures/flake8_pie/**",
-  "fixtures/python/rules/ruff/fixtures/flake8_simplify/SIM222.py",
-  "fixtures/python/rules/ruff/fixtures/pycodestyle/**",
-  "fixtures/python/value/ruff/B005.py",
-]
+path = "fixtures/python/value/ruff/B005.py"
 precedence = "override"
 SPDX-FileCopyrightText = "2022 Charles Marsh"
 SPDX-License-Identifier = "MIT"
@@ -729,3 +719,32 @@ path = [
 precedence = "override"
 SPDX-FileCopyrightText = ["2023 shadcn", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# Rule packs under packs/ (see packs/README.md): the tools' copied tests, one entry per
+# packs/<id>/licenses/<project>/UPSTREAM.md and copy kind. Keep these entries in step with the UPSTREAM.md tables.
+
+# Bandit 1.8.6 (packs/python/licenses/bandit/UPSTREAM.md): verbatim
+[[annotations]]
+path = "packs/python/upstream/bandit/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2014 Hewlett-Packard Development Company, L.P."
+SPDX-License-Identifier = "Apache-2.0"
+
+# Ruff 0.16.9 (packs/python/licenses/ruff/UPSTREAM.md): verbatim
+[[annotations]]
+path = "packs/python/upstream/ruff/fixtures/pyflakes/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2022 Charles Marsh", "2005-2011 Divmod, Inc.", "2013-2014 Florent Xicluna"]
+SPDX-License-Identifier = "MIT"
+
+# Ruff 0.16.9 (packs/python/licenses/ruff/UPSTREAM.md): verbatim
+[[annotations]]
+path = [
+  "packs/python/upstream/ruff/fixtures/flake8_bugbear/**",
+  "packs/python/upstream/ruff/fixtures/flake8_pie/**",
+  "packs/python/upstream/ruff/fixtures/flake8_simplify/SIM222.py",
+  "packs/python/upstream/ruff/fixtures/pycodestyle/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2022 Charles Marsh"
+SPDX-License-Identifier = "MIT"

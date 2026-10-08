@@ -1,4 +1,4 @@
-"""Records Ruff 0.16.9 for the Python pack's ported rules (rerail/conformance/languages/python/pack.json).
+"""Records Ruff 0.16.9 for the Python pack's ported rules (rerail/packs/python/conformance.json).
 Run offline, never in CI, under CPython 3.14:
 
     python3.14 generate.py fixtures <Ruff checkout at tag 0.16.9> <ruff executable, 0.16.9>
@@ -6,7 +6,7 @@ Run offline, never in CI, under CPython 3.14:
 
 `fixtures` copies each rule's own test fixtures (the files its `#[test_case(Rule::…, Path::new(…))]` cases lint with
 default settings, under `crates/ruff_linter/resources/test/fixtures/<linter>/`) to fixtures/<linter>/<file>
-(licenses/ruff/UPSTREAM.md lists them) and runs Ruff with every ported rule selected over every copy. `corpus` runs the
+(the pack's licenses/ruff/UPSTREAM.md lists them) and runs Ruff with every ported rule selected over every copy. `corpus` runs the
 same rules over a corpus's pack paths, files CPython 3.14 does not parse left out. Both run Ruff isolated from any
 configuration, at target version py310 (Ruff's CLI default and the engine's default `pythonVersion`, which the ports
 keep), with `# noqa` honoured: the ports honour it too (`suppress.noqa`). Each finding is the rule's code, path, line

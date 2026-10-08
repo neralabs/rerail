@@ -1,11 +1,11 @@
-"""Records Bandit 1.8.6 for the Python pack's ported tests (rerail/conformance/languages/python/pack.json).
+"""Records Bandit 1.8.6 for the Python pack's ported tests (rerail/packs/python/conformance.json).
 Run offline, never in CI, under CPython 3.14 (Bandit itself runs from its own install, on CPython 3.13):
 
     python3.14 generate.py fixtures <Bandit checkout at tag 1.8.6> <bandit executable, 1.8.6>
     python3.14 generate.py corpus <bandit executable, 1.8.6> <name>=<corpus checkout> [...]
 
 `fixtures` copies each test's own example (`examples/<file>`, the file Bandit's functional test for it scans) to
-fixtures/<file> (licenses/bandit/UPSTREAM.md lists them) and runs Bandit with every ported test over every copy.
+fixtures/<file> (the pack's licenses/bandit/UPSTREAM.md lists them) and runs Bandit with every ported test over every copy.
 `corpus` runs the same tests over a corpus's pack paths, files CPython 3.14 does not parse left out. Both run with
 `--ignore-nosec` (Rerail does not model `# nosec`, so the ports keep every finding) and every severity and confidence.
 A file Bandit reports an error for is skipped. Each finding is the test id, path, line and column (`col_offset`

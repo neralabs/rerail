@@ -17,7 +17,7 @@ Rerail's `native/src/code_rule_dsl/` and `conformance/languages/`.
 
 | Family | Upstream tools | Features |
 |---|---|---|
-| `python/` | Ruff 0.16.9, Pyflakes 3.4.0, Bandit 1.8.6, CPython 3.13, Jedi 0.19.2 | `calls`, `identifier`, `literal`, `rules`, `scope`, `suppress`, `value` |
+| `python/` | Ruff 0.16.9, Pyflakes 3.4.0, Bandit 1.8.6, CPython 3.13, Jedi 0.19.2 | `calls`, `identifier`, `literal`, `scope`, `suppress`, `value` |
 | `ecma/` | ESLint 10.11.0, typescript-eslint 8.70.1, eslint-utils 4.10.1, natural-compare 1.4.0 | `lines`, `scope`, `suppress`, `value` |
 | `php/` | PHP 8.5.11, PHPStan 2.2.16, Psalm 6.19.1, PHP_CodeSniffer 4.0.4 and 3.13.6, nikic/php-parser 5.9.0, phpstan/phpdoc-parser 2.3.5 | `arguments`, `calls`, `compare`, `format_args`, `literal`, `rules`, `scope`, `suppress`, `value` |
 | `blade/` | illuminate/view 13.34.0, PHP 8.5.11, PHPStan 2.2.16, stillat/blade-parser 2.1.0, Bladestan 0.11.7, tlint 9.7.0 | `rules`, `view` |
@@ -32,7 +32,9 @@ Rerail's `native/src/code_rule_dsl/` and `conformance/languages/`.
 `frameworks/eslint_record.mjs` is the recorder the `next/`, `node/` and `react/` generators share. `rules/` holds a
 pack's T4 recordings: each ported rule's upstream test cases (`fixtures/`) and pinned public corpora
 (`corpus-<name>.expected.json`). `candidates/` and `probes/` are runnable packs scored against those recordings, and
-`grammar/`, `t1/`, `t3/` and `feasibility/` hold the measurement tools of a pack's earlier tiers.
+`grammar/`, `t1/`, `t3/` and `feasibility/` hold the measurement tools of a pack's earlier tiers. A pack that has
+moved to `packs/<id>/` ([pack format](../docs/pack-format.md#moving-to-this-layout)) takes its `rules/`,
+`candidates/` and its rule tools' licences with it: Python's are in `packs/python/`.
 
 Each oracle stays whole inside its feature directory (generator, inputs and recorded output together), so every
 generator reads and writes relative to its own directory. A generator that needs pinned tools or corpus checkouts

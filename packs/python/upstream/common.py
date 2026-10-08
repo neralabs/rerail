@@ -1,4 +1,4 @@
-"""Shared by the rules/<tool>/generate.py recorders: the pack's corpora and the files each scores, the files Python
+"""Shared by the upstream/<tool>/generate.py recorders: the pack's corpora and the files each scores, the files Python
 cannot parse, and the recording format `rerail/conformance/languages/pack.ts` reads (`recordingSchema`).
 
 Run under CPython 3.14: the parse check below is CPython's own parser, the way `php -l` is PHP's."""
@@ -14,7 +14,7 @@ import sys
 import warnings
 
 HERE = pathlib.Path(__file__).resolve().parent
-PACK = HERE.parents[2] / "conformance" / "languages" / "python" / "pack.json"
+PACK = HERE.parent / "conformance.json"
 
 # The directories a repository audit never enters (`IGNORED_DIRECTORIES`, rerail/src/code-rule-enforcer.ts).
 IGNORED_DIRECTORIES = {".git", ".hg", ".svn", ".rerail", ".venv", "__pycache__", "node_modules", "dist", "build",
