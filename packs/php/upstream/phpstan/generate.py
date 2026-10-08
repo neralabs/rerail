@@ -1,4 +1,4 @@
-"""Records PHPStan 2.2.16 for the PHP pack's ported rules (rerail/conformance/languages/php/pack.json). Run offline,
+"""Records PHPStan 2.2.16 for the PHP pack's ported rules (rerail/packs/php/conformance.json). Run offline,
 never in CI, with PHP 8.5.11:
 
     python3 generate.py fixtures <phpstan-src checkout at tag 2.2.16> <composer project with phpstan/phpstan 2.2.16>
@@ -9,7 +9,7 @@ A finding belongs to a ported rule class by its identifier and, where another cl
 ported identifiers are recorded (`IDENTIFIERS`).
 
 `fixtures` reads each ported class's RuleTestCase statically (read_tests.php) and copies the files its test
-methods analyse to fixtures/<path under tests/PHPStan> (licenses/phpstan/UPSTREAM.md lists them). A file several
+methods analyse to fixtures/<path under tests/PHPStan> (the pack's licenses/phpstan/UPSTREAM.md lists them). A file several
 methods analyse with different rule options takes the method whose options are PHPStan's defaults at level max.
 Each analysis unit (a method's files, analysed together) is recorded as:
   - for the identifiers of the class whose test analyses it, the test's own expectation (message, line). A

@@ -1,11 +1,11 @@
-"""Records PHP_CodeSniffer 4.0.4 for the PHP pack's ported sniffs (rerail/conformance/languages/php/pack.json).
+"""Records PHP_CodeSniffer 4.0.4 for the PHP pack's ported sniffs (rerail/packs/php/conformance.json).
 Run offline, never in CI, with PHP 8.5.11:
 
     python3 generate.py fixtures <PHP_CodeSniffer checkout at tag 4.0.4> <composer project with squizlabs/php_codesniffer 4.0.4>
     python3 generate.py corpus <composer project> <name>=<corpus checkout> [...]
 
 `fixtures` copies each sniff's own test files (`src/Standards/<Standard>/Tests/<Category>/<Sniff>UnitTest*.inc`) to
-fixtures/<Standard>/<Category>/<file>.php (the runner reads `.php`; licenses/php_codesniffer/UPSTREAM.md lists them),
+fixtures/<Standard>/<Category>/<file>.php (the runner reads `.php`; the pack's licenses/php_codesniffer/UPSTREAM.md lists them),
 runs PHP_CodeSniffer with every ported sniff (ruleset.xml: the sniffs alone, with their default properties) over every
 copy, and requires its reports on a sniff's own files to be,
 line by line, the counts its test's getErrorList() and getWarningList() expect: so the recording on a sniff's own

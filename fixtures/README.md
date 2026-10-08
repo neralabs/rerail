@@ -19,7 +19,7 @@ Rerail's `native/src/code_rule_dsl/` and `conformance/languages/`.
 |---|---|---|
 | `python/` | Ruff 0.16.9, Pyflakes 3.4.0, Bandit 1.8.6, CPython 3.13, Jedi 0.19.2 | `calls`, `identifier`, `literal`, `scope`, `suppress`, `value` |
 | `ecma/` | ESLint 10.11.0, typescript-eslint 8.70.1, eslint-utils 4.10.1, natural-compare 1.4.0 | `lines`, `scope`, `suppress`, `value` |
-| `php/` | PHP 8.5.11, PHPStan 2.2.16, Psalm 6.19.1, PHP_CodeSniffer 4.0.4 and 3.13.6, nikic/php-parser 5.9.0, phpstan/phpdoc-parser 2.3.5 | `arguments`, `calls`, `compare`, `format_args`, `literal`, `rules`, `scope`, `suppress`, `value` |
+| `php/` | PHP 8.5.11, PHPStan 2.2.16, Psalm 6.19.1, PHP_CodeSniffer 4.0.4 and 3.13.6, nikic/php-parser 5.9.0, phpstan/phpdoc-parser 2.3.5 | `arguments`, `calls`, `compare`, `format_args`, `literal`, `scope`, `suppress`, `value` |
 | `blade/` | illuminate/view 13.34.0, PHP 8.5.11, PHPStan 2.2.16, stillat/blade-parser 2.1.0, Bladestan 0.11.7, tlint 9.7.0 | `rules`, `view` |
 | `vue/` | @vue/compiler-sfc 3.5.43, vue-eslint-parser 10.4.1, eslint-plugin-vue 10.11.1, ESLint 10.11.0 | `grammar`, `rules`, `view` |
 | `rust/` | rustc, clippy and rust-analyzer 1.99.0, tree-sitter-rust 0.24.2, syn 2 | `feasibility`, `grammar`, `literal`, `rules`, `suppress` |
@@ -30,8 +30,6 @@ pack's T4 recordings: each ported rule's upstream test cases (`fixtures/`) and p
 (`corpus-<name>.expected.json`). `candidates/` and `probes/` are runnable packs scored against those recordings, and
 `grammar/`, `t1/`, `t3/` and `feasibility/` hold the measurement tools of a pack's earlier tiers. A pack that has
 moved to `packs/<id>/` ([pack format](../docs/pack-format.md#moving-to-this-layout)) takes its `rules/`,
-`candidates/` and its rule tools' licences with it: Python's are in `packs/python/`, React's (the whole `react/`
-family) in `packs/react/`.
 
 Each oracle stays whole inside its feature directory (generator, inputs and recorded output together), so every
 generator reads and writes relative to its own directory. A generator that needs pinned tools or corpus checkouts
@@ -54,9 +52,6 @@ upstream path and whether the copy is verbatim, derived or an excerpt. Those fil
 | `ecma/licenses/eslint-utils/` | eslint-utils 4.10.1 | MIT |
 | `php/licenses/laravel/` | laravel/framework e5f3d6265f | MIT |
 | `php/licenses/symfony/` | symfony/symfony 2c4011aa7e | MIT |
-| `php/licenses/phpstan/` | PHPStan 2.2.16 | MIT |
-| `php/licenses/psalm/` | vimeo/psalm 6.19.1 | MIT |
-| `php/licenses/php_codesniffer/` | PHP_CodeSniffer 4.0.4 | BSD-3-Clause |
 | `blade/licenses/bagisto/`, `bookstack/`, `filament/`, `livewire/` | directive closures excerpted into `blade/view/directives.php` | MIT |
 | `vue/licenses/eslint-plugin-vue/` | eslint-plugin-vue 10.11.1 | MIT |
 | `rust/licenses/clippy/` | rust-clippy (Rust 1.99.0) | MIT OR Apache-2.0 |

@@ -1,4 +1,4 @@
-"""Shared by the rules/<tool>/generate.py recorders: the pack's corpora, the files PHP cannot parse, and the
+"""Shared by the upstream/<tool>/generate.py recorders: the pack's corpora, the files PHP cannot parse, and the
 recording format `rerail/conformance/languages/pack.ts` reads (`recordingSchema`)."""
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = pathlib.Path(__file__).resolve().parent
-PACK = HERE.parents[2] / "conformance" / "languages" / "php" / "pack.json"
+PACK = HERE.parent / "conformance.json"
 
 
 def corpus(name: str) -> dict:

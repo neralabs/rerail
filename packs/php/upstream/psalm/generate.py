@@ -1,4 +1,4 @@
-"""Records Psalm 6.19.1 for the PHP pack's ported issues (rerail/conformance/languages/php/pack.json). Run offline,
+"""Records Psalm 6.19.1 for the PHP pack's ported issues (rerail/packs/php/conformance.json). Run offline,
 never in CI, with PHP 8.5.11:
 
     python3 generate.py fixtures <Psalm checkout at tag 6.19.1> <composer project with vimeo/psalm 6.19.1>
@@ -7,7 +7,7 @@ never in CI, with PHP 8.5.11:
 `fixtures` reads every case of the issues' own tests (tests/UnusedVariableTest.php, tests/ForbiddenCodeTest.php):
 providerValidCodeParse() and providerInvalidCodeParse(), read statically by read_tests.php. Every case of both
 providers is read (all are constant expressions, none asks for a PHP version above 8.5), so none is left out. Each
-case is copied to fixtures/<Test>/<provider>/<case>.php (licenses/psalm/UPSTREAM.md lists them) and analysed alone, as
+case is copied to fixtures/<Test>/<provider>/<case>.php (the pack's licenses/psalm/UPSTREAM.md lists them) and analysed alone, as
 the upstream test analyses it: as src/somefile.php of its own project, at error level 1 with unused variables found
 (UnusedVariableTest's reportUnusedVariables(); not unused code), the case's ignored_issues suppressed, for its
 php_version (the tests' default 7.4; 8.0 for a `PHP80-` case, 8.1 for a valid `PHP81-` one). The recording is
@@ -21,8 +21,8 @@ from a project in .rerail/scratch/ whose psalm.xml names the corpus's files (the
 Psalm does not analyse a class whose parent or interface it cannot load (PHPUnit's TestCase, for every test), so
 that project installs the corpus's dependencies into deps/: the corpus's composer.json without its autoload, scripts
 and the packages the checkout itself holds (path and package repositories, which become `replace`d), plus EXTRA,
-resolved once by `composer update` and pinned by composer/<name>.lock, which later runs `composer install`. As
-`benchmark_php_usage_corpus` reads them (`rerail-fixtures/php/scope/php/generate_usage_corpus.py`), they are Psalm's
+resolved once by `composer update` and pinned by composer-<name>.lock, which later runs `composer install`. As
+`benchmark_php_usage_corpus` reads them (`rerail/fixtures/php/scope/php/generate_usage_corpus.py`), they are Psalm's
 `extraFiles`, scanned for declarations and not analysed, less the directories that would shadow the corpus's own
 declarations (`shadowing`). The recording's `unanalysed` lists, by file, the lines of the functions Psalm stops
 analysing and of the classes it analyses none of, read from its own reports (`unanalysed`): no finding there, Psalm's
@@ -44,7 +44,7 @@ from xml.sax.saxutils import quoteattr
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-sys.path.insert(0, str(HERE.parents[1] / "scope" / "php"))
+sys.path.insert(0, str(HERE.parents[3] / "fixtures" / "php" / "scope" / "php"))
 import common  # noqa: E402
 from generate_usage_corpus import shadowing, unanalysed  # noqa: E402
 
@@ -76,7 +76,7 @@ ROOT_VERSION = {"laravel": "13.34.0", "symfony": "8.2.x-dev"}
 
 
 def dependencies(name: str, root: pathlib.Path, directory: pathlib.Path) -> None:
-    """Installs the corpus's dependencies into `directory`'s vendor/, from composer/<name>.lock when it exists, with
+    """Installs the corpus's dependencies into `directory`'s vendor/, from composer-<name>.lock when it exists, with
     no autoloader: Psalm reads them as `extraFiles`."""
     manifest = json.loads((root / "composer.json").read_text())
     for key in ("autoload", "autoload-dev", "scripts"):
@@ -98,7 +98,7 @@ def dependencies(name: str, root: pathlib.Path, directory: pathlib.Path) -> None
     manifest["require-dev"].update(EXTRA.get(name, {}))
     manifest.setdefault("replace", {}).update({package: "*" for package in sorted(local) if "/" in package})
     (directory / "composer.json").write_text(json.dumps(manifest, indent=1) + "\n")
-    lock = HERE / "composer" / f"{name}.lock"
+    lock = HERE / f"composer-{name}.lock"
     env = {**ENV, "COMPOSER_ROOT_VERSION": ROOT_VERSION[name], "COMPOSER_NO_INTERACTION": "1"}
     if lock.exists():
         shutil.copyfile(lock, directory / "composer.lock")
@@ -106,7 +106,6 @@ def dependencies(name: str, root: pathlib.Path, directory: pathlib.Path) -> None
     subprocess.run(["composer", command, "--no-scripts", "--no-plugins", "--ignore-platform-reqs", "--no-progress",
                     "--prefer-dist", "--no-autoloader", "--quiet"], cwd=directory, env=env, check=True)
     if not lock.exists():
-        lock.parent.mkdir(exist_ok=True)
         shutil.copyfile(directory / "composer.lock", lock)
 
 

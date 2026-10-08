@@ -169,27 +169,6 @@ precedence = "override"
 SPDX-FileCopyrightText = ["Taylor Otwell", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
-# PHP_CodeSniffer 4.0.4 (php/licenses/php_codesniffer/UPSTREAM.md): verbatim
-[[annotations]]
-path = "fixtures/php/rules/phpcs/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = ["2012 Squiz Pty Ltd (ABN 77 084 670 600)", "2023 PHPCSStandards and contributors"]
-SPDX-License-Identifier = "BSD-3-Clause"
-
-# PHPStan 2.2.16 (php/licenses/phpstan/UPSTREAM.md): verbatim
-[[annotations]]
-path = "fixtures/php/rules/phpstan/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = ["2016 Ondřej Mirtes", "2025 PHPStan s.r.o."]
-SPDX-License-Identifier = "MIT"
-
-# vimeo/psalm 6.19.1 (php/licenses/psalm/UPSTREAM.md): verbatim
-[[annotations]]
-path = "fixtures/php/rules/psalm/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = "2016 Vimeo"
-SPDX-License-Identifier = "MIT"
-
 # symfony/symfony 2c4011aa7e (php/licenses/symfony/UPSTREAM.md): derived or excerpted
 [[annotations]]
 path = "fixtures/php/literal/symfony/phpdoc.expected.json"
@@ -787,4 +766,26 @@ path = [
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "Meta Platforms, Inc. and affiliates."
+
+# packs/php
+
+# PHP_CodeSniffer 4.0.4 (packs/php/licenses/php_codesniffer/UPSTREAM.md): verbatim
+[[annotations]]
+path = "packs/php/upstream/phpcs/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2012 Squiz Pty Ltd (ABN 77 084 670 600)", "2023 PHPCSStandards and contributors"]
+SPDX-License-Identifier = "BSD-3-Clause"
+
+# PHPStan 2.2.16 (packs/php/licenses/phpstan/UPSTREAM.md): verbatim
+[[annotations]]
+path = "packs/php/upstream/phpstan/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2016 Ondřej Mirtes", "2025 PHPStan s.r.o."]
+SPDX-License-Identifier = "MIT"
+
+# vimeo/psalm 6.19.1 (packs/php/licenses/psalm/UPSTREAM.md): verbatim
+[[annotations]]
+path = "packs/php/upstream/psalm/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2016 Vimeo"
 SPDX-License-Identifier = "MIT"
