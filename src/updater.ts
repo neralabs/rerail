@@ -270,7 +270,7 @@ export async function validateManagedInstallation(installation: Installation): P
   }
 
   const entrypoint = join(installation.packageRoot, "dist", "index.js");
-  // A child loads the staged kernel: on Windows a process with the kernel mapped cannot rename the staging
+  // A child loads the staged engine: on Windows a process with the engine mapped cannot rename the staging
   // directory into place or remove it, so an in-process check failed every install there with EPERM.
   const healthScript = [
     `const loaded = await import(${JSON.stringify(pathToFileURL(entrypoint).href)});`,

@@ -6,7 +6,7 @@
 // blocks and the template AST, `parseMode: "sfc"`), vue-eslint-parser 10.4.1 with @typescript-eslint/parser 8.70.1 and
 // typescript 6.0.3 (the ESLint-compatible template AST eslint-plugin-vue reads), the corpora in ../corpora.json and the
 // grammars in grammars.json, each checked out by commit under `<tools>/grammars/<checkout>`. Each grammar is compiled
-// to a shared library and parsed through `dump/` with the tree-sitter 0.27.0 runtime Rerail's kernel links.
+// to a shared library and parsed through `dump/` with the tree-sitter 0.27.0 runtime Rerail's engine links.
 //
 // For every `.vue` file of every corpus the generator records whether each reference accepts it, then compares each
 // grammar's tree with each reference by the normalized items of `sfc.mjs` (blocks, elements, attributes, directives,

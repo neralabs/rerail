@@ -7,7 +7,7 @@ use std::cell::OnceCell;
 use std::collections::HashSet;
 use tokenizers::Tokenizer;
 
-/// Mirrors `maxRegexPatternBytes` in `policies/executable-policy-dsl/capabilities.json`.
+/// Mirrors `maxRegexPatternBytes` in `code-rule-dsl/capabilities.json`.
 const MAX_REGEX_PATTERN_BYTES: usize = 16_384;
 const MAX_CONDITION_DEPTH: usize = 16;
 
@@ -57,7 +57,7 @@ pub trait Encoder {
     fn token_count(&self, text: &str) -> Result<usize>;
 }
 
-/// The kernel's model, tokenizer, and input-token cap.
+/// The engine's model, tokenizer, and input-token cap.
 pub struct ModelEncoder {
     pub model: StaticModel,
     pub tokenizer: Tokenizer,
@@ -356,7 +356,7 @@ fn only_key(object: &Map<String, Value>, key: &str, path: &str) -> Result<()> {
     }
 }
 
-/// Compile a pattern in the policy DSL's regex dialect and size limit. The error is a reason for the
+/// Compile a pattern in the code-rule DSL's regex dialect and size limit. The error is a reason for the
 /// caller to prefix with where the pattern sits.
 pub fn compile_regex(pattern: &str) -> std::result::Result<Regex, String> {
     if pattern.is_empty() {

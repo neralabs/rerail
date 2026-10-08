@@ -7,25 +7,25 @@ import {
   type AdapterSample,
   type AdapterSession,
 } from "./adapter-contract.js";
-import { LiveCosineRules } from "./cosine-rule-sync.js";
+import { LiveConversationRules } from "./conversation-rule-sync.js";
 import { isRerailStarted } from "./repository-start.js";
 import { bundledModelPath, PACKAGE_ROOT } from "./extension.js";
-import type { ExtensionTranscriptOptions } from "./extension-transcript.js";
+import type { SessionDatabaseOptions } from "./session-database-options.js";
 import type { ModelFingerprint } from "./native.js";
 import type { NativeSemanticToolRuntime } from "./native-semantic-tools.js";
 import { NativeSemanticRuntime } from "./native-semantic-runtime.js";
 import type { NativeSessionClient } from "./native-session-client.js";
 import { PiNativeSession } from "./pi-native-session.js";
 import { registerPiHostAdapter } from "./pi-host-adapter.js";
-import { CosineRuleRegistry, type RuleMatch } from "./registry.js";
-import { cosineRuleLoader, type CosineRuleSourceOptions } from "./rule-sources.js";
+import { ConversationRuleRegistry, type RuleMatch } from "./registry.js";
+import { conversationRuleLoader, type ConversationRuleSourceOptions } from "./rule-sources.js";
 import { loadBundledRules } from "./rule-bootstrap.js";
 import { openScopedRuleCatalog } from "./scoped-rule-catalog.js";
 import { defaultRerailDatabasePath } from "./database.js";
 import { RerailRuntime } from "./runtime.js";
 import { MATCH_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE } from "./session-state.js";
 
-export interface PiCosineRulesOptions extends ExtensionTranscriptOptions, CosineRuleSourceOptions {
+export interface PiConversationRulesOptions extends SessionDatabaseOptions, ConversationRuleSourceOptions {
   modelPath?: string;
   maxInputTokens?: number;
   maxRules?: number;
@@ -47,7 +47,7 @@ interface MatchEntryData {
 }
 
 
-function configuredDatabasePath(options: PiCosineRulesOptions, cwd: string): string {
+function configuredDatabasePath(options: PiConversationRulesOptions, cwd: string): string {
   return options.databasePath === undefined ? defaultRerailDatabasePath() : resolve(cwd, options.databasePath);
 }
 
@@ -59,18 +59,18 @@ interface InitializeOptions {
 
 
 
-export function createPiCosineRulesExtension(options: PiCosineRulesOptions = {}): ExtensionFactory {
-  return function piCosineRulesExtension(pi: ExtensionAPI): void {
-    let registry: CosineRuleRegistry | undefined;
+export function createPiConversationRulesExtension(options: PiConversationRulesOptions = {}): ExtensionFactory {
+  return function piConversationRulesExtension(pi: ExtensionAPI): void {
+    let registry: ConversationRuleRegistry | undefined;
     let runtime: RerailRuntime | undefined;
-    let ruleSync: LiveCosineRules | undefined;
+    let ruleSync: LiveConversationRules | undefined;
     let currentContext: ExtensionContext | undefined;
     let activeSession: AdapterSession | undefined;
     let turn = 0;
     const pendingBackgroundDeliveries = new Map<RerailRuntime, AdapterDelivery[]>();
     let semantic: NativeSemanticRuntime | undefined;
 
-    const activeRegistry = (): CosineRuleRegistry => {
+    const activeRegistry = (): ConversationRuleRegistry => {
       if (registry === undefined) throw new Error("cosine-rules extension received an event before session_start");
       return registry;
     };
@@ -95,9 +95,9 @@ export function createPiCosineRulesExtension(options: PiCosineRulesOptions = {})
       } satisfies MatchEntryData);
     };
     interface Attached {
-      registry: CosineRuleRegistry;
+      registry: ConversationRuleRegistry;
       runtime: RerailRuntime;
-      ruleSync: LiveCosineRules;
+      ruleSync: LiveConversationRules;
       session: AdapterSession;
       context: ExtensionContext;
       turn: number;
@@ -159,7 +159,7 @@ export function createPiCosineRulesExtension(options: PiCosineRulesOptions = {})
     };
     const sendDeliveries = (current: RerailRuntime | NativeSessionClient, deliveries: readonly AdapterDelivery[]): Promise<void> =>
       sendNativeDeliveries(deliveries, (message, options_) => pi.sendMessage(message, options_),
-        (sessionId, receiptId, ruleIds) => current.recordSteeringDelivery(sessionId, receiptId, ruleIds));
+        (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds));
     const native = new PiNativeSession({
       entries: context => (context ?? currentContext)?.sessionManager.getBranch() ?? [],
       appendEntry: (customType, data) => pi.appendEntry(customType, data),
@@ -248,14 +248,14 @@ export function createPiCosineRulesExtension(options: PiCosineRulesOptions = {})
 
     const build = async (ctx: ExtensionContext, session: AdapterSession): Promise<Attached> => {
       const databasePath = configuredDatabasePath(options, ctx.cwd);
-      const next = new CosineRuleRegistry({
+      const next = new ConversationRuleRegistry({
         modelPath: options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath(),
         ...(options.maxInputTokens === undefined ? {} : { maxInputTokens: options.maxInputTokens }),
         ...(options.maxRules === undefined ? {} : { maxRules: options.maxRules }),
       });
-      const loadRules = cosineRuleLoader(options, ctx.cwd, ".pi/conversation-rules.json");
+      const loadRules = conversationRuleLoader(options, ctx.cwd, ".pi/conversation-rules.json");
       const ruleStore = openScopedRuleCatalog(ctx.cwd, databasePath);
-      const sync = new LiveCosineRules(ruleStore, next, loadRules);
+      const sync = new LiveConversationRules(ruleStore, next, loadRules);
       try {
         ruleStore.seed(loadBundledRules());
         sync.prime();
@@ -314,20 +314,20 @@ export function createPiCosineRulesExtension(options: PiCosineRulesOptions = {})
       },
       sessionFor,
       ingest,
-      cosineTool: {
+      conversationRulesTool: {
         registry: activeRegistry,
         turn: () => turn,
         remoteExecute: () => {
           const current = native.current();
-          return current === undefined ? undefined : input => current.cosine(input);
+          return current === undefined ? undefined : input => current.conversationRules(input);
         },
       },
-      cosineCommand: {
+      conversationRulesCommand: {
         registry: activeRegistry,
         turn: () => turn,
         remoteCommand: () => {
           const current = native.current();
-          return current === undefined ? undefined : args => current.cosine({ action: "command", args });
+          return current === undefined ? undefined : args => current.conversationRules({ action: "command", args });
         },
       },
       packageRoot: PACKAGE_ROOT,
@@ -337,4 +337,4 @@ export function createPiCosineRulesExtension(options: PiCosineRulesOptions = {})
   };
 }
 
-export default createPiCosineRulesExtension();
+export default createPiConversationRulesExtension();

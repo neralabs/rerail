@@ -8,21 +8,21 @@ import { createRerailApi } from "../src/api/http.js";
 import { operations, type RerailApiStores } from "../src/api/operations.js";
 import { openRerailDatabase, type RerailDatabase } from "../src/database.js";
 import { startStateReader } from "../src/repository-start.js";
-import type { ExecutablePolicyFinding } from "../src/executable-policy.js";
-import { SqlitePolicyExecutionReader, SqlitePolicyExecutionStore } from "../src/policy-execution-store.js";
+import type { CodeRuleViolation } from "../src/code-rule.js";
+import { SqliteAuditReader, SqliteAuditStore } from "../src/audit-store.js";
 import { SqlitePresentationPreferenceStore } from "../src/presentation-preference-store.js";
-import { SqliteScanControlStore } from "../src/scan-control.js";
+import { SqliteAuditControlStore } from "../src/audit-control.js";
 import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
-import { MOCK_COSINE_RULES, MOCK_POLICY_RULES } from "../src/seed.js";
-import { SqliteTranscriptReader, SqliteTranscriptStore } from "../src/transcript-store.js";
+import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../src/seed.js";
+import { SqliteSessionReader, SqliteSessionStore } from "../src/session-store.js";
 
 /** The host a browser addressed the page to through a container port mapping; the fixture never binds it. */
 const PAGE_HOST = "localhost:35831";
 const SESSION = { host: "codex" as const, sessionId: "session-a", cwd: "/workspace" };
 
-const flagged: ExecutablePolicyFinding = {
-  id: "finding-1",
-  ruleId: MOCK_POLICY_RULES[0]!.id,
+const flagged: CodeRuleViolation = {
+  id: "violation-1",
+  ruleId: MOCK_CODE_RULES[0]!.id,
   clauseId: "console-call",
   code: "forbidden-call",
   mode: "block",
@@ -39,8 +39,8 @@ describe("Rerail API over HTTP", () => {
   let app: OpenAPIHono;
   let stores: RerailApiStores;
   let catalog: ScopedRuleCatalog;
-  let executions: SqlitePolicyExecutionStore;
-  let transcripts: SqliteTranscriptStore;
+  let audits: SqliteAuditStore;
+  let sessionStore: SqliteSessionStore;
   let raw: Database.Database;
   let database: RerailDatabase;
   let closeables: Array<{ close(): void }>;
@@ -51,28 +51,28 @@ describe("Rerail API over HTTP", () => {
     process.env.RERAIL_HOME = join(root, "home");
     databasePath = join(root, ".rerail", "rerail.sqlite");
     catalog = ScopedRuleCatalog.open(join(root, "rules.sqlite"), { repositoryId: "test-repository", workspaceRoot: root });
-    executions = new SqlitePolicyExecutionStore(databasePath);
-    transcripts = new SqliteTranscriptStore(databasePath);
-    const reader = new SqliteTranscriptReader(databasePath);
-    const executionReader = new SqlitePolicyExecutionReader(databasePath);
+    audits = new SqliteAuditStore(databasePath);
+    sessionStore = new SqliteSessionStore(databasePath);
+    const reader = new SqliteSessionReader(databasePath);
+    const auditReader = new SqliteAuditReader(databasePath);
     const preferences = new SqlitePresentationPreferenceStore(databasePath);
-    const scanControls = new SqliteScanControlStore(databasePath);
+    const auditControls = new SqliteAuditControlStore(databasePath);
     raw = new Database(databasePath);
     database = openRerailDatabase(databasePath);
-    closeables = [catalog, executions, transcripts, reader, executionReader, preferences, scanControls, raw, database.$client];
+    closeables = [catalog, audits, sessionStore, reader, auditReader, preferences, auditControls, raw, database.$client];
     stores = {
       reader,
-      executions: executionReader,
+      audits: auditReader,
       rules: () => catalog,
-      transcripts: () => transcripts,
-      scanControls: () => scanControls,
+      sessionStore: () => sessionStore,
+      auditControls: () => auditControls,
       preferences: () => preferences,
       database: () => database,
       repositoryState: startStateReader(database),
       health: () => ({ pid: process.pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
     };
     app = createRerailApi(stores, operations, { version: "0.0.0-test" });
-    transcripts.openSession(SESSION);
+    sessionStore.openSession(SESSION);
   });
 
   afterEach(async () => {
@@ -83,21 +83,21 @@ describe("Rerail API over HTTP", () => {
   });
 
   /** A completed run with an explicit start time, which is what every range query is bounded by. */
-  function seedRun(run: { sessionId?: string; at: number; findings?: ExecutablePolicyFinding[]; evaluated?: string[] }): string {
-    const runId = executions.start({
-      sessionId: run.sessionId ?? SESSION.sessionId,
+  function seedAudit(audit: { sessionId?: string; at: number; violations?: CodeRuleViolation[]; audited?: string[] }): string {
+    const auditId = audits.start({
+      sessionId: audit.sessionId ?? SESSION.sessionId,
       workspaceRoot: root,
       scope: "touched-files",
       mode: "steer",
       revision: 1,
       catalogRevision: null,
-      ruleRevisions: (run.evaluated ?? []).map(ruleId => ({ ruleId, revision: 1 })),
+      ruleRevisions: (audit.audited ?? []).map(ruleId => ({ ruleId, revision: 1 })),
       paths: ["web/src/x.ts"],
       ruleProvenance: [],
     });
-    executions.finish(runId, { status: "completed", violations: run.findings ?? [], failures: [] });
-    raw.prepare("UPDATE audits SET started_at = ? WHERE audit_id = ?").run(run.at, runId);
-    return runId;
+    audits.finish(auditId, { status: "completed", violations: audit.violations ?? [], failures: [] });
+    raw.prepare("UPDATE audits SET started_at = ? WHERE audit_id = ?").run(audit.at, auditId);
+    return auditId;
   }
 
   async function getJson<T>(path: string): Promise<T> {
@@ -107,21 +107,21 @@ describe("Rerail API over HTTP", () => {
     return await response.json() as T;
   }
 
-  it("counts one unfixed violation once however many runs report it", async () => {
-    const [policy, otherPolicy] = [MOCK_POLICY_RULES[0]!, MOCK_POLICY_RULES[1]!];
-    const cosine = MOCK_COSINE_RULES[0]!;
-    catalog.upsertPolicy(policy);
-    catalog.upsertPolicy(otherPolicy);
-    catalog.upsertCosine(cosine, { revision: 1 });
-    seedRun({ at: 500, findings: [flagged], evaluated: [policy.id] });
-    seedRun({ at: 2_000, findings: [flagged], evaluated: [policy.id, otherPolicy.id] });
-    seedRun({ at: 3_000, findings: [{ ...flagged, id: "finding-2" }], evaluated: [policy.id] });
+  it("counts one unfixed violation once however many audits report it", async () => {
+    const [codeRule, otherCodeRule] = [MOCK_CODE_RULES[0]!, MOCK_CODE_RULES[1]!];
+    const conversationRule = MOCK_CONVERSATION_RULES[0]!;
+    catalog.upsertCodeRule(codeRule);
+    catalog.upsertCodeRule(otherCodeRule);
+    catalog.upsertConversationRule(conversationRule, { revision: 1 });
+    seedAudit({ at: 500, violations: [flagged], audited: [codeRule.id] });
+    seedAudit({ at: 2_000, violations: [flagged], audited: [codeRule.id, otherCodeRule.id] });
+    seedAudit({ at: 3_000, violations: [{ ...flagged, id: "violation-2" }], audited: [codeRule.id] });
 
     const body = await getJson<{ since: number; rules: Record<string, Record<string, unknown>> }>("/api/rules/activity?since=1000");
 
     expect(body.since).toBe(1000);
     // Evaluated by the two runs in range; the run at 500 is before the range and counts for nothing.
-    expect(body.rules[policy.id]).toEqual({
+    expect(body.rules[codeRule.id]).toEqual({
       measured: true,
       distinctViolations: 1,
       sessions: 1,
@@ -130,9 +130,9 @@ describe("Rerail API over HTTP", () => {
       rerails: 0,
     });
     // Compiled into a run but never flagged: a zero backed by evidence rather than by silence.
-    expect(body.rules[otherPolicy.id]).toMatchObject({ measured: true, distinctViolations: 0, audits: 1, lastSeenAt: null });
+    expect(body.rules[otherCodeRule.id]).toMatchObject({ measured: true, distinctViolations: 0, audits: 1, lastSeenAt: null });
     // Conversation rules never write an audit, so there is nothing to report either way.
-    expect(body.rules[cosine.id]).toEqual({
+    expect(body.rules[conversationRule.id]).toEqual({
       measured: false,
       distinctViolations: 0,
       sessions: 0,
@@ -142,46 +142,46 @@ describe("Rerail API over HTTP", () => {
     });
   });
 
-  it("separates violations by path, span, and session, and excludes runs before the range", async () => {
-    const policy = MOCK_POLICY_RULES[0]!;
-    catalog.upsertPolicy(policy);
-    seedRun({ at: 500, findings: [{ ...flagged, path: "web/src/old.ts" }] });
-    seedRun({
+  it("separates violations by path, span, and session, and excludes audits before the range", async () => {
+    const codeRule = MOCK_CODE_RULES[0]!;
+    catalog.upsertCodeRule(codeRule);
+    seedAudit({ at: 500, violations: [{ ...flagged, path: "web/src/old.ts" }] });
+    seedAudit({
       at: 2_000,
       sessionId: "session-b",
-      findings: [flagged, { ...flagged, id: "finding-2", path: "web/src/y.ts" }],
+      violations: [flagged, { ...flagged, id: "violation-2", path: "web/src/y.ts" }],
     });
-    transcripts.openSession({ ...SESSION, sessionId: "session-b" });
-    seedRun({ at: 2_500, findings: [flagged] });
+    sessionStore.openSession({ ...SESSION, sessionId: "session-b" });
+    seedAudit({ at: 2_500, violations: [flagged] });
 
     const body = await getJson<{ rules: Record<string, Record<string, unknown>> }>("/api/rules/activity?since=1000");
 
-    // Findings alone do not make a run an evaluation of the rule; only the compiled rule set does.
-    expect(body.rules[policy.id]).toMatchObject({ distinctViolations: 2, sessions: 2, lastSeenAt: 2_500, audits: 0 });
+    // Violations alone do not make a run an evaluation of the rule; only the compiled rule set does.
+    expect(body.rules[codeRule.id]).toMatchObject({ distinctViolations: 2, sessions: 2, lastSeenAt: 2_500, audits: 0 });
     expect((await getJson<{ rules: Record<string, Record<string, unknown>> }>("/api/rules/activity?since=0"))
-      .rules[policy.id]).toMatchObject({ distinctViolations: 3, lastSeenAt: 2_500 });
+      .rules[codeRule.id]).toMatchObject({ distinctViolations: 3, lastSeenAt: 2_500 });
   });
 
-  it("attributes re-rails to the rules a steering delivery named", async () => {
-    const policy = MOCK_POLICY_RULES[0]!;
-    catalog.upsertPolicy(policy);
-    transcripts.append({ sessionId: SESSION.sessionId, kind: "steering-delivered", observedAt: 2_000, payload: { ruleIds: [policy.id] } });
+  it("attributes steers to the rules each steer named", async () => {
+    const codeRule = MOCK_CODE_RULES[0]!;
+    catalog.upsertCodeRule(codeRule);
+    sessionStore.append({ sessionId: SESSION.sessionId, kind: "steering-delivered", observedAt: 2_000, payload: { ruleIds: [codeRule.id] } });
     // Deliveries recorded before rule attribution existed carry an empty payload and count for nothing.
-    transcripts.append({ sessionId: SESSION.sessionId, kind: "steering-delivered", observedAt: 2_100, payload: {} });
-    transcripts.append({ sessionId: SESSION.sessionId, kind: "steering-delivered", observedAt: 500, payload: { ruleIds: [policy.id] } });
+    sessionStore.append({ sessionId: SESSION.sessionId, kind: "steering-delivered", observedAt: 2_100, payload: {} });
+    sessionStore.append({ sessionId: SESSION.sessionId, kind: "steering-delivered", observedAt: 500, payload: { ruleIds: [codeRule.id] } });
 
     const body = await getJson<{ rules: Record<string, { rerails: number }> }>("/api/rules/activity?since=1000");
 
-    expect(body.rules[policy.id]!.rerails).toBe(1);
+    expect(body.rules[codeRule.id]!.rerails).toBe(1);
     expect((await getJson<{ rules: Record<string, { rerails: number }> }>("/api/rules/activity?since=0"))
-      .rules[policy.id]!.rerails).toBe(2);
+      .rules[codeRule.id]!.rerails).toBe(2);
   });
 
-  it("lists findings newest first, paged, and filtered by rule", async () => {
-    const other = { ...flagged, id: "finding-other", ruleId: MOCK_POLICY_RULES[1]!.id, path: "web/src/z.ts" };
-    seedRun({ at: 1_000, findings: [flagged] });
+  it("lists violations newest first, paged, and filtered by rule", async () => {
+    const other = { ...flagged, id: "violation-other", ruleId: MOCK_CODE_RULES[1]!.id, path: "web/src/z.ts" };
+    seedAudit({ at: 1_000, violations: [flagged] });
     // The same violation twice in one run is one row; across runs it is history.
-    const newest = seedRun({ at: 4_000, findings: [flagged, { ...flagged, id: "finding-copy" }, other] });
+    const newest = seedAudit({ at: 4_000, violations: [flagged, { ...flagged, id: "violation-copy" }, other] });
 
     const page = await getJson<{ total: number; violations: Array<Record<string, unknown>> }>("/api/violations?since=0&limit=2");
     expect(page.total).toBe(3);
@@ -201,7 +201,7 @@ describe("Rerail API over HTTP", () => {
     });
     expect((await getJson<{ violations: Array<{ at: number }> }>("/api/violations?since=0&limit=2&offset=2")).violations)
       .toMatchObject([{ at: 1_000 }]);
-    // A page past the end still reports how many findings exist.
+    // A page past the end still reports how many violations exist.
     expect(await getJson<{ total: number; violations: unknown[] }>("/api/violations?since=0&limit=2&offset=3"))
       .toEqual({ total: 3, violations: [] });
 
@@ -211,8 +211,8 @@ describe("Rerail API over HTTP", () => {
   });
 
   it("lists only the sessions started in range", async () => {
-    transcripts.openSession({ ...SESSION, sessionId: "session-old" }, 500);
-    transcripts.openSession({ ...SESSION, sessionId: "session-new" }, 2_000);
+    sessionStore.openSession({ ...SESSION, sessionId: "session-old" }, 500);
+    sessionStore.openSession({ ...SESSION, sessionId: "session-new" }, 2_000);
 
     // The fixture's own session opened at the current clock, so only `session-old` falls outside.
     expect((await getJson<{ sessions: Array<{ sessionId: string }> }>("/api/sessions?since=1000")).sessions
@@ -221,7 +221,7 @@ describe("Rerail API over HTTP", () => {
   });
 
   it("answers an unchanged catalog read with 304 and mints a new tag after a write", async () => {
-    catalog.upsertPolicy(MOCK_POLICY_RULES[0]!);
+    catalog.upsertCodeRule(MOCK_CODE_RULES[0]!);
     const first = await app.request("/api/rules");
     const tag = first.headers.get("etag");
     expect(tag).toMatch(/^"[0-9a-f]{32}"$/);
@@ -233,10 +233,10 @@ describe("Rerail API over HTTP", () => {
     // A different filter is a different response, so it must not reuse the tag.
     expect((await app.request("/api/rules?kind=conversation", { headers: { "if-none-match": tag! } })).status).toBe(200);
 
-    const upsert = await app.request(`/api/rules/${MOCK_POLICY_RULES[1]!.id}`, {
+    const upsert = await app.request(`/api/rules/${MOCK_CODE_RULES[1]!.id}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "file", rule: MOCK_POLICY_RULES[1]! }),
+      body: JSON.stringify({ kind: "file", rule: MOCK_CODE_RULES[1]! }),
     });
     expect(upsert.status).toBe(200);
     const refreshed = await app.request("/api/rules", { headers: { "if-none-match": tag! } });
@@ -244,7 +244,7 @@ describe("Rerail API over HTTP", () => {
     expect(refreshed.headers.get("etag")).not.toBe(tag);
   });
 
-  it("stores a structural tool-call rule and rejects a regex the kernel cannot compile", async () => {
+  it("stores a structural tool-call rule and rejects a regex the engine cannot compile", async () => {
     const id = "no-force-push";
     const rule = (regex: string) => ({
       id,
@@ -273,7 +273,7 @@ describe("Rerail API over HTTP", () => {
 
   it("reports a quarantined inherited global toggle as a rule conflict", async () => {
     const id = "quarantined-global";
-    catalog.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id }, { applicability: "global" });
+    catalog.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id }, { applicability: "global" });
     const catalogDatabase = new Database(catalog.path);
     catalogDatabase.prepare("UPDATE catalog_rules SET document_json = ? WHERE rule_id = ?").run(
       JSON.stringify({ kind: "conversation", rule: { id, unknown: true } }),
@@ -294,8 +294,8 @@ describe("Rerail API over HTTP", () => {
     });
   });
 
-  it("dates activity, findings, and sessions by their own result", async () => {
-    catalog.upsertPolicy(MOCK_POLICY_RULES[0]!);
+  it("dates activity, violations, and sessions by their own result", async () => {
+    catalog.upsertCodeRule(MOCK_CODE_RULES[0]!);
     for (const path of ["/api/rules/activity?since=0", "/api/violations?since=0", "/api/sessions"]) {
       const first = await app.request(path);
       const tag = first.headers.get("etag")!;
@@ -303,8 +303,8 @@ describe("Rerail API over HTTP", () => {
       const repeated = await app.request(path, { headers: { "if-none-match": tag } });
       expect(repeated.status).toBe(304);
       expect(await repeated.text()).toBe("");
-      seedRun({ at: 5_000, findings: [flagged] });
-      transcripts.openSession({ ...SESSION, sessionId: `session-${path}` });
+      seedAudit({ at: 5_000, violations: [flagged] });
+      sessionStore.openSession({ ...SESSION, sessionId: `session-${path}` });
       expect((await app.request(path, { headers: { "if-none-match": tag } })).status).toBe(200);
     }
   });

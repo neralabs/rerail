@@ -1,9 +1,9 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CosineRuleRegistry } from "../src/registry.js";
-import type { CosineRule } from "../src/rule-schema.js";
+import { ConversationRuleRegistry } from "../src/registry.js";
+import type { ConversationRule } from "../src/rule-schema.js";
 
-function rule(overrides: Partial<CosineRule> = {}): CosineRule {
+function rule(overrides: Partial<ConversationRule> = {}): ConversationRule {
   return {
     id: "checkout",
     mode: "steer",
@@ -20,9 +20,9 @@ function rule(overrides: Partial<CosineRule> = {}): CosineRule {
   };
 }
 
-describe("CosineRuleRegistry", () => {
-  it("returns configured actions with native cosine match facts", () => {
-    const registry = new CosineRuleRegistry({ modelPath: resolve("model") });
+describe("ConversationRuleRegistry", () => {
+  it("returns configured actions with native conversation rule match facts", () => {
+    const registry = new ConversationRuleRegistry({ modelPath: resolve("model") });
     registry.replace([rule()]);
 
     const matches = registry.match({
@@ -42,7 +42,7 @@ describe("CosineRuleRegistry", () => {
   });
 
   it("keeps the active registry when replacement validation fails", () => {
-    const registry = new CosineRuleRegistry({ modelPath: resolve("model") });
+    const registry = new ConversationRuleRegistry({ modelPath: resolve("model") });
     registry.replace([rule()]);
 
     expect(() =>
@@ -58,7 +58,7 @@ describe("CosineRuleRegistry", () => {
   });
 
   it("applies once and after-gap repeat policies only after delivery", () => {
-    const registry = new CosineRuleRegistry({ modelPath: resolve("model") });
+    const registry = new ConversationRuleRegistry({ modelPath: resolve("model") });
     registry.replace([
       rule({ id: "once", repeat: { mode: "once" } }),
       rule({ id: "gap", repeat: { mode: "after-gap", gapTurns: 3 } }),

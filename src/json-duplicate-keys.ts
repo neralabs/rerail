@@ -1,6 +1,6 @@
 /**
  * `JSON.parse` keeps the last of repeated object keys, so `{"kind":"a","kind":"b"}` silently becomes
- * `{"kind":"b"}` and nothing downstream (the schema, or the kernel's own repeated-key check) ever sees
+ * `{"kind":"b"}` and nothing downstream (the schema, or the engine's own repeated-key check) ever sees
  * the first. A reviver cannot tell either, so this is a minimal scanner over the raw text.
  */
 
@@ -14,7 +14,7 @@ function escapePointerToken(token: string): string {
   return token.replaceAll("~", "~0").replaceAll("/", "~1");
 }
 
-/** Describe a repeated key the way the kernel does: "duplicate key `kind` at /checks/0/forbid". */
+/** Describe a repeated key the way the engine does: "duplicate key `kind` at /clauses/0/forbid". */
 export function describeDuplicateJsonKey({ pointer, key }: DuplicateJsonKey): string {
   return `duplicate key \`${key}\` at ${pointer === "" ? "/" : pointer}`;
 }

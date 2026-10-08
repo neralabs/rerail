@@ -1,6 +1,6 @@
 /**
  * The golden set: the TSLint ports Rerail ships, disabled, in the opt-in pack
- * (`policies/executable-policy-dsl/rules/opt-in/tslint/<rule>.json`). The pack folder is the membership source of truth
+ * (`code-rule-dsl/rules/opt-in/tslint/<rule>.json`). The pack folder is the membership source of truth
  * and holds each golden rule's default-options doc; the harness scores those docs as shipped (their real-world scope),
  * pairing them with the rule's option-variant overrides in `rules/<rule>/<variant>.json`.
  *
@@ -18,7 +18,7 @@ import { z } from "zod";
 import { HARNESS_DIRECTORY, RERAIL_ROOT } from "./fixtures.js";
 import { compareDeterministicStrings } from "../../src/stable-json.js";
 
-export const PACK_DIRECTORY = join(RERAIL_ROOT, "policies", "executable-policy-dsl", "rules", "opt-in", "tslint");
+export const PACK_DIRECTORY = join(RERAIL_ROOT, "code-rule-dsl", "rules", "opt-in", "tslint");
 export const GOLDEN_MANIFEST = join(HARNESS_DIRECTORY, "golden.json");
 const GOLDEN_FORMAT = "rerail-tslint-golden/v1";
 

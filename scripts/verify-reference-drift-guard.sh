@@ -6,16 +6,16 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-for path in package.json scripts/policy-dsl-reference.mjs src/policy-schema.ts src/policy-schema-semantic.ts \
-  src/policy-languages.ts src/policy-languages-semantic.ts native/src/policy_dsl/compile/ast_rule.rs \
-  docs/policy-dsl-reference.html; do
+for path in package.json scripts/code-rule-dsl-reference.mjs src/code-rule-schema.ts src/code-rule-schema-semantic.ts \
+  src/code-rule-languages.ts src/code-rule-languages-semantic.ts src/rule-mode.ts \
+  native/src/code_rule_dsl/compile/ast_rule.rs docs/code-rule-dsl-reference.html; do
   mkdir -p "$work/$(dirname "$path")"
   cp "$root/$path" "$work/$path"
 done
 
 npm --prefix "$work" run --silent check:reference > /dev/null
 
-reference="$work/docs/policy-dsl-reference.html"
+reference="$work/docs/code-rule-dsl-reference.html"
 node -e '
   const fs = require("node:fs");
   const [path] = process.argv.slice(1);

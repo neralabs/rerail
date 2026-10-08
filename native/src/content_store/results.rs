@@ -2,7 +2,7 @@
 
 use super::rows::{hash_params, intern_hash};
 use super::{
-    CODEC_ZSTD, CandidateCatalogIdentity, CandidateCheck, ContentStore, DirectoryReuse, HashKey,
+    CODEC_ZSTD, CandidateCatalogIdentity, CandidateClause, ContentStore, DirectoryReuse, HashKey,
     SourceId, StoreError, StoreResult, StoredLocalResult, WorkspaceCompletion, WorkspaceId,
 };
 use rusqlite::{OptionalExtension, params};
@@ -48,7 +48,7 @@ impl LocalResultCache {
     ) -> Arc<Vec<StoredLocalResult>> {
         let bytes = results
             .iter()
-            .map(|result| result.bytes.len() + result.candidate.check.len())
+            .map(|result| result.bytes.len() + result.candidate.clause.len())
             .sum::<usize>();
         if self.used_bytes.saturating_add(bytes) > self.byte_limit {
             self.entries.clear();
@@ -151,12 +151,12 @@ impl ContentStore {
                                 lanes: [row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?],
                             },
                         ),
-                        CandidateCheck {
-                            policy: HashKey {
+                        CandidateClause {
+                            rule: HashKey {
                                 algorithm: row.get(10)?,
                                 lanes: [row.get(11)?, row.get(12)?, row.get(13)?, row.get(14)?],
                             },
-                            check: row.get(15)?,
+                            clause: row.get(15)?,
                         },
                         row.get::<_, i64>(16)?,
                         row.get::<_, i64>(17)?,
@@ -227,12 +227,12 @@ impl ContentStore {
                     ],
                     |row| {
                         Ok((
-                            CandidateCheck {
-                                policy: HashKey {
+                            CandidateClause {
+                                rule: HashKey {
                                     algorithm: row.get(0)?,
                                     lanes: [row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?],
                                 },
-                                check: row.get(5)?,
+                                clause: row.get(5)?,
                             },
                             row.get::<_, i64>(6)?,
                             row.get::<_, i64>(7)?,

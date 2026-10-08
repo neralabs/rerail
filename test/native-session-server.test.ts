@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NativeSessionServer } from "../src/native-session-server.js";
-import { SqliteTranscriptReader } from "../src/transcript-store.js";
+import { SqliteSessionReader } from "../src/session-store.js";
 import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
 
 describe("NativeSessionServer request boundary", () => {
@@ -32,7 +32,7 @@ describe("NativeSessionServer request boundary", () => {
     await server.close();
   });
 
-  it("counts acknowledged host handoffs once in the session HUD", async () => {
+  it("counts acknowledged steers once in the session HUD", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-native-server-"));
     vi.stubEnv("RERAIL_HOME", join(root, "home"));
     startTestRepository(root, join(root, "rerail.sqlite"));
@@ -42,20 +42,20 @@ describe("NativeSessionServer request boundary", () => {
       modelPath: resolve("model"),
       databasePath,
     });
-    const reader = new SqliteTranscriptReader(databasePath);
+    const reader = new SqliteSessionReader(databasePath);
     const session = { workspaceRoot: root, sessionId: "s", host: "omp" as const };
     try {
       await server.handle({ ...session, operation: "initialize", entries: [] });
       expect(reader.hud("s").steeringCount).toBe(0);
-      // A client without re-rail attribution sends the bare receipt id.
-      const receipt = { ...session, operation: "record-steering-delivery" as const, input: "host-handoff" };
+      // A client without steer attribution sends the bare receipt id.
+      const receipt = { ...session, operation: "record-steering-delivery" as const, input: "host-steer" };
       await server.handle(receipt);
       await server.handle(receipt);
       expect(reader.hud("s").steeringCount).toBe(1);
       await server.handle({
         ...session,
         operation: "record-steering-delivery" as const,
-        input: { receiptId: "attributed-handoff", ruleIds: ["rerail:no-raw-sql"] },
+        input: { receiptId: "attributed-steer", ruleIds: ["rerail:no-raw-sql"] },
       });
       expect(reader.hud("s").steeringCount).toBe(2);
       expect(reader.events("s").filter(event => event.kind === "steering-delivered").map(event => event.payload)).toEqual([
@@ -78,7 +78,7 @@ describe("NativeSessionServer request boundary", () => {
     // `/rerail-stop` stops the checkout, then the host reattaches with a rebuild.
     stopTestRepository(root, databasePath);
     await server.handle({ ...session, operation: "initialize", entries: [], input: { rebuild: true } });
-    const reader = new SqliteTranscriptReader(databasePath);
+    const reader = new SqliteSessionReader(databasePath);
     try {
       expect(reader.sessions().find(recorded => recorded.sessionId === "s")?.endedAt).not.toBeNull();
     } finally {
@@ -86,7 +86,7 @@ describe("NativeSessionServer request boundary", () => {
     }
   });
 
-  it("retires an abandoned session and closes its transcript resources after the lease", async () => {
+  it("retires an abandoned session and closes its session store resources after the lease", async () => {
     vi.useFakeTimers();
     root = await mkdtemp(join(tmpdir(), "rerail-native-server-"));
     vi.stubEnv("RERAIL_HOME", join(root, "home"));
@@ -110,7 +110,7 @@ describe("NativeSessionServer request boundary", () => {
     await vi.advanceTimersByTimeAsync(1_100);
 
     await expect(server.handle({ ...request, operation: "poll" })).rejects.toThrow("native session is not initialized");
-    const reader = new SqliteTranscriptReader(databasePath);
+    const reader = new SqliteSessionReader(databasePath);
     expect(reader.sessions()).toContainEqual(expect.objectContaining({
       sessionId: "abandoned",
       endedAt: expect.any(Number),
@@ -146,7 +146,7 @@ describe("NativeSessionServer request boundary", () => {
       });
     }
 
-    const reader = new SqliteTranscriptReader(databasePath);
+    const reader = new SqliteSessionReader(databasePath);
     expect(reader.sessions()).toContainEqual(expect.objectContaining({
       sessionId: "active",
       endedAt: null,

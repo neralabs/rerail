@@ -1,5 +1,5 @@
 """Runs Psalm's unused-variable analysis over PHP corpora for `benchmark_php_usage_corpus`
-(rerail/native/src/policy_dsl/scope/php/tests.rs). Offline, not in CI:
+(rerail/native/src/code_rule_dsl/scope/php/tests.rs). Offline, not in CI:
 
     python3 generate_usage_corpus.py <composer project with vimeo/psalm 6.19.1> <output.json> \
         <name>=<path>[,<path>...] ...

@@ -19,7 +19,7 @@ export interface HostAdapterContractDriver {
   readonly profile: AdapterCapabilityProfile;
   start(session: AdapterSession): Promise<void>;
   emit(event: AdapterEvent): Promise<void>;
-  requestDelivery(
+  requestSteer(
     sessionId: string,
     requested: AdapterDelivery["requested"],
     content: string,
@@ -286,7 +286,7 @@ export function hostAdapterContract(options: HostAdapterContractOptions): void {
       await driver.start(second);
       await driver.emit({ kind: "user-prompt", eventId: "same-id", sessionId: first.sessionId, text: "Alpha" });
       await driver.emit({ kind: "user-prompt", eventId: "same-id", sessionId: second.sessionId, text: "Beta" });
-      await driver.requestDelivery(first.sessionId, "steer", "Only alpha");
+      await driver.requestSteer(first.sessionId, "steer", "Only alpha");
       expect(driver.samples().filter(sample => sample.sessionId === first.sessionId).map(sample => sample.text)).toEqual(["Alpha"]);
       expect(driver.samples().filter(sample => sample.sessionId === second.sessionId).map(sample => sample.text)).toEqual(["Beta"]);
       expect(driver.deliveries().filter(delivery => delivery.sessionId === second.sessionId)).toEqual([]);
@@ -297,7 +297,7 @@ export function hostAdapterContract(options: HostAdapterContractOptions): void {
       const active = session(driver.profile.host);
       await driver.start(active);
       for (const requested of RULE_MODES) {
-        await driver.requestDelivery(active.sessionId, requested, `content:${requested}`);
+        await driver.requestSteer(active.sessionId, requested, `content:${requested}`);
       }
       expect(driver.deliveries()).toEqual([
         {

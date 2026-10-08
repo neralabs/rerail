@@ -3,11 +3,11 @@ import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, realpathSync,
 import { basename, dirname, join, resolve } from "node:path";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "./database.js";
-import { readStoredPolicyRule, reportQuarantinedRule, storedDocumentDigest, type QuarantinedRule } from "./rule-quarantine.js";
-import { assertPolicyCompiles } from "./policy-kernel-check.js";
-import { policyRuleSchema, type PolicyRule } from "./policy-schema.js";
-import { assertKernelRegexes } from "./rule-regexes.js";
-import { parseCosineRule, type CosineRule } from "./rule-schema.js";
+import { readStoredCodeRule, reportQuarantinedRule, storedDocumentDigest, type QuarantinedRule } from "./rule-quarantine.js";
+import { assertCodeRuleCompiles } from "./code-rule-compile.js";
+import { codeRuleSchema, type CodeRule } from "./code-rule-schema.js";
+import { assertEngineRegexes } from "./rule-regexes.js";
+import { parseConversationRule, type ConversationRule } from "./rule-schema.js";
 import {
   catalogRules,
   ruleCatalogIdentities,
@@ -260,22 +260,22 @@ export class ScopedRuleCatalog {
     return removed;
   }
 
-  /** Validate against the schema, then compile in the kernel, before storing; a rule the kernel rejects is never written. */
-  upsertPolicy(input: unknown, options: ScopedRuleWriteOptions = {}): ScopedStoredRule {
-    const rule = policyRuleSchema.parse(input);
-    assertPolicyCompiles(rule);
+  /** Validate against the schema, then compile in the engine, before storing; a rule the engine rejects is never written. */
+  upsertCodeRule(input: unknown, options: ScopedRuleWriteOptions = {}): ScopedStoredRule {
+    const rule = codeRuleSchema.parse(input);
+    assertCodeRuleCompiles(rule);
     return this.#upsert({ kind: "file", rule }, { ...options, revision: rule.revision });
   }
 
-  upsertCosine(input: unknown, options: ScopedRuleWriteOptions = {}): ScopedStoredRule {
-    const rule = parseCosineRule(input);
+  upsertConversationRule(input: unknown, options: ScopedRuleWriteOptions = {}): ScopedStoredRule {
+    const rule = parseConversationRule(input);
     return this.#upsert({ kind: "conversation", rule }, options);
   }
 
   upsertDocument(document: RuleDocument, options: ScopedRuleWriteOptions = {}): ScopedStoredRule {
     return document.kind === "file"
-      ? this.upsertPolicy(document.rule, options)
-      : this.upsertCosine(document.rule, options);
+      ? this.upsertCodeRule(document.rule, options)
+      : this.upsertConversationRule(document.rule, options);
   }
 
   get(id: string): ScopedStoredRule | undefined {
@@ -310,15 +310,15 @@ export class ScopedRuleCatalog {
     });
   }
 
-  cosineRules(): CosineRule[] {
+  conversationRules(): ConversationRule[] {
     return this.list({ kind: "conversation", enabled: true }).flatMap(stored => stored.kind === "conversation" ? [stored.rule] : []);
   }
 
-  cosineIds(): Set<string> {
+  conversationRuleIds(): Set<string> {
     return new Set(this.list({ kind: "conversation" }).map(stored => stored.rule.id));
   }
 
-  policyRules(): PolicyRule[] {
+  codeRules(): CodeRule[] {
     return this.list({ kind: "file", enabled: true }).flatMap(stored => stored.kind === "file" ? [stored.rule] : []);
   }
 
@@ -443,6 +443,7 @@ export class ScopedRuleCatalog {
     return report;
   }
 
+
   /** Change token covering both other connections and writes through this instance. */
   dataVersion(): string {
     const sqliteVersion = this.#database.all<{ data_version: number }>(sql`PRAGMA data_version`)[0]?.data_version ?? 0;
@@ -484,8 +485,8 @@ export class ScopedRuleCatalog {
   }
 
   #upsert(document: RuleDocument, options: ScopedRuleWriteOptions): ScopedStoredRule {
-    // Every catalog write lands here; the kernel compiles a session's rules all or nothing.
-    if (document.kind === "conversation") assertKernelRegexes(document.rule);
+    // Every catalog write lands here; the engine compiles a session's rules all or nothing.
+    if (document.kind === "conversation") assertEngineRegexes(document.rule);
     const stored = this.#database.transaction(() => {
       const owner = this.#owner(options.applicability ?? "project");
       this.#database.insert(ruleCatalogIdentities).values({ ruleId: document.rule.id, kind: document.kind })
@@ -586,12 +587,12 @@ export class ScopedRuleCatalog {
     });
     let document: RuleDocument;
     if (row.kind === "file") {
-      const read = readStoredPolicyRule(row.document.rule);
+      const read = readStoredCodeRule(row.document.rule);
       if (!read.ok) return quarantine(read.reason);
       document = { kind: "file", rule: read.rule };
     } else {
       try {
-        document = { kind: "conversation", rule: parseCosineRule(row.document.rule) };
+        document = { kind: "conversation", rule: parseConversationRule(row.document.rule) };
       } catch (error) {
         return quarantine(error instanceof Error ? error.message : String(error));
       }

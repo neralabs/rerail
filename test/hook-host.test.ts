@@ -7,7 +7,7 @@ import { emitHookOutput, pendingPath, persistPending, readPending, serveHook, ta
 import { runClaudeHook } from "../src/claude-hook.js";
 import { runCodexHook } from "../src/codex-hook.js";
 import { runCursorHook } from "../src/cursor-hook.js";
-import { hookOptions, serveText, temporaryDirectories, transcriptQuery } from "./hook-fixtures.js";
+import { hookOptions, serveText, temporaryDirectories, sessionDatabaseQuery } from "./hook-fixtures.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-hook-host-");
 
@@ -16,12 +16,12 @@ function delivery(content: string, ruleIds: readonly string[] = []): AdapterDeli
 }
 
 function receiptCount(root: string): number {
-  return transcriptQuery<{ total: number }>(root, "SELECT COUNT(*) AS total FROM events WHERE kind = 'steering-delivered'")[0]!.total;
+  return sessionDatabaseQuery<{ total: number }>(root, "SELECT COUNT(*) AS total FROM events WHERE kind = 'steering-delivered'")[0]!.total;
 }
 
 function receiptPayloads(root: string): unknown[] {
   const sql = "SELECT payload_json AS payloadJson FROM events WHERE kind = 'steering-delivered' ORDER BY sequence";
-  return transcriptQuery<{ payloadJson: string }>(root, sql).map(row => JSON.parse(row.payloadJson));
+  return sessionDatabaseQuery<{ payloadJson: string }>(root, sql).map(row => JSON.parse(row.payloadJson));
 }
 
 const sessionStart = {
@@ -43,7 +43,7 @@ const hookCases: Array<{
   },
 ];
 
-describe("hook steering handoffs", () => {
+describe("hook steers", () => {
   it.each(hookCases)("counts one $host output only after bundled guidance is written", async ({ host, run, input, expected }) => {
     const root = await temporaryDirectory();
     const options = hookOptions(root);
@@ -143,7 +143,7 @@ describe("hook host durable state", () => {
     expect(await readPending(path)).toEqual([]);
   });
 
-  it("keeps only steering entries from a pending file", async () => {
+  it("keeps only steer entries from a pending file", async () => {
     const root = await temporaryDirectory();
     const path = pendingPath(root, "codex", "session-1");
     await mkdir(join(path, ".."), { recursive: true });
@@ -154,7 +154,7 @@ describe("hook host durable state", () => {
     expect(await readPending(path)).toEqual([delivery("steer"), { ...delivery("block"), requested: "block" }]);
   });
 
-  it("serializes one-shot work per harness session and releases the lock after failure", async () => {
+  it("serializes one-shot work per host session and releases the lock after failure", async () => {
     const root = await temporaryDirectory();
     const order: string[] = [];
     const firstEntered = Promise.withResolvers<void>();

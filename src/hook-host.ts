@@ -2,16 +2,16 @@ import { join } from "node:path";
 import type { AdapterSession, RerailEventLoop } from "./adapter-contract.js";
 import { bundledModelPath } from "./extension.js";
 import { RerailRuntime } from "./runtime.js";
-import { ingestKernelEvent } from "./kernel-service.js";
-import { daemonKernelSocket } from "./daemon-control.js";
+import { ingestEngineEvent } from "./engine-service.js";
+import { daemonEngineSocket } from "./daemon-control.js";
 import {
-  bindSteeringReceipt,
+  bindSteerReceipt,
   withSessionLock,
   type HookHost,
   type HookOutput,
 } from "./hook-adapter.js";
 import type { SemanticEmbedder } from "./semantic-types.js";
-import { SqliteTranscriptStore } from "./transcript-store.js";
+import { SqliteSessionStore } from "./session-store.js";
 import { defaultRerailDatabasePath } from "./database.js";
 import { readRepositoryId } from "./repository-identity.js";
 
@@ -26,9 +26,9 @@ function recordLocalReceipt(session: AdapterSession, databasePath: string): (rec
     } catch {
       repositoryId = undefined;
     }
-    const store = new SqliteTranscriptStore(databasePath, { repositoryId });
+    const store = new SqliteSessionStore(databasePath, { repositoryId });
     try {
-      store.recordSteeringDelivery(session, receiptId, ruleIds);
+      store.recordSteer(session, receiptId, ruleIds);
     } finally {
       store.close();
     }
@@ -44,7 +44,7 @@ export interface HookOptions {
   embedder?: SemanticEmbedder;
 }
 
-/** Runs a normal package hook against the daemon kernel, or an explicit local test runtime. */
+/** Runs a normal package hook against the engine service, or an explicit local test runtime. */
 export async function runHostHook(
   host: HookHost,
   workspace: string,
@@ -56,17 +56,18 @@ export async function runHostHook(
   return withSessionLock(storageRoot, host, sessionId, async () => {
     const databasePath = options.databasePath ?? defaultRerailDatabasePath();
     const session: AdapterSession = { host, sessionId, cwd: workspace };
+
     if (options.embedder === undefined) {
       const socketPath = options.kernelSocketPath ?? process.env.RERAIL_KERNEL_SOCKET
-        ?? await daemonKernelSocket(true);
+        ?? await daemonEngineSocket(true);
       const configuration = {
         storageRoot,
         databasePath,
         modelPath: options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath(),
         workspaceRoot: workspace,
       };
-      const output = await handle({ ingest: event => ingestKernelEvent(socketPath, event, configuration) }, storageRoot);
-      return bindSteeringReceipt(output, recordLocalReceipt(session, databasePath));
+      const output = await handle({ ingest: event => ingestEngineEvent(socketPath, event, configuration) }, storageRoot);
+      return bindSteerReceipt(output, recordLocalReceipt(session, databasePath));
     }
     const runtime = new RerailRuntime({
       storageRoot,
@@ -76,7 +77,7 @@ export async function runHostHook(
     });
     try {
       const output = await handle(runtime, storageRoot);
-      return bindSteeringReceipt(output, recordLocalReceipt(session, databasePath));
+      return bindSteerReceipt(output, recordLocalReceipt(session, databasePath));
     } finally {
       await runtime.dispose();
     }

@@ -1,6 +1,6 @@
 # SQL-driven transducer execution
 
-Status: the `rerail_matches` virtual table has been deleted, with `transducer/sql_backend.rs` and its terminals; policy evaluation runs no SQL. Regex clauses are scanned natively (`query::regex_matches`) and AST rules are matched by the grammar matcher. The terminal virtual table, SQL-as-outer-rule-engine and execution-phase sections below are history; the transducer `Program` interpreter is exercised by tests and the benchmark backends only.
+Status: the `rerail_matches` virtual table has been deleted, with `transducer/sql_backend.rs` and its terminals; code-rule evaluation runs no SQL. Regex clauses are scanned natively (`query::regex_matches`) and AST rules are matched by the grammar matcher. The terminal virtual table, SQL-as-outer-rule-engine and execution-phase sections below are history; the transducer `Program` interpreter is exercised by tests and the benchmark backends only.
 
 ## Current file filter
 
@@ -38,24 +38,24 @@ An incomplete publication cannot prove that a file/check pair is absent.
 
 The runtime reads the complete candidate manifest before worker evaluation.
 The read uses one joined SQL statement for the requested catalog.
-It returns stable `CandidateCheck` identities, not SQLite identifiers, to the runtime.
+It returns stable `CandidateClause` identities, not SQLite identifiers, to the runtime.
 
-`restore_persisted_file()` maps each identity to a compiled `CheckId`.
+`restore_persisted_file()` maps each identity to a compiled `ClauseId`.
 It replaces `file.candidates.ast` with the stored subset before tape restoration and index construction.
 `candidate_dispatch()` then builds these in-memory dispatch lists:
 
-- `Candidates.by_kind` for checks with root kinds.
-- `Candidates.unrestricted` for checks without a safe root kind.
+- `Candidates.by_kind` for clauses with root kinds.
+- `Candidates.unrestricted` for clauses without a safe root kind.
 
-`evaluate_ast_file()` builds `FileAnchorIndex` only for the remaining checks.
-It creates one `Selection` for each check.
+`evaluate_ast_file()` builds `FileAnchorIndex` only for the remaining clauses.
+It creates one `Selection` for each clause.
 The preorder matcher loop reads `by_kind`, `unrestricted`, and each selection.
-Thus, rejected file/check pairs never enter the matcher loop.
+Thus, rejected file/clause pairs never enter the matcher loop.
 
 ## Search index
 
 Schema 12 replaced the file-by-predicate posting tables with contentless FTS5 documents.
-The index contents do not depend on the policy catalog.
+The index contents do not depend on the code-rule catalog.
 Only the kind family remains; the exact-value and source-word families were deleted with their readers.
 
 `search_kind_fts` stores one kind token for each preorder node.
@@ -139,13 +139,13 @@ SQL can then implement these higher-level operations:
 - Counts, ranges, grouping, and threshold expressions.
 - Cross-file relations.
 - Rule alternatives with explicit priority columns.
-- Finding templates from relational columns.
+- Violation templates from relational columns.
 - Absence checks after a completion join.
 - Incremental invalidation joins by tape and catalog identity.
 - Stable output order with explicit logical keys.
 
 SQL scalar functions are suitable for pure operations on one value.
-Examples include hash comparison, small posting decoding, collation, and finding formatting.
+Examples include hash comparison, small posting decoding, collation, and violation formatting.
 A scalar function must not run one matcher for each file or rule row.
 That design recreates the nested execution loop.
 
@@ -161,7 +161,7 @@ Each phase uses one bulk operation:
 1. SQL kind presence decides which stored tapes need decoding.
 2. One GPU dispatch finds exact roots for all file/program pairs.
 3. `rerail_matches(batch)` exposes matches and completion rows to SQL.
-4. SQL joins terminal rows and creates higher-level findings.
+4. SQL joins terminal rows and creates higher-level violations.
 
 For exact literals, the GPU anchor kernel proves the complete terminal predicate.
 The runtime emits terminal rows directly and omits a second terminal dispatch.

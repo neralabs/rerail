@@ -1,4 +1,4 @@
-import { policyRuleSchema, type PolicyRule } from "./policy-schema.js";
+import { codeRuleSchema, type CodeRule } from "./code-rule-schema.js";
 import type { RuleKind } from "./schema.js";
 import { ruleDocumentDigest } from "./stable-json.js";
 
@@ -8,11 +8,11 @@ export function storedDocumentDigest(kind: RuleKind, rule: unknown): string {
   return ruleDocumentDigest({ kind, rule } as Parameters<typeof ruleDocumentDigest>[0]);
 }
 
-export type StoredPolicyRead = { ok: true; rule: PolicyRule } | { ok: false; reason: string };
+export type StoredCodeRuleRead = { ok: true; rule: CodeRule } | { ok: false; reason: string };
 
-/** Validate a stored policy body against the current schema. Never throws. */
-export function readStoredPolicyRule(stored: unknown): StoredPolicyRead {
-  const parsed = policyRuleSchema.safeParse(stored);
+/** Validate a stored code-rule body against the current schema. Never throws. */
+export function readStoredCodeRule(stored: unknown): StoredCodeRuleRead {
+  const parsed = codeRuleSchema.safeParse(stored);
   if (parsed.success) return { ok: true, rule: parsed.data };
   const issue = parsed.error.issues[0];
   return { ok: false, reason: issue === undefined ? "invalid policy document" : `${issue.path.join("/") || "(root)"}: ${issue.message}` };

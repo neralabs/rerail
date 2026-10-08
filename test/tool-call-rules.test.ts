@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { NativeSample } from "../src/native.js";
-import { CosineRuleRegistry } from "../src/registry.js";
-import { parseCosineRuleDocument } from "../src/rule-schema.js";
+import { ConversationRuleRegistry } from "../src/registry.js";
+import { parseConversationRuleDocument } from "../src/rule-schema.js";
 import { stableJsonText } from "../src/stable-json.js";
 
 const FORCE_PUSH = "oss:no-force-push";
@@ -23,19 +23,19 @@ function result(toolName: string, output: string): NativeSample {
   return { source: `tool:${toolName}`, boundary: "tool-call", text: output };
 }
 
-function registry(): CosineRuleRegistry {
-  const registry = new CosineRuleRegistry({ modelPath: resolve("model") });
-  registry.replace(parseCosineRuleDocument(document));
+function registry(): ConversationRuleRegistry {
+  const registry = new ConversationRuleRegistry({ modelPath: resolve("model") });
+  registry.replace(parseConversationRuleDocument(document));
   return registry;
 }
 
-function fired(registry: CosineRuleRegistry, sample: NativeSample): string[] {
+function fired(registry: ConversationRuleRegistry, sample: NativeSample): string[] {
   return registry.match(sample, { respectRepeat: false }).map(match => match.ruleId);
 }
 
 describe("tool-call rules from the open-source corpus", () => {
   it("parses the example document without references or embeddings", () => {
-    const rules = parseCosineRuleDocument(document);
+    const rules = parseConversationRuleDocument(document);
     expect(rules.map(rule => rule.id)).toEqual([FORCE_PUSH, SKIP_VERIFY, GIT_INTERNALS]);
     expect(rules.every(rule => rule.reference === undefined)).toBe(true);
   });

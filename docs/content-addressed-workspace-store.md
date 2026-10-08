@@ -10,11 +10,11 @@ The design has these machine-wide limits:
 
 - steady-state Rerail RSS of less than 1 GiB.
 - total store size of less than 10 GB.
-- repository diagnostics stop after 100,000 files or 512 MiB of source; a repository index holds
+- repository audits stop after 100,000 files or 512 MiB of source; a repository index holds
   at most one batch of source (32 files, reading stops at 1 MiB, plus at most one 32 MB file).
 - interactive edit p95 latency of less than 500 ms.
 
-This design does not change the transcript schema or the rule-ownership model.
+This design does not change the session database schema or the rule-ownership model.
 It adds a machine-wide content-addressed store for source, tapes, snapshots, and overlays.
 All database operations must move behind the Rust daemon boundary.
 
@@ -33,9 +33,9 @@ The Rust implementation returns domain results and bounded byte buffers.
 The Rust implementation runs blocking database work outside the JavaScript event loop.
 Background garbage collection also runs in Rust.
 
-Repository-scope diagnostics of a Git checkout run `indexRepositoryAsync()` on the scan workspace,
+Repository-scope audits of a Git checkout run `indexRepositoryAsync()` on the audit workspace,
 one bounded chunk per call. Rust walks the workspace root exactly as the JavaScript walk does
-(workspace-root-relative regular files with the host's source languages and policy scopes, never
+(workspace-root-relative regular files with the host's source languages and code-rule scopes, never
 through a symlink, outside the host's ignored directories); `.gitignore`, `.rerailignore` and the
 built-in ignores decide only which clean files it may restore, never which files it evaluates.
 It restores every completed clean directory from the store, then reads one batch per chunk from
@@ -45,7 +45,7 @@ evaluation slot; only a chunk's read and apply take it. JavaScript transfers no 
 source; between chunks it lets interactive edits run first and applies the 100,000-file, 512 MiB,
 20-failure and five-minute bounds. A complete index records its clean trees for reuse through
 `completeStorageRevisionAsync()` on a libuv pool thread; that write is a cache, so a busy or
-failing store costs the reuse, never the scan's results. Outside a Git checkout the scan walks
+failing store costs the reuse, never the audit's results. Outside a Git checkout the audit walks
 the filesystem in JavaScript under the same bounds.
 `applyBufferAsync()` remains available for unsaved and generated content.
 
@@ -58,13 +58,13 @@ Each record includes the tree hash, logical path prefix, snapshot, and semantic 
 A tree is not eligible if Git reports an overlay below its prefix.
 The runtime restores only maximal matching prefixes.
 Schema 10 stores result pages for each clean Git tree and logical prefix.
-Each page contains at most 64 direct file paths, findings, and deterministic failures.
+Each page contains at most 64 direct file paths, violations, and deterministic failures.
 The store compresses each page in an independent level-3 Zstandard frame.
 
 A matching subtree attaches all of its result segments without per-file restoration.
 The runtime does not create file state, load sources, hash sources, restore tapes, or decode local check results.
-Result paging merges attached findings with dirty overlays in deterministic result order.
-Policies with global checks continue to use per-file state because they require complete fact evidence.
+Result paging merges attached violations with dirty overlays in deterministic result order.
+Code rules with global clauses continue to use per-file state because they require complete fact evidence.
 
 Repository restoration resolves file identities and saved results in bulk.
 Rust resolves clean Git aliases with one JSON-backed joined query.
@@ -90,7 +90,7 @@ A full measurement over a large Python repository contained:
 - 95,697,853 source bytes.
 - 160.38 MB of raw compact tapes.
 - 56,079,347 bytes of level-3 Zstandard frames.
-- 169,014 findings.
+- 169,014 violations.
 
 The source and tape ratio was approximately 2.68 raw bytes per source byte.
 Level-3 Zstandard reduced the combined source and tapes to 21.9 percent of their raw size.
@@ -143,8 +143,8 @@ Disposable test trees must not consume the machine cache.
 ## Current daemon context
 
 The installed daemon can host several workspace runtimes in one process.
-Its runtime key includes the storage root, model path, transcript database, and workspace root.
-Each workspace has separate session state, policy state, parse state, and result state.
+Its runtime key includes the storage root, model path, session database, and workspace root.
+Each workspace has separate session state, code-rule state, parse state, and result state.
 
 The installed daemon shares its process, native module, model files, and machine rule catalog.
 Linked Git worktrees also share the repository identity from the Git common directory.
@@ -159,7 +159,7 @@ Path-addressed hybrid storage required approximately 3.0 GiB for the 44 maintain
 The scan-limit upper estimate was approximately 6.8 GB.
 
 One hundred similar workspaces can approach the 10 GB limit.
-This model also leaves little space for WAL files, churn, transcripts, and temporary operations.
+This model also leaves little space for WAL files, churn, session databases, and temporary operations.
 
 ### Content-addressed storage
 
@@ -237,7 +237,7 @@ The daemon uses two persistence scopes.
 ### Per-worktree state
 
 Each worktree keeps its existing local state.
-This state includes transcripts, settings, diagnostics, and other checkout-owned data.
+This state includes session databases, settings, repository audits, and other checkout-owned data.
 
 The CAS records each workspace identity and current root.
 The local state does not contain source frames or tape frames.
@@ -360,7 +360,7 @@ Initial string domains include paths, path components, workspace roots, and repo
 ### Paths
 
 The first implementation interns complete normalized repository-relative paths.
-This choice keeps finding rendering and path lookup simple.
+This choice keeps violation rendering and path lookup simple.
 
 ```sql
 CREATE TABLE paths (
@@ -516,7 +516,7 @@ A `.rerailignore` negation cannot include a path from this mandatory list.
 `gix` receives these exclusions as pathspecs before its worktree walk.
 This rule prevents disposable trees from entering discovery or capacity measurements.
 
-These rules shape Git discovery, and so storage reuse, only. A repository scan evaluates every file
+These rules shape Git discovery, and so storage reuse, only. A repository audit evaluates every file
 the host's walk selects, including ignored and mandatory-excluded paths; it reads them from the
 worktree instead of restoring them.
 
@@ -532,7 +532,7 @@ Content-transforming Git attributes need special handling.
 These attributes include filters, line-ending conversion, and `working-tree-encoding`.
 
 If a transform can change workspace bytes, Rust reads and hashes the workspace file.
-Rerail findings and tape spans must bind to the evaluated workspace bytes.
+Rerail violations and tape spans must bind to the evaluated workspace bytes.
 
 A Git submodule entry identifies a commit, not a child tree.
 Rerail treats each scanned nested repository as a separate snapshot root.
@@ -622,7 +622,7 @@ Competing writers use insert-or-find behavior and discard the duplicate frame af
 
 A normal edit transaction changes one overlay path and its object references.
 An indexing transaction publishes a bounded batch.
-No transaction contains a complete repository scan.
+No transaction contains a complete repository audit.
 
 ## Garbage collection
 
@@ -726,14 +726,14 @@ The memory plan uses bounded regions for:
 - SQLite page caches.
 - hot compressed frames.
 - restored source and tapes.
-- active policy runtimes.
+- active code-rule runtimes.
 - garbage-collection scratch state.
 - result delivery.
 
 Inactive workspace runtimes must leave memory.
-A workspace manifest in SQLite does not require a resident policy runtime.
+A workspace manifest in SQLite does not require a resident code-rule runtime.
 
-The daemon must share immutable compiled policy plans when their identities match.
+The daemon must share immutable compiled code-rule plans when their identities match.
 It must retain only active workspace overlays and hot file frames.
 
 Initial parsing and indexing remain in a disposable worker.
@@ -760,7 +760,7 @@ An oversized source or tape uses bounded transient heap storage instead of a sep
 ## Failure and recovery
 
 The CAS contains rebuildable data.
-A database failure must not corrupt source worktrees or transcript databases.
+A database failure must not corrupt source worktrees or session databases.
 
 SQLite transactions protect all published references.
 An interrupted frame build can leave only an unreferenced immutable object.

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 const routing = vi.hoisted(() => ({
   isMainRerailBuild: vi.fn<() => boolean>(),
-  daemonKernelSocket: vi.fn<(replaceOtherPackage: boolean) => Promise<string>>(),
+  daemonEngineSocket: vi.fn<(replaceOtherPackage: boolean) => Promise<string>>(),
 }));
 vi.mock("../src/rerail-build.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../src/rerail-build.js"),
@@ -9,7 +9,7 @@ vi.mock("../src/rerail-build.js", async () => ({
 }));
 vi.mock("../src/daemon-control.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../src/daemon-control.js"),
-  daemonKernelSocket: routing.daemonKernelSocket,
+  daemonEngineSocket: routing.daemonEngineSocket,
 }));
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
@@ -26,7 +26,7 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
   routing.isMainRerailBuild.mockReset();
-  routing.daemonKernelSocket.mockReset();
+  routing.daemonEngineSocket.mockReset();
 });
 
 async function runStream(lines: readonly string[], eventLoop: RerailEventLoop): Promise<readonly Record<string, unknown>[]> {
@@ -83,18 +83,18 @@ describe("Rerail event stream", () => {
   });
 });
 
-interface KernelRequestBody {
+interface EngineRequestBody {
   event: { eventId: string };
   configuration: Record<string, string>;
 }
 
-/** Stands in for the main daemon's kernel socket, answering every event with a delivery only it produces. */
-async function fakeDaemonKernel(socketPath: string): Promise<KernelRequestBody[]> {
-  const received: KernelRequestBody[] = [];
+/** Stands in for the main daemon's engine service socket, answering every event with a delivery only it produces. */
+async function fakeEngineService(socketPath: string): Promise<EngineRequestBody[]> {
+  const received: EngineRequestBody[] = [];
   const server: Server = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += String(chunk);
-    const parsed = JSON.parse(body) as KernelRequestBody;
+    const parsed = JSON.parse(body) as EngineRequestBody;
     received.push(parsed);
     response.end(encodeRerailEventResult({
       eventId: parsed.event.eventId,
@@ -107,13 +107,13 @@ async function fakeDaemonKernel(socketPath: string): Promise<KernelRequestBody[]
 }
 
 describe("rerail events in a main build", () => {
-  it("sends every event to the daemon kernel instead of evaluating in-process", async () => {
+  it("sends every event to the daemon engine service instead of evaluating in-process", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-events-main-"));
     cleanups.push(async () => await rm(root, { recursive: true, force: true }));
-    const socketPath = join(root, "kernel.sock");
-    const received = await fakeDaemonKernel(socketPath);
+    const socketPath = join(root, "engine.sock");
+    const received = await fakeEngineService(socketPath);
     routing.isMainRerailBuild.mockReturnValue(true);
-    routing.daemonKernelSocket.mockResolvedValue(socketPath);
+    routing.daemonEngineSocket.mockResolvedValue(socketPath);
     startTestRepository(root, join(root, "rerail.sqlite"));
     const output = new PassThrough();
     let written = "";
@@ -144,7 +144,7 @@ describe("rerail events in a main build", () => {
     }));
     // Only the first event may replace a daemon from another package; a stream that outlives an update must
     // keep using the newer daemon rather than bring its own version back.
-    expect(routing.daemonKernelSocket.mock.calls).toEqual([[true], [false]]);
+    expect(routing.daemonEngineSocket.mock.calls).toEqual([[true], [false]]);
   });
 
   it("never asks for the daemon, which would autostart it, while Rerail is off in the checkout", async () => {
@@ -168,6 +168,7 @@ describe("rerail events in a main build", () => {
     });
 
     expect(JSON.parse(written.trim())).toEqual({ eventId: "start", deliveries: [] });
-    expect(routing.daemonKernelSocket).not.toHaveBeenCalled();
+    expect(routing.daemonEngineSocket).not.toHaveBeenCalled();
   });
 });
+

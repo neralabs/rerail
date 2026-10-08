@@ -1,7 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
-import { IGNORED_DIRECTORIES, languageFor } from "../../src/executable-policy-enforcer.js";
-import { loadNativeBinding, type NativeCompiledPolicyDsl } from "../../src/native.js";
+import { IGNORED_DIRECTORIES, languageFor } from "../../src/code-rule-enforcer.js";
+import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../src/native.js";
 import { RERAIL_ROOT } from "./fixtures.js";
 import { applyToWorkspace, capabilitiesJson, compileDocument, findPort, INFORMATIONAL_FAILURE_CODES, listPortedRules } from "./runner.js";
 import { compareDeterministicStrings } from "../../src/stable-json.js";
@@ -74,13 +74,13 @@ export async function timeCorpus(directoryArgument: string, runs: number): Promi
   const compileStarted = performance.now();
   const included: string[] = [];
   const excluded: string[] = [];
-  const compiled: NativeCompiledPolicyDsl[] = rules.flatMap(rule => {
+  const compiled: NativeCompiledCodeRuleDsl[] = rules.flatMap(rule => {
     const document = findPort(rule).document;
     if (document === undefined) return [];
     try {
-      const policy = compileDocument(document);
+      const codeRule = compileDocument(document);
       included.push(rule);
-      return [policy];
+      return [codeRule];
     } catch {
       excluded.push(rule);
       return [];
@@ -92,8 +92,8 @@ export async function timeCorpus(directoryArgument: string, runs: number): Promi
   const coldRunsMs: number[] = [];
   let last: WorkspaceEvaluation | undefined;
   for (let run = 0; run < runs; run += 1) {
-    const workspace = new binding.PolicyDslWorkspace();
-    for (const policy of compiled) workspace.addPolicy(policy);
+    const workspace = new binding.CodeRuleDslWorkspace();
+    for (const codeRule of compiled) workspace.addCodeRule(codeRule);
     const started = performance.now();
     last = JSON.parse(await workspace.applyAsync(load)) as WorkspaceEvaluation;
     coldRunsMs.push(performance.now() - started);
@@ -107,9 +107,9 @@ export async function timeCorpus(directoryArgument: string, runs: number): Promi
   ];
   const edits: EditTiming[] = [];
   let revision = 1;
-  const workspace = new binding.PolicyDslWorkspace();
+  const workspace = new binding.CodeRuleDslWorkspace();
   try {
-    for (const policy of compiled) workspace.addPolicy(policy);
+    for (const codeRule of compiled) workspace.addCodeRule(codeRule);
     await workspace.applyAsync(JSON.stringify({ revision, files, removed: [] }));
     for (const [which, target] of targets) {
       if (target === undefined) continue;

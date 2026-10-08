@@ -120,12 +120,12 @@ export interface AdapterSession {
   cwd: string;
 }
 
-/** Harness hook payloads are untyped JSON; nonblank text is the only accepted field value. */
-export function hookText(harness: string) {
+/** Host hook payloads are untyped JSON; nonblank text is the only accepted field value. */
+export function hookText(host: string) {
   return {
     required(input: Readonly<Record<string, unknown>>, field: string): string {
       const value = input[field];
-      if (typeof value !== "string" || value.trim() === "") throw new Error(`${harness} hook omitted ${field}`);
+      if (typeof value !== "string" || value.trim() === "") throw new Error(`${host} hook omitted ${field}`);
       return value;
     },
     optional(input: Readonly<Record<string, unknown>>, field: string): string | undefined {
@@ -189,7 +189,7 @@ export function assistantCompletionEvent(
   return assistantDeltaEvent(sessionId, `assistant-final:${nonce}`, messageId, streamed ? "" : text(), true);
 }
 
-export function toolCallEvent(
+export function callEvent(
   sessionId: string,
   eventId: string,
   toolCallId: string,
@@ -199,7 +199,7 @@ export function toolCallEvent(
   return { kind: "call", eventId, sessionId, toolCallId, toolName, input };
 }
 
-export function toolResultEvent(
+export function resultEvent(
   sessionId: string,
   eventId: string,
   toolCallId: string,
@@ -229,11 +229,11 @@ export interface AdapterDelivery {
   requested: RuleMode;
   mechanism: DeliveryMechanism;
   content: string;
-  /** Distinct rule ids whose findings were rendered into `content`, first-seen order; empty when the delivery is not policy steering. */
+  /** Distinct rule ids whose violations were rendered into `content`, first-seen order; empty when the delivery is not a code-rule steer. */
   ruleIds: readonly string[];
 }
 
-/** The `customType` every harness records Rerail rule guidance under in its own session transcript. */
+/** The `customType` every host records Rerail rule guidance under in its own session transcript. */
 export const RULE_MESSAGE_TYPE = "rerail.rule" as const;
 
 type NativeRuleMessage = {
@@ -267,7 +267,7 @@ export async function sendNativeDeliveries(
     try {
       await record(delivery.sessionId, randomUUID(), delivery.ruleIds);
     } catch (error) {
-      // A successful handoff stays successful even if bookkeeping cannot persist it.
+      // A successful steer stays successful even if bookkeeping cannot persist it.
       console.error("rerail steering receipt:", error);
     }
   }

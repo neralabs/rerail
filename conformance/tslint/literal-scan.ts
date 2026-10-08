@@ -29,7 +29,7 @@ const LANGUAGE_WORDS = new Set([
   "line", "next",
 ]);
 
-const REVIEW: ReadonlySet<LiteralFinding["status"]> = new Set(["suspicious", "fixture-text", "option-default"]);
+const REVIEW: ReadonlySet<LiteralViolation["status"]> = new Set(["suspicious", "fixture-text", "option-default"]);
 
 /** Keys whose string values are matched against source text; `kind`, `stopBy`, `id`, messages and `matches` are not. */
 const LITERAL_KEYS = new Set(["pattern", "context", "selector", "regex", "text", "fix"]);
@@ -43,7 +43,7 @@ export interface PortLiteral {
   value: string;
 }
 
-export interface LiteralFinding extends PortLiteral {
+export interface LiteralViolation extends PortLiteral {
   /** `suspicious`, or why the literal is fine. */
   status: "suspicious" | "fixture-text" | "option-default" | "context" | "language" | "protected" | "rule-source" | "option" | "not-in-fixtures";
 }
@@ -104,7 +104,7 @@ export function fixtureIdentifiers(rule: string): { identifiers: Set<string>; wo
   return { identifiers, words, options };
 }
 
-export function scanRule(rule: string): LiteralFinding[] {
+export function scanRule(rule: string): LiteralViolation[] {
   const literals = portLiterals(rule);
   if (literals.length === 0) return [];
   const { identifiers, words, options } = fixtureIdentifiers(rule);
@@ -112,7 +112,7 @@ export function scanRule(rule: string): LiteralFinding[] {
   const sourceNames = ruleSourceWords(rule);
   return literals.map(literal => {
     const inFixtures = identifiers.has(literal.token) || words.has(literal.token);
-    const status: LiteralFinding["status"] = !inFixtures
+    const status: LiteralViolation["status"] = !inFixtures
       ? "not-in-fixtures"
       : protectedNames.has(literal.token)
         ? "protected"
@@ -139,17 +139,17 @@ export function literalScanReport(options: { all: boolean; rule?: string | undef
   const lines: string[] = [];
   let flagged = 0;
   for (const { name } of rules) {
-    const findings = scanRule(name).filter(finding => (options.all ? finding.status !== "not-in-fixtures" : REVIEW.has(finding.status)));
-    if (findings.length === 0) continue;
+    const violations = scanRule(name).filter(violation => (options.all ? violation.status !== "not-in-fixtures" : REVIEW.has(violation.status)));
+    if (violations.length === 0) continue;
     flagged += 1;
     lines.push(name);
     const seen = new Set<string>();
-    for (const finding of findings) {
-      const key = `${finding.file} ${finding.key} ${finding.token} ${finding.status}`;
+    for (const violation of violations) {
+      const key = `${violation.file} ${violation.key} ${violation.token} ${violation.status}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const shown = finding.value.length > 100 ? `${finding.value.slice(0, 97)}...` : finding.value;
-      lines.push(`  ${finding.status.padEnd(15)} ${finding.token.padEnd(16)} ${finding.file} ${finding.key}: ${shown}`);
+      const shown = violation.value.length > 100 ? `${violation.value.slice(0, 97)}...` : violation.value;
+      lines.push(`  ${violation.status.padEnd(15)} ${violation.token.padEnd(16)} ${violation.file} ${violation.key}: ${shown}`);
     }
   }
   lines.push(`${flagged} rule(s) with ${options.all ? "fixture-identifier" : "suspicious"} literals`);

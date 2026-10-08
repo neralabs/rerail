@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { AdapterDelivery } from "../src/adapter-contract.js";
 import { codexHookOutput, handleCodexEvent, runCodexHook } from "../src/codex-hook.js";
 import type { HookOptions } from "../src/hook-host.js";
-import { hookOptions, scriptedLoop, serveText, temporaryDirectories, transcriptQuery, transcriptRows } from "./hook-fixtures.js";
+import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "./hook-fixtures.js";
 import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-codex-hook-");
@@ -14,7 +14,7 @@ function delivery(requested: AdapterDelivery["requested"], content: string, rule
 }
 
 describe("Codex one-shot hook", () => {
-  it("persists the documented hook lifecycle into the SQLite transcript across separate hook processes", async () => {
+  it("persists the documented hook lifecycle into the SQLite session store across separate hook processes", async () => {
     const root = await temporaryDirectory();
     const options = hookOptions(root);
     const common = { session_id: "codex-session", cwd: root, transcript_path: null, model: "gpt-5-codex", permission_mode: "default" };
@@ -37,7 +37,7 @@ describe("Codex one-shot hook", () => {
       last_assistant_message: "Done.",
     }, options)).toEqual({});
 
-    expect(transcriptRows(root, ["session-start", "user-prompt", "call", "assistant-message", "turn-end"])).toEqual([
+    expect(eventRows(root, ["session-start", "user-prompt", "call", "assistant-message", "turn-end"])).toEqual([
       ["codex-session:session-start:startup", "session-start"],
       ["codex-session:prompt:t1", "user-prompt"],
       ["codex-session:tool-call:call-1", "call"],
@@ -53,7 +53,7 @@ describe("Codex one-shot hook", () => {
       hookOptions(root),
     );
     expect(output).toEqual({});
-    expect(transcriptQuery(root, "SELECT session_id FROM sessions")).toEqual([]);
+    expect(sessionDatabaseQuery(root, "SELECT session_id FROM sessions")).toEqual([]);
   });
 
   it("does not start or record hook activity where Rerail is not started", async () => {
@@ -66,8 +66,9 @@ describe("Codex one-shot hook", () => {
     startTestRepository(root, hookOptions(root).databasePath);
     stopTestRepository(root, hookOptions(root).databasePath);
     expect(await runCodexHook(start, hookOptions(root))).toEqual({});
-    expect(transcriptQuery(root, "SELECT session_id FROM sessions")).toEqual([]);
+    expect(sessionDatabaseQuery(root, "SELECT session_id FROM sessions")).toEqual([]);
   });
+
 
   it("answers {} on stdout and exits cleanly when stdin is malformed or the runtime fails", async () => {
     const root = await temporaryDirectory();
@@ -81,7 +82,7 @@ describe("Codex one-shot hook", () => {
 
     const runtimeFailure = await serve(
       JSON.stringify({ hook_event_name: "SessionStart", session_id: "s", cwd: root, source: "startup" }),
-      { storageRoot: join(root, "sessions"), kernelSocketPath: join(root, "missing-kernel.sock") },
+      { storageRoot: join(root, "sessions"), kernelSocketPath: join(root, "missing-engine.sock") },
     );
     expect(JSON.parse(runtimeFailure.stdout)).toEqual({});
     expect(runtimeFailure.stderr).toMatch(/^rerail hook: /);
@@ -131,7 +132,7 @@ describe("Codex one-shot hook", () => {
     expect(codexHookOutput("SessionEnd", [delivery("steer", "ignored")])).toEqual({});
   });
 
-  it("carries steering pended after a tool to the next tool call when one comes before Stop", async () => {
+  it("carries a steer pended after a tool to the next tool call when one comes before Stop", async () => {
     const root = await temporaryDirectory();
     const storageRoot = join(root, "sessions");
     const common = { session_id: "codex-session", cwd: root, turn_id: "t1" };

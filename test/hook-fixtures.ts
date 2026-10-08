@@ -37,8 +37,8 @@ export function temporaryDirectories(prefix: string): (options?: { started?: boo
   };
 }
 
-/** Rows from a hook's SQLite transcript through a separate read-only connection. */
-export function transcriptQuery<Row>(root: string, sql: string): Row[] {
+/** Rows from a hook's SQLite session database through a separate read-only connection. */
+export function sessionDatabaseQuery<Row>(root: string, sql: string): Row[] {
   const database = new Database(join(root, "rerail.sqlite"), { readonly: true });
   try {
     return database.prepare<[], Row>(sql).all();
@@ -48,10 +48,10 @@ export function transcriptQuery<Row>(root: string, sql: string): Row[] {
 }
 
 /** Event ids and kinds a hook lifecycle persisted, in sequence. */
-export function transcriptRows(root: string, kinds: readonly string[]): Array<[string, string]> {
+export function eventRows(root: string, kinds: readonly string[]): Array<[string, string]> {
   const kindList = kinds.map(kind => `'${kind}'`).join(", ");
   const sql = `SELECT event_id AS eventId, kind FROM events WHERE kind IN (${kindList}) ORDER BY sequence`;
-  return transcriptQuery<{ eventId: string; kind: string }>(root, sql).map(row => [row.eventId, row.kind]);
+  return sessionDatabaseQuery<{ eventId: string; kind: string }>(root, sql).map(row => [row.eventId, row.kind]);
 }
 
 export function scriptedLoop(script: Readonly<Record<string, readonly AdapterDelivery[]>>): RerailEventLoop & { events: AdapterEvent[] } {

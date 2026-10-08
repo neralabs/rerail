@@ -1,6 +1,6 @@
 """Records what each local suppression annotation in pinned PHP corpora drops from PHPStan 2.2.16,
 Psalm 6.19.1 and PHP_CodeSniffer 4.0.4, for `benchmark_php_suppression_corpus`
-(rerail/native/src/policy_dsl/suppress/php_corpus_tests.rs). Offline, not in CI:
+(rerail/native/src/code_rule_dsl/suppress/php_corpus_tests.rs). Offline, not in CI:
 
     python3 generate_corpus.py <tools dir> <environment dir> <output.json> \
         <name>=<corpus root>:<path>[,<path>...][@<composer root version>] ...

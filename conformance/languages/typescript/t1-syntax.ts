@@ -9,16 +9,16 @@
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { capabilitiesJson } from "../../tslint/runner.js";
-import type { PolicySourceLanguage } from "../../../src/executable-policy.js";
-import { IGNORED_DIRECTORIES, languageFor } from "../../../src/executable-policy-enforcer.js";
-import { encodePolicyWorkspaceRequest, loadNativeBinding } from "../../../src/native.js";
+import type { CodeRuleSourceLanguage } from "../../../src/code-rule.js";
+import { IGNORED_DIRECTORIES, languageFor } from "../../../src/code-rule-enforcer.js";
+import { encodeCodeRuleWorkspaceRequest, loadNativeBinding } from "../../../src/native.js";
 
 const [root, pathList, output, unparsedRecording] = process.argv.slice(2);
 if (root === undefined || pathList === undefined || output === undefined) throw new Error("usage: classify.ts <corpus> <paths> <out.json> [<recording>]");
 const ECMA = new Set(["typescript", "tsx", "javascript"]);
 const unparsed = new Set<string>(unparsedRecording === undefined ? [] : JSON.parse(readFileSync(unparsedRecording, "utf8")).source.skipped);
 
-type Source = { path: string; language: PolicySourceLanguage; source: string };
+type Source = { path: string; language: CodeRuleSourceLanguage; source: string };
 const files: Source[] = [];
 const walk = (relative: string): void => {
   for (const entry of readdirSync(join(root, relative), { withFileTypes: true })) {
@@ -34,7 +34,7 @@ const walk = (relative: string): void => {
 for (const path of pathList.split(",")) walk(path);
 files.sort((left, right) => (left.path < right.path ? -1 : 1));
 
-const policy = (id: string, rule: unknown): string =>
+const codeRule = (id: string, rule: unknown): string =>
   JSON.stringify({
     format: "rerail.policy/v1",
     id,
@@ -51,24 +51,24 @@ const policy = (id: string, rule: unknown): string =>
 // prefix operator looser than a call, so `!f<T>(x)` is `!(f<T>(x))`, never `(!f)<T>(x)`.
 const NOT_MEMBER = ["binary_expression", "ternary_expression", "assignment_expression", "augmented_assignment_expression", "unary_expression", "await_expression", "update_expression", "as_expression", "satisfies_expression", "yield_expression", "arrow_function", "new_expression"];
 const binding = loadNativeBinding();
-const workspace = new binding.PolicyDslWorkspace();
-workspace.addPolicy(binding.PolicyDslRuntime.compile(policy("syntax-probe", { kind: "ERROR" }), "json", capabilitiesJson()));
-workspace.addPolicy(binding.PolicyDslRuntime.compile(policy("non-null-over", { kind: "non_null_expression", has: { stopBy: "neighbor", any: NOT_MEMBER.map(kind => ({ kind })) } }), "json", capabilitiesJson()));
-workspace.addPolicy(binding.PolicyDslRuntime.compile(policy("prefix-callee", { kind: "call_expression", has: { field: "function", any: ["unary_expression", "await_expression", "update_expression"].map(kind => ({ kind })) } }), "json", capabilitiesJson()));
+const workspace = new binding.CodeRuleDslWorkspace();
+workspace.addCodeRule(binding.CodeRuleDslRuntime.compile(codeRule("syntax-probe", { kind: "ERROR" }), "json", capabilitiesJson()));
+workspace.addCodeRule(binding.CodeRuleDslRuntime.compile(codeRule("non-null-over", { kind: "non_null_expression", has: { stopBy: "neighbor", any: NOT_MEMBER.map(kind => ({ kind })) } }), "json", capabilitiesJson()));
+workspace.addCodeRule(binding.CodeRuleDslRuntime.compile(codeRule("prefix-callee", { kind: "call_expression", has: { field: "function", any: ["unary_expression", "await_expression", "update_expression"].map(kind => ({ kind })) } }), "json", capabilitiesJson()));
 const started = performance.now();
 let revision = 0;
 for (let start = 0; start < files.length; start += 32) {
   revision += 1;
-  await workspace.applyBufferAsync(encodePolicyWorkspaceRequest({ revision, files: files.slice(start, start + 32), removed: [], deferGlobal: true, quiet: true }));
+  await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: files.slice(start, start + 32), removed: [], deferGlobal: true, quiet: true }));
 }
 revision += 1;
-await workspace.applyBufferAsync(encodePolicyWorkspaceRequest({ revision, files: [], removed: [], quiet: true }));
-type Finding = { ruleId: string; path: string; span: { startLine: number; startColumn: number; startByte: number; endByte: number } };
-const findings: Finding[] = [];
+await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: [], removed: [], quiet: true }));
+type Violation = { ruleId: string; path: string; span: { startLine: number; startColumn: number; startByte: number; endByte: number } };
+const violations: Violation[] = [];
 const failures: { ruleId?: string; code: string; message: string; path?: string }[] = [];
 for (let cursor = 0; ; ) {
   const page = JSON.parse(await workspace.resultPageAsync(cursor, 8 << 20));
-  findings.push(...page.violations);
+  violations.push(...page.violations);
   failures.push(...page.failures);
   if (page.done) break;
   cursor = page.cursor;
@@ -87,16 +87,16 @@ const syntaxErrors = failures
   })
   .sort((left, right) => (left.path < right.path ? -1 : 1));
 const sites = (policyId: string) =>
-  findings
-    .filter(finding => finding.ruleId === policyId)
-    .map(finding => {
-      const source = Buffer.from(byPath.get(finding.path)!.source, "utf8");
-      const text = source.subarray(finding.span.startByte, finding.span.endByte).toString("utf8");
-      return { path: finding.path, line: finding.span.startLine + 1, column: finding.span.startColumn + 1, text: text.slice(0, 120) };
+  violations
+    .filter(violation => violation.ruleId === policyId)
+    .map(violation => {
+      const source = Buffer.from(byPath.get(violation.path)!.source, "utf8");
+      const text = source.subarray(violation.span.startByte, violation.span.endByte).toString("utf8");
+      return { path: violation.path, line: violation.span.startLine + 1, column: violation.span.startColumn + 1, text: text.slice(0, 120) };
     });
 const nonNull = sites("non-null-over");
 const prefixCallee = sites("prefix-callee");
-// Every check is sound under syntax errors, so `source-partial` is expected on every syntax-error file.
+// Every clause is sound under syntax errors, so `source-partial` is expected on every syntax-error file.
 const otherFailures = failures.filter(failure => failure.code !== "source-partial");
 const report = {
   files: files.length,

@@ -13,26 +13,26 @@ import {
 } from "./adapter-contract.js";
 import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState } from "./host-runtime.js";
 import { autostartDaemon } from "./daemon-control.js";
-import { ExecutablePolicyBridge, generatedEditPaths, type SourceObservationCache } from "./executable-policy-bridge.js";
-import { NativeExecutablePolicyEnforcer } from "./executable-policy-enforcer.js";
-import type { ExecutablePolicyEvaluator, PolicyEvaluationSettings, PolicySteeringDelivery } from "./executable-policy.js";
-import type { PolicyExecutionRecorder, PolicyRunRecord } from "./policy-execution.js";
-import { SqlitePolicyExecutionStore } from "./policy-execution-store.js";
-import { DEFAULT_POLICY_SETTINGS, SqliteScanControlStore, type PolicyOwnerClaim } from "./scan-control.js";
-import { bootstrapPolicyDslCatalog, type PolicyDslCatalog } from "./policy-dsl-catalog.js";
+import { CodeRuleBridge, generatedEditPaths, type SourceObservationCache } from "./code-rule-bridge.js";
+import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
+import type { CodeRuleAuditor, AuditSettings, RuleSteerDelivery } from "./code-rule.js";
+import type { AuditRecorder, AuditRecord } from "./audit.js";
+import { SqliteAuditStore } from "./audit-store.js";
+import { DEFAULT_AUDIT_SETTINGS, SqliteAuditControlStore, type PolicyOwnerClaim } from "./audit-control.js";
+import { bootstrapCodeRuleDslCatalog, type CodeRuleDslCatalog } from "./code-rule-dsl-catalog.js";
 import { loadBundledRules } from "./rule-bootstrap.js";
 import { defaultRerailDatabasePath } from "./database.js";
 import { resolveRepositoryContext, ScopedRuleCatalog, type RepositoryContext } from "./scoped-rule-catalog.js";
 import { contextStartState, RepositoryStartWatch } from "./repository-start.js";
 import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "./semantic-primitives.js";
-import { CosineRuleRegistry, type RuleMatch } from "./registry.js";
-import { LiveCosineRules } from "./cosine-rule-sync.js";
+import { ConversationRuleRegistry, type RuleMatch } from "./registry.js";
+import { LiveConversationRules } from "./conversation-rule-sync.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "./rule-schema.js";
-import { cosineRuleLoader } from "./rule-sources.js";
+import { conversationRuleLoader } from "./rule-sources.js";
 import { RULE_MODES } from "./rule-mode.js";
 import { restorableRule, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
-import { SqliteTranscriptStore } from "./transcript-store.js";
+import { SqliteSessionStore } from "./session-store.js";
 import type {
   ContentItem,
   ContentSnapshot,
@@ -78,26 +78,26 @@ function validatedLedger(values: readonly unknown[]): LedgerEntry[] {
 function processedEventIds(ledger: readonly LedgerEntry[]): Set<string> {
   return new Set(ledger.flatMap((entry) => (entry.type === "event" ? [entry.eventId] : [])));
 }
-interface PolicyScanVerdict {
+interface AuditRequestVerdict {
   status: "completed" | "failed" | "interrupted";
   error: string | null;
 }
-/** Outcome of an explicit scan from its recorded runs: any missing or non-completed run fails the whole request. */
-function policyScanVerdict(runIds: readonly string[], runs: readonly (PolicyRunRecord | undefined)[]): PolicyScanVerdict {
-  const unavailable = runs.indexOf(undefined);
-  if (unavailable >= 0) return { status: "failed", error: `Policy run ${runIds[unavailable]} was not recorded` };
-  const completed = runs as PolicyRunRecord[];
-  const interrupted = completed.find(run => run.status === "interrupted");
+/** Outcome of an explicit audit request from its recorded audits: any missing or non-completed audit fails the whole request. */
+function auditRequestVerdict(auditIds: readonly string[], audits: readonly (AuditRecord | undefined)[]): AuditRequestVerdict {
+  const unavailable = audits.indexOf(undefined);
+  if (unavailable >= 0) return { status: "failed", error: `Policy run ${auditIds[unavailable]} was not recorded` };
+  const completed = audits as AuditRecord[];
+  const interrupted = completed.find(audit => audit.status === "interrupted");
   if (interrupted !== undefined) return { status: "interrupted", error: `Policy run ${interrupted.auditId} was interrupted` };
-  const failed = completed.find(run => run.status !== "completed");
+  const failed = completed.find(audit => audit.status !== "completed");
   if (failed !== undefined) {
     const details = failed.failures.map(failure => failure.message).filter(Boolean).join("; ");
     return { status: "failed", error: details || `Policy run ${failed.auditId} ended ${failed.status}` };
   }
   return { status: "completed", error: null };
 }
-/** Policy calls recorded without a matching result, in ledger order. */
-function unresolvedPolicyCalls(ledger: readonly LedgerEntry[]): Extract<LedgerEntry, { type: "policy-call" }>[] {
+/** Code-rule calls recorded without a matching result, in ledger order. */
+function unresolvedCodeRuleCalls(ledger: readonly LedgerEntry[]): Extract<LedgerEntry, { type: "policy-call" }>[] {
   const pending = new Map<string, Extract<LedgerEntry, { type: "policy-call" }>>();
   for (const entry of ledger) {
     if (entry.type === "policy-call") pending.set(entry.toolCallId, entry);
@@ -152,7 +152,7 @@ const LedgerEntrySchema = z.union([
       requested: z.enum(RULE_MODES),
       mechanism: z.enum(["observe", "native-queue", "additional-context", "deferred-context"]),
       content: z.string(),
-      // Ledger entries written before re-rail attribution carry no rule ids.
+      // Ledger entries written before steer attribution carry no rule ids.
       ruleIds: z.array(z.string()).default([]),
     }),
   }),
@@ -283,7 +283,7 @@ class JsonlWatermarkStore implements WatermarkStore {
   }
 }
 
-interface PendingPolicyDelivery {
+interface PendingSteer {
   delivery: AdapterDelivery;
   revision: number;
   scope: string[];
@@ -300,18 +300,18 @@ interface RuntimeSessionState {
   ledgerPath: string;
   ledgerAppendState: JsonlAppendState;
   sampleSequence: number;
-  registry?: CosineRuleRegistry;
-  ruleSync: LiveCosineRules | undefined;
+  registry?: ConversationRuleRegistry;
+  ruleSync: LiveConversationRules | undefined;
   turn: number;
   eventDeliveries: Map<string, AdapterDelivery[]>;
-  backgroundDeliveries: PendingPolicyDelivery[];
-  policyRevision: number;
-  policySourceVersions: Map<string, number>;
-  policyBridge?: ExecutablePolicyBridge;
+  pendingSteers: PendingSteer[];
+  codeRuleRevision: number;
+  codeRuleSourceVersions: Map<string, number>;
+  codeRuleBridge?: CodeRuleBridge;
   ownerClaim: PolicyOwnerClaim | undefined;
-  policyControl: Promise<void> | undefined;
-  repositoryDiagnostic: Promise<void> | undefined;
-  pendingPolicyCalls: Array<{ id: string; toolName: string }>;
+  auditRequestWork: Promise<void> | undefined;
+  repositoryAudit: Promise<void> | undefined;
+  pendingCodeRuleCalls: Array<{ id: string; toolName: string }>;
   closed: boolean;
 }
 
@@ -360,7 +360,7 @@ function sessionDirectory(root: string, sessionId: string): string {
 }
 
 /** Replays a session ledger into its registry and returns the turn the session had reached. */
-function replayLedger(registry: CosineRuleRegistry, ledger: readonly LedgerEntry[]): number {
+function replayLedger(registry: ConversationRuleRegistry, ledger: readonly LedgerEntry[]): number {
   let turn = 0;
   for (const entry of ledger) {
     if (entry.type === "rule-mutation") {
@@ -375,7 +375,7 @@ function replayLedger(registry: CosineRuleRegistry, ledger: readonly LedgerEntry
   return turn;
 }
 
-function applyRuleMutation(registry: CosineRuleRegistry, mutation: RuleMutation): void {
+function applyRuleMutation(registry: ConversationRuleRegistry, mutation: RuleMutation): void {
   if (mutation.operation === "remove") {
     registry.remove(mutation.ids);
     return;
@@ -383,6 +383,7 @@ function applyRuleMutation(registry: CosineRuleRegistry, mutation: RuleMutation)
   const rule = restorableRule(mutation.rule, "persisted rule");
   if (rule !== undefined) registry.upsert(rule, { replace: mutation.replace });
 }
+
 
 function publicProjection(projection: SemanticProjection): unknown {
   return {
@@ -414,20 +415,20 @@ export interface RerailRuntimeOptions {
   /** Checkout root and stable repository identity used to resolve project rules. */
   workspaceRoot: string;
   repositoryContext?: RepositoryContext;
-  policy?: PolicyEvaluationSettings;
-  /** Delivers a completed background policy result without waiting for another host event. */
+  auditSettings?: AuditSettings;
+  /** Delivers a completed background code-rule result without waiting for another host event. */
   deliverBackground?: (delivery: AdapterDelivery) => Promise<void> | void;
   /** Transfers a prepared session's host ownership before durable publication. */
   beforeSessionPublish?: (session: AdapterSession) => Promise<void> | void;
-  /** Test and alternate-runtime seam for policy execution. */
-  createPolicyEvaluator?: (options: {
+  /** Test and alternate-runtime seam for audits. */
+  createAuditor?: (options: {
     workspaceRoot: string;
-    delivery: PolicySteeringDelivery;
-    executions: PolicyExecutionRecorder;
-  } & PolicyEvaluationSettings) => ExecutablePolicyEvaluator;
+    steerDelivery: RuleSteerDelivery;
+    audits: AuditRecorder;
+  } & AuditSettings) => CodeRuleAuditor;
   nativeSession?: {
-    registry: CosineRuleRegistry;
-    ruleSync?: LiveCosineRules;
+    registry: ConversationRuleRegistry;
+    ruleSync?: LiveConversationRules;
     turn: number;
     onMatch(match: RuleMatch, sample: AdapterSample, turn: number): void;
     onTurn?(turn: number): void;
@@ -438,23 +439,23 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #storageRoot: string;
   readonly #embedder: SemanticEmbedder;
   readonly #modelPath: string | undefined;
-  readonly #transcripts: SqliteTranscriptStore;
-  readonly #executions: SqlitePolicyExecutionStore;
-  readonly #policyHandoffs = new Set<Promise<AdapterDelivery | undefined>>();
-  readonly #policyCatalog: PolicyDslCatalog;
+  readonly #sessionStore: SqliteSessionStore;
+  readonly #audits: SqliteAuditStore;
+  readonly #steersInFlight = new Set<Promise<AdapterDelivery | undefined>>();
+  readonly #codeRuleCatalog: CodeRuleDslCatalog;
   readonly #ruleCatalog: ScopedRuleCatalog;
   /** Attribution for every session this runtime records, kept past disposal for late receipts. */
   readonly #repositoryId: string;
   readonly #sessions = new Map<string, RuntimeSessionState>();
   readonly #closedSessions = new Map<string, { descriptor: AdapterSession; startedAt: number; endedAt: number }>();
-  #transcriptsClosed = false;
+  #sessionStoreClosed = false;
   readonly #routers = new Map<RerailHost, RerailHostRuntime>();
   readonly #nativeSession: RerailRuntimeOptions["nativeSession"];
-  readonly #createPolicyEvaluator: NonNullable<RerailRuntimeOptions["createPolicyEvaluator"]>;
+  readonly #createAuditor: NonNullable<RerailRuntimeOptions["createAuditor"]>;
   readonly #deliverBackground: RerailRuntimeOptions["deliverBackground"];
   readonly #beforeSessionPublish: RerailRuntimeOptions["beforeSessionPublish"];
-  readonly #policySettings: Required<PolicyEvaluationSettings>;
-  readonly #controls: SqliteScanControlStore;
+  readonly #auditSettings: Required<AuditSettings>;
+  readonly #controls: SqliteAuditControlStore;
   readonly #controlTimer: NodeJS.Timeout;
   readonly #autostart: boolean;
   readonly #ingestLanes = new SessionLanes();
@@ -467,22 +468,22 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#nativeSession = options.nativeSession;
     this.#deliverBackground = options.deliverBackground;
     this.#beforeSessionPublish = options.beforeSessionPublish;
-    this.#policySettings = { ...DEFAULT_POLICY_SETTINGS, ...options.policy };
+    this.#auditSettings = { ...DEFAULT_AUDIT_SETTINGS, ...options.auditSettings };
     this.#autostart = options.autostart ?? true;
-    this.#createPolicyEvaluator = options.createPolicyEvaluator ?? ((policy) => new NativeExecutablePolicyEnforcer(
-      this.#policyCatalog,
-      policy,
+    this.#createAuditor = options.createAuditor ?? ((auditorOptions) => new NativeCodeRuleEnforcer(
+      this.#codeRuleCatalog,
+      auditorOptions,
     ));
     if (options.embedder !== undefined) this.#embedder = options.embedder;
     else if (options.modelPath !== undefined) this.#embedder = new NativeSemanticEmbedder(options.modelPath);
     else throw new Error("RerailRuntime requires embedder or modelPath");
     const databasePath = options.databasePath ?? defaultRerailDatabasePath();
     const workspaceRoot = resolve(options.workspaceRoot);
-    let transcripts: SqliteTranscriptStore | undefined;
-    let executions: SqlitePolicyExecutionStore | undefined;
-    let controls: SqliteScanControlStore | undefined;
+    let sessionStore: SqliteSessionStore | undefined;
+    let audits: SqliteAuditStore | undefined;
+    let controls: SqliteAuditControlStore | undefined;
     let ruleCatalog: ScopedRuleCatalog | undefined;
-    let policyCatalog: PolicyDslCatalog | undefined;
+    let codeRuleCatalog: CodeRuleDslCatalog | undefined;
     let startWatch: RepositoryStartWatch | undefined;
     try {
       const catalog = ScopedRuleCatalog.open(
@@ -493,31 +494,31 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       // Bundled rules arrive only where Rerail is started; `rerail start` seeds a new repository.
       if (contextStartState(catalog.path, catalog.context()) === "started") catalog.seed(loadBundledRules());
       startWatch = options.startGate === true ? new RepositoryStartWatch(catalog.path, catalog.context()) : undefined;
-      policyCatalog = bootstrapPolicyDslCatalog({
+      codeRuleCatalog = bootstrapCodeRuleDslCatalog({
         databasePath: catalog.path, store: catalog,
         onRefresh: () => { for (const sessionId of this.#sessions.keys()) this.recordRuleCoverage(sessionId); },
       });
       this.#repositoryId = catalog.context().repositoryId;
-      transcripts = new SqliteTranscriptStore(databasePath, { repositoryId: this.#repositoryId });
-      executions = new SqlitePolicyExecutionStore(databasePath);
-      controls = new SqliteScanControlStore(databasePath);
+      sessionStore = new SqliteSessionStore(databasePath, { repositoryId: this.#repositoryId });
+      audits = new SqliteAuditStore(databasePath);
+      controls = new SqliteAuditControlStore(databasePath);
       this.#ruleCatalog = catalog;
-      this.#policyCatalog = policyCatalog;
-      this.#transcripts = transcripts;
-      this.#executions = executions;
+      this.#codeRuleCatalog = codeRuleCatalog;
+      this.#sessionStore = sessionStore;
+      this.#audits = audits;
       this.#controls = controls;
       this.#startWatch = startWatch;
     } catch (error) {
-      transcripts?.close();
-      executions?.close();
+      sessionStore?.close();
+      audits?.close();
       controls?.close();
       startWatch?.close();
-      if (policyCatalog !== undefined) policyCatalog.close();
+      if (codeRuleCatalog !== undefined) codeRuleCatalog.close();
       else ruleCatalog?.close();
       throw error;
     }
     this.#controlTimer = setInterval(() => {
-      for (const sessionId of this.#sessions.keys()) this.#schedulePolicyControls(sessionId);
+      for (const sessionId of this.#sessions.keys()) this.#scheduleAuditRequests(sessionId);
     }, 250);
     this.#controlTimer.unref?.();
   }
@@ -533,7 +534,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return this.#ingestLanes.run(sessionId, async () => {
       // Checked again in the lane: an event accepted while started can run after a stop committed elsewhere.
       if (this.#stopped()) {
-        // A session that attached while started still ends, releasing its policy bridge and polling; nothing is recorded.
+        // A session that attached while started still ends, releasing its code-rule bridge and polling; nothing is recorded.
         if (event.kind === "session-end" && this.#sessions.has(sessionId)) await this.closeSession(sessionId);
         return [];
       }
@@ -545,7 +546,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     });
   }
 
-  /** Branch navigation restores repeat/turn state without retiring the live stream or policy owner. */
+  /** Branch navigation restores repeat/turn state without retiring the live stream or code-rule owner. */
   restoreNativeTurn(sessionId: string, turn: number): void {
     this.#session(sessionId).turn = turn;
   }
@@ -559,55 +560,55 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const { active, descriptor } = this.#resolveEventSession(event);
     if (active === undefined) await this.#router(descriptor.host).start(descriptor);
     const state = this.#session(event.sessionId);
-    this.#schedulePolicyControls(state.descriptor.sessionId);
+    this.#scheduleAuditRequests(state.descriptor.sessionId);
     state.ruleSync?.refresh();
-    state.policyBridge?.refreshPolicies();
+    state.codeRuleBridge?.refreshCodeRules();
     if (event.kind === "call") {
       const id = event.toolCallId;
-      const preimages = await state.policyBridge?.begin(id, event.toolName, event.input);
+      const preimages = await state.codeRuleBridge?.begin(id, event.toolName, event.input);
       await this.#append(state, {
         type: "policy-call", toolCallId: id, toolName: event.toolName, paths: generatedEditPaths(event.toolName, event.input),
         ...(preimages === undefined ? {} : { preimages }),
       });
-      state.pendingPolicyCalls.push({ id, toolName: event.toolName });
+      state.pendingCodeRuleCalls.push({ id, toolName: event.toolName });
     }
     await this.#router(descriptor.host).ingest(event);
     if (event.kind === "result") {
-      const index = state.pendingPolicyCalls.findIndex((call) => call.id === event.toolCallId);
+      const index = state.pendingCodeRuleCalls.findIndex((call) => call.id === event.toolCallId);
       if (index >= 0) {
-        const [call] = state.pendingPolicyCalls.splice(index, 1);
-        await state.policyBridge?.finish(call!.id, event.failed === true);
+        const [call] = state.pendingCodeRuleCalls.splice(index, 1);
+        await state.codeRuleBridge?.finish(call!.id, event.failed === true);
         await this.#append(state, { type: "policy-result", toolCallId: call!.id });
         if (ADAPTER_CAPABILITIES[descriptor.host].toolSurface === "native") {
-          await state.policyBridge?.settleGeneratedEdits();
+          await state.codeRuleBridge?.settleGeneratedEdits();
         }
       }
     }
     if (event.kind === "turn-end") {
-      await state.policyBridge?.checkpoint("turn");
-      await state.policyBridge?.settle();
+      await state.codeRuleBridge?.checkpoint("turn");
+      await state.codeRuleBridge?.settle();
     }
     if (event.kind === "session-end") return [];
-    const deliveries = await this.#collectPolicyDeliveries(state);
+    const deliveries = await this.#collectPendingSteers(state);
     deliveries.push(...(state.eventDeliveries.get(event.eventId) ?? []));
     state.eventDeliveries.delete(event.eventId);
     return deliveries;
   }
 
   /**
-   * Completed policy results not yet handed to the host, for hosts that poll instead of
+   * Completed code-rule results not yet handed to the host, for hosts that poll instead of
    * receiving `deliverBackground` pushes. Unknown or closed sessions have nothing pending.
    */
   async collectDeliveries(sessionId: string): Promise<AdapterDelivery[]> {
     const state = this.#sessions.get(sessionId);
-    return state === undefined || this.#stopped() ? [] : this.#collectPolicyDeliveries(state);
+    return state === undefined || this.#stopped() ? [] : this.#collectPendingSteers(state);
   }
 
-  async #collectPolicyDeliveries(state: RuntimeSessionState): Promise<AdapterDelivery[]> {
+  async #collectPendingSteers(state: RuntimeSessionState): Promise<AdapterDelivery[]> {
     // Delivery removes entries from the list, so iterate a snapshot.
     const deliveries: AdapterDelivery[] = [];
-    for (const pending of state.backgroundDeliveries.slice()) {
-      const delivery = await this.#deliverPolicyResult(state, pending, false);
+    for (const pending of state.pendingSteers.slice()) {
+      const delivery = await this.#deliverSteer(state, pending, false);
       if (delivery !== undefined) deliveries.push(delivery);
     }
     return deliveries;
@@ -703,36 +704,36 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     };
   }
 
-  recordSteeringDelivery(sessionId: string, receiptId: string, ruleIds: readonly string[] = []): void {
+  recordSteer(sessionId: string, receiptId: string, ruleIds: readonly string[] = []): void {
     const state = this.#sessions.get(sessionId);
     const closed = this.#closedSessions.get(sessionId);
     const descriptor = state?.descriptor ?? closed?.descriptor;
     if (descriptor === undefined) throw new Error(`Unknown session: ${sessionId}`);
     // An awaited native send may finish after switching/disposal; its receipt still belongs to this session.
-    const transcripts = this.#transcriptsClosed
-      ? new SqliteTranscriptStore(this.#transcripts.path, { repositoryId: this.#repositoryId })
-      : this.#transcripts;
+    const sessionStore = this.#sessionStoreClosed
+      ? new SqliteSessionStore(this.#sessionStore.path, { repositoryId: this.#repositoryId })
+      : this.#sessionStore;
     try {
-      transcripts.recordSteeringDelivery(descriptor, receiptId, ruleIds, {
+      sessionStore.recordSteer(descriptor, receiptId, ruleIds, {
         startedAt: state?.startedAt ?? closed!.startedAt,
         endedAt: closed?.endedAt ?? null,
       });
     } finally {
-      if (this.#transcriptsClosed) transcripts.close();
+      if (this.#sessionStoreClosed) sessionStore.close();
     }
   }
 
   /** Report loaded sources, never refresh enforcement for presentation metadata. */
   recordRuleCoverage(sessionId: string): void {
     const state = this.#sessions.get(sessionId);
-    // Unpublished sessions have no transcript row yet; the session-start ingest records coverage once they do.
+    // Unpublished sessions have no session row yet; the session-start ingest records coverage once they do.
     if (state === undefined || state.closed || state.ownerClaim === undefined) return;
     try {
-      this.#transcripts.recordRuleCoverage(state.descriptor, {
+      this.#sessionStore.recordRuleCoverage(state.descriptor, {
         repositoryId: this.#ruleCatalog.context().repositoryId,
-        activeRuleCount: (state.registry?.count ?? 0) + this.#policyCatalog.status.ruleCount,
+        activeRuleCount: (state.registry?.count ?? 0) + this.#codeRuleCatalog.status.ruleCount,
         conversationRuleSignature: state.ruleSync?.sourceSignature ?? "",
-        fileRuleSignature: this.#policyCatalog.status.sourceSignature,
+        fileRuleSignature: this.#codeRuleCatalog.status.sourceSignature,
       });
     } catch (error) {
       console.error("rerail rule coverage:", error);
@@ -741,19 +742,19 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async dispose(): Promise<void> {
     clearInterval(this.#controlTimer);
     await Promise.all([...this.#sessions.keys()].map(sessionId => this.closeSession(sessionId)));
-    await Promise.allSettled(this.#policyHandoffs);
+    await Promise.allSettled(this.#steersInFlight);
     this.#controls.close();
-    this.#executions.close();
-    this.#transcripts.close();
-    this.#transcriptsClosed = true;
-    this.#policyCatalog.close();
+    this.#audits.close();
+    this.#sessionStore.close();
+    this.#sessionStoreClosed = true;
+    this.#codeRuleCatalog.close();
     this.#startWatch?.close();
   }
 
   async openSession(session: AdapterSession): Promise<HostRuntimeSessionState> {
     const existing = this.#sessions.get(session.sessionId);
     if (existing !== undefined) return { processedEventIds: [...existing.processed] };
-    const recordedSession = this.#transcripts.session(session.sessionId);
+    const recordedSession = this.#sessionStore.session(session.sessionId);
     const startedAt = recordedSession?.startedAt ?? Date.now();
     const directory = sessionDirectory(this.#storageRoot, session.sessionId);
     await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -787,23 +788,23 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       ruleSync,
       turn,
       eventDeliveries: new Map(),
-      backgroundDeliveries: [],
-      policyRevision: 0,
-      policySourceVersions: new Map(),
+      pendingSteers: [],
+      codeRuleRevision: 0,
+      codeRuleSourceVersions: new Map(),
       ownerClaim: undefined,
-      policyControl: undefined,
-      repositoryDiagnostic: undefined,
-      pendingPolicyCalls: [],
+      auditRequestWork: undefined,
+      repositoryAudit: undefined,
+      pendingCodeRuleCalls: [],
       closed: false,
     };
     let ready = false;
-    const policySettings = this.#controls.getWorkspaceSettings(session.cwd);
-    const delivery: PolicySteeringDelivery = {
-      requestDelivery: async (sessionId, requested, content, metadata) => {
+    const auditSettings = this.#controls.getWorkspaceSettings(session.cwd);
+    const steerDelivery: RuleSteerDelivery = {
+      requestSteer: async (sessionId, requested, content, metadata) => {
         const activeState = this.#sessions.get(sessionId);
         if (activeState !== opened || activeState.closed) return "discarded";
-        const revision = metadata?.revision ?? activeState.policyRevision;
-        const pending: PendingPolicyDelivery = {
+        const revision = metadata?.revision ?? activeState.codeRuleRevision;
+        const pending: PendingSteer = {
           delivery: {
             sessionId,
             requested,
@@ -814,63 +815,63 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
           revision,
           scope: metadata?.scope ?? [],
         };
-        if (!this.#currentPolicyResult(activeState, pending)) return "discarded";
-        activeState.backgroundDeliveries.push(pending);
+        if (!this.#isCurrentSteer(activeState, pending)) return "discarded";
+        activeState.pendingSteers.push(pending);
         if (ready && metadata?.background === true && this.#deliverBackground !== undefined) {
-          const handoff = this.#deliverPolicyResult(activeState, pending, true);
+          const inFlight = this.#deliverSteer(activeState, pending, true);
           const waitsForNativeBoundary = metadata.generatedEdit === true
             && ADAPTER_CAPABILITIES[activeState.descriptor.host].toolSurface === "native";
-          if (waitsForNativeBoundary) await handoff;
+          if (waitsForNativeBoundary) await inFlight;
         }
         return "queued";
       },
     };
-    let evaluator: ExecutablePolicyEvaluator | undefined;
+    let auditor: CodeRuleAuditor | undefined;
     let workspaceOpened = false;
     this.#sessions.set(session.sessionId, opened);
     try {
-      evaluator = this.#createPolicyEvaluator({
+      auditor = this.#createAuditor({
         workspaceRoot: session.cwd,
-        delivery,
-        executions: this.#executions,
-        ...this.#policySettings,
-        ...policySettings,
+        steerDelivery,
+        audits: this.#audits,
+        ...this.#auditSettings,
+        ...auditSettings,
       });
-      opened.policyBridge = new ExecutablePolicyBridge(session.cwd, evaluator, {
+      opened.codeRuleBridge = new CodeRuleBridge(session.cwd, auditor, {
         observations: this.#sourceObservations,
         onRevision: (sessionId, revision, paths) => {
           const current = this.#sessions.get(sessionId);
           if (current !== opened || current.closed || paths.length === 0) return;
-          current.policyRevision = Math.max(current.policyRevision, revision);
-          for (const path of paths) current.policySourceVersions.set(path, revision);
-          current.backgroundDeliveries = current.backgroundDeliveries.filter(pending => this.#currentPolicyResult(current, pending));
+          current.codeRuleRevision = Math.max(current.codeRuleRevision, revision);
+          for (const path of paths) current.codeRuleSourceVersions.set(path, revision);
+          current.pendingSteers = current.pendingSteers.filter(pending => this.#isCurrentSteer(current, pending));
         },
       });
-      await opened.policyBridge.openWorkspace(session.sessionId);
+      await opened.codeRuleBridge.openWorkspace(session.sessionId);
       workspaceOpened = true;
-      for (const call of unresolvedPolicyCalls(ledger)) {
-        opened.pendingPolicyCalls.push({ id: call.toolCallId, toolName: call.toolName });
-        await opened.policyBridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {});
+      for (const call of unresolvedCodeRuleCalls(ledger)) {
+        opened.pendingCodeRuleCalls.push({ id: call.toolCallId, toolName: call.toolName });
+        await opened.codeRuleBridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {});
       }
       await this.#beforeSessionPublish?.(session);
-      this.#transcripts.openSession(session, startedAt);
+      this.#sessionStore.openSession(session, startedAt);
       this.#closedSessions.delete(session.sessionId);
-      this.#transcripts.startHudTracking(session, completeTracking);
+      this.#sessionStore.startHudTracking(session, completeTracking);
       opened.ownerClaim = this.#controls.registerOwner(session.sessionId, this.#deliverBackground === undefined ? "next-event" : "background");
-      if (this.#controls.claimRepositoryDiagnostic(session.sessionId)) {
-        opened.repositoryDiagnostic = this.#runRepositoryDiagnostic(session.sessionId, opened);
+      if (this.#controls.claimRepositoryAudit(session.sessionId)) {
+        opened.repositoryAudit = this.#runRepositoryAudit(session.sessionId, opened);
       }
       ready = true;
       if (this.#deliverBackground !== undefined) {
         // Delivery removes entries from the list, so iterate a snapshot.
-        const backgroundDeliverySnapshot = [...opened.backgroundDeliveries];
-        for (const pending of backgroundDeliverySnapshot) {
-          void this.#deliverPolicyResult(opened, pending, true);
+        const pendingSteerSnapshot = [...opened.pendingSteers];
+        for (const pending of pendingSteerSnapshot) {
+          void this.#deliverSteer(opened, pending, true);
         }
       }
       return { processedEventIds: [...processed] };
     } catch (error) {
-      await this.#abandonSession(session.sessionId, opened, evaluator, workspaceOpened);
+      await this.#abandonSession(session.sessionId, opened, auditor, workspaceOpened);
       throw error;
     }
   }
@@ -879,21 +880,21 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async #abandonSession(
     sessionId: string,
     opened: RuntimeSessionState,
-    evaluator: ExecutablePolicyEvaluator | undefined,
+    auditor: CodeRuleAuditor | undefined,
     workspaceOpened: boolean,
   ): Promise<void> {
     opened.closed = true;
-    opened.backgroundDeliveries = [];
+    opened.pendingSteers = [];
     this.#sessions.delete(sessionId);
     if (opened.ownerClaim !== undefined) {
       this.#controls.interrupt(sessionId);
-      this.#controls.interruptRepositoryDiagnostic(sessionId);
+      this.#controls.interruptRepositoryAudit(sessionId);
       this.#controls.releaseOwner(sessionId, opened.ownerClaim);
-      this.#transcripts.closeSession(sessionId);
+      this.#sessionStore.closeSession(sessionId);
     }
     try {
-      if (workspaceOpened) await opened.policyBridge!.close();
-      else await evaluator?.close();
+      if (workspaceOpened) await opened.codeRuleBridge!.close();
+      else await auditor?.close();
     } catch {
       // Cleanup must not replace the initialization error.
     }
@@ -903,47 +904,47 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const state = this.#sessions.get(sessionId);
     if (state !== undefined) {
       state.closed = true;
-      state.backgroundDeliveries = [];
+      state.pendingSteers = [];
       this.#closedSessions.set(sessionId, { descriptor: state.descriptor, startedAt: state.startedAt, endedAt: Date.now() });
       if (state.ownerClaim !== undefined) {
         this.#controls.interrupt(sessionId);
-        this.#controls.interruptRepositoryDiagnostic(sessionId);
+        this.#controls.interruptRepositoryAudit(sessionId);
         this.#controls.releaseOwner(sessionId, state.ownerClaim);
       }
-      state.policyBridge?.interrupt();
+      state.codeRuleBridge?.interrupt();
     }
     try {
-      await state?.policyControl;
+      await state?.auditRequestWork;
     } finally {
       try {
         try {
-          await state?.policyBridge?.close();
+          await state?.codeRuleBridge?.close();
         } finally {
-          await state?.repositoryDiagnostic;
+          await state?.repositoryAudit;
         }
       } finally {
         this.#sessions.delete(sessionId);
-        this.#transcripts.closeSession(sessionId, this.#closedSessions.get(sessionId)?.endedAt);
+        this.#sessionStore.closeSession(sessionId, this.#closedSessions.get(sessionId)?.endedAt);
       }
     }
   }
 
-  async #runRepositoryDiagnostic(sessionId: string, state: RuntimeSessionState): Promise<void> {
+  async #runRepositoryAudit(sessionId: string, state: RuntimeSessionState): Promise<void> {
     try {
-      const runIds = await state.policyBridge!.scan({ scope: "repository", mode: "log" });
-      const runId = runIds[0] ?? null;
-      const run = runId === null ? undefined : this.#executions.get(runId);
-      if (run?.status === "completed") {
-        this.#controls.finishRepositoryDiagnostic(sessionId, runId, "completed");
+      const auditIds = await state.codeRuleBridge!.audit({ scope: "repository", mode: "log" });
+      const auditId = auditIds[0] ?? null;
+      const audit = auditId === null ? undefined : this.#audits.get(auditId);
+      if (audit?.status === "completed") {
+        this.#controls.finishRepositoryAudit(sessionId, auditId, "completed");
         return;
       }
-      const status = run?.status === "interrupted" ? "interrupted" : "failed";
-      const error = run === undefined
+      const status = audit?.status === "interrupted" ? "interrupted" : "failed";
+      const error = audit === undefined
         ? "Repository diagnostic completed without a policy run"
-        : run.failures.map(failure => failure.message).join("; ") || `Repository diagnostic ${run.status}`;
-      this.#controls.finishRepositoryDiagnostic(sessionId, runId, status, error);
+        : audit.failures.map(failure => failure.message).join("; ") || `Repository diagnostic ${audit.status}`;
+      this.#controls.finishRepositoryAudit(sessionId, auditId, status, error);
     } catch (error) {
-      this.#controls.finishRepositoryDiagnostic(
+      this.#controls.finishRepositoryAudit(
         sessionId,
         null,
         "failed",
@@ -955,7 +956,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async persistEvent(event: AdapterEvent): Promise<void> {
     const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
     const state = this.#session(sessionId);
-    this.#transcripts.append({
+    this.#sessionStore.append({
       sessionId,
       eventId: event.eventId,
       kind: event.kind,
@@ -1007,7 +1008,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         requested: match.mode,
         mechanism: ADAPTER_CAPABILITIES[state.descriptor.host].delivery[match.mode],
         content: match.action.content,
-        // Cosine matches are not policy steering, so they carry no policy rule ids.
+        // Conversation rule matches are not code-rule steers, so they carry no code-rule ids.
         ruleIds: [],
       };
       await this.#append(state, { type: "delivery", delivery });
@@ -1016,22 +1017,22 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     state.eventDeliveries.set(sample.eventId, deliveries);
   }
 
-  #schedulePolicyControls(sessionId: string): void {
+  #scheduleAuditRequests(sessionId: string): void {
     const state = this.#sessions.get(sessionId);
     if (state === undefined || state.closed || state.ownerClaim === undefined) return;
-    state.policyBridge?.updateSettings(this.#controls.hasUserSettings(sessionId)
+    state.codeRuleBridge?.updateSettings(this.#controls.hasUserSettings(sessionId)
       ? this.#controls.getSettings(sessionId).settings
-      : this.#policySettings);
-    if (state.policyControl !== undefined) return;
-    const work = this.#applyPolicyControls(sessionId);
-    state.policyControl = work;
+      : this.#auditSettings);
+    if (state.auditRequestWork !== undefined) return;
+    const work = this.#runAuditRequests(sessionId);
+    state.auditRequestWork = work;
     void work.catch((error: unknown) => {
       process.stderr.write(`rerail: policy control scan failed: ${error instanceof Error ? error.message : String(error)}\n`);
     }).finally(() => {
-      if (state.policyControl === work) state.policyControl = undefined;
+      if (state.auditRequestWork === work) state.auditRequestWork = undefined;
     });
   }
-  async #applyPolicyControls(sessionId: string): Promise<void> {
+  async #runAuditRequests(sessionId: string): Promise<void> {
     const state = this.#sessions.get(sessionId);
     if (state === undefined || state.closed || state.ownerClaim === undefined) return;
     const request = this.#controls.claim(sessionId, state.ownerClaim);
@@ -1041,21 +1042,21 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       return;
     }
     try {
-      const runIds = await state.policyBridge?.scan({
+      const auditIds = await state.codeRuleBridge?.audit({
         scope: request.scope,
         mode: request.mode,
         ...(request.paths.length === 0 ? {} : { paths: request.paths }),
       });
       if (state.closed) {
-        this.#controls.finish(request.id, "interrupted", runIds ?? [], "Session closed during scan");
+        this.#controls.finish(request.id, "interrupted", auditIds ?? [], "Session closed during scan");
         return;
       }
-      if (runIds === undefined || runIds.length === 0) {
+      if (auditIds === undefined || auditIds.length === 0) {
         this.#controls.finish(request.id, "failed", [], "Policy evaluator completed scan without a recorded run");
         return;
       }
-      const verdict = policyScanVerdict(runIds, runIds.map(runId => this.#executions.get(runId)));
-      this.#controls.finish(request.id, verdict.status, [...runIds], verdict.error);
+      const verdict = auditRequestVerdict(auditIds, auditIds.map(auditId => this.#audits.get(auditId)));
+      this.#controls.finish(request.id, verdict.status, [...auditIds], verdict.error);
     } catch (error) {
       this.#controls.finish(
         request.id,
@@ -1066,42 +1067,42 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
-  #currentPolicyResult(state: RuntimeSessionState, pending: PendingPolicyDelivery): boolean {
+  #isCurrentSteer(state: RuntimeSessionState, pending: PendingSteer): boolean {
     return !state.closed
       && this.#sessions.get(state.descriptor.sessionId) === state
       && (pending.scope.length === 0
-        ? pending.revision >= state.policyRevision
-        : pending.scope.every(path => (state.policySourceVersions.get(path) ?? 0) <= pending.revision));
+        ? pending.revision >= state.codeRuleRevision
+        : pending.scope.every(path => (state.codeRuleSourceVersions.get(path) ?? 0) <= pending.revision));
   }
 
-  #deliverPolicyResult(
+  #deliverSteer(
     state: RuntimeSessionState,
-    pending: PendingPolicyDelivery,
+    pending: PendingSteer,
     native: boolean,
   ): Promise<AdapterDelivery | undefined> {
-    const handoff = this.#performPolicyDelivery(state, pending, native);
-    this.#policyHandoffs.add(handoff);
-    const settled = (): void => { this.#policyHandoffs.delete(handoff); };
-    void handoff.then(settled, settled);
-    return handoff;
+    const inFlight = this.#performSteer(state, pending, native);
+    this.#steersInFlight.add(inFlight);
+    const settled = (): void => { this.#steersInFlight.delete(inFlight); };
+    void inFlight.then(settled, settled);
+    return inFlight;
   }
 
-  async #performPolicyDelivery(
+  async #performSteer(
     state: RuntimeSessionState,
-    pending: PendingPolicyDelivery,
+    pending: PendingSteer,
     native: boolean,
   ): Promise<AdapterDelivery | undefined> {
-    const index = state.backgroundDeliveries.indexOf(pending);
+    const index = state.pendingSteers.indexOf(pending);
     if (index < 0) return undefined;
-    state.backgroundDeliveries.splice(index, 1);
-    if (!this.#currentPolicyResult(state, pending) || this.#stopped()) return undefined;
+    state.pendingSteers.splice(index, 1);
+    if (!this.#isCurrentSteer(state, pending) || this.#stopped()) return undefined;
     try {
       await this.persistDelivery(pending.delivery);
     } catch (error) {
       process.stderr.write(`rerail: could not record policy delivery: ${error instanceof Error ? error.message : String(error)}\n`);
     }
     // A stop committed elsewhere while the ledger was written withholds the result.
-    if (!this.#currentPolicyResult(state, pending) || this.#stopped()) return undefined;
+    if (!this.#isCurrentSteer(state, pending) || this.#stopped()) return undefined;
     if (!native) return pending.delivery;
     try {
       await this.#deliverBackground!(pending.delivery);
@@ -1137,17 +1138,17 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     session: AdapterSession,
     ledger: readonly LedgerEntry[],
   ): {
-    registry: CosineRuleRegistry | undefined;
+    registry: ConversationRuleRegistry | undefined;
     turn: number;
-    ruleSync?: LiveCosineRules | undefined;
+    ruleSync?: LiveConversationRules | undefined;
   } {
     if (this.#nativeSession !== undefined) return this.#nativeSession;
-    const registry = this.#modelPath === undefined ? undefined : new CosineRuleRegistry({ modelPath: this.#modelPath });
+    const registry = this.#modelPath === undefined ? undefined : new ConversationRuleRegistry({ modelPath: this.#modelPath });
     if (registry === undefined) {
       return { registry, turn: 0, ruleSync: undefined };
     }
     const directory = RULE_DIRECTORIES[session.host] ?? ".codex";
-    const ruleSync = new LiveCosineRules(this.#ruleCatalog, registry, cosineRuleLoader({}, session.cwd, join(directory, "conversation-rules.json")));
+    const ruleSync = new LiveConversationRules(this.#ruleCatalog, registry, conversationRuleLoader({}, session.cwd, join(directory, "conversation-rules.json")));
     ruleSync.prime();
     return {
       registry,

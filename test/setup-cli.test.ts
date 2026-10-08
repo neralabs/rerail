@@ -32,26 +32,26 @@ afterEach(async () => {
 
 interface Fixture {
   context: SetupContext;
-  /** The harness config home `install` writes into; `process.env.HOME` points here for the test. */
-  harnessHome: string;
+  /** The host config home `install` writes into; `process.env.HOME` points here for the test. */
+  hostConfigHome: string;
   packageRoot: string;
 }
 
-/** A checkout-shaped package root plus an empty Rerail home, with Claude Code the only detected harness. */
+/** A checkout-shaped package root plus an empty Rerail home, with Claude Code the only detected host. */
 async function fixture(): Promise<Fixture> {
   const base = await mkdtemp(join(tmpdir(), "rerail-setup-cli-"));
   temporaryDirectories.push(base);
   const packageRoot = join(base, "checkout", "rerail");
   await mkdir(join(packageRoot, "dist"), { recursive: true });
   await writeFile(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
-  const harnessHome = join(base, "home");
-  await mkdir(join(harnessHome, ".claude"), { recursive: true });
-  process.env.HOME = harnessHome;
+  const hostConfigHome = join(base, "home");
+  await mkdir(join(hostConfigHome, ".claude"), { recursive: true });
+  process.env.HOME = hostConfigHome;
   vi.spyOn(process, "cwd").mockReturnValue(base);
   const home = join(base, "rerail-home");
   return {
     context: { home, packageRoot, updater: new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0" }) },
-    harnessHome,
+    hostConfigHome,
     packageRoot,
   };
 }
@@ -73,8 +73,8 @@ describe("rerail install --root", () => {
   });
 
   it("registers hooks through current, and --remove finds them there", async () => {
-    const { context, harnessHome, packageRoot } = await fixture();
-    const settingsPath = join(harnessHome, ".claude", "settings.json");
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    const settingsPath = join(hostConfigHome, ".claude", "settings.json");
     const hookPath = join(context.updater.currentLink, "dist", "claude-hook.js");
 
     await runInstallCommand(["--root", packageRoot, "--harness", "claude-code"], context);
@@ -86,14 +86,14 @@ describe("rerail install --root", () => {
     for (const groups of Object.values(settings.hooks)) {
       for (const group of groups) for (const hook of group.hooks) expect(hook.command).toContain(hookPath);
     }
-    expect(await readFile(join(harnessHome, ".claude", "commands", "rerail.md"), "utf8")).toContain(
+    expect(await readFile(join(hostConfigHome, ".claude", "commands", "rerail.md"), "utf8")).toContain(
       join(context.updater.currentLink, "dist", "cli.js"),
     );
 
     await runInstallCommand(["--root", packageRoot, "--harness", "claude-code", "--remove"], context);
 
     expect(JSON.parse(await readFile(settingsPath, "utf8"))).toEqual({});
-    expect(existsSync(join(harnessHome, ".claude", "commands", "rerail.md"))).toBe(false);
+    expect(existsSync(join(hostConfigHome, ".claude", "commands", "rerail.md"))).toBe(false);
   });
 
   it("writes nothing under the Rerail home for a dry run", async () => {
@@ -108,7 +108,7 @@ describe("rerail install --root", () => {
   });
 
   it("backs up rules and history on uninstall, and keeps them when only one coding agent is removed", async () => {
-    const { context, harnessHome, packageRoot } = await fixture();
+    const { context, hostConfigHome, packageRoot } = await fixture();
     await runInstallCommand(["--root", packageRoot, "--harness", "claude-code"], context);
     const files = { "rerail.sqlite": "rules and history", "rerail.sqlite-wal": "wal" };
     for (const [name, text] of Object.entries(files)) await writeFile(join(context.home, name), text);
@@ -117,23 +117,23 @@ describe("rerail install --root", () => {
     for (const name of Object.keys(files)) expect(existsSync(join(context.home, name))).toBe(true);
 
     await runInstallCommand(["--root", packageRoot, "--remove"], context);
-    const backups = (await readdir(harnessHome)).filter(name => name.startsWith(".rerail-clean-"));
+    const backups = (await readdir(hostConfigHome)).filter(name => name.startsWith(".rerail-clean-"));
     expect(backups).toEqual([expect.stringMatching(/^\.rerail-clean-\d{8}$/u)]);
     for (const [name, text] of Object.entries(files)) {
       expect(existsSync(join(context.home, name))).toBe(false);
-      expect(await readFile(join(harnessHome, backups[0]!, "rerail-home", name), "utf8")).toBe(text);
+      expect(await readFile(join(hostConfigHome, backups[0]!, "rerail-home", name), "utf8")).toBe(text);
     }
 
     // A second uninstall the same day never overwrites the first backup.
     await writeFile(join(context.home, "rerail.sqlite"), "later");
     await runInstallCommand(["--root", packageRoot, "--remove"], context);
-    const later = (await readdir(harnessHome)).filter(name => /^\.rerail-clean-\d{8}-\d{6}$/u.test(name));
+    const later = (await readdir(hostConfigHome)).filter(name => /^\.rerail-clean-\d{8}-\d{6}$/u.test(name));
     expect(later).toHaveLength(1);
-    expect(await readFile(join(harnessHome, later[0]!, "rerail-home", "rerail.sqlite"), "utf8")).toBe("later");
+    expect(await readFile(join(hostConfigHome, later[0]!, "rerail-home", "rerail.sqlite"), "utf8")).toBe("later");
   });
 
   it("backs up every file a running daemon leaves once it has stopped and checkpointed its write-ahead log", async () => {
-    const { context, harnessHome, packageRoot } = await fixture();
+    const { context, hostConfigHome, packageRoot } = await fixture();
     await runInstallCommand(["--root", packageRoot, "--harness", "claude-code"], context);
     const files = { "rerail.sqlite": "rules and history", "rerail.sqlite-wal": "wal", "rerail.sqlite-shm": "shm" };
     for (const [name, text] of Object.entries(files)) await writeFile(join(context.home, name), text);
@@ -145,22 +145,22 @@ describe("rerail install --root", () => {
 
     expect(await runInstallCommand(["--root", packageRoot, "--remove"], context)).toBe(0);
 
-    const [backup] = (await readdir(harnessHome)).filter(name => name.startsWith(".rerail-clean-"));
-    expect(await readdir(join(harnessHome, backup!, "rerail-home"))).toEqual(["rerail.sqlite"]);
+    const [backup] = (await readdir(hostConfigHome)).filter(name => name.startsWith(".rerail-clean-"));
+    expect(await readdir(join(hostConfigHome, backup!, "rerail-home"))).toEqual(["rerail.sqlite"]);
     expect((await readdir(context.home)).filter(name => name.includes(".sqlite"))).toEqual([]);
   });
 
   it("keeps rules and history when another checkout registered with --root is removed", async () => {
-    const { context, harnessHome, packageRoot } = await fixture();
+    const { context, hostConfigHome, packageRoot } = await fixture();
     await runInstallCommand(["--root", packageRoot, "--harness", "claude-code"], context);
     await writeFile(join(context.home, "rerail.sqlite"), "live database");
     // The undo names that checkout, not the managed install `current` points at.
-    const checkoutRoot = join(harnessHome, "..", "checkout");
+    const checkoutRoot = join(hostConfigHome, "..", "checkout");
     await mkdir(join(checkoutRoot, "dist"), { recursive: true });
 
     expect(await runInstallCommand(["--root", checkoutRoot, "--remove"], context)).toBe(0);
 
     expect(await readFile(join(context.home, "rerail.sqlite"), "utf8")).toBe("live database");
-    expect((await readdir(harnessHome)).filter(name => name.startsWith(".rerail-clean-"))).toEqual([]);
+    expect((await readdir(hostConfigHome)).filter(name => name.startsWith(".rerail-clean-"))).toEqual([]);
   });
 });

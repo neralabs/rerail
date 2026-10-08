@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { lstatSync, readdirSync, readFileSync, realpathSync, type Dirent } from "node:fs";
 import { dirname, join, posix, relative, sep } from "node:path";
 import { withinCheckout } from "./checkout-control.js";
-import { IGNORED_DIRECTORIES } from "./executable-policy-enforcer.js";
+import { IGNORED_DIRECTORIES } from "./code-rule-enforcer.js";
 import { GIT_EXECUTABLE } from "./repository-identity.js";
 import { compareDeterministicStrings } from "./stable-json.js";
 

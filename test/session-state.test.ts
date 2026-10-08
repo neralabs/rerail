@@ -1,11 +1,11 @@
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { CosineRuleRegistry } from "../src/registry.js";
+import { ConversationRuleRegistry } from "../src/registry.js";
 import { replaySessionState } from "../src/session-state.js";
 import { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../src/extension.js";
-import type { CosineRule } from "../src/rule-schema.js";
+import type { ConversationRule } from "../src/rule-schema.js";
 
-const rule: CosineRule = {
+const rule: ConversationRule = {
   id: "checkout",
   mode: "steer",
   reference: "Guest checkout remains available.",
@@ -17,7 +17,7 @@ const rule: CosineRule = {
 
 describe("replaySessionState", () => {
   it("replays mutations and delivered repeat state in branch order", () => {
-    const registry = new CosineRuleRegistry({ modelPath: resolve("model") });
+    const registry = new ConversationRuleRegistry({ modelPath: resolve("model") });
     registry.replace([]);
 
     const turn = replaySessionState(registry, [
@@ -47,7 +47,7 @@ describe("replaySessionState", () => {
   });
 
   it("skips a mutation whose rule no longer parses and keeps replaying the branch", () => {
-    const registry = new CosineRuleRegistry({ modelPath: resolve("model") });
+    const registry = new ConversationRuleRegistry({ modelPath: resolve("model") });
     registry.replace([]);
     const { mode: _mode, ...modeless } = rule;
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);

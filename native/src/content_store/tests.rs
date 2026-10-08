@@ -479,9 +479,9 @@ fn snapshot_publication_is_atomic() {
             1,
         )
         .unwrap();
-    let candidate = CandidateCheck {
-        policy: HashKey::sha256(b"policy"),
-        check: "check".to_owned(),
+    let candidate = CandidateClause {
+        rule: HashKey::sha256(b"policy"),
+        clause: "check".to_owned(),
     };
     let stored = store
         .publish_snapshot_file(
@@ -561,9 +561,9 @@ fn overlay_publication_replaces_payload_and_candidates_atomically() {
     let workspace = store
         .open_workspace("/atomic", "repo", "owner", snapshot, 1, 100)
         .unwrap();
-    let candidate = CandidateCheck {
-        policy: HashKey::sha256(b"policy"),
-        check: "changed".to_owned(),
+    let candidate = CandidateClause {
+        rule: HashKey::sha256(b"policy"),
+        clause: "changed".to_owned(),
     };
     let tape_bytes = b"compressed tape payload";
     let publications = [
@@ -668,9 +668,9 @@ fn local_results_publish_across_sqlite_variable_limit_chunks() {
         .map(|index| {
             let bytes = format!("result-{index}").into_bytes();
             LocalResultPublication {
-                candidate: CandidateCheck {
-                    policy: HashKey::sha256(format!("policy-{index}").as_bytes()),
-                    check: format!("check-{index}"),
+                candidate: CandidateClause {
+                    rule: HashKey::sha256(format!("policy-{index}").as_bytes()),
+                    clause: format!("check-{index}"),
                 },
                 context: HashKey::sha256(format!("bulk-context-{}", index % 2).as_bytes()),
                 raw_length: bytes.len(),
@@ -700,7 +700,7 @@ fn local_results_publish_across_sqlite_variable_limit_chunks() {
             )
             .unwrap()
             .into_iter()
-            .map(|result| (result.candidate.check, result.bytes))
+            .map(|result| (result.candidate.clause, result.bytes))
             .collect::<Vec<_>>();
         restored.sort();
         let mut expected = (0..12)
@@ -752,9 +752,9 @@ fn relationship_revalidation_does_not_hash_payloads_under_write_lock() {
 fn local_results_are_scoped_by_context_hash() {
     let (_path, store) = store("local-result-contexts");
     let (workspace, catalog) = local_result_workspace(&store, "local-result-contexts");
-    let candidate = CandidateCheck {
-        policy: HashKey::sha256(b"policy"),
-        check: "check".to_owned(),
+    let candidate = CandidateClause {
+        rule: HashKey::sha256(b"policy"),
+        clause: "check".to_owned(),
     };
     let first_context = HashKey::sha256(b"alpha/x.py");
     let second_context = HashKey::sha256(b"beta/x.py");
@@ -825,9 +825,9 @@ fn a_result_under_a_new_context_of_stored_objects_is_kept() {
     let (_path, store) = store("local-result-new-context");
     let (workspace, catalog) = local_result_workspace(&store, "local-result-new-context");
     let result = |context: &[u8], bytes: &'static [u8]| LocalResultPublication {
-        candidate: CandidateCheck {
-            policy: HashKey::sha256(b"policy"),
-            check: "check".to_owned(),
+        candidate: CandidateClause {
+            rule: HashKey::sha256(b"policy"),
+            clause: "check".to_owned(),
         },
         context: HashKey::sha256(context),
         raw_length: bytes.len(),
@@ -852,7 +852,7 @@ fn a_result_under_a_new_context_of_stored_objects_is_kept() {
             .unwrap()
     };
     publish(&[result(b"first", b"alpha")]);
-    // Source, path, catalog and check are all stored now: only the context is new.
+    // Source, path, catalog and clause are all stored now: only the context is new.
     let stored = publish(&[result(b"second", b"beta")]);
     let restored = store
         .local_check_results(stored.source, HashKey::sha256(b"second"), catalog)
@@ -862,7 +862,7 @@ fn a_result_under_a_new_context_of_stored_objects_is_kept() {
 }
 
 #[test]
-fn context_results_cascade_when_sources_and_checks_are_deleted() {
+fn context_results_cascade_when_sources_and_clauses_are_deleted() {
     for delete_source in [true, false] {
         let (_path, store) = store(if delete_source {
             "context-result-source-cascade"
@@ -871,9 +871,9 @@ fn context_results_cascade_when_sources_and_checks_are_deleted() {
         });
         let (workspace, catalog) = local_result_workspace(&store, "context-result-cascade");
         let result = LocalResultPublication {
-            candidate: CandidateCheck {
-                policy: HashKey::sha256(b"policy"),
-                check: "check".to_owned(),
+            candidate: CandidateClause {
+                rule: HashKey::sha256(b"policy"),
+                clause: "check".to_owned(),
             },
             context: HashKey::sha256(b"context"),
             raw_length: 6,
@@ -960,12 +960,12 @@ fn reconciliation_reprepares_source_collected_after_the_read() {
 }
 
 #[test]
-fn reconciliation_revalidates_check_collected_before_relationship_write() {
+fn reconciliation_revalidates_clause_collected_before_relationship_write() {
     let (path, store) = store("publication-revalidate-check");
     let (workspace, catalog) = local_result_workspace(&store, "publication-revalidate-check");
-    let candidate = CandidateCheck {
-        policy: HashKey::sha256(b"policy"),
-        check: "check".to_owned(),
+    let candidate = CandidateClause {
+        rule: HashKey::sha256(b"policy"),
+        clause: "check".to_owned(),
     };
     let result = LocalResultPublication {
         candidate: candidate.clone(),

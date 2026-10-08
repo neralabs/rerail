@@ -23,7 +23,7 @@ use std::{
 
 const BUILTIN_IGNORE: &[u8] = b".git/\nnode_modules/\ntarget/\ntmp/\n__pycache__/\n";
 /// The extensions of the files the host evaluates (`SOURCE_LANGUAGES` in
-/// executable-policy-enforcer.ts): dialect sources and the text files regex checks read.
+/// code-rule-enforcer.ts): dialect sources and the text files regex clauses read.
 const SOURCE_SUFFIXES: &[&str] = &[
     "bash", "cjs", "css", "cts", "html", "js", "json", "jsx", "md", "mdx", "mjs", "mts", "php",
     "py", "pyi", "rs", "rst", "scss", "sh", "sql", "toml", "ts", "tsx", "txt", "yaml", "yml",
@@ -568,7 +568,7 @@ impl GitWorkspace {
             .map_err(|error| discovery_error("cannot persist workspace source", error))
     }
 
-    /// Read the exact bytes that policy evaluation uses, refusing a file larger than `max_bytes`
+    /// Read the exact bytes that code-rule evaluation uses, refusing a file larger than `max_bytes`
     /// with `ErrorKind::FileTooLarge`. The bytes carry no Git identity: publication hashes them
     /// against the committed blob only when the path is clean (`source_alias`).
     pub fn read_source(&self, relative_path: &str, max_bytes: u64) -> std::io::Result<Vec<u8>> {

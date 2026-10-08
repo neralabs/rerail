@@ -2,14 +2,14 @@ import { realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
-import type { ExecutablePolicyFinding, PolicyFindingFix, PolicySourceSpan } from "../executable-policy.js";
-import type { PolicyExecutionFailure } from "../policy-execution.js";
-import type { PolicyExecutionRunReader, PolicyRunQuery, RepositoryDiagnosticEntryQuery, RepositoryDiagnosticQuery } from "../policy-execution-store.js";
+import type { CodeRuleViolation, CodeRuleViolationFix, CodeRuleSourceSpan } from "../code-rule.js";
+import type { AuditFailure } from "../audit.js";
+import type { AuditReader, AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../audit-store.js";
 import { withinCheckout } from "../checkout-control.js";
 import type { RerailDatabase } from "../database.js";
 import { listRepositories, repositorySetUp, setCheckoutState, startRepository, type RepositoryStartState } from "../repository-start.js";
 import {
-  policyRuns,
+  audits,
   presentationPreferences,
   PRESENTATION_HOSTS,
   RULE_APPLICABILITIES,
@@ -19,22 +19,22 @@ import {
   workLinks,
 } from "../schema.js";
 import {
-  policyControlsSchema,
-  policySettingsPatchSchema,
-  repositoryDiagnosticSchema,
-  scanInputSchema,
-  scanRequestSchema,
-} from "../scan-control-schema.js";
-import type { SqliteScanControlStore } from "../scan-control.js";
-import { PolicyCompileError, PolicyKernelUnavailableError } from "../policy-kernel-check.js";
-import { policyRuleSchema } from "../policy-schema.js";
+  auditControlsSchema,
+  auditSettingsPatchSchema,
+  repositoryAuditSchema,
+  auditRequestInputSchema,
+  auditRequestSchema,
+} from "../audit-control-schema.js";
+import type { SqliteAuditControlStore } from "../audit-control.js";
+import { CodeRuleCompileError, EngineUnavailableError } from "../code-rule-compile.js";
+import { codeRuleSchema } from "../code-rule-schema.js";
 import { RULE_MODES } from "../rule-mode.js";
-import { kernelRegexIssues } from "../rule-regexes.js";
-import { cosineRuleSchema, SAMPLE_BOUNDARIES } from "../rule-schema.js";
+import { engineRegexIssues } from "../rule-regexes.js";
+import { conversationRuleSchema, SAMPLE_BOUNDARIES } from "../rule-schema.js";
 import { QuarantinedGlobalRuleError, type ScopedRuleCatalog, type ScopedRuleQuery } from "../scoped-rule-catalog.js";
 import { cachedRecommendRulePacks, loadRulePacks, rulePackIdOf } from "../rule-packs.js";
 import { rulePackListSchema, rulePackRecommendationsSchema } from "./rule-pack-contracts.js";
-import { TRANSCRIPT_EVENT_PAGE_LIMIT, type SqliteTranscriptReader, type SqliteTranscriptStore } from "../transcript-store.js";
+import { SESSION_EVENT_PAGE_LIMIT, type SqliteSessionReader, type SqliteSessionStore } from "../session-store.js";
 import type { SqlitePresentationPreferenceStore } from "../presentation-preference-store.js";
 import { presentationDaemonSchema, presentationResponseSchema, sessionResponseSchema, sessionSummarySchema } from "./session-contracts.js";
 
@@ -46,15 +46,15 @@ import { presentationDaemonSchema, presentationResponseSchema, sessionResponseSc
  */
 export interface RerailApiStores {
   /** Read-only view; tolerates a database that does not exist yet. */
-  readonly reader: SqliteTranscriptReader;
+  readonly reader: SqliteSessionReader;
   /** Machine catalog resolved for the daemon's repository/project context. */
   rules(): ScopedRuleCatalog;
   /** Writable session/event/work-link store; opening it creates the database. */
-  transcripts(): SqliteTranscriptStore;
-  /** Durable per-session scan defaults and explicit scan requests. */
-  scanControls(): SqliteScanControlStore;
-  /** Read-only execution history; remains empty before any writer creates the database. */
-  readonly executions: PolicyExecutionRunReader;
+  sessionStore(): SqliteSessionStore;
+  /** Durable per-session audit defaults and explicit audit requests. */
+  auditControls(): SqliteAuditControlStore;
+  /** Read-only audit history; remains empty before any writer creates the database. */
+  readonly audits: AuditReader;
   /** Daemon-owned presentation settings in the project database. */
   preferences(): SqlitePresentationPreferenceStore;
   /** Writable handle for state with no store of its own: whether Rerail is started per repository. */
@@ -166,20 +166,20 @@ const storedRuleBase = {
 };
 
 export const storedRuleSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("file"), rule: policyRuleSchema, ...storedRuleBase }).strict(),
-  z.object({ kind: z.literal("conversation"), rule: cosineRuleSchema, ...storedRuleBase }).strict(),
+  z.object({ kind: z.literal("file"), rule: codeRuleSchema, ...storedRuleBase }).strict(),
+  z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, ...storedRuleBase }).strict(),
 ]);
 
 const packIdField = { packId: z.string().nullable().describe("The rule pack this rule comes from; null for rules in no pack.") };
 const listedRuleSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("file"), rule: policyRuleSchema, ...storedRuleBase, ...packIdField }).strict(),
-  z.object({ kind: z.literal("conversation"), rule: cosineRuleSchema, ...storedRuleBase, ...packIdField }).strict(),
+  z.object({ kind: z.literal("file"), rule: codeRuleSchema, ...storedRuleBase, ...packIdField }).strict(),
+  z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, ...storedRuleBase, ...packIdField }).strict(),
 ]);
 
 export const ruleUpsertSchema = z
   .object({
     kind: z.enum(RULE_KINDS),
-    rule: z.union([policyRuleSchema, cosineRuleSchema]),
+    rule: z.union([codeRuleSchema, conversationRuleSchema]),
     enabled: z.boolean().optional(),
     applicability: z.enum(RULE_APPLICABILITIES).optional(),
     /** Conversation rules only; file rules carry `rule.revision`. */
@@ -187,15 +187,15 @@ export const ruleUpsertSchema = z
   })
   .strict()
   .superRefine((value, context) => {
-    const looksPolicy = "clauses" in value.rule;
-    if ((value.kind === "file") !== looksPolicy) {
+    const looksCodeRule = "clauses" in value.rule;
+    if ((value.kind === "file") !== looksCodeRule) {
       context.addIssue({ code: "custom", path: ["rule"], message: `rule body does not match kind ${value.kind}` });
     }
     if (value.kind === "file" && value.revision !== undefined) {
       context.addIssue({ code: "custom", path: ["revision"], message: "file rules take their revision from rule.revision" });
     }
     if (value.kind === "conversation" && !("clauses" in value.rule)) {
-      for (const issue of kernelRegexIssues(value.rule)) {
+      for (const issue of engineRegexIssues(value.rule)) {
         context.addIssue({ code: "custom", path: ["rule", ...issue.path], message: issue.message });
       }
     }
@@ -210,7 +210,7 @@ export const workLinkInputSchema = createInsertSchema(workLinks).pick({ kind: tr
 
 const ruleId = z.object({ id: z.string().min(1) });
 
-const policySourceSpanSchema: z.ZodType<PolicySourceSpan> = z.object({
+const codeRuleSourceSpanSchema: z.ZodType<CodeRuleSourceSpan> = z.object({
   startByte: z.number().int(),
   endByte: z.number().int(),
   startLine: z.number().int(),
@@ -219,12 +219,12 @@ const policySourceSpanSchema: z.ZodType<PolicySourceSpan> = z.object({
   endColumn: z.number().int(),
 }).strict();
 
-const policyFindingFixSchema: z.ZodType<PolicyFindingFix> = z.object({
-  span: policySourceSpanSchema,
+const codeRuleViolationFixSchema: z.ZodType<CodeRuleViolationFix> = z.object({
+  span: codeRuleSourceSpanSchema,
   text: z.string().describe("Replacement text for the span. A suggestion only; Rerail never applies it."),
 }).strict();
 
-const executablePolicyFindingSchema: z.ZodType<ExecutablePolicyFinding> = z.object({
+const codeRuleViolationSchema: z.ZodType<CodeRuleViolation> = z.object({
   id: z.string(),
   ruleId: z.string(),
   clauseId: z.string(),
@@ -232,13 +232,13 @@ const executablePolicyFindingSchema: z.ZodType<ExecutablePolicyFinding> = z.obje
   mode: z.enum(RULE_MODES),
   message: z.string(),
   path: z.string().optional(),
-  span: policySourceSpanSchema.optional(),
-  captures: z.record(z.string(), z.array(policySourceSpanSchema)),
+  span: codeRuleSourceSpanSchema.optional(),
+  captures: z.record(z.string(), z.array(codeRuleSourceSpanSchema)),
   variables: z.record(z.string(), z.union([z.boolean(), z.number(), z.string()])),
-  fix: policyFindingFixSchema.optional(),
+  fix: codeRuleViolationFixSchema.optional(),
 }).strict();
 
-const policyExecutionFailureSchema: z.ZodType<PolicyExecutionFailure> = z.object({
+const auditFailureSchema: z.ZodType<AuditFailure> = z.object({
   ruleId: z.string().exactOptional(),
   clauseId: z.string(),
   code: z.enum(["budget-exceeded", "missing-capability", "source-incomplete", "source-partial", "adapter-error"]),
@@ -247,18 +247,18 @@ const policyExecutionFailureSchema: z.ZodType<PolicyExecutionFailure> = z.object
   stage: z.enum(["read", "parse", "evaluate", "scan", "scope", "persistence"]).optional(),
 }).strict();
 
-export const policyRunRecordSchema = createSelectSchema(policyRuns).extend({
+export const auditRecordSchema = createSelectSchema(audits).extend({
   paths: z.array(z.string()),
-  violations: z.array(executablePolicyFindingSchema),
-  failures: z.array(policyExecutionFailureSchema),
+  violations: z.array(codeRuleViolationSchema),
+  failures: z.array(auditFailureSchema),
   catalogRevision: z.string().nullable(),
   ruleRevisions: z.array(z.object({ ruleId: z.string(), revision: z.number().int() }).strict()),
 });
-export const policyControlsResponseSchema = policyControlsSchema.extend({
-  repositoryAuditRecord: policyRunRecordSchema.extend({}).nullable(),
+export const auditControlsResponseSchema = auditControlsSchema.extend({
+  repositoryAuditRecord: auditRecordSchema.extend({}).nullable(),
 });
 
-export const policyRunQuerySchema = z.object({
+export const auditQuerySchema = z.object({
   auditId: z.string().min(1).optional(),
   sessionId: z.string().min(1).optional(),
   status: z.enum(["running", "completed", "failed", "interrupted", "superseded"]).optional(),
@@ -267,15 +267,15 @@ export const policyRunQuerySchema = z.object({
   limit: countParameter.min(1).max(200).optional().describe("Maximum records to return; defaults to 50 and is capped at 200."),
   offset: countParameter.optional().describe("Number of matching records to skip; defaults to 0."),
 }).strict();
-const repositoryDiagnosticQuerySchema = z.object({
+const repositoryAuditQuerySchema = z.object({
   workspaceRoot: z.string().min(1).optional(),
-  status: repositoryDiagnosticSchema.shape.status.optional(),
+  status: repositoryAuditSchema.shape.status.optional(),
   limit: countParameter.min(1).max(200).optional(),
   offset: countParameter.optional(),
 }).strict();
-const repositoryDiagnosticSummarySchema = z.object({
+const repositoryAuditSummarySchema = z.object({
   workspaceRoot: z.string(),
-  repositoryAudit: repositoryDiagnosticSchema.nullable(),
+  repositoryAudit: repositoryAuditSchema.nullable(),
   audit: z.object({
     auditId: z.string(),
     scope: z.enum(["repository", "touched-files", "ai-output"]),
@@ -289,7 +289,7 @@ const repositoryDiagnosticSummarySchema = z.object({
     failureCount: z.number().int().nonnegative(),
   }).strict().nullable(),
 }).strict();
-const repositoryDiagnosticEntryQuerySchema = z.object({
+const repositoryAuditEntryQuerySchema = z.object({
   kind: z.enum(["violation", "failure"]).optional(),
   mode: z.enum(RULE_MODES).optional().describe("Mode of the rule that produced a violation; failures never match."),
   code: z.string().optional(),
@@ -298,12 +298,12 @@ const repositoryDiagnosticEntryQuerySchema = z.object({
   limit: countParameter.min(1).max(200).optional(),
   offset: countParameter.optional(),
 }).strict();
-const repositoryDiagnosticEntrySchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("violation"), violation: executablePolicyFindingSchema }).strict(),
-  z.object({ kind: z.literal("failure"), failure: policyExecutionFailureSchema }).strict(),
+const repositoryAuditEntrySchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("violation"), violation: codeRuleViolationSchema }).strict(),
+  z.object({ kind: z.literal("failure"), failure: auditFailureSchema }).strict(),
 ]);
 
-function policyRunQuery(input: z.infer<typeof policyRunQuerySchema>): PolicyRunQuery {
+function auditQuery(input: z.infer<typeof auditQuerySchema>): AuditQuery {
   return {
     ...(input.auditId === undefined ? {} : { auditId: input.auditId }),
     ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
@@ -314,7 +314,7 @@ function policyRunQuery(input: z.infer<typeof policyRunQuerySchema>): PolicyRunQ
     ...(input.offset === undefined ? {} : { offset: input.offset }),
   };
 }
-function repositoryDiagnosticQuery(input: z.infer<typeof repositoryDiagnosticQuerySchema>): RepositoryDiagnosticQuery {
+function repositoryAuditQuery(input: z.infer<typeof repositoryAuditQuerySchema>): RepositoryAuditQuery {
   return {
     ...(input.workspaceRoot === undefined ? {} : { workspaceRoot: input.workspaceRoot }),
     ...(input.status === undefined ? {} : { status: input.status }),
@@ -322,9 +322,9 @@ function repositoryDiagnosticQuery(input: z.infer<typeof repositoryDiagnosticQue
     ...(input.offset === undefined ? {} : { offset: input.offset }),
   };
 }
-function repositoryDiagnosticEntryQuery(
-  input: z.infer<typeof repositoryDiagnosticEntryQuerySchema> & { auditId: string },
-): RepositoryDiagnosticEntryQuery {
+function repositoryAuditEntryQuery(
+  input: z.infer<typeof repositoryAuditEntryQuerySchema> & { auditId: string },
+): RepositoryAuditEntryQuery {
   return {
     auditId: input.auditId,
     ...(input.kind === undefined ? {} : { kind: input.kind }),
@@ -336,12 +336,12 @@ function repositoryDiagnosticEntryQuery(
     ...(input.offset === undefined ? {} : { offset: input.offset }),
   };
 }
-function policyControlsResponse(stores: RerailApiStores, sessionId: string): z.infer<typeof policyControlsResponseSchema> {
-  const controls = stores.scanControls().getSettings(sessionId);
+function auditControlsResponse(stores: RerailApiStores, sessionId: string): z.infer<typeof auditControlsResponseSchema> {
+  const controls = stores.auditControls().getSettings(sessionId);
   const auditId = controls.repositoryAudit?.auditId;
   return {
     ...controls,
-    repositoryAuditRecord: auditId === null || auditId === undefined ? null : stores.executions.get(auditId) ?? null,
+    repositoryAuditRecord: auditId === null || auditId === undefined ? null : stores.audits.get(auditId) ?? null,
   };
 }
 
@@ -355,7 +355,7 @@ function requireSession(stores: RerailApiStores, sessionId: string): void {
 function sessionResponse(stores: RerailApiStores, sessionId: string): z.infer<typeof sessionResponseSchema> | null {
   const session = stores.reader.session(sessionId);
   return session === undefined ? null
-    : { session, hud: stores.reader.hud(sessionId), audit: stores.executions.latestSummary(sessionId) ?? null };
+    : { session, hud: stores.reader.hud(sessionId), audit: stores.audits.latestSummary(sessionId) ?? null };
 }
 const sessionId = z.object({ sessionId: z.string().min(1) });
 const projectRepository = z.object({
@@ -403,7 +403,7 @@ const ruleActivitySchema = z.object({
   rerails: z.number().int().nonnegative(),
 }).strict();
 
-const findingRecordSchema = z.object({
+const violationRecordSchema = z.object({
   id: z.string(),
   ruleId: z.string(),
   clauseId: z.string(),
@@ -411,8 +411,8 @@ const findingRecordSchema = z.object({
   mode: z.enum(RULE_MODES),
   message: z.string(),
   path: z.string().nullable(),
-  span: policySourceSpanSchema.nullable(),
-  fix: policyFindingFixSchema.nullable(),
+  span: codeRuleSourceSpanSchema.nullable(),
+  fix: codeRuleViolationFixSchema.nullable(),
   sessionId: z.string(),
   auditId: z.string(),
   at: z.number().int().describe("Start time of the audit that reported the violation."),
@@ -468,7 +468,7 @@ export const operations: readonly Operation[] = [
       let repository = input.repository;
       if (session !== null) {
         try {
-          // A harness may report a directory below its launch root; presence and identity follow the session's canonical cwd.
+          // A host may report a directory below its launch root; presence and identity follow the session's canonical cwd.
           const cwd = realpathSync(session.session.cwd);
           if (session.session.host !== input.host || !withinCheckout(cwd, realpathSync(input.repository))) session = null;
           else repository = cwd;
@@ -580,8 +580,8 @@ export const operations: readonly Operation[] = [
     query: z.object({ since: sinceParameter }).strict(),
     output: z.object({ since: z.number().int().nonnegative(), rules: z.record(z.string(), ruleActivitySchema) }),
     handler: (stores, input) => {
-      const activity = stores.executions.ruleActivity(input.since);
-      const rerails = stores.reader.steeringDeliveriesByRule(input.since);
+      const activity = stores.audits.ruleActivity(input.since);
+      const steers = stores.reader.steersByRule(input.since);
       const rules: Record<string, z.infer<typeof ruleActivitySchema>> = {};
       for (const stored of stores.rules().list({})) {
         // Every catalog rule is reported, so a caller never has to infer absence from a missing key.
@@ -592,7 +592,7 @@ export const operations: readonly Operation[] = [
           sessions: totals?.sessions ?? 0,
           lastSeenAt: totals?.lastSeenAt ?? null,
           audits: totals?.audits ?? 0,
-          rerails: stored.kind === "conversation" ? 0 : rerails.get(stored.rule.id) ?? 0,
+          rerails: stored.kind === "conversation" ? 0 : steers.get(stored.rule.id) ?? 0,
         };
       }
       return { since: input.since, rules };
@@ -630,10 +630,10 @@ export const operations: readonly Operation[] = [
       };
       const store = stores.rules();
       try {
-        return { rule: input.kind === "file" ? store.upsertPolicy(input.rule, options) : store.upsertCosine(input.rule, options) };
+        return { rule: input.kind === "file" ? store.upsertCodeRule(input.rule, options) : store.upsertConversationRule(input.rule, options) };
       } catch (error) {
-        if (error instanceof PolicyCompileError) throw new ApiError(400, "invalid-rule", error.message);
-        if (error instanceof PolicyKernelUnavailableError) throw new ApiError(503, "kernel-unavailable", error.message);
+        if (error instanceof CodeRuleCompileError) throw new ApiError(400, "invalid-rule", error.message);
+        if (error instanceof EngineUnavailableError) throw new ApiError(503, "kernel-unavailable", error.message);
         throw new ApiError(409, "rule-conflict", (error as Error).message);
       }
     },
@@ -711,10 +711,10 @@ export const operations: readonly Operation[] = [
     path: "/api/sessions/{sessionId}/audit-settings",
     summary: "Fetch ongoing audit defaults and the first repository audit for one session's canonical workspace.",
     params: sessionId,
-    output: policyControlsResponseSchema,
+    output: auditControlsResponseSchema,
     handler: (stores, input) => {
       requireSession(stores, input.sessionId);
-      return policyControlsResponse(stores, input.sessionId);
+      return auditControlsResponse(stores, input.sessionId);
     },
   }),
   defineOperation({
@@ -723,13 +723,13 @@ export const operations: readonly Operation[] = [
     path: "/api/sessions/{sessionId}/audit-settings",
     summary: "Update ongoing audit defaults for one session's canonical workspace.",
     params: sessionId,
-    body: policySettingsPatchSchema,
-    output: policyControlsResponseSchema,
+    body: auditSettingsPatchSchema,
+    output: auditControlsResponseSchema,
     handler: (stores, input) => {
       requireSession(stores, input.sessionId);
       const { sessionId, ...patch } = input;
-      stores.scanControls().updateSettings(sessionId, patch);
-      return policyControlsResponse(stores, sessionId);
+      stores.auditControls().updateSettings(sessionId, patch);
+      return auditControlsResponse(stores, sessionId);
     },
   }),
   defineOperation({
@@ -738,12 +738,12 @@ export const operations: readonly Operation[] = [
     path: "/api/sessions/{sessionId}/audit-requests",
     summary: "Queue an explicit audit for one session. Touched-file audits require paths.",
     params: sessionId,
-    body: scanInputSchema,
-    output: scanRequestSchema,
+    body: auditRequestInputSchema,
+    output: auditRequestSchema,
     handler: (stores, input) => {
       requireSession(stores, input.sessionId);
-      const { sessionId, ...scan } = input;
-      return stores.scanControls().requestScan(sessionId, scan);
+      const { sessionId, ...request } = input;
+      return stores.auditControls().requestAudit(sessionId, request);
     },
   }),
   defineOperation({
@@ -752,10 +752,10 @@ export const operations: readonly Operation[] = [
     path: "/api/sessions/{sessionId}/audit-requests",
     summary: "List explicit audit requests and the ids of the audits each one produced for one session.",
     params: sessionId,
-    output: z.object({ auditRequests: z.array(scanRequestSchema) }),
+    output: z.object({ auditRequests: z.array(auditRequestSchema) }),
     handler: (stores, input) => {
       requireSession(stores, input.sessionId);
-      return { auditRequests: stores.scanControls().listScans(input.sessionId) };
+      return { auditRequests: stores.auditControls().listAuditRequests(input.sessionId) };
     },
   }),
   defineOperation({
@@ -763,12 +763,12 @@ export const operations: readonly Operation[] = [
     method: "GET",
     path: "/api/repository-audits",
     summary: "List one full repository audit baseline per historically scanned repository.",
-    query: repositoryDiagnosticQuerySchema,
+    query: repositoryAuditQuerySchema,
     output: z.object({
-      repositories: z.array(repositoryDiagnosticSummarySchema),
+      repositories: z.array(repositoryAuditSummarySchema),
       total: z.number().int().nonnegative(),
     }),
-    handler: (stores, input) => stores.executions.listRepositoryDiagnostics(repositoryDiagnosticQuery(input)),
+    handler: (stores, input) => stores.audits.listRepositoryAudits(repositoryAuditQuery(input)),
   }),
   defineOperation({
     id: "repository_audit_entries_list",
@@ -776,18 +776,18 @@ export const operations: readonly Operation[] = [
     path: "/api/repository-audits/{auditId}/entries",
     summary: "Query paginated violations and failures from one repository audit baseline.",
     params: z.object({ auditId: z.string().min(1) }),
-    query: repositoryDiagnosticEntryQuerySchema,
+    query: repositoryAuditEntryQuerySchema,
     output: z.object({
-      entries: z.array(repositoryDiagnosticEntrySchema),
+      entries: z.array(repositoryAuditEntrySchema),
       total: z.number().int().nonnegative(),
     }),
     handler: (stores, input) => {
-      const page = stores.executions.listRepositoryDiagnosticEntries(repositoryDiagnosticEntryQuery(input));
+      const page = stores.audits.listRepositoryAuditEntries(repositoryAuditEntryQuery(input));
       if (page === undefined) throw new ApiError(404, "repository-audit-not-found", `repository audit ${input.auditId} does not exist`);
       return {
         entries: page.entries.map(entry => entry.kind === "violation"
-          ? { kind: "violation" as const, violation: executablePolicyFindingSchema.parse(entry.payload) }
-          : { kind: "failure" as const, failure: policyExecutionFailureSchema.parse(entry.payload) }),
+          ? { kind: "violation" as const, violation: codeRuleViolationSchema.parse(entry.payload) }
+          : { kind: "failure" as const, failure: auditFailureSchema.parse(entry.payload) }),
         total: page.total,
       };
     },
@@ -797,9 +797,9 @@ export const operations: readonly Operation[] = [
     method: "GET",
     path: "/api/audits",
     summary: "List durable audit history, filtered independently by session, status, scope, or mode.",
-    query: policyRunQuerySchema,
-    output: z.object({ audits: z.array(policyRunRecordSchema), total: z.number().int().nonnegative() }),
-    handler: (stores, input) => stores.executions.list(policyRunQuery(input)),
+    query: auditQuerySchema,
+    output: z.object({ audits: z.array(auditRecordSchema), total: z.number().int().nonnegative() }),
+    handler: (stores, input) => stores.audits.list(auditQuery(input)),
   }),
   defineOperation({
     id: "violations_list",
@@ -812,9 +812,9 @@ export const operations: readonly Operation[] = [
       offset: countParameter.optional().describe("Number of matching violations to skip; defaults to 0."),
       ruleId: z.string().min(1).optional().describe("Restrict to one catalog rule id."),
     }).strict(),
-    output: z.object({ total: z.number().int().nonnegative(), violations: z.array(findingRecordSchema) }),
+    output: z.object({ total: z.number().int().nonnegative(), violations: z.array(violationRecordSchema) }),
     handler: (stores, input) => {
-      const page = stores.executions.listFindingHistory({
+      const page = stores.audits.listViolationHistory({
         since: input.since,
         ...(input.limit === undefined ? {} : { limit: input.limit }),
         ...(input.offset === undefined ? {} : { offset: input.offset }),
@@ -857,7 +857,7 @@ export const operations: readonly Operation[] = [
     id: "session_events",
     method: "GET",
     path: "/api/sessions/{sessionId}/events",
-    summary: `Page through one session's transcript events in sequence order, at most ${TRANSCRIPT_EVENT_PAGE_LIMIT} per page.`,
+    summary: `Page through one session's transcript events in sequence order, at most ${SESSION_EVENT_PAGE_LIMIT} per page.`,
     params: sessionId,
     query: z.object({
       after: countParameter.optional().describe("Return events with a sequence strictly greater than this value."),
@@ -866,7 +866,7 @@ export const operations: readonly Operation[] = [
     output: z.object({
       events: z.array(eventRecordSchema),
       nextAfter: z.number().int().nonnegative(),
-      pageLimit: z.literal(TRANSCRIPT_EVENT_PAGE_LIMIT),
+      pageLimit: z.literal(SESSION_EVENT_PAGE_LIMIT),
     }),
     handler: (stores, input) => {
       const page = stores.reader.events(input.sessionId, {
@@ -877,7 +877,7 @@ export const operations: readonly Operation[] = [
       return {
         events: [...page],
         nextAfter: last === undefined ? input.after ?? 0 : last.sequence,
-        pageLimit: TRANSCRIPT_EVENT_PAGE_LIMIT as typeof TRANSCRIPT_EVENT_PAGE_LIMIT,
+        pageLimit: SESSION_EVENT_PAGE_LIMIT as typeof SESSION_EVENT_PAGE_LIMIT,
       };
     },
   }),
@@ -899,7 +899,7 @@ export const operations: readonly Operation[] = [
     body: workLinkInputSchema,
     output: z.object({ workLinks: z.array(workLinkRecordSchema) }),
     handler: (stores, input) => {
-      const store = stores.transcripts();
+      const store = stores.sessionStore();
       store.linkWork({
         sessionId: input.sessionId,
         kind: input.kind,

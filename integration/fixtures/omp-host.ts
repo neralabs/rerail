@@ -11,7 +11,7 @@ export default async function fixture(api: ExtensionAPI): Promise<void> {
   const config = JSON.parse(await readFile(process.env.RERAIL_OMP_TEST_CONFIG!, "utf8")) as {
     responses: MockResponse[];
     extension?: string;
-    kernel?: boolean;
+    engine?: boolean;
     modelPath: string;
     evidencePath: string;
     authPath?: string;
@@ -26,8 +26,8 @@ export default async function fixture(api: ExtensionAPI): Promise<void> {
   const finished = Promise.withResolvers<void>();
   let notificationStarted = false;
   let notificationReleased = false;
-  if (config.kernel) {
-    // Deliberately blocked observer: tool execution and its policy barrier must not wait for it.
+  if (config.engine) {
+    // Deliberately blocked observer: tool execution and its code-rule barrier must not wait for it.
     api.on("tool_execution_start", async () => {
       notificationStarted = true;
       await finished.promise;
@@ -38,8 +38,8 @@ export default async function fixture(api: ExtensionAPI): Promise<void> {
   if (config.extension) {
     // The test selects the installed default or configurable production entrypoint at runtime.
     const production = await import(pathToFileURL(config.extension).href);
-    await (config.kernel
-      ? production.createCosineRulesExtension({ modelPath: config.modelPath, registerCommand: false, registerTool: false })
+    await (config.engine
+      ? production.createConversationRulesExtension({ modelPath: config.modelPath, registerCommand: false, registerTool: false })
       : production.default)(api);
   }
   api.registerCommand("rerail-test-append", {

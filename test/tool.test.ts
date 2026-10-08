@@ -2,8 +2,8 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ExtensionAPI, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
 import * as zod from "@oh-my-pi/omptype/zod";
-import { CosineRuleRegistry } from "../src/registry.js";
-import { registerCosineRulesTool } from "../src/tool.js";
+import { ConversationRuleRegistry } from "../src/registry.js";
+import { registerConversationRulesTool } from "../src/tool.js";
 
 const rule = {
   id: "checkout",
@@ -17,7 +17,7 @@ const rule = {
 
 describe("conversation_rules tool", () => {
   it("adds, tests, lists, and removes session rules", async () => {
-    const registry = new CosineRuleRegistry({ modelPath: resolve("model") });
+    const registry = new ConversationRuleRegistry({ modelPath: resolve("model") });
     registry.replace([]);
     let definition: ToolDefinition | undefined;
     const entries: unknown[] = [];
@@ -30,7 +30,7 @@ describe("conversation_rules tool", () => {
         entries.push(data);
       },
     } as unknown as ExtensionAPI;
-    registerCosineRulesTool(pi, { registry: () => registry, turn: () => 0 });
+    registerConversationRulesTool(pi, { registry: () => registry, turn: () => 0 });
     if (definition === undefined) throw new Error("tool was not registered");
 
     const add = await definition.execute("call-1", { action: "add", rule }, undefined, undefined, {} as never);

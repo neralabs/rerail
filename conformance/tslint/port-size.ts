@@ -15,7 +15,7 @@ export interface PortSize {
   not: number;
   any: number;
   all: number;
-  /** Deepest rule-object nesting in any check; a rule with no sub-rules has depth 1. */
+  /** Deepest rule-object nesting in any clause; a rule with no sub-rules has depth 1. */
   maxDepth: number;
 }
 

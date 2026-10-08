@@ -34,8 +34,8 @@ function lifecycleHarness(changeOwnerBeforeFailure: boolean) {
     shutdown: async () => undefined,
     sessionFor: async () => session,
     ingest: async (_event: AdapterEvent) => { ingested += 1; },
-    cosineTool: {},
-    cosineCommand: {},
+    conversationRulesTool: {},
+    conversationRulesCommand: {},
     packageRoot: "/rerail",
     started: () => true,
   });

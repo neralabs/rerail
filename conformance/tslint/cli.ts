@@ -47,7 +47,7 @@ function resolveCompare(path: string): string {
   return repositoryPath(existsSync(fromCwd) ? fromCwd : resolve(RERAIL_ROOT, path));
 }
 
-function kernelInfo(): { path: string; version: string } {
+function engineInfo(): { path: string; version: string } {
   const configured = process.env.RERAIL_NATIVE_KERNEL_PATH;
   const path = configured ?? join(RERAIL_ROOT, "native", `rerail.${nativePlatformSuffix()}.node`);
   let built = "";
@@ -198,7 +198,7 @@ async function main(): Promise<void> {
     label: values.label,
     tslintSha: TSLINT_SHA,
     typescriptVersion: FIXTURE_TYPESCRIPT_VERSION,
-    kernel: kernelInfo(),
+    kernel: engineInfo(),
     runs,
     inventory: inventory(),
     rules: results,

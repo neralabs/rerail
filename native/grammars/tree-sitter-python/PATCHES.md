@@ -145,5 +145,5 @@ held it upstream, as `.` matches `\r`), matching the comment text CPython and Ru
 single-quoted string no longer runs through a lone `\r`, which CPython rejects as unterminated.
 
 Tree-sitter itself still counts rows at `\n` only, so a node's row and column (and a tape's, which
-equals the native tree's) do not change; findings are placed by Rerail's line table, which follows
-Ruff's `\r\n`, `\r` and `\n` (`policy_dsl/lines.rs`).
+equals the native tree's) do not change; violations are placed by Rerail's line table, which follows
+Ruff's `\r\n`, `\r` and `\n` (`code_rule_dsl/lines.rs`).

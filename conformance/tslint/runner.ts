@@ -1,8 +1,8 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
-import { loadNativeBinding, type NativeCompiledPolicyDsl, type NativePolicyDslWorkspace } from "../../src/native.js";
-import { bundledPolicyDslDirectory } from "../../src/policy-dsl-catalog.js";
+import { loadNativeBinding, type NativeCompiledCodeRuleDsl, type NativeCodeRuleDslWorkspace } from "../../src/native.js";
+import { bundledCodeRuleDslDirectory } from "../../src/code-rule-dsl-catalog.js";
 import type { ExpectedFailure } from "./lint-format.js";
 import { checkFix, type EmittedFix, type FixCheck } from "./fix-check.js";
 import { portSize, type PortSize } from "./port-size.js";
@@ -62,7 +62,7 @@ const workspaceResultSchema = z.object({
   }),
 });
 
-export interface ActualFinding {
+export interface ActualViolation {
   startLine: number;
   startCol: number;
   endLine: number;
@@ -87,8 +87,8 @@ export interface FileResult {
   truePositives: number;
   endAgreements: number;
   missed: ExpectedFailure[];
-  extra: ActualFinding[];
-  endMismatches: Array<{ expected: ExpectedFailure; actual: ActualFinding }>;
+  extra: ActualViolation[];
+  endMismatches: Array<{ expected: ExpectedFailure; actual: ActualViolation }>;
   engineFailures: Array<{ clauseId: string; code: string; message: string }>;
   /** `source-partial` message: the file has syntax errors and AST clauses ran only outside them. Not an engine failure. */
   partial?: string | undefined;
@@ -160,7 +160,7 @@ export interface RuleResult {
   falseNegatives: number;
   endAgreements: number;
   engineFailures: number;
-  /** Evaluated files the kernel marked `source-partial`; informational, the verdict comes from TP/FP/FN. */
+  /** Evaluated files the engine marked `source-partial`; informational, the verdict comes from TP/FP/FN. */
   partialFiles: number;
   precision: number | null;
   recall: number | null;
@@ -235,16 +235,16 @@ export function listPortedRules(): string[] {
 
 let capabilities: string | undefined;
 export function capabilitiesJson(): string {
-  capabilities ??= readFileSync(join(bundledPolicyDslDirectory(), "capabilities.json"), "utf8");
+  capabilities ??= readFileSync(join(bundledCodeRuleDslDirectory(), "capabilities.json"), "utf8");
   return capabilities;
 }
 
-export function compileDocument(path: string): NativeCompiledPolicyDsl {
-  return loadNativeBinding().PolicyDslRuntime.compile(readFileSync(path, "utf8"), "json", capabilitiesJson());
+export function compileDocument(path: string): NativeCompiledCodeRuleDsl {
+  return loadNativeBinding().CodeRuleDslRuntime.compile(readFileSync(path, "utf8"), "json", capabilitiesJson());
 }
 
 /** Mirrors the enforcer: inline `tryApply` first, `applyAsync` when the workspace is busy. */
-export async function applyToWorkspace(workspace: NativePolicyDslWorkspace, payload: string): Promise<string> {
+export async function applyToWorkspace(workspace: NativeCodeRuleDslWorkspace, payload: string): Promise<string> {
   return workspace.tryApply(payload) ?? (await workspace.applyAsync(payload));
 }
 
@@ -257,7 +257,7 @@ function positionAt(source: Buffer, byte: number): { line: number; col: number }
 }
 
 interface FileEvaluation {
-  findings: ActualFinding[];
+  violations: ActualViolation[];
   fixes: EmittedFix[];
   failures: FileResult["engineFailures"];
   partial: string | undefined;
@@ -266,53 +266,53 @@ interface FileEvaluation {
 
 /**
  * `source-partial` says the file has syntax errors and AST witnesses were reported only outside them. That is
- * the kernel working as designed, so it is not an engine failure: missed findings inside the error region already
+ * the engine working as designed, so it is not an engine failure: missed violations inside the error region already
  * show up as FNs. `source-incomplete` (a rule unsound under errors skipped the file) stays an engine failure.
  */
 export const INFORMATIONAL_FAILURE_CODES: ReadonlySet<string> = new Set(["source-partial"]);
 
-/** Failure codes meaning the grammar could not parse the whole file, whatever the kernel then did with it. */
+/** Failure codes meaning the grammar could not parse the whole file, whatever the engine then did with it. */
 export const PARSE_FAILURE_CODES: ReadonlySet<string> = new Set(["source-incomplete", "source-partial"]);
 
 /** Each fixture is its own isolated workspace, as TSLint lints each fixture alone; a syntax oddity in one cannot poison another. */
-async function evaluateFixture(compiled: NativeCompiledPolicyDsl, file: FixtureFile, source: string): Promise<FileEvaluation> {
-  const workspace = new (loadNativeBinding().PolicyDslWorkspace)();
+async function evaluateFixture(compiled: NativeCompiledCodeRuleDsl, file: FixtureFile, source: string): Promise<FileEvaluation> {
+  const workspace = new (loadNativeBinding().CodeRuleDslWorkspace)();
   try {
-    workspace.addPolicy(compiled);
+    workspace.addCodeRule(compiled);
     const payload = JSON.stringify({ revision: 1, files: [{ path: file.path, language: file.language, source }], removed: [] });
     const started = performance.now();
     const raw = await applyToWorkspace(workspace, payload);
     const ms = performance.now() - started;
     const { evaluation } = workspaceResultSchema.parse(JSON.parse(raw));
     const bytes = Buffer.from(source, "utf8");
-    const findings = evaluation.violations.flatMap(finding => {
-      if (finding.span === undefined || (finding.path !== undefined && finding.path !== file.path)) return [];
-      const start = positionAt(bytes, finding.span.startByte);
-      const end = positionAt(bytes, finding.span.endByte);
-      return [{ startLine: start.line, startCol: start.col, endLine: end.line, endCol: end.col, clauseId: finding.clauseId }];
+    const violations = evaluation.violations.flatMap(violation => {
+      if (violation.span === undefined || (violation.path !== undefined && violation.path !== file.path)) return [];
+      const start = positionAt(bytes, violation.span.startByte);
+      const end = positionAt(bytes, violation.span.endByte);
+      return [{ startLine: start.line, startCol: start.col, endLine: end.line, endCol: end.col, clauseId: violation.clauseId }];
     });
-    const fixes = evaluation.violations.flatMap(finding =>
-      finding.fix === undefined || (finding.path !== undefined && finding.path !== file.path)
+    const fixes = evaluation.violations.flatMap(violation =>
+      violation.fix === undefined || (violation.path !== undefined && violation.path !== file.path)
         ? []
-        : [{ startByte: finding.fix.span.startByte, endByte: finding.fix.span.endByte, text: finding.fix.text }],
+        : [{ startByte: violation.fix.span.startByte, endByte: violation.fix.span.endByte, text: violation.fix.text }],
     );
     const failures = evaluation.failures
       .filter(failure => !INFORMATIONAL_FAILURE_CODES.has(failure.code))
       .map(({ clauseId, code, message }) => ({ clauseId, code, message }));
     const partial = evaluation.failures.find(failure => INFORMATIONAL_FAILURE_CODES.has(failure.code))?.message;
-    return { findings, fixes, failures, partial, ms };
+    return { violations, fixes, failures, partial, ms };
   } finally {
     workspace.close();
   }
 }
 
-function compare(expected: ExpectedFailure[], actual: ActualFinding[]): Pick<FileResult, "truePositives" | "endAgreements" | "missed" | "extra" | "endMismatches"> {
+function compare(expected: ExpectedFailure[], actual: ActualViolation[]): Pick<FileResult, "truePositives" | "endAgreements" | "missed" | "extra" | "endMismatches"> {
   const key = (line: number, col: number): string => `${line}:${col}`;
-  const actualByStart = new Map<string, ActualFinding[]>();
-  for (const finding of actual) {
-    const bucket = actualByStart.get(key(finding.startLine, finding.startCol)) ?? [];
-    bucket.push(finding);
-    actualByStart.set(key(finding.startLine, finding.startCol), bucket);
+  const actualByStart = new Map<string, ActualViolation[]>();
+  for (const violation of actual) {
+    const bucket = actualByStart.get(key(violation.startLine, violation.startCol)) ?? [];
+    bucket.push(violation);
+    actualByStart.set(key(violation.startLine, violation.startCol), bucket);
   }
   const missed: ExpectedFailure[] = [];
   const endMismatches: FileResult["endMismatches"] = [];
@@ -325,7 +325,7 @@ function compare(expected: ExpectedFailure[], actual: ActualFinding[]): Pick<Fil
       continue;
     }
     truePositives += 1;
-    const sameEnd = bucket.findIndex(finding => finding.endLine === failure.endLine && finding.endCol === failure.endCol);
+    const sameEnd = bucket.findIndex(violation => violation.endLine === failure.endLine && violation.endCol === failure.endCol);
     if (sameEnd !== -1) {
       endAgreements += 1;
       bucket.splice(sameEnd, 1);
@@ -340,7 +340,7 @@ function compare(expected: ExpectedFailure[], actual: ActualFinding[]): Pick<Fil
 /** Whether any clause of a port document declares `violation.fix`. */
 function declaresFix(path: string): boolean {
   const document = z.object({ clauses: z.array(z.object({ violation: z.object({ fix: z.string().optional() }).passthrough() }).passthrough()) }).passthrough();
-  return document.parse(JSON.parse(readFileSync(path, "utf8"))).clauses.some(check => check.violation.fix !== undefined);
+  return document.parse(JSON.parse(readFileSync(path, "utf8"))).clauses.some(clause => clause.violation.fix !== undefined);
 }
 
 function median(values: number[]): number {
@@ -416,7 +416,7 @@ export async function evaluateRule(info: RuleInfo, runs: number, options: Evalua
 
   if (port.document === undefined && port.overrides.size === 0) return finish("NO_PORT", {});
 
-  const compiled = new Map<string, NativeCompiledPolicyDsl>();
+  const compiled = new Map<string, NativeCompiledCodeRuleDsl>();
   const compileErrors: string[] = [];
   for (const path of [port.document, ...port.overrides.values()]) {
     if (path === undefined) continue;
@@ -466,18 +466,18 @@ export async function evaluateRule(info: RuleInfo, runs: number, options: Evalua
         results.push({ ...common, skipped: "rule disabled for this file type in tslint.json", expected, source });
         continue;
       }
-      const policy = documentPath === undefined ? undefined : compiled.get(documentPath);
-      if (policy === undefined) {
+      const codeRule = documentPath === undefined ? undefined : compiled.get(documentPath);
+      if (codeRule === undefined) {
         results.push({ ...common, expected, missed: expected, source });
         continue;
       }
-      if (port.golden && documentPath === port.document && !policy.inScope(file.path)) {
+      if (port.golden && documentPath === port.document && !codeRule.inScope(file.path)) {
         results.push({ ...common, outOfScope: true, expected, source });
         continue;
       }
       let first: FileEvaluation | undefined;
       for (let run = 0; run < runs; run += 1) {
-        const evaluation = await evaluateFixture(policy, file, source);
+        const evaluation = await evaluateFixture(codeRule, file, source);
         first ??= evaluation;
         timings[run]! += evaluation.ms;
       }
@@ -488,7 +488,7 @@ export async function evaluateRule(info: RuleInfo, runs: number, options: Evalua
       const original: FileResult = {
         ...common,
         expected,
-        ...compare(expected, first.findings),
+        ...compare(expected, first.violations),
         engineFailures: first.failures,
         partial: first.partial,
         ...(fix === undefined ? {} : { fix }),
@@ -502,10 +502,10 @@ export async function evaluateRule(info: RuleInfo, runs: number, options: Evalua
       const fixed = applyRepairs(file.parsed.source, expected, repairs);
       repairErrors.push(...fixed.errors.map(message => `${variant.id}/${file.lintPath} ${message}`));
       const repairedSource = prepareSource(info.name, file, fixed.source, options).source;
-      const evaluation = await evaluateFixture(policy, file, repairedSource);
+      const evaluation = await evaluateFixture(codeRule, file, repairedSource);
       repairedFiles.push({
         original,
-        repaired: { ...common, expected: fixed.expected, ...compare(fixed.expected, evaluation.findings), engineFailures: evaluation.failures, partial: evaluation.partial, source: repairedSource },
+        repaired: { ...common, expected: fixed.expected, ...compare(fixed.expected, evaluation.violations), engineFailures: evaluation.failures, partial: evaluation.partial, source: repairedSource },
         dropped: fixed.dropped,
       });
     }

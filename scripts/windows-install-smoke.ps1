@@ -1,8 +1,8 @@
 # Release gate for native Windows: install a packed @neralabs/rerail tarball the way a user does, with
 # `npx @neralabs/rerail setup`, from a throwaway local registry standing in for npmjs, in a sandbox profile. Then
-# exercise the managed runtime: launcher, `current` junction, daemon and native kernel, Claude Code's exec-form
-# hook, the Codex hook as Codex runs it (PowerShell), update check, and harness removal. Uses `node` from PATH,
-# so the runner's architecture decides which native kernel is exercised.
+# exercise the managed runtime: launcher, `current` junction, daemon and native engine, Claude Code's exec-form
+# hook, the Codex hook as Codex runs it (PowerShell), update check, and coding-agent registration removal. Uses
+# `node` from PATH, so the runner's architecture decides which native engine is exercised.
 #
 # Only the @neralabs scope resolves through the local registry (Verdaccio); every dependency still comes from
 # npmjs, exactly as for a user who installs the published package.

@@ -5,9 +5,9 @@ import { loadNativeBinding } from "../src/native.js";
 describe("native model", () => {
   it("loads the pinned local artifact and exposes its fingerprint", () => {
     const native = loadNativeBinding();
-    const kernel = native.CosineKernel.load(resolve("model"), 256);
+    const engine = native.ConversationEngine.load(resolve("model"), 256);
 
-    expect(kernel.fingerprint()).toEqual({
+    expect(engine.fingerprint()).toEqual({
       modelId: "minishlab/potion-base-8M",
       revision: "bf8b056651a2c21b8d2565580b8569da283cab23",
       dimensions: 256,

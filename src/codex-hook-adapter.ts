@@ -25,7 +25,7 @@ const CONTEXT_EVENTS: EventTable = {
   PreToolUse: true,
 };
 
-/** Stop carries steering too: Codex continues the turn with it as a `decision: "block"` reason. */
+/** Stop carries steers too: Codex continues the turn with it as a `decision: "block"` reason. */
 const CARRY_EVENTS: EventTable = { ...CONTEXT_EVENTS, Stop: true };
 
 const { required: requiredText } = hookText("Codex");

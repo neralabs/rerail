@@ -44,7 +44,7 @@ describe("Rerail event protocol", () => {
     }))).toEqual({ eventId: "session-1:prompt-1", deliveries: [] });
   });
 
-  it("carries delivery rule ids across the kernel socket", () => {
+  it("carries delivery rule ids across the engine socket", () => {
     const delivery = {
       sessionId: "session-1",
       requested: "steer" as const,

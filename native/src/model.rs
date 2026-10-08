@@ -9,7 +9,7 @@ use std::{
 };
 use tokenizers::Tokenizer;
 
-pub const KERNEL_FORMAT_VERSION: u32 = 1;
+pub const ENGINE_FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,7 +44,8 @@ pub struct ModelFingerprint {
     pub dimensions: u32,
     pub weights_sha256: String,
     pub tokenizer_sha256: String,
-    pub kernel_format_version: u32,
+    #[napi(js_name = "kernelFormatVersion")]
+    pub engine_format_version: u32,
 }
 
 pub struct LoadedModel {
@@ -89,9 +90,9 @@ pub fn load_model(root: &Path) -> Result<LoadedModel> {
         ))
     })?;
 
-    if manifest.format_version != KERNEL_FORMAT_VERSION {
+    if manifest.format_version != ENGINE_FORMAT_VERSION {
         return Err(invalid(format!(
-            "unsupported model format version {}; expected {KERNEL_FORMAT_VERSION}",
+            "unsupported model format version {}; expected {ENGINE_FORMAT_VERSION}",
             manifest.format_version
         )));
     }
@@ -121,7 +122,7 @@ pub fn load_model(root: &Path) -> Result<LoadedModel> {
             dimensions,
             weights_sha256: manifest.files.model.sha256,
             tokenizer_sha256: manifest.files.tokenizer.sha256,
-            kernel_format_version: KERNEL_FORMAT_VERSION,
+            engine_format_version: ENGINE_FORMAT_VERSION,
         },
     })
 }

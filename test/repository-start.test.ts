@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase } from "../src/database.js";
 import { loadBundledRules } from "../src/rule-bootstrap.js";
-import { MOCK_COSINE_RULES, seedRerailDatabase } from "../src/seed.js";
+import { MOCK_CONVERSATION_RULES, seedRerailDatabase } from "../src/seed.js";
 import {
   isRerailStarted,
   repositoryStartState,
@@ -72,8 +72,8 @@ describe("repository start state", () => {
     // A rule switched off while stopped stays off: starting again does not run the set-up a second time.
     const context = resolveRepositoryContext(main);
     const catalog = ScopedRuleCatalog.open(databasePath, context);
-    catalog.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "kept-on" });
-    catalog.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "switched-off" });
+    catalog.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "kept-on" });
+    catalog.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "switched-off" });
     const switchedOff = "switched-off";
     catalog.setEnabled({ ids: [switchedOff] }, false);
     catalog.close();
@@ -237,7 +237,7 @@ describe("repository start state", () => {
       expect(await runtime.ingest({ kind: "session-end", eventId: "end", sessionId: "ending" })).toEqual([]);
       const raw = new Database(databasePath, { readonly: true });
       try {
-        // Closed now, not at dispose: its policy bridge and polling are released while the runtime lives on.
+        // Closed now, not at dispose: its code-rule bridge and polling are released while the runtime lives on.
         expect(raw.prepare("SELECT ended_at FROM sessions WHERE session_id = 'ending'").pluck().get()).not.toBeNull();
         expect(raw.prepare("SELECT event_id FROM events WHERE event_id = 'end'").pluck().all()).toEqual([]);
       } finally {
@@ -256,6 +256,7 @@ describe("repository start state", () => {
     expect(stopRerail(checkout, io, join(root, "rerail.sqlite"))).toBe("never");
     expect(io.lines).toEqual(["○ Rerail has not been started in landing-page, so there is nothing to stop. Start it with rerail start."]);
   });
+
 
   it("keeps a repository never started after `rerail seed` records its mock session", async () => {
     const root = await temporary("rerail-seed-");

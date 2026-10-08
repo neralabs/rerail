@@ -115,7 +115,7 @@ describe("placeCorrections", () => {
     expect(turns.flatMap(t => t.orphans)).toEqual([]);
   });
 
-  it("orphans a finding no call touches onto the second turn, or the only turn", () => {
+  it("orphans a violation no call touches onto the second turn, or the only turn", () => {
     const turns = fixture();
     const missing = correction("k1", "src/elsewhere.ts:1");
     const pathless = correction("k2", null);

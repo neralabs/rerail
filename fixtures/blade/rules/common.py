@@ -9,7 +9,7 @@ import subprocess
 
 HERE = pathlib.Path(__file__).resolve().parent
 PACK = HERE.parents[2] / "conformance" / "languages" / "blade" / "pack.json"
-# The directories the runner never walks (rerail/src/executable-policy-enforcer.ts, IGNORED_DIRECTORIES).
+# The directories the runner never walks (rerail/src/code-rule-enforcer.ts, IGNORED_DIRECTORIES).
 IGNORED = {".git", ".hg", ".svn", ".rerail", ".venv", "__pycache__", "node_modules", "dist", "build", ".next",
            ".turbo", "coverage", "target", "vendor"}
 

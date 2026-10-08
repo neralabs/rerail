@@ -9,7 +9,7 @@ declare module "*/ui/sessions-model.js" {
     finding: { path?: string | null; [k: string]: unknown };
     rule: unknown;
   }
-  export interface ToolCallView {
+  export interface CallView {
     key: string;
     verb: string;
     label: string;
@@ -39,7 +39,7 @@ declare module "*/ui/sessions-model.js" {
     aSeq: number | null;
     uTime: number | null;
     aTime: number | null;
-    tools: ToolCallView[];
+    tools: CallView[];
     orphans: Correction[];
     ended: boolean;
   }

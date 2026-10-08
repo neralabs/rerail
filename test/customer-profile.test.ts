@@ -11,7 +11,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  assertLocalPolicyKernelEntitlement,
+  assertLocalEngineEntitlement,
   authorizedUpdateChannel,
   runProfileCommand,
   signedUpdatePolicy,
@@ -146,13 +146,13 @@ describe("signed customer profiles", () => {
     expect(() => authorizedUpdateChannel(policy, "beta")).toThrow("restricts updates to channel latest");
     expect(policy).toEqual({
       profileName: "acme",
-      localPolicyKernel: true,
+      localEngine: true,
       automaticUpdates: true,
       channel: "latest",
     });
-    expect(() => assertLocalPolicyKernelEntitlement({
+    expect(() => assertLocalEngineEntitlement({
       ...(policy as NonNullable<typeof policy>),
-      localPolicyKernel: false,
+      localEngine: false,
     })).toThrow("does not entitle the local policy kernel");
   });
 

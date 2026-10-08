@@ -58,7 +58,7 @@ export function stableJsonText(value: unknown): string | undefined {
   }
 }
 
-/** Content digest of a rule document; equal digests mean the kernel would compile identical rules. */
+/** Content digest of a rule document; equal digests mean the engine would compile identical rules. */
 export function ruleDocumentDigest(document: RuleDocument): string {
   const canonical = stableJsonText({ kind: document.kind, rule: document.rule });
   if (canonical === undefined) throw new TypeError(`rule ${document.rule.id} is not JSON representable`);

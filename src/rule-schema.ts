@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { RULE_MODES } from "./rule-mode.js";
 
-export const COSINE_RULE_DOCUMENT_VERSION = 1 as const;
+export const CONVERSATION_RULE_DOCUMENT_VERSION = 1 as const;
 
 export const MATCH_OPERATORS = ["gte", "lte"] as const;
 export type MatchOperator = (typeof MATCH_OPERATORS)[number];
@@ -28,7 +28,7 @@ export const sampleSourceSchema = z.union(
  */
 export type MatchField = "text" | "tool.name" | "input" | `input.${string}`;
 
-/** A structural match, in the policy DSL's vocabulary: Rust regex syntax, `eq`, and `all`/`any`/`not`. */
+/** A structural match, in the code-rule DSL's vocabulary: Rust regex syntax, `eq`, and `all`/`any`/`not`. */
 export type MatchCondition =
   | { field: MatchField; regex: string }
   | { field: MatchField; eq: string }
@@ -47,7 +47,7 @@ export const matchConditionSchema: z.ZodType<MatchCondition> = z.lazy(() =>
   z
     .object({
       field: z.string().regex(MATCH_FIELD_PATTERN, "must be text, tool.name, input, or input.<path>").optional(),
-      // The kernel judges the dialect and size limit: see kernelRegexIssues in rule-regexes.ts.
+      // The engine judges the dialect and size limit: see engineRegexIssues in rule-regexes.ts.
       regex: z.string().min(1, "must not be empty").optional(),
       eq: z.string().optional(),
       contains: z.string().min(1, "must not be empty").optional(),
@@ -81,12 +81,12 @@ const similarityMatchSchema = z
   .strict();
 
 /** Whether a rule's match is a similarity threshold rather than a structural condition. */
-export function isSimilarityMatch(match: CosineRule["match"]): match is SimilarityMatch {
+export function isSimilarityMatch(match: ConversationRule["match"]): match is SimilarityMatch {
   return "operator" in match;
 }
 
 /** One-line summary for rule listings: `gte 0.8` for a similarity match, `structural` otherwise. */
-export function describeMatch(match: CosineRule["match"]): string {
+export function describeMatch(match: ConversationRule["match"]): string {
   return isSimilarityMatch(match) ? `${match.operator} ${match.threshold}` : "structural";
 }
 
@@ -99,7 +99,7 @@ function readsToolFields(condition: MatchCondition | undefined): boolean {
   return "not" in condition && readsToolFields(condition.not);
 }
 
-export const cosineRuleSchema = z
+export const conversationRuleSchema = z
   .object({
     id: nonEmptyString(MAX_ID_LENGTH),
     mode: z.enum(RULE_MODES),
@@ -150,16 +150,16 @@ export const cosineRuleSchema = z
     }
   });
 
-export type CosineRule = z.infer<typeof cosineRuleSchema>;
+export type ConversationRule = z.infer<typeof conversationRuleSchema>;
 
-export const cosineRuleDocumentSchema = z
+export const conversationRuleDocumentSchema = z
   .object({
-    version: z.literal(COSINE_RULE_DOCUMENT_VERSION),
-    rules: z.array(cosineRuleSchema),
+    version: z.literal(CONVERSATION_RULE_DOCUMENT_VERSION),
+    rules: z.array(conversationRuleSchema),
   })
   .strict();
 
-export type CosineRuleDocument = z.infer<typeof cosineRuleDocumentSchema>;
+export type ConversationRuleDocument = z.infer<typeof conversationRuleDocumentSchema>;
 
 function record(value: unknown, path: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -175,24 +175,24 @@ export function parseSampleSource(value: unknown, path: string): SampleSource {
 }
 
 /** Parse one rule, reporting the first failing field as `<path>.<field>: <reason>`. */
-export function parseCosineRule(value: unknown, path = "rule"): CosineRule {
-  const result = cosineRuleSchema.safeParse(value);
+export function parseConversationRule(value: unknown, path = "rule"): ConversationRule {
+  const result = conversationRuleSchema.safeParse(value);
   if (result.success) return result.data;
   const issue = result.error.issues[0]!;
   const location = [path, ...issue.path.map(String)].join(".");
   throw new TypeError(`${location} ${issue.message}`);
 }
 
-export function parseCosineRuleDocument(value: unknown): CosineRule[] {
+export function parseConversationRuleDocument(value: unknown): ConversationRule[] {
   const document = record(value, "rule document");
-  if (document.version !== COSINE_RULE_DOCUMENT_VERSION) {
-    throw new TypeError(`rule document.version must equal ${COSINE_RULE_DOCUMENT_VERSION}`);
+  if (document.version !== CONVERSATION_RULE_DOCUMENT_VERSION) {
+    throw new TypeError(`rule document.version must equal ${CONVERSATION_RULE_DOCUMENT_VERSION}`);
   }
   if (!Array.isArray(document.rules)) {
     throw new TypeError("rule document.rules must be an array");
   }
 
-  const rules = document.rules.map((rule, index) => parseCosineRule(rule, `rule document.rules[${index}]`));
+  const rules = document.rules.map((rule, index) => parseConversationRule(rule, `rule document.rules[${index}]`));
   const ids = new Set<string>();
   for (const rule of rules) {
     if (ids.has(rule.id)) throw new TypeError(`duplicate rule id: ${rule.id}`);

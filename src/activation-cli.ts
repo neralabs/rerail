@@ -13,7 +13,7 @@ export interface ParsedOption {
 }
 
 export interface SignedUpdatePolicy {
-  localPolicyKernel: boolean;
+  localEngine: boolean;
   profileName: string;
   automaticUpdates: boolean;
   channel: string;
@@ -70,7 +70,7 @@ export async function signedUpdatePolicy(
     automaticUpdates: selected.verified.profile.entitlement.automaticUpdates
       && features.includes("automatic-updates"),
     channel: selected.verified.profile.entitlement.updateChannel,
-    localPolicyKernel: features.includes("local-policy-kernel"),
+    localEngine: features.includes("local-policy-kernel"),
   };
 }
 
@@ -84,8 +84,8 @@ export function authorizedUpdateChannel(
   return policy?.channel ?? requestedChannel;
 }
 
-export function assertLocalPolicyKernelEntitlement(policy: SignedUpdatePolicy | undefined): void {
-  if (policy !== undefined && !policy.localPolicyKernel) {
+export function assertLocalEngineEntitlement(policy: SignedUpdatePolicy | undefined): void {
+  if (policy !== undefined && !policy.localEngine) {
     throw new Error(`Signed profile ${policy.profileName} does not entitle the local policy kernel`);
   }
 }

@@ -16,16 +16,16 @@ import Database from "better-sqlite3";
 import type { CustomMessagePayload, ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { z } from "zod";
 import { RULE_MESSAGE_TYPE } from "../src/adapter-contract.js";
-import { createCosineRulesExtension } from "../src/extension.js";
-import type { CosineRule } from "../src/rule-schema.js";
+import { createConversationRulesExtension } from "../src/extension.js";
+import type { ConversationRule } from "../src/rule-schema.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "./native-daemon-fixture.js";
 import { defaultRerailDatabasePath, resetRepositoryHistory } from "../src/database.js";
 import { openScopedRuleCatalog, resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
-import { SqliteTranscriptReader } from "../src/transcript-store.js";
+import { SqliteSessionReader } from "../src/session-store.js";
 import { isRerailStarted } from "../src/repository-start.js";
 import { startTestRepository } from "./support/started-repository.js";
 
-// Every test here builds real sessions (native model, kernel, rule catalog); on a loaded CI runner a
+// Every test here builds real sessions (native model, engine, rule catalog); on a loaded CI runner a
 // build alone can pass the 5 s default, whichever test happens to pay the cold start.
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -107,7 +107,7 @@ function receiptCount(context: ExtensionContext): number {
   }
 }
 
-const sentenceRule: CosineRule = {
+const sentenceRule: ConversationRule = {
   id: "checkout",
   mode: "steer",
   reference: "Guest checkout remains available.",
@@ -117,10 +117,10 @@ const sentenceRule: CosineRule = {
   repeat: { mode: "once" },
 };
 
-describe("OMP cosine-rules extension", () => {
+describe("OMP conversation-rules extension", () => {
   it.each(["steer", "block"] as const)("steers immediately when a streamed sentence matches a %s rule", async mode => {
     const harness = await createHarness();
-    createCosineRulesExtension({
+    createConversationRulesExtension({
       modelPath: resolve("model"),
       rules: [{ ...sentenceRule, mode }],
       registerTool: false,
@@ -170,7 +170,7 @@ describe("OMP cosine-rules extension", () => {
       isIdle: () => true,
       hasPendingMessages: () => false,
     });
-    createCosineRulesExtension({
+    createConversationRulesExtension({
       modelPath: resolve("model"),
       rules: [{
         ...sentenceRule,
@@ -193,7 +193,7 @@ describe("OMP cosine-rules extension", () => {
   it("does not count a rejected native send", async () => {
     const harness = await createHarness();
     harness.pi.sendMessage = () => { throw new Error("host rejected guidance"); };
-    createCosineRulesExtension({
+    createConversationRulesExtension({
       modelPath: resolve("model"), rules: [sentenceRule], registerTool: false, registerCommand: false,
     })(harness.pi);
     await harness.handlers.get("session_start")?.({ type: "session_start" }, harness.context);
@@ -205,7 +205,7 @@ describe("OMP cosine-rules extension", () => {
     expect(receiptCount(harness.context)).toBe(0);
   });
 
-  it("loads enabled cosine rules from the project database and lets them override file rules", async () => {
+  it("loads enabled conversation rules from the project database and lets them override file rules", async () => {
     const harness = await createHarness();
     mkdirSync(join(harness.context.cwd, ".omp"));
     writeFileSync(join(harness.context.cwd, ".omp", "conversation-rules.json"), JSON.stringify({
@@ -220,10 +220,10 @@ describe("OMP cosine-rules extension", () => {
       rules: [{ ...sentenceRule, id: "file-only", action: { content: "File-only rule." } }],
     }), { flag: "wx" });
     const store = openScopedRuleCatalog(harness.context.cwd);
-    store.upsertCosine({ ...sentenceRule, action: { content: "From the database." } });
-    store.upsertCosine({ ...sentenceRule, id: "disabled", action: { content: "Disabled rule." } }, { enabled: false });
+    store.upsertConversationRule({ ...sentenceRule, action: { content: "From the database." } });
+    store.upsertConversationRule({ ...sentenceRule, id: "disabled", action: { content: "Disabled rule." } }, { enabled: false });
     store.close();
-    createCosineRulesExtension({
+    createConversationRulesExtension({
       modelPath: resolve("model"),
       rules: [{ ...sentenceRule, id: "file-only", action: { content: "Host fallback." } }],
       ruleFiles: [".omp/conversation-rules.json", ".omp/second-rules.json"],
@@ -247,7 +247,7 @@ describe("OMP cosine-rules extension", () => {
 
   it("counts after-gap repeats across separate agent runs", async () => {
     const harness = await createHarness();
-    createCosineRulesExtension({
+    createConversationRulesExtension({
       modelPath: resolve("model"),
       rules: [{ ...sentenceRule, repeat: { mode: "after-gap", gapTurns: 2 } }],
       registerTool: false,
@@ -288,7 +288,7 @@ describe("OMP cosine-rules extension", () => {
 
   it("samples awaited tool calls and tolerates malformed tool arguments", async () => {
     const harness = await createHarness();
-    const toolRule: CosineRule = {
+    const toolRule: ConversationRule = {
       ...sentenceRule,
       id: "tool-input",
       reference: '{"checkout":"Guest checkout remains available."}',
@@ -296,7 +296,7 @@ describe("OMP cosine-rules extension", () => {
       sample: { source: "tool:submit", boundary: "tool-call", minimumTokens: 1 },
       action: { content: "Observe the tool." },
     };
-    createCosineRulesExtension({
+    createConversationRulesExtension({
       modelPath: resolve("model"),
       rules: [toolRule],
       registerTool: false,
@@ -350,7 +350,7 @@ describe("OMP cosine-rules extension", () => {
 
   it("steers on a structural tool-call rule and ignores the tool result that echoes it", async () => {
     const harness = await createHarness();
-    const forcePush: CosineRule = {
+    const forcePush: ConversationRule = {
       id: "no-force-push",
       mode: "log",
       match: { field: "input.command", regex: "\\bgit\\s+push\\b[^\\n]*--force\\b" },
@@ -358,7 +358,7 @@ describe("OMP cosine-rules extension", () => {
       action: { content: "Do not force-push." },
       repeat: { mode: "always" },
     };
-    createCosineRulesExtension({
+    createConversationRulesExtension({
       modelPath: resolve("model"),
       rules: [forcePush],
       registerTool: false,
@@ -366,12 +366,12 @@ describe("OMP cosine-rules extension", () => {
     })(harness.pi);
     await harness.handlers.get("session_start")?.({ type: "session_start" }, harness.context);
 
-    const toolCall = (toolCallId: string, command: string) => harness.handlers.get("tool_call")?.(
+    const call = (toolCallId: string, command: string) => harness.handlers.get("tool_call")?.(
       { type: "tool_call", toolCallId, toolName: "bash", input: { command } },
       harness.context,
     );
-    await toolCall("tool-1", "git push origin feature/auth");
-    await toolCall("tool-2", "git push --force origin main");
+    await call("tool-1", "git push origin feature/auth");
+    await call("tool-2", "git push --force origin main");
     await harness.handlers.get("tool_result")?.(
       {
         type: "tool_result",
@@ -395,7 +395,7 @@ describe("OMP cosine-rules extension", () => {
   it("detaches the current OMP runtime when Rerail is stopped in the repository", async () => {
     const harness = await createHarness();
     const notices: Array<{ message: string; level: string }> = [];
-    createCosineRulesExtension({
+    createConversationRulesExtension({
       modelPath: resolve("model"),
       rules: [sentenceRule],
       registerTool: false,
@@ -420,7 +420,7 @@ describe("OMP cosine-rules extension", () => {
     const harness = await createHarness();
     const configured = join(harness.context.cwd, "configured", "rules.sqlite");
     startTestRepository(harness.context.cwd, configured);
-    createCosineRulesExtension({
+    createConversationRulesExtension({
       modelPath: resolve("model"),
       databasePath: configured,
       rules: [sentenceRule],
@@ -439,7 +439,7 @@ describe("OMP cosine-rules extension", () => {
 
   it("records and steers nothing in a repository where Rerail was never started", async () => {
     const harness = await createHarness({ started: false });
-    createCosineRulesExtension({
+    createConversationRulesExtension({
       modelPath: resolve("model"),
       rules: [sentenceRule],
       registerTool: false,
@@ -451,7 +451,7 @@ describe("OMP cosine-rules extension", () => {
     );
 
     expect(harness.messages).toEqual([]);
-    const reader = new SqliteTranscriptReader(defaultRerailDatabasePath());
+    const reader = new SqliteSessionReader(defaultRerailDatabasePath());
     try {
       expect(reader.session("omp-test-session")).toBeUndefined();
     } finally {
@@ -459,9 +459,9 @@ describe("OMP cosine-rules extension", () => {
     }
   });
 
-  it("retires the live owner before rebuilding the same OMP session through cosine reload", async () => {
+  it("retires the live owner before rebuilding the same OMP session through a conversation rules reload", async () => {
     const harness = await createHarness();
-    createCosineRulesExtension({
+    createConversationRulesExtension({
       modelPath: resolve("model"),
       rules: [sentenceRule],
       registerTool: false,
@@ -486,7 +486,7 @@ describe("OMP cosine-rules extension", () => {
 
   it("keeps recording and delivering guidance after an in-place reset beneath the daemon", async () => {
     const harness = await createHarness();
-    createCosineRulesExtension({
+    createConversationRulesExtension({
       modelPath: resolve("model"),
       rules: [{ ...sentenceRule, repeat: { mode: "always" } }],
       registerTool: false, registerCommand: false,
@@ -504,7 +504,7 @@ describe("OMP cosine-rules extension", () => {
     expect(harness.messages.map(sent => sent.message.content)).toEqual([
       "Check checkout requirements.", "Check checkout requirements.",
     ]);
-    const reader = new SqliteTranscriptReader(databasePath);
+    const reader = new SqliteSessionReader(databasePath);
     try {
       expect(reader.events("omp-test-session").map(event => event.kind)).toEqual([
         "assistant-delta",
@@ -515,6 +515,7 @@ describe("OMP cosine-rules extension", () => {
       reader.close();
     }
   });
+
 
   describe("attach retry", () => {
     /** A running daemon whose native sessions can be refused by name, and whose next initialize can be held mid-flight. */
@@ -546,7 +547,7 @@ describe("OMP cosine-rules extension", () => {
       const daemon = flakyDaemon(harness.context.cwd);
       vi.useFakeTimers();
       const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-      createCosineRulesExtension({ modelPath: resolve("model"), rules: [sentenceRule], registerTool: false, registerCommand: false })(harness.pi);
+      createConversationRulesExtension({ modelPath: resolve("model"), rules: [sentenceRule], registerTool: false, registerCommand: false })(harness.pi);
       daemon.state.down.add("omp-test-session");
       await expect(harness.handlers.get("session_start")!({ type: "session_start" }, harness.context)).rejects.toThrow("fetch failed");
       expect(daemon.initializes("omp-test-session")).toBe(1);
@@ -572,7 +573,7 @@ describe("OMP cosine-rules extension", () => {
       const daemon = flakyDaemon(harness.context.cwd);
       vi.useFakeTimers();
       vi.spyOn(process.stderr, "write").mockReturnValue(true);
-      createCosineRulesExtension({ modelPath: resolve("model"), rules: [sentenceRule], registerTool: false, registerCommand: false })(harness.pi);
+      createConversationRulesExtension({ modelPath: resolve("model"), rules: [sentenceRule], registerTool: false, registerCommand: false })(harness.pi);
       const next = { ...harness.context, sessionManager: { getSessionId: () => "omp-next-session", getBranch: () => [] } } as unknown as ExtensionContext;
       daemon.state.down.add("omp-test-session");
       await expect(harness.handlers.get("session_start")!({ type: "session_start" }, harness.context)).rejects.toThrow();
@@ -600,7 +601,7 @@ describe("OMP cosine-rules extension", () => {
       const daemon = flakyDaemon(harness.context.cwd);
       vi.useFakeTimers();
       vi.spyOn(process.stderr, "write").mockReturnValue(true);
-      createCosineRulesExtension({ modelPath: resolve("model"), rules: [sentenceRule], registerTool: false, registerCommand: false })(harness.pi);
+      createConversationRulesExtension({ modelPath: resolve("model"), rules: [sentenceRule], registerTool: false, registerCommand: false })(harness.pi);
       daemon.state.down.add("omp-test-session");
       await expect(harness.handlers.get("session_start")!({ type: "session_start" }, harness.context)).rejects.toThrow();
 
@@ -623,7 +624,7 @@ describe("OMP cosine-rules extension", () => {
       const daemon = flakyDaemon(harness.context.cwd);
       vi.useFakeTimers();
       vi.spyOn(process.stderr, "write").mockReturnValue(true);
-      createCosineRulesExtension({ modelPath: resolve("model"), rules: [sentenceRule], registerTool: false, registerCommand: false })(harness.pi);
+      createConversationRulesExtension({ modelPath: resolve("model"), rules: [sentenceRule], registerTool: false, registerCommand: false })(harness.pi);
       const next = { ...harness.context, sessionManager: { getSessionId: () => "omp-next-session", getBranch: () => [] } } as unknown as ExtensionContext;
       await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
       expect(daemon.initializes("omp-test-session")).toBe(1);

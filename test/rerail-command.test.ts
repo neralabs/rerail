@@ -1,15 +1,15 @@
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ presentation: vi.fn(), rulesPage: vi.fn(), openPage: vi.fn() }));
-vi.mock("../src/session-presentation.js", () => ({ readPresentation: mocks.presentation, readRulesPage: mocks.rulesPage }));
+const mocks = vi.hoisted(() => ({ presentation: vi.fn(), rulesDashboard: vi.fn(), openDashboard: vi.fn() }));
+vi.mock("../src/session-presentation.js", () => ({ readPresentation: mocks.presentation, readRulesDashboard: mocks.rulesDashboard }));
 vi.mock("../src/daemon-control.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../src/daemon-control.js"),
-  openPage: mocks.openPage,
+  openDashboard: mocks.openDashboard,
 }));
 import { registerRerailCommands, type RerailCommandHost, type RerailCommandContext } from "../src/rerail-command.js";
 
 beforeEach(() => {
-  mocks.openPage.mockResolvedValue("system-browser");
+  mocks.openDashboard.mockResolvedValue("system-browser");
 });
 
 afterEach(() => {
@@ -37,27 +37,27 @@ function commandHarness() {
 
 describe("/rerail-ui", () => {
   it("opens the rules page in the browser", async () => {
-    mocks.rulesPage.mockResolvedValue({ url: "http://127.0.0.1:4737/#rules", reason: null });
+    mocks.rulesDashboard.mockResolvedValue({ url: "http://127.0.0.1:4737/#rules", reason: null });
     const { run, notices } = commandHarness();
     await run("rerail-ui");
-    expect(mocks.rulesPage).toHaveBeenCalledWith({ cwd: "/workspace" });
-    expect(mocks.openPage).toHaveBeenCalledWith("http://127.0.0.1:4737/#rules");
+    expect(mocks.rulesDashboard).toHaveBeenCalledWith({ cwd: "/workspace" });
+    expect(mocks.openDashboard).toHaveBeenCalledWith("http://127.0.0.1:4737/#rules");
     expect(notices).toEqual([{ message: "Opening http://127.0.0.1:4737/#rules", level: "info" }]);
   });
 
   it("says so when the page opened as a tab in the Orca window", async () => {
-    mocks.rulesPage.mockResolvedValue({ url: "http://127.0.0.1:4737/#rules", reason: null });
-    mocks.openPage.mockResolvedValue("orca-tab");
+    mocks.rulesDashboard.mockResolvedValue({ url: "http://127.0.0.1:4737/#rules", reason: null });
+    mocks.openDashboard.mockResolvedValue("orca-tab");
     const { run, notices } = commandHarness();
     await run("rerail-ui");
     expect(notices).toEqual([{ message: "Opening http://127.0.0.1:4737/#rules in the Orca window", level: "info" }]);
   });
 
   it("reports why there is no page instead of opening nothing", async () => {
-    mocks.rulesPage.mockResolvedValue({ url: null, reason: "daemon unavailable" });
+    mocks.rulesDashboard.mockResolvedValue({ url: null, reason: "daemon unavailable" });
     const { run, notices } = commandHarness();
     await run("rerail-ui");
-    expect(mocks.openPage).not.toHaveBeenCalled();
+    expect(mocks.openDashboard).not.toHaveBeenCalled();
     expect(notices).toEqual([{ message: "/rerail-ui: no Rerail page to open: daemon unavailable", level: "error" }]);
   });
 });
@@ -67,7 +67,7 @@ describe("/rerail-session", () => {
     mocks.presentation.mockResolvedValue({ text: "Rerail | 3 rules", url: "http://127.0.0.1:4737/?sessionId=session-1&host=omp#sessions", parts: [], presence: "resident" });
     const { run, notices } = commandHarness();
     await run("rerail-session");
-    expect(mocks.openPage).toHaveBeenCalledWith("http://127.0.0.1:4737/?sessionId=session-1&host=omp#sessions");
+    expect(mocks.openDashboard).toHaveBeenCalledWith("http://127.0.0.1:4737/?sessionId=session-1&host=omp#sessions");
     expect(notices).toEqual([{ message: "Opening http://127.0.0.1:4737/?sessionId=session-1&host=omp#sessions", level: "info" }]);
   });
 
@@ -75,7 +75,7 @@ describe("/rerail-session", () => {
     mocks.presentation.mockResolvedValue({ text: "Rerail | daemon unavailable", url: null, parts: [], presence: "absent" });
     const { run, notices } = commandHarness();
     await run("rerail-session");
-    expect(mocks.openPage).not.toHaveBeenCalled();
+    expect(mocks.openDashboard).not.toHaveBeenCalled();
     expect(notices).toEqual([{ message: "/rerail-session: no Rerail page to open: Rerail | daemon unavailable", level: "error" }]);
   });
 });

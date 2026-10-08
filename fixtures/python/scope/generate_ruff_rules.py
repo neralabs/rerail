@@ -1,5 +1,5 @@
 """Writes ruff-rules.expected.json: the lines where Ruff's own rules report on small file trees, per case, for the ports
-the kernel tests pin (T100 over relative imports, B905 by target version, INP001, N999 and A005 by module path, N999's ignored names and
+the engine tests pin (T100 over relative imports, B905 by target version, INP001, N999 and A005 by module path, N999's ignored names and
 migration directories). Each case's files are written to a scratch directory and checked
 there, so package detection and module paths are Ruff's. Run offline, not in CI:
 python3 generate_ruff_rules.py <path to a ruff executable>."""

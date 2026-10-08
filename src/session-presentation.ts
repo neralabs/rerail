@@ -30,14 +30,14 @@ export interface PresentationRequest {
   onDemand?: boolean;
 }
 
-export interface RulesPageRequest {
+export interface RulesDashboardRequest {
   cwd: string;
 }
 
-export type RulesPage = { url: string; reason: null } | { url: null; reason: string };
+export type RulesDashboard = { url: string; reason: null } | { url: null; reason: string };
 
 /** `<origin>/#rules` — the rules view of the daemon page. */
-export function rulesPageUrl(origin: URL): string {
+export function rulesDashboardUrl(origin: URL): string {
   const url = new URL(origin);
   url.hash = "rules";
   return url.href;
@@ -97,34 +97,34 @@ async function get<Schema extends z.ZodType>(origin: URL, path: string, schema: 
 }
 
 function sessionParts(origin: URL, { session, hud }: z.infer<typeof sessionResponseSchema>): SessionPresentation["parts"] {
-  const sessionUrl = new URL(origin);
-  sessionUrl.searchParams.set("sessionId", session.sessionId);
-  sessionUrl.searchParams.set("host", session.host);
-  sessionUrl.hash = "sessions";
-  const rulesUrl = rulesPageUrl(origin);
+  const sessionLink = new URL(origin);
+  sessionLink.searchParams.set("sessionId", session.sessionId);
+  sessionLink.searchParams.set("host", session.host);
+  sessionLink.hash = "sessions";
+  const rulesUrl = rulesDashboardUrl(origin);
   const ruleNoun = hud.activeRuleCount === 1 ? "rule" : "rules";
   return [
-    { text: "Rerail", url: sessionUrl.href },
+    { text: "Rerail", url: sessionLink.href },
     { text: hud.activeRuleCount === null ? "rules unavailable" : `${hud.activeRuleCount} ${ruleNoun}`, url: rulesUrl },
-    { text: hud.steeringCount === null ? "steering unavailable" : `steered ${hud.steeringCount}×`, url: sessionUrl.href },
+    { text: hud.steeringCount === null ? "steering unavailable" : `steered ${hud.steeringCount}×`, url: sessionLink.href },
   ];
 }
 
-async function appendEvaluation(
-  parts: SessionPresentation["parts"], { audit: run }: z.infer<typeof sessionResponseSchema>,
+async function appendAudit(
+  parts: SessionPresentation["parts"], { audit: audit }: z.infer<typeof sessionResponseSchema>,
   nativeOk: boolean, workspace: string, onDemand: boolean,
 ): Promise<void> {
   try {
-    if (run !== null && await realpath(run.workspaceRoot) !== workspace) throw new Error("Mismatched evaluation identity");
+    if (audit !== null && await realpath(audit.workspaceRoot) !== workspace) throw new Error("Mismatched evaluation identity");
     if (onDemand) {
-      const evaluation = run === null ? "not evaluated"
-        : `${run.scope}: ${run.status} | ${run.violationCount} findings | ${run.failureCount} failures`;
+      const evaluation = audit === null ? "not evaluated"
+        : `${audit.scope}: ${audit.status} | ${audit.violationCount} findings | ${audit.failureCount} failures`;
       parts.push({ text: `${nativeOk ? "healthy" : "kernel unavailable"} | ${evaluation}`, url: null });
       return;
     }
     if (!nativeOk) parts.push({ text: "kernel unavailable", url: null });
-    if (run?.status === "running") parts.push({ text: "checking…", url: null });
-    else if (run?.status === "failed" || (run !== null && run.failureCount > 0)) parts.push({ text: "evaluation failed", url: null });
+    if (audit?.status === "running") parts.push({ text: "checking…", url: null });
+    else if (audit?.status === "failed" || (audit !== null && audit.failureCount > 0)) parts.push({ text: "evaluation failed", url: null });
   } catch {
     parts.push({ text: "evaluation unavailable", url: null });
   }
@@ -184,7 +184,7 @@ async function verifyDaemon(cwd: string): Promise<VerifiedDaemon | string> {
  * The page edits the rules of the daemon's repository, so a daemon that cannot show it was
  * started in this checkout's repository is refused rather than handed out. Passive: never starts a daemon.
  */
-export async function readRulesPage({ cwd }: RulesPageRequest): Promise<RulesPage> {
+export async function readRulesDashboard({ cwd }: RulesDashboardRequest): Promise<RulesDashboard> {
   if (typeof cwd !== "string" || !isAbsolute(cwd)) return { url: null, reason: "daemon unavailable" };
   try {
     const daemon = await verifyDaemon(cwd);
@@ -193,7 +193,7 @@ export async function readRulesPage({ cwd }: RulesPageRequest): Promise<RulesPag
     if (health === undefined) return { url: null, reason: "daemon unavailable" };
     const repositoryId = readRepositoryId(daemon.workspace);
     if (repositoryId === undefined || health.repositoryId !== repositoryId) return { url: null, reason: "daemon serves another repository" };
-    return { url: rulesPageUrl(daemon.origin), reason: null };
+    return { url: rulesDashboardUrl(daemon.origin), reason: null };
   } catch {
     return { url: null, reason: "unavailable" };
   }
@@ -239,14 +239,14 @@ export async function readPresentation({ sessionId, host, cwd, onDemand = false 
     if (response.repositoryState !== "started") return unavailable(NOT_ON_HERE, presence, response.repositoryState);
     if (context.session === null) return unavailable("session unavailable", presence, "started");
     const { session } = context.session;
-    // The harness may sit below its launch root; the session's canonical cwd stays the identity.
+    // The host may sit below its launch root; the session's canonical cwd stays the identity.
     const root = await realpath(session.cwd);
     if (session.sessionId !== sessionId || session.host !== host || !withinCheckout(root, workspace)) {
       return unavailable("session unavailable", presence, "started");
     }
     const parts = sessionParts(origin, context.session);
     // History failure must not discard already verified session counters.
-    await appendEvaluation(parts, context.session, context.daemon.native.ok, root, onDemand);
+    await appendAudit(parts, context.session, context.daemon.native.ok, root, onDemand);
     return presentation(parts, presence, "started");
   } catch {
     return unavailable("unavailable", presence);

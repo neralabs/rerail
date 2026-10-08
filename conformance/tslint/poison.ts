@@ -2,7 +2,7 @@
  * Identifier-poisoning gate: scores every port on the normal fixtures and on the renamed fixtures (`rename.ts`) and
  * reports each rule whose score moves. A port that implements structure scores identically; one that matches names only
  * the fixtures use (`foo`, `MyClass`) loses TPs or gains FPs. Parse checks per file: TypeScript's syntax diagnostics
- * (in the runner) and the kernel's `source-partial` error-region message must be unchanged by the rename.
+ * (in the runner) and the engine's `source-partial` error-region message must be unchanged by the rename.
  *
  *   node --import tsx conformance/tslint/cli.ts --rename-identifiers                 every rule, table of rules whose score changed
  *   node --import tsx conformance/tslint/cli.ts --rename-identifiers --rule <name>   one rule's detailed diff on the renamed fixtures
@@ -36,9 +36,9 @@ export interface RenameComparison {
   normalRepaired: Score | undefined;
   renamedRepaired: Score | undefined;
   changed: boolean;
-  /** Renamer problems: parse changes (TypeScript or kernel) and exhausted names. */
+  /** Renamer problems: parse changes (TypeScript or engine) and exhausted names. */
   renamerIssues: string[];
-  /** Expected failures missed only on the renamed fixtures, and findings extra only there (`file line:col`). */
+  /** Expected failures missed only on the renamed fixtures, and violations extra only there (`file line:col`). */
   lostOnRename: string[];
   gainedOnRename: string[];
 }

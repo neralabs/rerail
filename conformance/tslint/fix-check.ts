@@ -1,6 +1,6 @@
 /** Suggested fixes emitted by a port, applied the way TSLint applies them and compared with its `.fix` files. */
 
-/** A finding's suggested fix: replace `[startByte, endByte)` of the fixture source with `text`. */
+/** A violation's suggested fix: replace `[startByte, endByte)` of the fixture source with `text`. */
 export interface EmittedFix {
   startByte: number;
   endByte: number;

@@ -1,12 +1,12 @@
-import type { CosineRuleRegistry } from "./registry.js";
-import { parseCosineRule, type CosineRule } from "./rule-schema.js";
+import type { ConversationRuleRegistry } from "./registry.js";
+import { parseConversationRule, type ConversationRule } from "./rule-schema.js";
 
 export const MATCH_ENTRY_TYPE = "rerail.match";
 export const MUTATION_ENTRY_TYPE = "rerail.mutation";
 export const TURN_ENTRY_TYPE = "rerail.turn";
 
 export type RuleMutation =
-  | { operation: "upsert"; rule: CosineRule; replace: boolean }
+  | { operation: "upsert"; rule: ConversationRule; replace: boolean }
   | { operation: "remove"; ids: string[] };
 
 export interface SessionEntryLike {
@@ -23,16 +23,16 @@ function entryData(entry: SessionEntryLike): Record<string, unknown> | undefined
 }
 
 /** A persisted rule that no longer parses is skipped with a notice, so it cannot block session restore. */
-export function restorableRule(value: unknown, path: string): CosineRule | undefined {
+export function restorableRule(value: unknown, path: string): ConversationRule | undefined {
   try {
-    return parseCosineRule(value, path);
+    return parseConversationRule(value, path);
   } catch (error) {
     process.stderr.write(`rerail: skipped unreadable rule mutation: ${error instanceof Error ? error.message : String(error)}\n`);
     return undefined;
   }
 }
 
-function replayMutation(registry: CosineRuleRegistry, data: Record<string, unknown>): void {
+function replayMutation(registry: ConversationRuleRegistry, data: Record<string, unknown>): void {
   if (data.operation === "upsert") {
     const rule = restorableRule(data.rule, "session mutation rule");
     if (rule !== undefined) registry.upsert(rule, { replace: data.replace === true });
@@ -42,7 +42,7 @@ function replayMutation(registry: CosineRuleRegistry, data: Record<string, unkno
 }
 
 function replayEntry(
-  registry: CosineRuleRegistry,
+  registry: ConversationRuleRegistry,
   entry: SessionEntryLike,
   currentTurn: number,
 ): number {
@@ -66,7 +66,7 @@ function replayEntry(
 }
 
 export function replaySessionState(
-  registry: CosineRuleRegistry,
+  registry: ConversationRuleRegistry,
   entries: readonly SessionEntryLike[],
 ): number {
   let currentTurn = 0;

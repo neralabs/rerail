@@ -89,12 +89,12 @@ export class ReferenceHostAdapter implements HostAdapterContractDriver {
     return this.#runtime.ingest(event);
   }
 
-  requestDelivery(
+  requestSteer(
     sessionId: string,
     requested: AdapterDelivery["requested"],
     content: string,
   ): Promise<void> {
-    return this.#runtime.requestDelivery(sessionId, requested, content);
+    return this.#runtime.requestSteer(sessionId, requested, content);
   }
 
   samples(): readonly AdapterSample[] {

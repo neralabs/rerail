@@ -1,11 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { CosineRuleRegistry } from "./registry.js";
+import type { ConversationRuleRegistry } from "./registry.js";
 import { MUTATION_ENTRY_TYPE, type RuleMutation } from "./session-state.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "./rule-schema.js";
 
-export interface PiCosineRulesToolRuntime {
-  registry?: () => CosineRuleRegistry;
+export interface PiConversationRulesToolRuntime {
+  registry?: () => ConversationRuleRegistry;
   turn?: () => number;
   remoteExecute?: () => ((input: unknown) => Promise<unknown>) | undefined;
 }
@@ -34,7 +34,7 @@ function toolResult(details: Record<string, unknown>) {
   };
 }
 
-export function registerPiCosineRulesTool(pi: ExtensionAPI, runtime: PiCosineRulesToolRuntime): void {
+export function registerPiConversationRulesTool(pi: ExtensionAPI, runtime: PiConversationRulesToolRuntime): void {
   pi.registerTool({
     name: "conversation_rules",
     label: "Cosine Rules",

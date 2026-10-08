@@ -2,11 +2,11 @@
 /// checks the identities the build script computes.
 #[cfg(test)]
 mod build_identity;
+mod code_rule_dsl;
 pub mod content_store;
 pub mod git_workspace;
 mod main_instance;
 mod model;
-mod policy_dsl;
 pub mod process;
 mod rules;
 
@@ -98,14 +98,15 @@ pub(crate) static WORK_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
 #[napi(object)]
 pub struct Health {
     pub ok: bool,
-    pub kernel_version: String,
+    #[napi(js_name = "kernelVersion")]
+    pub engine_version: String,
 }
 
 #[napi]
 pub fn health() -> Health {
     Health {
         ok: true,
-        kernel_version: "1".to_owned(),
+        engine_version: "1".to_owned(),
     }
 }
 
@@ -213,14 +214,14 @@ pub(crate) fn purge_allocator_pages() {
 }
 
 #[napi]
-pub struct CosineKernel {
+pub struct ConversationEngine {
     encoder: ModelEncoder,
     fingerprint: ModelFingerprint,
     rules: RuleSet,
 }
 
 #[napi]
-impl CosineKernel {
+impl ConversationEngine {
     #[napi(factory)]
     pub fn load(model_path: String, max_input_tokens: u32) -> Result<Self> {
         if max_input_tokens == 0 {

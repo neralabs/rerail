@@ -3,8 +3,8 @@ export type ParityHost = (typeof PARITY_HOSTS)[number];
 
 export const REQUIRED_CAPABILITIES = [
   "event-capture",
-  "transcript-persistence",
-  "configured-rule-evaluation",
+  "session-persistence",
+  "configured-rule-audit",
   "repeat-policy",
   "automatic-delivery",
   "rule-management",

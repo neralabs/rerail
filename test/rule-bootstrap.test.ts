@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase } from "../src/database.js";
-import { policyRuleSchema, type PolicyRule } from "../src/policy-schema.js";
+import { codeRuleSchema, type CodeRule } from "../src/code-rule-schema.js";
 import { loadBundledRules } from "../src/rule-bootstrap.js";
 import { SqliteRuleStore, type BundledRuleDocument, type RuleDocument } from "../src/rule-store.js";
 import { ruleDocumentDigest } from "../src/stable-json.js";
@@ -24,8 +24,8 @@ async function temporaryDatabase(): Promise<string> {
   return join(root, ".rerail", "rerail.sqlite");
 }
 
-function policy(id: string, revision = 1, message = "No print"): PolicyRule {
-  return policyRuleSchema.parse({
+function codeRule(id: string, revision = 1, message = "No print"): CodeRule {
+  return codeRuleSchema.parse({
     clauses: [
       {
         id: `${id}:check`,
@@ -40,12 +40,12 @@ function policy(id: string, revision = 1, message = "No print"): PolicyRule {
   });
 }
 
-const bundled = (...rules: PolicyRule[]): RuleDocument[] => rules.map(rule => ({ kind: "file", rule }));
+const bundled = (...rules: CodeRule[]): RuleDocument[] => rules.map(rule => ({ kind: "file", rule }));
 
 describe("SqliteRuleStore.seed", () => {
   it("inserts new bundled rules with their digest and leaves them alone on the next run", async () => {
     const store = new SqliteRuleStore(await temporaryDatabase());
-    const documents = bundled(policy("bundled:a"), policy("bundled:b"));
+    const documents = bundled(codeRule("bundled:a"), codeRule("bundled:b"));
 
     expect(store.seed(documents, 1_000)).toEqual({ inserted: 2, refreshed: 0, kept: 0 });
     expect(store.get("bundled:a")).toMatchObject({ sourceDigest: ruleDocumentDigest(documents[0]!), createdAt: 1_000 });
@@ -56,12 +56,12 @@ describe("SqliteRuleStore.seed", () => {
 
   it("follows an upstream change only while the row is untouched, and never overwrites an edit", async () => {
     const store = new SqliteRuleStore(await temporaryDatabase());
-    store.seed(bundled(policy("bundled:a"), policy("bundled:b")), 1_000);
+    store.seed(bundled(codeRule("bundled:a"), codeRule("bundled:b")), 1_000);
     store.setEnabled({ ids: ["bundled:b"] }, false, 1_500);
     // The user edits rule a in place; rule b only had its enabled flag flipped, which is state, not content.
-    store.upsertPolicy(policy("bundled:a", 1, "Use the logger"), { now: 2_000 });
+    store.upsertCodeRule(codeRule("bundled:a", 1, "Use the logger"), { now: 2_000 });
 
-    const upstream = bundled(policy("bundled:a", 2, "Print is forbidden"), policy("bundled:b", 2, "Print is forbidden"));
+    const upstream = bundled(codeRule("bundled:a", 2, "Print is forbidden"), codeRule("bundled:b", 2, "Print is forbidden"));
     expect(store.seed(upstream, 3_000)).toEqual({ inserted: 0, refreshed: 1, kept: 1 });
     const edited = store.get("bundled:a");
     expect(edited?.kind === "file" && edited.rule.clauses[0]?.violation?.message).toBe("Use the logger");
@@ -75,24 +75,24 @@ describe("SqliteRuleStore.seed", () => {
 
   it("inserts an opt-in document disabled, and neither a refresh nor a re-seed changes its enabled state", async () => {
     const store = new SqliteRuleStore(await temporaryDatabase());
-    const optIn = (rule: PolicyRule): BundledRuleDocument => ({ kind: "file", rule, enabledByDefault: false });
+    const optIn = (rule: CodeRule): BundledRuleDocument => ({ kind: "file", rule, enabledByDefault: false });
 
-    expect(store.seed([optIn(policy("pack:a")), optIn(policy("pack:b"))], 1_000)).toEqual({ inserted: 2, refreshed: 0, kept: 0 });
-    expect(store.get("pack:a")).toMatchObject({ enabled: false, sourceDigest: ruleDocumentDigest({ kind: "file", rule: policy("pack:a") }) });
-    expect(store.policyRules()).toEqual([]);
+    expect(store.seed([optIn(codeRule("pack:a")), optIn(codeRule("pack:b"))], 1_000)).toEqual({ inserted: 2, refreshed: 0, kept: 0 });
+    expect(store.get("pack:a")).toMatchObject({ enabled: false, sourceDigest: ruleDocumentDigest({ kind: "file", rule: codeRule("pack:a") }) });
+    expect(store.codeRules()).toEqual([]);
     store.setEnabled({ ids: ["pack:b"] }, true, 1_500);
 
-    expect(store.seed([optIn(policy("pack:a", 2)), optIn(policy("pack:b", 2))], 2_000)).toEqual({ inserted: 0, refreshed: 2, kept: 0 });
+    expect(store.seed([optIn(codeRule("pack:a", 2)), optIn(codeRule("pack:b", 2))], 2_000)).toEqual({ inserted: 0, refreshed: 2, kept: 0 });
     expect(store.get("pack:a")).toMatchObject({ enabled: false, revision: 2 });
     expect(store.get("pack:b")).toMatchObject({ enabled: true, revision: 2 });
-    expect(store.policyRules().map(rule => rule.id)).toEqual(["pack:b"]);
+    expect(store.codeRules().map(rule => rule.id)).toEqual(["pack:b"]);
     store.close();
   });
 
   it("never touches a user-created rule that collides with a new bundled id", async () => {
     const store = new SqliteRuleStore(await temporaryDatabase());
-    store.upsertPolicy(policy("shared:id", 7, "Mine"), { now: 1_000 });
-    expect(store.seed(bundled(policy("shared:id")), 2_000)).toEqual({ inserted: 0, refreshed: 0, kept: 1 });
+    store.upsertCodeRule(codeRule("shared:id", 7, "Mine"), { now: 1_000 });
+    expect(store.seed(bundled(codeRule("shared:id")), 2_000)).toEqual({ inserted: 0, refreshed: 0, kept: 1 });
     expect(store.get("shared:id")).toMatchObject({ revision: 7, sourceDigest: null });
     store.close();
   });
@@ -117,7 +117,7 @@ describe("bundled rules", () => {
     temporaryDirectories.push(root);
     const write = async (path: string, id: string): Promise<void> => {
       await mkdir(dirname(join(root, path)), { recursive: true });
-      await writeFile(join(root, path), JSON.stringify(policy(id)));
+      await writeFile(join(root, path), JSON.stringify(codeRule(id)));
     };
     await write("default.json", "example:default");
     await write("opt-in/zeta/a.json", "zeta:a");
@@ -144,10 +144,10 @@ describe("bundled rules", () => {
     temporaryDirectories.push(root);
     await mkdir(join(root, "opt-in", "tslint"), { recursive: true });
     await mkdir(join(root, "opt-in", ".hidden-pack"), { recursive: true });
-    await writeFile(join(root, "default.json"), JSON.stringify(policy("example:default")));
-    await writeFile(join(root, "opt-in", "tslint", "a.json"), JSON.stringify(policy("tslint:a")));
+    await writeFile(join(root, "default.json"), JSON.stringify(codeRule("example:default")));
+    await writeFile(join(root, "opt-in", "tslint", "a.json"), JSON.stringify(codeRule("tslint:a")));
     await writeFile(join(root, "opt-in", "tslint", "README.md"), "# tslint pack\n");
-    await writeFile(join(root, "opt-in", ".hidden-pack", "x.json"), JSON.stringify(policy("hidden:x")));
+    await writeFile(join(root, "opt-in", ".hidden-pack", "x.json"), JSON.stringify(codeRule("hidden:x")));
     await writeFile(join(root, "opt-in", ".DS_Store"), "\u0000\u0001binary");
     await writeFile(join(root, "opt-in", "README.md"), "# opt-in packs\n");
     expect(loadBundledRules(root).map(document => [document.rule.id, document.enabledByDefault])).toEqual([

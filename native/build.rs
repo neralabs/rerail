@@ -167,7 +167,7 @@ fn is_checkout(directory: &Path) -> bool {
 
 /// Identities persisted artifacts are keyed by, derived from what built them rather than from
 /// hand-bumped strings. `RERAIL_ENGINE_BUILD_ID` covers every engine source file and every locked
-/// dependency, so a stored check result is only reused by the build that would compute it.
+/// dependency, so a stored clause result is only reused by the build that would compute it.
 /// `RERAIL_GRAMMAR_BUILD_ID` covers the parser and grammar versions a stored tape was parsed with.
 fn build_identities() {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
@@ -190,7 +190,7 @@ fn build_identities() {
         engine.update([0]);
     }
     engine.update(lock_text.as_bytes());
-    // The vendored grammars are part of both identities: what a check finds depends on the trees
+    // The vendored grammars are part of both identities: what a clause finds depends on the trees
     // they build, as it did on the locked grammar crates they replace.
     let mut grammar_inputs = Vec::new();
     for input in GRAMMARS.iter().flat_map(|grammar| grammar.inputs) {
@@ -206,7 +206,7 @@ fn build_identities() {
     }
     // A Blade tape holds the PHP view of its template: how the view is built is part of the tape.
     let blade_view =
-        std::fs::read(manifest.join("src/policy_dsl/blade/view.rs")).expect("view is readable");
+        std::fs::read(manifest.join("src/code_rule_dsl/blade/view.rs")).expect("view is readable");
     println!(
         "cargo:rustc-env=RERAIL_ENGINE_BUILD_ID={}",
         hex(&engine.finalize())

@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { POLICY_LANGUAGE_FAMILIES } from "../../src/policy-languages.js";
+import { CODE_RULE_LANGUAGE_FAMILIES } from "../../src/code-rule-languages.js";
 import { compareDeterministicStrings } from "../../src/stable-json.js";
 
 export const HARNESS_DIRECTORY = dirname(fileURLToPath(import.meta.url));
@@ -59,7 +59,7 @@ export type CapabilityExemption = z.infer<typeof exemptionSchema>;
 export const packSchema = z
   .strictObject({
     pack: z.string().regex(/^[a-z0-9][a-z0-9-]*$/u),
-    family: z.enum(POLICY_LANGUAGE_FAMILIES),
+    family: z.enum(CODE_RULE_LANGUAGE_FAMILIES),
     /** Every capability the pack declares; T4 needs a rule for each, T2 an oracle for each. */
     capabilities: z.array(nonEmpty).min(1),
     /** Declared capabilities T4 covers by exemption instead of a rule. */

@@ -1,7 +1,7 @@
 """Runs PHPStan 2.2.16's PrintfParametersRule and PrintfArrayParametersRule (`argument.sprintf`,
 `argument.printf`, `argument.vsprintf`, `argument.vprintf`, and the rule's `argument.sscanf`,
 `argument.fscanf`) over whole PHP corpora for `benchmark_php_format_corpus`
-(rerail/native/src/policy_dsl/compile/format_args/php.rs). Offline, not in CI:
+(rerail/native/src/code_rule_dsl/compile/format_args/php.rs). Offline, not in CI:
 
     python3 generate_corpus.py <composer project with phpstan/phpstan 2.2.16> <output.json> \
         <name>=<corpus root>:<path>[,<path>...] ...

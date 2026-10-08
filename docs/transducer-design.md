@@ -213,11 +213,11 @@ Those frontends and execution backends remain separate work.
 The encoding checks read the example words directly from this document:
 
 ```bash
-python3 rerail/scripts/test_transducer_design.py
+python3 scripts/test_transducer_design.py
 ```
 
 They check one-word encoding and its boundaries.
-The native implementation is `native/src/policy_dsl/transducer.rs`.
+The native implementation is `native/src/code_rule_dsl/transducer.rs`.
 It implements every instruction above, table validation, path ordering, capture isolation, cycle checks, and shared kind dispatch.
 
 ## Implemented ast-grep comparison
@@ -255,7 +255,7 @@ The source corpus contained 95,697,853 bytes.
 
 The benchmark artifact was recorded during development and is not part of this repository.
 This result applies only to the exact root-terminal compiler subset.
-It does not establish structural-pattern, metavariable, relation, or full-policy speedups.
+It does not establish structural-pattern, metavariable, relation, or full-code-rule speedups.
 
 ## Batch and anchor contract
 

@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery } from "../src/adapter-contract.js";
-import type { PolicySteeringDelivery } from "../src/executable-policy.js";
+import type { RuleSteerDelivery } from "../src/code-rule.js";
 import { RerailRuntime } from "../src/runtime.js";
 import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
-import { SqliteTranscriptStore } from "../src/transcript-store.js";
+import { SqliteSessionStore } from "../src/session-store.js";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -33,34 +33,34 @@ describe("Rerail session startup", () => {
         embed: async texts => texts.map(() => new Float32Array([1, 0])),
       },
     });
-    const transcripts = new SqliteTranscriptStore(databasePath);
+    const sessionStore = new SqliteSessionStore(databasePath);
     const session = { host: "omp" as const, sessionId: "retry-start", cwd: join(root, "workspace") };
     const prompt = { kind: "user-prompt" as const, eventId: "retry-prompt", sessionId: session.sessionId, session, text: "Recovered prompt" };
 
     try {
       await expect(runtime.ingest({ kind: "session-start", eventId: "start", session })).rejects.toMatchObject({ code: "ENOENT" });
-      expect(transcripts.session(session.sessionId)).toBeUndefined();
+      expect(sessionStore.session(session.sessionId)).toBeUndefined();
       // A hook may retry on its next event rather than sending another session-start.
       await expect(runtime.ingest(prompt)).rejects.toMatchObject({ code: "ENOENT" });
-      expect(transcripts.session(session.sessionId)).toBeUndefined();
+      expect(sessionStore.session(session.sessionId)).toBeUndefined();
 
       await mkdir(session.cwd);
       await runtime.ingest(prompt);
       await runtime.ingest({ kind: "user-prompt", eventId: "next-prompt", sessionId: session.sessionId, text: "Still attached" });
       // Publication records `hud-tracking-start` and one `rule-coverage` event beside the two prompts.
-      expect(transcripts.session(session.sessionId)).toMatchObject({ eventCount: 4, endedAt: null });
+      expect(sessionStore.session(session.sessionId)).toMatchObject({ eventCount: 4, endedAt: null });
       await runtime.ingest({ kind: "session-end", eventId: "end", sessionId: session.sessionId });
-      expect(transcripts.session(session.sessionId)).toMatchObject({ eventCount: 5, endedAt: expect.any(Number) });
+      expect(sessionStore.session(session.sessionId)).toMatchObject({ eventCount: 5, endedAt: expect.any(Number) });
     } finally {
       await runtime.dispose();
-      transcripts.close();
+      sessionStore.close();
     }
   });
 
   it("delivers observations queued during successful attachment but discards failed and retired attachments", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-session-observations-"));
     directories.push(root);
-    const callbacks: PolicySteeringDelivery[] = [];
+    const callbacks: RuleSteerDelivery[] = [];
     const deliveries: AdapterDelivery[] = [];
     const delivered = Promise.withResolvers<void>();
     const failure = new Error("Workspace attachment failed");
@@ -80,18 +80,18 @@ describe("Rerail session startup", () => {
         deliveries.push(delivery);
         delivered.resolve();
       },
-      createPolicyEvaluator: ({ delivery }) => {
-        callbacks.push(delivery);
+      createAuditor: ({ steerDelivery }) => {
+        callbacks.push(steerDelivery);
         const attempt = callbacks.length;
         return {
           openWorkspace: async sessionId => {
-            await delivery.requestDelivery(sessionId, "steer", `Observation ${attempt}`, {
+            await steerDelivery.requestSteer(sessionId, "steer", `Observation ${attempt}`, {
               revision: 0, scope: [], background: true,
             });
             if (attempt === 1) throw failure;
           },
           acceptsPath: () => true,
-          evaluateGeneratedEdits: async (_sessionId, batch) => ({
+          auditGeneratedEdits: async (_sessionId, batch) => ({
             revision: batch.revision, disposition: "continue", violations: [], failures: [],
           }),
           close: async () => undefined,
@@ -104,7 +104,7 @@ describe("Rerail session startup", () => {
       expect(deliveries).toEqual([]);
       await runtime.ingest({ kind: "session-start", eventId: "retry", session });
       await delivered.promise;
-      expect(await callbacks[0]!.requestDelivery(session.sessionId, "steer", "Retired observation", {
+      expect(await callbacks[0]!.requestSteer(session.sessionId, "steer", "Retired observation", {
         revision: 0, scope: [], background: true,
       })).toBe("discarded");
       expect(deliveries).toEqual([
@@ -141,10 +141,10 @@ describe("Rerail session restore", () => {
       storageRoot,
       modelPath: resolve("model"),
       databasePath: join(root, "rerail.sqlite"),
-      createPolicyEvaluator: () => ({
+      createAuditor: () => ({
         openWorkspace: async () => undefined,
         acceptsPath: () => false,
-        evaluateGeneratedEdits: async (_sessionId, batch) => ({
+        auditGeneratedEdits: async (_sessionId, batch) => ({
           revision: batch.revision, disposition: "continue", violations: [], failures: [],
         }),
         close: async () => undefined,
@@ -184,8 +184,8 @@ describe("Rerail session restore", () => {
       rules: [rule("shared", "From the file."), rule("switched-off", "From the file."), rule("file-only", "From the file.")],
     }));
     const catalog = ScopedRuleCatalog.open(databasePath, repositoryContext);
-    catalog.upsertCosine(rule("shared", "From the database."), { now: 1_000 });
-    catalog.upsertCosine(rule("switched-off", "From the database."), { enabled: false, now: 1_000 });
+    catalog.upsertConversationRule(rule("shared", "From the database."), { now: 1_000 });
+    catalog.upsertConversationRule(rule("switched-off", "From the database."), { enabled: false, now: 1_000 });
     catalog.close();
     const runtime = new RerailRuntime({
       autostart: false,
@@ -194,10 +194,10 @@ describe("Rerail session restore", () => {
       storageRoot: join(root, "sessions"),
       modelPath: resolve("model"),
       databasePath,
-      createPolicyEvaluator: () => ({
+      createAuditor: () => ({
         openWorkspace: async () => undefined,
         acceptsPath: () => false,
-        evaluateGeneratedEdits: async (_sessionId, batch) => ({
+        auditGeneratedEdits: async (_sessionId, batch) => ({
           revision: batch.revision, disposition: "continue", violations: [], failures: [],
         }),
         close: async () => undefined,

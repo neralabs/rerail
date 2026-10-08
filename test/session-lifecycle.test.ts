@@ -5,11 +5,11 @@ import type { ExtensionAPI as OmpAPI, ExtensionContext as OmpContext } from "@oh
 import type { ExtensionAPI as PiAPI, ExtensionContext as PiContext } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { createCosineRulesExtension } from "../src/extension.js";
-import { createPiCosineRulesExtension } from "../src/pi-extension.js";
-import { ExecutablePolicyBridge } from "../src/executable-policy-bridge.js";
+import { createConversationRulesExtension } from "../src/extension.js";
+import { createPiConversationRulesExtension } from "../src/pi-extension.js";
+import { CodeRuleBridge } from "../src/code-rule-bridge.js";
 import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../src/session-state.js";
-import type { CosineRule } from "../src/rule-schema.js";
+import type { ConversationRule } from "../src/rule-schema.js";
 
 import { closeNativeTestDaemons, startNativeTestDaemon } from "./native-daemon-fixture.js";
 import { startTestRepository } from "./support/started-repository.js";
@@ -49,14 +49,14 @@ async function harness(host: "omp" | "pi") {
     sessionManager: { getSessionId: () => "original", getBranch: () => branch },
     ui: { notify() {} },
   } as unknown as Context;
-  const rule: CosineRule = {
+  const rule: ConversationRule = {
     id: "checkout", mode: "steer", reference: "Guest checkout remains available.",
     match: { operator: "gte", threshold: 0.99 },
     sample: { source: "assistant-text", boundary: "sentence", minimumTokens: 1 },
     action: { content: "Check checkout requirements." },
     repeat: { mode: "always" },
   };
-  const createExtension = host === "omp" ? createCosineRulesExtension : createPiCosineRulesExtension;
+  const createExtension = host === "omp" ? createConversationRulesExtension : createPiConversationRulesExtension;
   createExtension({ modelPath: resolve("model"), rules: [rule], registerTool: false })(api);
   return {
     context, branch, messages, entries,
@@ -79,7 +79,7 @@ describe.each(["omp", "pi"] as const)("%s transactional attachment", host => {
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     const failure = new Error("Workspace attachment unavailable");
-    vi.spyOn(ExecutablePolicyBridge.prototype, "openWorkspace").mockImplementationOnce(async () => {
+    vi.spyOn(CodeRuleBridge.prototype, "openWorkspace").mockImplementationOnce(async () => {
       entered.resolve();
       await release.promise;
     });
@@ -110,7 +110,7 @@ describe.each(["omp", "pi"] as const)("%s transactional attachment", host => {
       await extension.emit("message_update", delta("Guest checkout "));
       extension.branch.push({ type: "custom", id: "restored-turn", timestamp: new Date(0).toISOString(), customType: TURN_ENTRY_TYPE, data: { turn: 19 } });
       const failure = new Error("Workspace reload unavailable");
-      vi.spyOn(ExecutablePolicyBridge.prototype, "openWorkspace").mockRejectedValueOnce(failure);
+      vi.spyOn(CodeRuleBridge.prototype, "openWorkspace").mockRejectedValueOnce(failure);
       await expect(extension.reload()).rejects.toThrow(failure.message);
 
       await extension.emit("message_update", delta("remains available. Next"));
@@ -135,7 +135,7 @@ describe.each(["omp", "pi"] as const)("%s transactional attachment", host => {
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     const failure = new Error("First workspace unavailable");
-    vi.spyOn(ExecutablePolicyBridge.prototype, "openWorkspace").mockImplementationOnce(async () => {
+    vi.spyOn(CodeRuleBridge.prototype, "openWorkspace").mockImplementationOnce(async () => {
       entered.resolve();
       await release.promise;
     });

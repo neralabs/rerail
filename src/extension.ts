@@ -11,29 +11,29 @@ import {
   assistantCompletionEvent,
   assistantDeltaEvent,
   sendNativeDeliveries,
-  toolCallEvent,
-  toolResultEvent,
+  callEvent,
+  resultEvent,
   turnEndEvent,
   userPromptEvent,
   type AdapterDelivery,
   type AdapterEvent,
   type AdapterSession,
 } from "./adapter-contract.js";
-import { registerCosineRulesCommand } from "./command.js";
+import { registerConversationRulesCommand } from "./command.js";
 import { nodeExecutable } from "./daemon-control.js";
 import { registerOmpSemanticTools, type NativeSemanticToolRuntime } from "./native-semantic-tools.js";
 import { createNativeSession, NativeSessionClient, type NativeSessionHost } from "./native-session-client.js";
-import type { ExtensionTranscriptOptions } from "./extension-transcript.js";
-import type { CosineRuleSourceOptions } from "./rule-sources.js";
+import type { SessionDatabaseOptions } from "./session-database-options.js";
+import type { ConversationRuleSourceOptions } from "./rule-sources.js";
 import { registerRerailCommands } from "./rerail-command.js";
 import { createOmpPresentation } from "./omp-presentation.js";
 import { readRepositoryState } from "./session-presentation.js";
-import { registerCosineRulesTool } from "./tool.js";
+import { registerConversationRulesTool } from "./tool.js";
 
 export { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, TURN_ENTRY_TYPE } from "./session-state.js";
 
 
-export interface CosineRulesOptions extends ExtensionTranscriptOptions, CosineRuleSourceOptions {
+export interface ConversationRulesOptions extends SessionDatabaseOptions, ConversationRuleSourceOptions {
   modelPath?: string;
   maxInputTokens?: number;
   maxRules?: number;
@@ -105,19 +105,19 @@ interface InitializeOptions {
 
 /** The OMP adapter's delivery boundary, shared by live detection and local previews. */
 export function deliverOmpGuidance(pi: Pick<ExtensionAPI, "sendMessage">, delivery: AdapterDelivery): Promise<void> {
-  // A preview bypasses detection; it records no steering receipt because no runtime session owns it.
+  // A preview bypasses detection; it records no steer receipt because no runtime session owns it.
   return sendNativeDeliveries([delivery], (message, options) => pi.sendMessage(message, options), () => undefined);
 }
 
-export function createCosineRulesExtension(options: CosineRulesOptions = {}): ExtensionFactory {
-  return function cosineRulesExtension(pi: ExtensionAPI): void {
+export function createConversationRulesExtension(options: ConversationRulesOptions = {}): ExtensionFactory {
+  return function conversationRulesExtension(pi: ExtensionAPI): void {
     pi.setLabel("Cosine Rules");
 
     let currentContext: ExtensionContext | undefined;
     let activeSession: AdapterSession | undefined;
     const presentation = createOmpPresentation();
     const streamedMessages = new Set<string>();
-    const policyTools = new Map<string, string>();
+    const codeRuleTools = new Map<string, string>();
     let semantic: NativeSemanticToolRuntime | undefined;
     let remote: NativeSessionClient | undefined;
 
@@ -133,7 +133,7 @@ export function createCosineRulesExtension(options: CosineRulesOptions = {}): Ex
       activeSession = undefined;
       semantic = undefined;
       streamedMessages.clear();
-      policyTools.clear();
+      codeRuleTools.clear();
       await closing?.close();
     };
 
@@ -153,12 +153,12 @@ export function createCosineRulesExtension(options: CosineRulesOptions = {}): Ex
             || typeof context.hasPendingMessages !== "function"
             || context.isIdle()) return;
         // OMP's public sendMessage is fire-and-forget while the agent is active,
-        // but policy guidance must enter the native steer queue before the tool
+        // but code-rule guidance must enter the native steer queue before the tool
         // hook releases the agent loop. A microtask checkpoint drains the
         // string-only normalization path; the hook prevents queue consumption.
         await new Promise<void>(resolve_ => queueMicrotask(resolve_));
         if (!context.hasPendingMessages()) throw new Error("OMP did not accept Rerail policy guidance");
-      }, (sessionId, receiptId, ruleIds) => current.recordSteeringDelivery(sessionId, receiptId, ruleIds));
+      }, (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds));
 
     const ingest = async (event: AdapterEvent): Promise<void> => {
       if (remote === undefined) throw new Error("cosine-rules extension received an event before session_start");
@@ -188,17 +188,17 @@ export function createCosineRulesExtension(options: CosineRulesOptions = {}): Ex
     // OMP may begin building the next provider context before an async tool hook
     // has crossed its first await. Claim tool boundaries synchronously so the
     // context hook can join all edit work that was announced before it.
-    let policyBoundary: Promise<void> = Promise.resolve();
-    const sequencePolicyEvent = (operation: () => Promise<void>): Promise<void> => {
-      const work = policyBoundary.then(operation, operation);
-      policyBoundary = work.then(() => undefined, () => undefined);
+    let codeRuleBoundary: Promise<void> = Promise.resolve();
+    const sequenceCodeRuleEvent = (operation: () => Promise<void>): Promise<void> => {
+      const work = codeRuleBoundary.then(operation, operation);
+      codeRuleBoundary = work.then(() => undefined, () => undefined);
       return work;
     };
-    const settlePolicyBoundary = async (): Promise<void> => {
+    const settleCodeRuleBoundary = async (): Promise<void> => {
       for (;;) {
-        const pending = policyBoundary;
+        const pending = codeRuleBoundary;
         await pending;
-        if (pending === policyBoundary) return;
+        if (pending === codeRuleBoundary) return;
       }
     };
 
@@ -272,10 +272,10 @@ export function createCosineRulesExtension(options: CosineRulesOptions = {}): Ex
     };
 
     if (options.registerTool !== false) {
-      registerCosineRulesTool(pi, {
+      registerConversationRulesTool(pi, {
         remoteExecute: () => {
           const current = remote;
-          return current === undefined ? undefined : input => current.cosine(input);
+          return current === undefined ? undefined : input => current.conversationRules(input);
         },
       });
       registerOmpSemanticTools(pi, {
@@ -286,16 +286,16 @@ export function createCosineRulesExtension(options: CosineRulesOptions = {}): Ex
       });
     }
     if (options.registerCommand !== false) {
-      registerCosineRulesCommand(pi, {
+      registerConversationRulesCommand(pi, {
         remoteCommand: () => {
           const current = remote;
           return current === undefined ? undefined : async args => {
             if (args.trim() === "reload") {
               if (currentContext === undefined) throw new Error("cannot reload cosine rules before session_start");
               await initialize(currentContext, { rebuild: true });
-              return remote!.cosine({ action: "list" });
+              return remote!.conversationRules({ action: "list" });
             }
-            return current.cosine({ action: "command", args });
+            return current.conversationRules({ action: "command", args });
           };
         },
         reload: async () => {
@@ -332,15 +332,15 @@ export function createCosineRulesExtension(options: CosineRulesOptions = {}): Ex
     });
 
     pi.on("context", async (event) => {
-      await settlePolicyBoundary();
+      await settleCodeRuleBoundary();
       const session = activeSession;
       if (session !== undefined) {
         for (const message of event.messages) {
           if (message.role !== "toolResult") continue;
-          const toolName = policyTools.get(message.toolCallId);
+          const toolName = codeRuleTools.get(message.toolCallId);
           if (toolName === undefined) continue;
-          policyTools.delete(message.toolCallId);
-          await sequencePolicyEvent(() => ingest(toolResultEvent(
+          codeRuleTools.delete(message.toolCallId);
+          await sequenceCodeRuleEvent(() => ingest(resultEvent(
             session.sessionId,
             `tool-result:${message.toolCallId}`,
             message.toolCallId,
@@ -350,7 +350,7 @@ export function createCosineRulesExtension(options: CosineRulesOptions = {}): Ex
           )));
         }
       }
-      await settlePolicyBoundary();
+      await settleCodeRuleBoundary();
     });
 
     pi.on("message_update", async (event) => {
@@ -386,11 +386,11 @@ export function createCosineRulesExtension(options: CosineRulesOptions = {}): Ex
 
     // Awaited hooks bracket the actual tool; execution notifications can arrive after the write.
     pi.on("tool_call", (event) => {
-      policyTools.set(event.toolCallId, event.toolName);
-      return sequencePolicyEvent(async () => {
+      codeRuleTools.set(event.toolCallId, event.toolName);
+      return sequenceCodeRuleEvent(async () => {
         const session = await sessionFor();
         if (session === undefined) return;
-        await ingest(toolCallEvent(
+        await ingest(callEvent(
           session.sessionId,
           `tool-call:${event.toolCallId}`,
           event.toolCallId,
@@ -400,11 +400,11 @@ export function createCosineRulesExtension(options: CosineRulesOptions = {}): Ex
       });
     });
     pi.on("tool_result", (event) => {
-      policyTools.delete(event.toolCallId);
-      return sequencePolicyEvent(async () => {
+      codeRuleTools.delete(event.toolCallId);
+      return sequenceCodeRuleEvent(async () => {
         const session = await sessionFor();
         if (session === undefined) return;
-        await ingest(toolResultEvent(
+        await ingest(resultEvent(
           session.sessionId,
           `tool-result:${event.toolCallId}`,
           event.toolCallId,

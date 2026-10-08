@@ -1,15 +1,15 @@
-import type { PolicyRule } from "./policy-schema.js";
-import type { CosineRule } from "./rule-schema.js";
-import { POLICY_AST_LANGUAGES } from "./policy-languages.js";
+import type { CodeRule } from "./code-rule-schema.js";
+import type { ConversationRule } from "./rule-schema.js";
+import { CODE_RULE_AST_LANGUAGES } from "./code-rule-languages.js";
 
 import { SqliteRuleStore } from "./rule-store.js";
-import { SqliteTranscriptStore, type WorkLink } from "./transcript-store.js";
+import { SqliteSessionStore, type WorkLink } from "./session-store.js";
 
 /**
  * Throwaway mock rows so MCP and UI work can start before the rule generator
  * exists. Every rule here passes its kind's schema; `rerail seed` is idempotent.
  */
-export const MOCK_POLICY_RULES: readonly PolicyRule[] = [
+export const MOCK_CODE_RULES: readonly CodeRule[] = [
   {
     format: "rerail.policy/v1",
     id: "mock-no-console-log",
@@ -35,7 +35,7 @@ export const MOCK_POLICY_RULES: readonly PolicyRule[] = [
     clauses: [
       {
         id: "list-of-query",
-        forbid: { ast: { language: POLICY_AST_LANGUAGES[0], rule: { pattern: "list($QUERY)" } } },
+        forbid: { ast: { language: CODE_RULE_AST_LANGUAGES[0], rule: { pattern: "list($QUERY)" } } },
         violation: { anchor: "witness.span", code: "RERAIL-MOCK-002", message: "Query materialized before filters were applied." },
       },
     ],
@@ -66,7 +66,7 @@ export const MOCK_POLICY_RULES: readonly PolicyRule[] = [
   },
 ];
 
-export const MOCK_COSINE_RULES: readonly CosineRule[] = [
+export const MOCK_CONVERSATION_RULES: readonly ConversationRule[] = [
   {
     id: "mock-cosine-prefer-generated-client",
     mode: "steer",
@@ -114,8 +114,8 @@ export interface SeedOptions {
 }
 
 export interface SeedResult {
-  policyRules: number;
-  cosineRules: number;
+  codeRules: number;
+  conversationRules: number;
   sessions: number;
   events: number;
   workLinks: number;
@@ -125,37 +125,37 @@ export function seedRerailDatabase(path: string, options: SeedOptions = {}): See
   const now = options.now ?? Date.now();
   const rules = new SqliteRuleStore(path);
   try {
-    for (const rule of MOCK_POLICY_RULES) rules.upsertPolicy(rule, { now });
-    for (const [index, rule] of MOCK_COSINE_RULES.entries()) {
-      rules.upsertCosine(rule, { now, revision: 1, enabled: index === 0 });
+    for (const rule of MOCK_CODE_RULES) rules.upsertCodeRule(rule, { now });
+    for (const [index, rule] of MOCK_CONVERSATION_RULES.entries()) {
+      rules.upsertConversationRule(rule, { now, revision: 1, enabled: index === 0 });
     }
   } finally {
     rules.close();
   }
 
-  const transcripts = new SqliteTranscriptStore(path, { repositoryId: options.repositoryId });
+  const sessionStore = new SqliteSessionStore(path, { repositoryId: options.repositoryId });
   try {
     const sessionId = mockSessionId(options.repositoryId);
     const session = { host: "omp" as const, sessionId, cwd: options.cwd ?? process.cwd() };
-    transcripts.openSession(session, now - 60_000);
+    sessionStore.openSession(session, now - 60_000);
     const events = [
       { eventId: "mock-event-1", kind: "session-lifecycle", observedAt: now - 60_000, payload: { type: "session-initialize" } },
       { eventId: "mock-event-2", kind: "user-prompt", observedAt: now - 50_000, payload: { text: "Add a users page that calls /api/users." } },
       { eventId: "mock-event-3", kind: "call", observedAt: now - 40_000, payload: { toolName: "write", args: { path: "web/src/users.ts" } } },
       { eventId: "mock-event-4", kind: "turn-end", observedAt: now - 30_000, payload: { turn: 1 } },
     ];
-    for (const event of events) transcripts.append({ sessionId, ...event });
-    transcripts.closeSession(sessionId, now - 20_000);
+    for (const event of events) sessionStore.append({ sessionId, ...event });
+    sessionStore.closeSession(sessionId, now - 20_000);
     const workLinks = mockWorkLinks(sessionId);
-    for (const link of workLinks) transcripts.linkWork(link, now);
+    for (const link of workLinks) sessionStore.linkWork(link, now);
     return {
-      policyRules: MOCK_POLICY_RULES.length,
-      cosineRules: MOCK_COSINE_RULES.length,
+      codeRules: MOCK_CODE_RULES.length,
+      conversationRules: MOCK_CONVERSATION_RULES.length,
       sessions: 1,
       events: events.length,
       workLinks: workLinks.length,
     };
   } finally {
-    transcripts.close();
+    sessionStore.close();
   }
 }

@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { NativeExecutablePolicyEnforcer } from "../src/executable-policy-enforcer.js";
-import type { PolicyExecutionRecorder, PolicyRunInput, PolicyRunResult } from "../src/policy-execution.js";
-import { bootstrapPolicyDslCatalog, bundledPolicyDslDirectory } from "../src/policy-dsl-catalog.js";
-import { policyRuleSchema } from "../src/policy-schema.js";
+import { NativeCodeRuleEnforcer } from "../src/code-rule-enforcer.js";
+import type { AuditRecorder, AuditInput, AuditResult } from "../src/audit.js";
+import { bootstrapCodeRuleDslCatalog, bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
+import { codeRuleSchema } from "../src/code-rule-schema.js";
 import { SqliteRuleStore } from "../src/rule-store.js";
 
 // T6 of the language-pack standard (docs/design/rerail-language-conformance.md): Python, TypeScript, PHP and Blade
@@ -24,21 +24,21 @@ async function directory(prefix: string): Promise<string> {
 }
 
 const escapes = { stopBy: "end", kind: "function_call_expression", has: { field: "function", regex: "^htmlspecialchars$" } };
-const check = (id: string, language: string, rule: object) => ({
+const clause = (id: string, language: string, rule: object) => ({
   id, violation: { code: id.toUpperCase(), anchor: "witness.span", message: id }, forbid: { ast: { language, rule } },
 });
-/** One policy per language, each scoped to every file: a policy reporting on another family's file would leak. */
-const POLICIES = [
-  { id: "mixed:python", clauses: [check("os-system", "python", { kind: "attribute", resolves: { import: ["os.system"] } })] },
-  { id: "mixed:typescript", clauses: [check("console-log", "typescript", { pattern: "console.log($ARG)" })] },
-  { id: "mixed:php", clauses: [check("reaches-escape", "php", { kind: "function_call_expression", calls: { has: escapes } })] },
+/** One code rule per language, each scoped to every file: a code rule reporting on another family's file would leak. */
+const CODE_RULES = [
+  { id: "mixed:python", clauses: [clause("os-system", "python", { kind: "attribute", resolves: { import: ["os.system"] } })] },
+  { id: "mixed:typescript", clauses: [clause("console-log", "typescript", { pattern: "console.log($ARG)" })] },
+  { id: "mixed:php", clauses: [clause("reaches-escape", "php", { kind: "function_call_expression", calls: { has: escapes } })] },
   { id: "mixed:blade", clauses: [
-    check("reaches-escape", "blade", { kind: "function_call_expression", calls: { has: escapes } }),
-    check("raw-echo", "blade", { kind: "php_statement", regex: "^\\{!!" }),
+    clause("reaches-escape", "blade", { kind: "function_call_expression", calls: { has: escapes } }),
+    clause("raw-echo", "blade", { kind: "php_statement", regex: "^\\{!!" }),
   ] },
-].map(({ id, clauses }) => policyRuleSchema.parse({ format: "rerail.policy/v1", id, revision: 1, mode: "steer", scope: { include: ["**/*"], exclude: [] }, clauses }));
+].map(({ id, clauses }) => codeRuleSchema.parse({ format: "rerail.policy/v1", id, revision: 1, mode: "steer", scope: { include: ["**/*"], exclude: [] }, clauses }));
 
-/** What each file reports, as `policy/check`: the fixture's escapes reach PHP's htmlspecialchars from PHP and Blade alike. */
+/** What each file reports, as `rule/clause`: the fixture's escapes reach PHP's htmlspecialchars from PHP and Blade alike. */
 const EXPECTED = {
   "api/app/service.py": ["mixed:python/os-system"],
   "app/Http/Controller.php": ["mixed:php/reaches-escape"],
@@ -50,35 +50,35 @@ const EXPECTED = {
 async function enforcerFor(workspaceRoot: string) {
   const home = await directory("rerail-mixed-catalog-");
   const capabilitiesPath = join(home, "capabilities.json");
-  await writeFile(capabilitiesPath, await readFile(join(bundledPolicyDslDirectory(), "capabilities.json")));
-  const databasePath = join(home, "policies.sqlite");
+  await writeFile(capabilitiesPath, await readFile(join(bundledCodeRuleDslDirectory(), "capabilities.json")));
+  const databasePath = join(home, "code-rules.sqlite");
   const store = new SqliteRuleStore(databasePath);
-  for (const policy of POLICIES) store.upsertPolicy(policy);
+  for (const codeRule of CODE_RULES) store.upsertCodeRule(codeRule);
   store.close();
-  const catalog = bootstrapPolicyDslCatalog({ capabilitiesPath, databasePath });
-  const runs = new Map<string, PolicyRunInput & { result?: PolicyRunResult }>();
-  const executions: PolicyExecutionRecorder = {
-    start(input) { const runId = `run-${runs.size + 1}`; runs.set(runId, { ...input }); return runId; },
-    finish(runId, result) { runs.get(runId)!.result = result; },
-    progress(runId, result) { runs.get(runId)!.result = { status: "completed", ...result }; },
+  const catalog = bootstrapCodeRuleDslCatalog({ capabilitiesPath, databasePath });
+  const audits = new Map<string, AuditInput & { result?: AuditResult }>();
+  const recorder: AuditRecorder = {
+    start(input) { const auditId = `run-${audits.size + 1}`; audits.set(auditId, { ...input }); return auditId; },
+    finish(auditId, result) { audits.get(auditId)!.result = result; },
+    progress(auditId, result) { audits.get(auditId)!.result = { status: "completed", ...result }; },
     interrupt() {},
   };
-  const enforcer = new NativeExecutablePolicyEnforcer(catalog, { workspaceRoot, delivery: { requestDelivery: async () => undefined }, executions });
+  const enforcer = new NativeCodeRuleEnforcer(catalog, { workspaceRoot, steerDelivery: { requestSteer: async () => undefined }, audits: recorder });
   await enforcer.openWorkspace("mixed");
-  /** One log-only repository scan: each file's `policy/check` findings, the IDs of all findings, and the failures. */
-  const scan = async () => {
-    const [runId] = await enforcer.scan("mixed", { scope: "repository", mode: "log" });
-    const result = runs.get(runId!)?.result;
+  /** One log-only repository audit: each file's `rule/clause` violations, the IDs of all violations, and the failures. */
+  const audit = async () => {
+    const [auditId] = await enforcer.audit("mixed", { scope: "repository", mode: "log" });
+    const result = audits.get(auditId!)?.result;
     const reported: Record<string, string[]> = {};
-    for (const finding of result?.violations ?? []) (reported[finding.path ?? ""] ??= []).push(`${finding.ruleId}/${finding.clauseId}`);
+    for (const violation of result?.violations ?? []) (reported[violation.path ?? ""] ??= []).push(`${violation.ruleId}/${violation.clauseId}`);
     for (const path of Object.keys(reported)) reported[path]!.sort();
     return {
       status: result?.status, reported,
-      ids: Object.fromEntries((result?.violations ?? []).map(finding => [`${finding.path}:${finding.clauseId}:${finding.span?.startByte}`, finding.id])),
+      ids: Object.fromEntries((result?.violations ?? []).map(violation => [`${violation.path}:${violation.clauseId}:${violation.span?.startByte}`, violation.id])),
       failures: (result?.failures ?? []).map(failure => `${failure.path ?? ""} ${failure.code}`),
     };
   };
-  return { enforcer, scan, close: async () => { await enforcer.close(); catalog.close(); } };
+  return { enforcer, audit, close: async () => { await enforcer.close(); catalog.close(); } };
 }
 
 async function mixedRepository(git: boolean): Promise<string> {
@@ -99,28 +99,28 @@ describe("a repository mixing Python, TypeScript, PHP and Blade", () => {
   it.each([
     ["the native repository index (Git checkout)", true],
     ["the host's directory walk", false],
-  ])("reports each language's findings on its own files only, through %s, and follows a PHP edit across languages", async (_name, git) => {
+  ])("reports each language's violations on its own files only, through %s, and follows a PHP edit across languages", async (_name, git) => {
     const root = await mixedRepository(git);
-    const { enforcer, scan, close } = await enforcerFor(root);
+    const { enforcer, audit, close } = await enforcerFor(root);
     try {
-      const before = await scan();
+      const before = await audit();
       // vendor/ calls the helper too, but the host never evaluates it.
       expect({ status: before.status, reported: before.reported, failures: before.failures }).toEqual({ status: "completed", reported: EXPECTED, failures: [] });
 
       // Renaming the PHP helper changes what the PHP and Blade callers in other files reach, and nothing else.
       const helpers = "<?php\n\nfunction escape_html_renamed(string $value): string\n{\n    return htmlspecialchars($value, ENT_QUOTES);\n}\n";
       await writeFile(join(root, "app/Support/helpers.php"), helpers);
-      await enforcer.evaluateGeneratedEdits("mixed", {
+      await enforcer.auditGeneratedEdits("mixed", {
         revision: 1, checkpoints: ["edit"], edits: [{ path: "app/Support/helpers.php", language: "php", generatedText: helpers }],
       });
       await enforcer.settle();
-      const after = await scan();
+      const after = await audit();
       const { "app/Http/Controller.php": _controller, ...rest } = EXPECTED;
       expect({ status: after.status, reported: after.reported, failures: after.failures }).toEqual({
         status: "completed", failures: [],
         reported: { ...rest, "resources/views/page.blade.php": ["mixed:blade/raw-echo"] },
       });
-      // The other languages' findings are the same findings, not re-derived ones.
+      // The other languages' violations are the same violations, not re-derived ones.
       for (const [key, id] of Object.entries(after.ids)) expect(before.ids[key]).toBe(id);
     } finally {
       await close();

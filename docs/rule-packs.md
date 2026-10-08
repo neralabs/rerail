@@ -12,11 +12,11 @@ Only rules that already exist ship as packs. Rerail ships one:
 
 | Pack | Category | Rules | Where it applies | What it is |
 |---|---|--:|---|---|
-| TSLint | language | 74 | the `typescript` dependency, `*.ts` or `*.tsx` files | The golden TSLint ports in `policies/executable-policy-dsl/rules/opt-in/tslint/`: each passed TSLint's own test suite in the conformance harness, with TSLint's default options. Group: TSLint. |
+| TSLint | language | 74 | the `typescript` dependency, `*.ts` or `*.tsx` files | The golden TSLint ports in `code-rule-dsl/rules/opt-in/tslint/`: each passed TSLint's own test suite in the conformance harness, with TSLint's default options. Group: TSLint. |
 
 The rule list is the pack file itself: `policies/rule-packs/tslint.json`. A rule's title comes from its document's description.
 
-A pack for a project's own conventions is added the same way: its rule documents under `policies/executable-policy-dsl/rules/` and a `repository` pack file in `policies/rule-packs/` that lists them, with a match definition naming the files or dependencies that identify the project. Linter packs for other languages and frameworks wait until their rule ports exist.
+A pack for a project's own conventions is added the same way: its rule documents under `code-rule-dsl/rules/` and a `repository` pack file in `policies/rule-packs/` that lists them, with a match definition naming the files or dependencies that identify the project. Linter packs for other languages and frameworks wait until their rule ports exist.
 
 Every rule is listed in the mode its own document has (all `steer` today), and the pack lists its rules as on.
 

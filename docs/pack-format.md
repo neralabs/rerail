@@ -136,7 +136,7 @@ are published, so an installed pack can still be checked at the example level.
 | `covers` | yes | One sentence: what the pack covers |
 | `reason` | yes | Why it fits, in general terms; the reason shown for a repository is built from what matched |
 | `coreRange` | yes | Semver range of core versions the pack works with |
-| `languages` | yes | Policy languages its rules read; each must be one the running core supports |
+| `languages` | yes | Code-rule languages its rules read; each must be one the running core supports |
 | `license` | yes | SPDX expression for everything the package publishes |
 | `upstream` | yes | Projects the pack copies or adapts from; each has `licenses/<project>/`. Empty when none |
 | `match` | yes | When a repository fits, as in v1: `{ "any": [signal, …] }` with `files` or `npmDependencies` signals |
@@ -222,8 +222,8 @@ It runs these checks in order and exits non-zero if any fails:
 | 1 | Manifest | The manifest does not match the schema; ids repeat; a `document` is missing, its `id` differs, or a file in `rules/` is not listed |
 | 2 | Package | `package.json` lacks `rerail.pack`; `name`, `license` or the core peer range disagree with the manifest; `files` misses a published path or includes `validation/`; it has `dependencies` |
 | 3 | Compatibility | The running core is outside `coreRange`; a language is not supported; a rule document does not compile against core's capabilities |
-| 4 | Examples | A `caught` example produces no finding for its rule, or a `passes` example produces one |
-| 5 | Upstream evidence | With `validation`: a ported rule's findings and the tool's recordings differ outside the declared divergences; a divergence no longer matches anything (stale); a declared capability has neither a ported rule nor an exemption |
+| 4 | Examples | A `caught` example produces no violation for its rule, or a `passes` example produces one |
+| 5 | Upstream evidence | With `validation`: a ported rule's violations and the tool's recordings differ outside the declared divergences; a divergence no longer matches anything (stale); a declared capability has neither a ported rule nor an exemption |
 | 6 | Licences | An `upstream` project has no `licenses/<project>/`; a file under `validation/upstream/` is not listed in an `UPSTREAM.md`; a licence falls outside the repository allowlist |
 
 Checks 1 to 4 need only the published package. Check 5 needs a source checkout (`validation/`), and corpus
@@ -261,7 +261,7 @@ repository's release workflow and trusted publishing, under `next` first and `la
 
 | Today | Becomes |
 |---|---|
-| `policies/rule-packs/tslint.json` and `policies/executable-policy-dsl/rules/opt-in/tslint/` (shipped in core) | `packs/tslint/`: manifest and `rules/`, once core loads installed packs |
+| `policies/rule-packs/tslint.json` and `code-rule-dsl/rules/opt-in/tslint/` (shipped in core) | `packs/tslint/`: manifest and `rules/`, once core loads installed packs |
 | `conformance/tslint/rules/**` (option variants and ports that are not shipped) | `packs/tslint/validation/candidates/` |
 | `conformance/tslint/` golden manifest and audit | The `tslint` manifest's rule list and `validation/divergences.json` |
 | `conformance/languages/<lang>/pack.json`, `rules/`, `divergences.json` | `packs/<lang>/` manifest, `rules/` or `validation/candidates/`, and `validation/divergences.json` |

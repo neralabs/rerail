@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { cosineRuleSchema, parseCosineRule, parseCosineRuleDocument } from "../src/rule-schema.js";
+import { conversationRuleSchema, parseConversationRule, parseConversationRuleDocument } from "../src/rule-schema.js";
 
-describe("parseCosineRuleDocument", () => {
+describe("parseConversationRuleDocument", () => {
   it("accepts a versioned dissimilarity rule", () => {
-    const rules = parseCosineRuleDocument({
+    const rules = parseConversationRuleDocument({
       version: 1,
       rules: [
         {
@@ -37,7 +37,7 @@ describe("parseCosineRuleDocument", () => {
 
   it("rejects a threshold outside cosine range", () => {
     expect(() =>
-      parseCosineRuleDocument({
+      parseConversationRuleDocument({
         version: 1,
         rules: [
           {
@@ -54,11 +54,11 @@ describe("parseCosineRuleDocument", () => {
   });
 
   it("reports the failing field path and accepts tool sources through the shared zod schema", () => {
-    expect(() => parseCosineRule({ id: "x", mode: "steer", reference: "r", match: { operator: "gte", threshold: 0.5 }, sample: { source: "tool:", boundary: "message" }, action: { content: "c" } }, "rules[0]"))
+    expect(() => parseConversationRule({ id: "x", mode: "steer", reference: "r", match: { operator: "gte", threshold: 0.5 }, sample: { source: "tool:", boundary: "message" }, action: { content: "c" } }, "rules[0]"))
       .toThrow("rules[0].sample.source must be user-input, assistant-text, or tool:<name>");
-    expect(() => parseCosineRule({ id: "x", mode: "steer", reference: "r", match: { operator: "gte", threshold: 0.5 }, sample: { source: "user-input", boundary: "message" }, action: { content: "c" }, extra: 1 }))
+    expect(() => parseConversationRule({ id: "x", mode: "steer", reference: "r", match: { operator: "gte", threshold: 0.5 }, sample: { source: "user-input", boundary: "message" }, action: { content: "c" }, extra: 1 }))
       .toThrow(/^rule Unrecognized key/u);
-    expect(cosineRuleSchema.parse({
+    expect(conversationRuleSchema.parse({
       id: "x",
       mode: "log",
       reference: "r",
@@ -76,11 +76,11 @@ describe("parseCosineRuleDocument", () => {
       sample: { source: "user-input", boundary: "message" },
       action: { content: "c" },
     };
-    expect(parseCosineRule(rule).mode).toBe("block");
+    expect(parseConversationRule(rule).mode).toBe("block");
     const { mode: _mode, ...modeless } = rule;
-    expect(() => parseCosineRule(modeless)).toThrow(/^rule\.mode /u);
-    expect(() => parseCosineRule({ ...rule, mode: "observe" })).toThrow(/^rule\.mode /u);
-    expect(() => parseCosineRule({ ...rule, action: { delivery: "steer", content: "c" } })).toThrow(/^rule\.action Unrecognized key/u);
+    expect(() => parseConversationRule(modeless)).toThrow(/^rule\.mode /u);
+    expect(() => parseConversationRule({ ...rule, mode: "observe" })).toThrow(/^rule\.mode /u);
+    expect(() => parseConversationRule({ ...rule, action: { delivery: "steer", content: "c" } })).toThrow(/^rule\.action Unrecognized key/u);
   });
 });
 
@@ -97,7 +97,7 @@ describe("structural match conditions", () => {
   });
 
   it("accepts leaf conditions and all/any/not over them without a reference", () => {
-    expect(parseCosineRule(toolRule())).toEqual(toolRule());
+    expect(parseConversationRule(toolRule())).toEqual(toolRule());
     const nested = {
       all: [
         { any: [{ field: "tool.name", eq: "Bash" }, { field: "tool.name", regex: "^shell$" }] },
@@ -105,8 +105,8 @@ describe("structural match conditions", () => {
         { field: "input", contains: "push" },
       ],
     };
-    expect(parseCosineRule(toolRule({ match: nested, sample: ANY_TOOL_CALL })).match).toEqual(nested);
-    expect(parseCosineRule(toolRule({
+    expect(parseConversationRule(toolRule({ match: nested, sample: ANY_TOOL_CALL })).match).toEqual(nested);
+    expect(parseConversationRule(toolRule({
       match: { field: "text", regex: "(?i)force push" },
       sample: { source: "assistant-text", boundary: "message" },
     })).match).toEqual({ field: "text", regex: "(?i)force push" });
@@ -124,13 +124,13 @@ describe("structural match conditions", () => {
     ["an empty condition inside all", { match: { all: [{}] } }, /^rule\.match\.all\.0 must contain field, all, any, or not$/u],
     ["an empty condition under not", { match: { not: {} } }, /^rule\.match\.not must contain field, all, any, or not$/u],
   ])("rejects %s on a structural rule", (_label, overrides, message) => {
-    expect(() => parseCosineRule(toolRule(overrides))).toThrow(message);
+    expect(() => parseConversationRule(toolRule(overrides))).toThrow(message);
   });
 
   it("keeps similarity rules requiring a reference and a concrete source", () => {
     const similarity = { match: { operator: "gte", threshold: 0.8 } };
-    expect(() => parseCosineRule(toolRule(similarity))).toThrow(/rule\.reference/u);
-    expect(() => parseCosineRule(toolRule({ ...similarity, reference: "force push", sample: ANY_TOOL_CALL })))
+    expect(() => parseConversationRule(toolRule(similarity))).toThrow(/rule\.reference/u);
+    expect(() => parseConversationRule(toolRule({ ...similarity, reference: "force push", sample: ANY_TOOL_CALL })))
       .toThrow(/rule\.sample\.source .*tool:\*/u);
   });
 });

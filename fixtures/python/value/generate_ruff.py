@@ -7,7 +7,7 @@ value, annotation or parameter kind, and a base class's own bases. M9b's fix rou
 SIM113), lookup_symbol (ASYNC220), only_binding (ASYNC240), find_argument (B905, ASYNC115) and node identity (SIM113); binds.bindings counts SIM113's counter bindings in the
 loop (a comprehension walrus, a match capture and a del count; a comprehension target, a keyword and a nested
 function's local do not). M12b's E712-each and PIE810-each keep repeated offsets: Ruff reports one diagnostic per
-offending operand or per group of calls at the same range (finding.each); W605-each one per invalid escape in an
+offending operand or per group of calls at the same range (violation.each); W605-each one per invalid escape in an
 f-string's format spec, several in one node's text.
 Run offline, not in CI:
 python3 generate_ruff.py <path to a ruff executable, 0.16.9>"""

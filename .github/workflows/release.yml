@@ -1,6 +1,6 @@
 name: Release
 
-# Builds the @neralabs/rerail package: native rules kernels for every supported target, the
+# Builds the @neralabs/rerail package: native rules engines for every supported target, the
 # TypeScript runtime, and the bundled UI, packed into one cross-platform tarball.
 #
 # `workflow_dispatch` builds and uploads the tarball as a run artifact without publishing, so a
@@ -22,7 +22,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Rejects a malformed tag, or one that disagrees with package.json, before any kernel is built.
+  # Rejects a malformed tag, or one that disagrees with package.json, before any engine is built.
   metadata:
     name: Release metadata
     runs-on: ubuntu-24.04
@@ -77,7 +77,7 @@ jobs:
           - runner: windows-2025
             target: x86_64-pc-windows-msvc
             windows_runtime_smoke: true
-          # Cross-compiled on x64; no hosted Windows arm64 runner is used, so this kernel is checked
+          # Cross-compiled on x64; no hosted Windows arm64 runner is used, so this engine is checked
           # by import inspection only.
           - runner: windows-2025
             target: aarch64-pc-windows-msvc
@@ -127,12 +127,12 @@ jobs:
       - name: Build TypeScript
         run: npm run build:ts
 
-      - name: Build native kernel
+      - name: Build native engine
         run: ./node_modules/.bin/napi build --platform --release --target ${{ matrix.target }} --manifest-path native/Cargo.toml --output-dir native
 
-      # Runners ship the Visual C++ runtime, so the load smokes below cannot catch a kernel
+      # Runners ship the Visual C++ runtime, so the load smokes below cannot catch an engine
       # that needs it; a clean Windows install does not have it.
-      - name: Check Windows kernel has no Visual C++ runtime dependency
+      - name: Check Windows engine has no Visual C++ runtime dependency
         if: endsWith(matrix.target, '-windows-msvc')
         shell: bash
         run: node scripts/check-windows-runtime.mjs native/rerail.*.node
@@ -174,7 +174,7 @@ jobs:
         if: matrix.windows_runtime_smoke
         run: ./node_modules/.bin/vitest run integration/signed-profile-cli.test.ts
 
-      - name: Smoke native kernel
+      - name: Smoke native engine
         if: matrix.target != 'aarch64-pc-windows-msvc'
         run: ./node_modules/.bin/vitest run test/native-health.test.ts
 
@@ -186,7 +186,7 @@ jobs:
         if: matrix.windows_runtime_smoke
         run: ./node_modules/.bin/vitest run test/windows-daemon-launch.test.ts
 
-      - name: Upload native kernel
+      - name: Upload native engine
         uses: actions/upload-artifact@v7
         with:
           name: rerail-native-${{ matrix.target }}
@@ -227,7 +227,7 @@ jobs:
           npm run build:codex
           npm run build:ui
 
-      - name: Download native kernels
+      - name: Download native engines
         uses: actions/download-artifact@v7
         with:
           pattern: rerail-native-*
@@ -267,10 +267,10 @@ jobs:
           for notice in LICENSE NOTICE; do
             test -f "$installed/$notice" || { echo "missing $notice" >&2; exit 1; }
           done
-          # prepack stamps package.json's version into the harness plugin manifests.
-          for harness in claude codex cursor; do
+          # prepack stamps package.json's version into the host plugin manifests.
+          for host in claude codex cursor; do
             node -e 'const [pkg, manifest] = process.argv.slice(1).map((path) => require(path)); if (manifest.version !== pkg.version) { console.error(process.argv[2] + " version " + manifest.version + " is not " + pkg.version); process.exit(1); }' \
-              "$installed/package.json" "$installed/.$harness-plugin/plugin.json"
+              "$installed/package.json" "$installed/.$host-plugin/plugin.json"
           done
           (
             cd "$smoke_directory"
@@ -284,7 +284,7 @@ jobs:
           path: ${{ steps.packed-package.outputs.tarball }}
           if-no-files-found: error
 
-  # The managed install renames a staged version into place, runs the native kernel, and starts the
+  # The managed install renames a staged version into place, runs the native engine, and starts the
   # daemon: behavior the Linux package smoke cannot see. Every release installs on native Windows x64
   # before it ships.
   windows-install:
