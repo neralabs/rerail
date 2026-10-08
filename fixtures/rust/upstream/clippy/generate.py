@@ -1,6 +1,6 @@
-"""Records clippy 0.1.99 (Rust 1.99.0) for the Rust pack's ported lints (rerail/conformance/languages/rust/pack.draft.json),
+"""Records clippy 0.1.99 (Rust 1.99.0) for the Rust pack's ported lints (fixtures/rust/upstream/conformance.draft.json),
 each one checked only by an `EarlyLintPass` (AST, no types). Run offline, never in CI, with the pinned toolchain
-(rules/common.py pins it and refuses any other; Python 3.9 standard library only):
+(upstream/common.py pins it and refuses any other; Python 3.9 standard library only):
 
     python3 generate.py fixtures <rust-clippy checkout at tag rust-1.99.0> <scratch directory>
     python3 generate.py corpus <cargo target root> <name>=<corpus checkout> [...]

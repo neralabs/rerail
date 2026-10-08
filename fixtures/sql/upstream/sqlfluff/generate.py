@@ -1,4 +1,4 @@
-"""Records SQLFluff 4.4.0 for the SQL pack's chosen T4 rules (RULES; the draft manifest is ../pack.draft.json). Run
+"""Records SQLFluff 4.4.0 for the SQL pack's chosen T4 rules (RULES; the draft manifest is ../conformance.draft.json). Run
 offline by a maintainer, never in CI, with the pinned venv (../../common.py):
 
     <checkout>/.rerail/tools/sql/venv/bin/python generate.py fixtures

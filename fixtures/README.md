@@ -21,17 +21,21 @@ Rerail's `native/src/code_rule_dsl/` and `conformance/languages/`.
 | `ecma/` | ESLint 10.11.0, typescript-eslint 8.70.1, eslint-utils 4.10.1, natural-compare 1.4.0 | `lines`, `scope`, `suppress`, `value` |
 | `php/` | PHP 8.5.11, PHPStan 2.2.16, Psalm 6.19.1, PHP_CodeSniffer 4.0.4 and 3.13.6, nikic/php-parser 5.9.0, phpstan/phpdoc-parser 2.3.5 | `arguments`, `calls`, `compare`, `format_args`, `literal`, `scope`, `suppress`, `value` |
 | `blade/` | illuminate/view 13.34.0, PHP 8.5.11, PHPStan 2.2.16 | `view` |
-| `vue/` | @vue/compiler-sfc 3.5.43, vue-eslint-parser 10.4.1, eslint-plugin-vue 10.11.1, ESLint 10.11.0 | `grammar`, `rules`, `view` |
-| `rust/` | rustc, clippy and rust-analyzer 1.99.0, tree-sitter-rust 0.24.2, syn 2 | `feasibility`, `grammar`, `literal`, `rules`, `suppress` |
-| `sql/` | SQLFluff 4.4.0, PostgreSQL 18 parser (pglast 8.5), SQLite 3.50.4, MySQL 8.4.11 | `names`, `rules`, `suppress`, `t1`, `t3`, `value` |
+| `vue/` | @vue/compiler-sfc 3.5.43, vue-eslint-parser 10.4.1, eslint-plugin-vue 10.11.1, ESLint 10.11.0 | `grammar`, `upstream`, `view` |
+| `rust/` | rustc, clippy and rust-analyzer 1.99.0, tree-sitter-rust 0.24.2, syn 2 | `feasibility`, `grammar`, `literal`, `suppress`, `upstream` |
+| `sql/` | SQLFluff 4.4.0, PostgreSQL 18 parser (pglast 8.5), SQLite 3.50.4, MySQL 8.4.11 | `names`, `suppress`, `t1`, `t3`, `upstream`, `value` |
 
 The rule packs (python, php, blade, typescript, react, node, next) live in `packs/<id>/`
 ([pack format](../docs/pack-format.md#moving-to-this-layout)): their upstream tools' copied tests and recordings, their
-candidates and their licence records moved there. What stays here is engine oracles. `vue/`, `rust/` and `sql/` also
-keep the material recorded ahead of their packs: `rules/` holds the upstream linters' recordings on their own tests
-(`fixtures/`) and on pinned public corpora (`corpus-<name>.expected.json`), and `grammar/`, `t1/`, `t3/` and
-`feasibility/` hold the measurement tools. They move to `packs/<id>/upstream/` when those packs gain their first
-rules. `../conformance/recorders/eslint-record.mjs` is the recorder the ESLint-based generators share.
+candidates and their licence records moved there. What stays here is engine oracles, and the material `vue/`, `rust/`
+and `sql/` recorded ahead of their packs. Those languages have upstream recordings but no rules yet, so they have no
+pack directory: `<id>/upstream/` holds the upstream linters' recorders, their copied tests (`<tool>/fixtures/`) and
+recordings on those tests and on pinned public corpora (`<tool>/corpus-<name>.expected.json`), laid out as a pack's
+`upstream/`, beside the planned rule list (`rust/upstream/conformance.draft.json`,
+`sql/upstream/conformance.draft.json`, `vue/upstream/rules.json`); `grammar/`, `t1/`, `t3/` and `feasibility/` hold
+the measurement tools. When a language's pack gains its first rules, its draft becomes `packs/<id>/conformance.json`
+and `<id>/upstream/` moves to `packs/<id>/upstream/`. `../conformance/recorders/eslint-record.mjs` is the recorder the
+ESLint-based generators share.
 
 Each oracle stays whole inside its feature directory (generator, inputs and recorded output together), so every
 generator reads and writes relative to its own directory. A generator that needs pinned tools or corpus checkouts

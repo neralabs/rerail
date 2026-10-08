@@ -200,6 +200,8 @@ allowlist are accepted.
 Moved: `python`, `php`, `blade`, `typescript`, `react`, `node` and `next`, each from `conformance/languages/<id>/`,
 `fixtures/<id>/rules/`, its candidates and probes, and the rule rows of its licence records. The ESLint recorder they
 share is `conformance/recorders/eslint-record.mjs`, and the TypeScript grammar census is `conformance/t1/typescript-syntax.ts`.
-Not moved yet: TSLint (in core until core loads installed packs); `rust`, `sql` and `vue`, whose upstream recordings stay
-in `fixtures/<id>/rules/` until their packs gain rules; and `conformance/languages/rust/pack.draft.json`, the Rust
-port plan.
+Not moved yet: TSLint (in core until core loads installed packs); `rust`, `sql` and `vue`, which have upstream
+recordings but no rules: they stay in `fixtures/<id>/upstream/` beside each language's draft manifest
+(`fixtures/rust/upstream/conformance.draft.json`, `fixtures/sql/upstream/conformance.draft.json`,
+`fixtures/vue/upstream/rules.json`) until their packs gain rules, when the draft becomes `packs/<id>/conformance.json`
+and `upstream/` moves to `packs/<id>/upstream/`.

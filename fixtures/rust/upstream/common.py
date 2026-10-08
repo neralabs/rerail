@@ -1,5 +1,5 @@
-"""Shared by rerail-fixtures/rust/rules/clippy/generate.py and rerail-fixtures/rust/suppress/generate_corpus.py: the
-pinned toolchain, the Rust pack's corpora and clippy lints (rerail/conformance/languages/rust/pack.draft.json), the
+"""Shared by fixtures/rust/upstream/clippy/generate.py and fixtures/rust/suppress/generate_corpus.py: the
+pinned toolchain, the Rust pack's corpora and clippy lints (fixtures/rust/upstream/conformance.draft.json), the
 `cargo clippy` corpus run, and the recording format `rerail/conformance/languages/pack.ts` reads (`recordingSchema`).
 
 Pins (each generator refuses anything else):
@@ -7,7 +7,7 @@ Pins (each generator refuses anything else):
   `rustc +1.99.0` / `cargo +1.99.0 clippy` / `<sysroot>/bin/clippy-driver`.
 - Clippy source: https://github.com/rust-lang/rust-clippy at tag `rust-1.99.0`,
   commit 49e2f89a2605a9a340e04955fdbefa9803e6027a.
-- Corpora (from pack.draft.json): ripgrep 3fce3b5bb0236da2df6d99672afb8a719642eca7,
+- Corpora (from conformance.draft.json): ripgrep 3fce3b5bb0236da2df6d99672afb8a719642eca7,
   tokio b2636752450484955e7ad334bac678424d51bc4a.
 Python 3.9 standard library only."""
 
@@ -21,7 +21,7 @@ import subprocess
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
-PACK = HERE.parents[2] / "conformance" / "languages" / "rust" / "pack.draft.json"
+PACK = HERE / "conformance.draft.json"
 
 TOOLCHAIN = "1.99.0"
 RUSTC_VERSION = "rustc 1.99.0 (b940084d7 2026-09-28)"

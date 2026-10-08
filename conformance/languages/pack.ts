@@ -71,7 +71,7 @@ export const packSchema = z
     corpora: z.array(corpusSchema),
     tools: z.array(toolSchema),
     rules: z.array(ruleSchema),
-    /** Recordings directory, relative to the pack directory; default `<fixtures>/<pack>/rules`. */
+    /** Recordings directory, relative to the pack directory; default `upstream/` beside conformance.json, else `<fixtures>/<pack>/upstream`. */
     oracles: nonEmpty.optional(),
   })
   .superRefine((pack, context) => {
@@ -184,7 +184,7 @@ export function packDirectory(name: string): string {
 
 /**
  * The conformance pack in `directory`: `packs/<id>/` (conformance.json, recordings under `upstream/` by default) or
- * `conformance/languages/<name>/` (pack.json, recordings under `<fixtures>/<pack>/rules` by default).
+ * `conformance/languages/<name>/` (pack.json, recordings under `<fixtures>/<pack>/upstream` by default).
  */
 export function loadPack(directory: string): LoadedPack {
   const moved = existsSync(join(directory, CONFORMANCE_FILE));
@@ -195,7 +195,7 @@ export function loadPack(directory: string): LoadedPack {
   for (const divergence of divergences) {
     if (!ids.has(divergence.rule)) throw new Error(`${divergencesPath}: divergence names unknown rule ${divergence.rule}`);
   }
-  const defaultOracles = moved ? join(directory, "upstream") : join(ORACLES_ROOT, pack.pack, "rules");
+  const defaultOracles = moved ? join(directory, "upstream") : join(ORACLES_ROOT, pack.pack, "upstream");
   return {
     pack,
     directory,

@@ -209,19 +209,19 @@ function fixtures(checkout) {
   console.log(`cases: ${kept} kept of ${cases.length}`);
 }
 
-/** `rerail-fixtures/vue/licenses/eslint-plugin-vue/`: the upstream LICENSE, verbatim, and a manifest of every copy. */
+/** `fixtures/vue/licenses/eslint-plugin-vue/`: the upstream LICENSE, verbatim, and a manifest of every copy. */
 function writeLicense(checkout, kept) {
   const dir = join(HERE, "../../licenses/eslint-plugin-vue");
   mkdirSync(dir, { recursive: true });
   copyFileSync(join(checkout, "LICENSE"), join(dir, "LICENSE"));
-  const rows = kept.map(c => `| \`rules/eslint-plugin-vue/${c.file}\` | \`${c.upstream}\` case \`${c.case}\` | ${c.copy} |`);
+  const rows = kept.map(c => `| \`upstream/eslint-plugin-vue/${c.file}\` | \`${c.upstream}\` case \`${c.case}\` | ${c.copy} |`);
   writeFileSync(join(dir, "UPSTREAM.md"), `# eslint-plugin-vue ${TOOLS["eslint-plugin-vue"]}
 
 Upstream: [vuejs/eslint-plugin-vue](https://github.com/vuejs/eslint-plugin-vue/tree/${UPSTREAM_COMMIT}) at tag \`${UPSTREAM_TAG}\` (commit \`${UPSTREAM_COMMIT}\`). License: MIT (Copyright (c) 2017 Toru Nagashima); [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the code of RuleTester cases of the rules the Vue pack will port (\`rules/rules.json\`), and remain under eslint-plugin-vue's license. Each is one case's \`code\`, copied verbatim, or wrapped in a \`<script>\` element when the case is a script (a non-\`.vue\` filename, a parser other than vue-eslint-parser, or code with no SFC block and no filename), so that it is a \`.vue\` file. Every other file under \`rules/\` is Rerail's, under the Apache License 2.0 (this repository's \`LICENSE\`): \`rules.json\`, \`read_tests.mjs\`, \`generate.mjs\`, \`cases.json\` and the recordings they write by running ESLint ${TOOLS.eslint} with eslint-plugin-vue ${TOOLS["eslint-plugin-vue"]}.
+The files listed below are the code of RuleTester cases of the rules the Vue pack will port (\`upstream/rules.json\`), and remain under eslint-plugin-vue's license. Each is one case's \`code\`, copied verbatim, or wrapped in a \`<script>\` element when the case is a script (a non-\`.vue\` filename, a parser other than vue-eslint-parser, or code with no SFC block and no filename), so that it is a \`.vue\` file. Every other file under \`upstream/\` is Rerail's, under the Apache License 2.0 (this repository's \`LICENSE\`): \`rules.json\`, \`read_tests.mjs\`, \`generate.mjs\`, \`cases.json\` and the recordings they write by running ESLint ${TOOLS.eslint} with eslint-plugin-vue ${TOOLS["eslint-plugin-vue"]}.
 
-This file is written by \`rules/eslint-plugin-vue/generate.mjs fixtures\`. Paths are relative to \`vue/\`.
+This file is written by \`upstream/eslint-plugin-vue/generate.mjs fixtures\`. Paths are relative to \`vue/\`.
 
 | File | Upstream case | Copy |
 |---|---|---|
