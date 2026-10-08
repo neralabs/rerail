@@ -1,0 +1,7 @@
+Rerail rule pack: PHP
+Copyright 2026 Nera Software Inc.
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Its rules are ports of rules from PHP_CodeSniffer (BSD-3-Clause), PHPStan (MIT) and Psalm (MIT). Their licences and
+the record of every file copied from them are in licenses/php_codesniffer/, licenses/phpstan/ and licenses/psalm/.

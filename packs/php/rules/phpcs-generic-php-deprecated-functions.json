@@ -3,7 +3,7 @@
   "id": "phpcs-generic-php-deprecated-functions",
   "revision": 1,
   "mode": "steer",
-  "description": "PHP_CodeSniffer 4.0.4 Generic.PHP.DeprecatedFunctions on PHP 8.5.11: a call PHP resolves to one of the 67 internal functions ReflectionFunction::isDeprecated() reports (the extensions PHP_CodeSniffer's PHP loads; rerail-fixtures/php/rules/phpcs records the list).",
+  "description": "PHP_CodeSniffer 4.0.4 Generic.PHP.DeprecatedFunctions on PHP 8.5.11: a call PHP resolves to one of the 67 internal functions ReflectionFunction::isDeprecated() reports (the extensions PHP_CodeSniffer's PHP loads; rerail/packs/php/upstream/phpcs records the list).",
   "scope": {
     "include": [
       "**/*.php"

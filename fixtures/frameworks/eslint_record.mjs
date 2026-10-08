@@ -88,7 +88,7 @@ export function findingsOf(result, text, path, rules) {
   return { fatal: undefined, findings };
 }
 
-/** Writes a recording as php/rules/common.py does: findings sorted, one-space indent. */
+/** Writes a recording as packs/php/upstream/common.py does: findings sorted, one-space indent. */
 export function writeRecording(path, tool, version, source, findings) {
   const sorted = [...findings].sort(
     (a, b) => (a.rule < b.rule ? -1 : a.rule > b.rule ? 1 : 0) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) || a.line - b.line || (a.column ?? 0) - (b.column ?? 0),
