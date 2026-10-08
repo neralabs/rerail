@@ -28,7 +28,7 @@ num-bigint = "=0.4.6"
 num-integer = "=0.1.47"
 num-traits = "=0.2.19"
 parking_lot = { version = "0.12", features = ["arc_lock"] }
-rayon = "=1.11.0"
+rayon = "=1.12.0"
 serde = { version = "1.0", features = ["derive"] }
 fancy-regex = "=0.14.0"
 regex = "=1.13.1"
