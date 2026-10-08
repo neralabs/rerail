@@ -5,6 +5,8 @@ import type { AdapterDelivery } from "../src/adapter-contract.js";
 import { codexHookOutput, handleCodexEvent, runCodexHook } from "../src/codex-hook.js";
 import type { HookOptions } from "../src/hook-host.js";
 import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "./hook-fixtures.js";
+import { sessionStartNote } from "../src/rerail-steer.js";
+import { dashboardOrigin } from "../src/session-presentation.js";
 import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-codex-hook-");
@@ -19,7 +21,10 @@ describe("Codex one-shot hook", () => {
     const options = hookOptions(root);
     const common = { session_id: "codex-session", cwd: root, transcript_path: null, model: "gpt-5-codex", permission_mode: "default" };
 
-    expect(await runCodexHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, options)).toEqual({});
+    const note = sessionStartNote(await dashboardOrigin(root), "codex", "codex-session");
+    expect(await runCodexHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, options)).toEqual({
+      hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: note },
+    });
     expect(await runCodexHook({ ...common, hook_event_name: "UserPromptSubmit", turn_id: "t1", prompt: "Refactor auth" }, options)).toEqual({});
     expect(await runCodexHook({
       ...common,
@@ -95,7 +100,10 @@ describe("Codex one-shot hook", () => {
 
     const startLoop = scriptedLoop({ "session-start": [delivery("steer", "Read the conventions."), delivery("log", "hidden")] });
     expect(await handleCodexEvent({ ...common, hook_event_name: "SessionStart", source: "startup" }, startLoop, storageRoot)).toEqual({
-      hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: "Read the conventions." },
+      hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        additionalContext: `${sessionStartNote(await dashboardOrigin(root), "codex", "codex-session")}\n\nRead the conventions.`,
+      },
     });
 
     const toolLoop = scriptedLoop({
@@ -108,7 +116,9 @@ describe("Codex one-shot hook", () => {
       tool_name: "Bash",
       tool_use_id: "call-1",
       tool_response: "ok",
-    }, toolLoop, storageRoot)).toEqual({});
+    }, toolLoop, storageRoot)).toEqual({
+      hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "Generated file.\n\nRun the tests." },
+    });
 
     const stopLoop = scriptedLoop({ "turn-end": [delivery("steer", "Deferred steer."), delivery("block", "Deferred block.")] });
     expect(await handleCodexEvent({
@@ -118,7 +128,7 @@ describe("Codex one-shot hook", () => {
       last_assistant_message: "Done.",
     }, stopLoop, storageRoot)).toEqual({
       decision: "block",
-      reason: "Generated file.\n\nRun the tests.\n\nDeferred steer.\n\nDeferred block.",
+      reason: "Deferred steer.\n\nDeferred block.",
     });
     expect(stopLoop.events.map(event => event.kind)).toEqual(["assistant-message", "turn-end"]);
 
@@ -132,7 +142,7 @@ describe("Codex one-shot hook", () => {
     expect(codexHookOutput("SessionEnd", [delivery("steer", "ignored")])).toEqual({});
   });
 
-  it("carries a steer pended after a tool to the next tool call when one comes before Stop", async () => {
+  it("delivers a tool's steering at its own PostToolUse, leaving nothing for the next tool call or Stop", async () => {
     const root = await temporaryDirectory();
     const storageRoot = join(root, "sessions");
     const common = { session_id: "codex-session", cwd: root, turn_id: "t1" };
@@ -141,12 +151,12 @@ describe("Codex one-shot hook", () => {
       { ...common, hook_event_name: "PostToolUse", tool_name: "Bash", tool_use_id: "call-1", tool_response: "ok" },
       scriptedLoop({ result: [delivery("block", "Revert the generated edit.")] }),
       storageRoot,
-    )).toEqual({});
+    )).toEqual({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "Revert the generated edit." } });
     expect(await handleCodexEvent(
       { ...common, hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: "call-2", tool_input: { command: "ls" } },
       scriptedLoop({}),
       storageRoot,
-    )).toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: "Revert the generated edit." } });
+    )).toEqual({});
     expect(await handleCodexEvent({ ...common, hook_event_name: "Stop", last_assistant_message: "Done." }, scriptedLoop({}), storageRoot)).toEqual({});
   });
 });

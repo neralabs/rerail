@@ -45,7 +45,7 @@ function violations(compiled: NativeCompiledCodeRuleDsl, path: string, source: s
 
 const bundled = loadBundledRules(bundledRulesDirectory());
 const documents = bundled.filter(document => document.enabledByDefault !== false);
-const optIn = bundled.filter(document => document.enabledByDefault === false);
+const optIn = bundled.filter(document => document.enabledByDefault === false && document.rule.id.startsWith("tslint:"));
 /** Rule id -> rule file stem; the fixture file shares the stem. */
 const stemByRuleId: Record<string, string> = Object.fromEntries(
   readdirSync(bundledRulesDirectory())

@@ -929,11 +929,14 @@ export const codeRuleAstCountSchema: z.ZodType<CodeRuleDslAstCount> = z.lazy(() 
       follows: codeRuleAstRelationSchema.optional(),
       min: z.number().int().nonnegative().optional(),
       max: z.number().int().nonnegative().optional(),
+      as: metavariableName.optional(),
+      offset: z.number().int().optional(),
     })
     .strict()
     .refine(count => AST_RELATION_KEYS.filter(key => count[key] !== undefined).length === 1, "A count must contain exactly one relation: inside, has, precedes, or follows.")
     .refine(count => (count.min ?? 0) >= 1 || count.max !== undefined, "A count must set min to at least 1, or set max.")
-    .refine(count => count.max === undefined || (count.min ?? 0) <= count.max, "A count's min must not exceed its max.") as unknown as z.ZodType<CodeRuleDslAstCount>,
+    .refine(count => count.max === undefined || (count.min ?? 0) <= count.max, "A count's min must not exceed its max.")
+    .refine(count => count.offset === undefined || count.as !== undefined, { message: "A count's offset needs as: it is added to the value that as binds.", path: ["offset"] }) as unknown as z.ZodType<CodeRuleDslAstCount>,
 );
 
 const codeRuleValuePair = z.tuple([codeRuleValueSchema, codeRuleValueSchema]);
@@ -1482,7 +1485,10 @@ function visitSubRules(rule: CodeRuleDslAstRule, path: RulePath, parsed: ParseGr
   if (typeof rule.nthChild === "object" && rule.nthChild.ofRule !== undefined) visit(rule.nthChild.ofRule, [...path, "nthChild", "ofRule"], parsed, fields);
   if (rule.not !== undefined) visit(rule.not, [...path, "not"], parsed, fields);
   visitRelations(rule, path, false, parsed, fields, issue, visit);
-  if (rule.count !== undefined) visitRelations(rule.count, [...path, "count"], true, parsed, fields, issue, visit);
+  if (rule.count !== undefined) {
+    if (parsed !== undefined && rule.count.as !== undefined) issue([...path, "count", "as"], "A parsed tree's count binds nothing; count in the ast query's own rule to report its value.");
+    visitRelations(rule.count, [...path, "count"], true, parsed, fields, issue, visit);
+  }
   visitBindingRules(rule, path, visit);
 }
 

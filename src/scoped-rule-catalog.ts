@@ -202,14 +202,32 @@ export class ScopedRuleCatalog {
   #localRevision = 0;
 
   static open(path: string, repository: RepositoryContext, database: RerailDatabase = openRerailDatabase(path)): ScopedRuleCatalog {
-    return new ScopedRuleCatalog(path, repository, database);
+    return new ScopedRuleCatalog(path, repository, database, true);
   }
 
-  private constructor(path: string, repository: RepositoryContext, database: RerailDatabase) {
+  /**
+   * A read-only view for status readers (`/rerail`): it never takes the write lock, imports legacy
+   * rules, or records the repository. Undefined while the repository has no project yet, which only
+   * a writer creates; its writes fail, as the connection is read-only.
+   */
+  static openReadOnly(path: string, repository: RepositoryContext): ScopedRuleCatalog | undefined {
+    const catalog = new ScopedRuleCatalog(path, repository, openRerailDatabase(path, { readonly: true }), false);
+    try {
+      if (catalog.#project() !== undefined) return catalog;
+    } catch (error) {
+      catalog.close();
+      throw error;
+    }
+    catalog.close();
+    return undefined;
+  }
+
+  private constructor(path: string, repository: RepositoryContext, database: RerailDatabase, writable: boolean) {
     this.path = resolve(path);
 
     this.#database = database;
     this.#repository = { repositoryId: repository.repositoryId, workspaceRoot: resolve(repository.workspaceRoot) };
+    if (!writable) return;
     this.#ensureRepository(Date.now());
     if (this.#project() === undefined) {
       this.assignRepository(`repository:${repository.repositoryId}`, basename(this.#repository.workspaceRoot), repository.repositoryId);

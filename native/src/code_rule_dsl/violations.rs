@@ -15,7 +15,7 @@
 //! whose `TemplateFix` reads only metavariables.
 use super::json::invalid;
 use super::matcher::{
-    AstMatcher, Capture, GrammarMatcher, UtilTable, UtilitySummary, binding_range,
+    AstMatcher, Capture, CaptureAnalysis, GrammarMatcher, UtilTable, UtilitySummary, binding_range,
     collect_variables,
 };
 use super::model::{
@@ -86,7 +86,8 @@ fn emitting(query: &Query) -> &Query {
 
 /// Every capture name a matcher can bind, following ast-grep-config 0.45.3. Negated sub-rules
 /// and counts never contribute bindings (they probe a throwaway environment), so their metavariables are
-/// excluded; `any` branches and relations are included, and a name only some of them bind may be
+/// excluded; a count's own value (`as`) is text only a message reads (`CaptureAnalysis::counts`).
+/// `any` branches and relations are included, and a name only some of them bind may be
 /// absent at runtime. A `matches` reference shares the caller's environment both ways
 /// (`referent_rule.rs`), so a local utility's names are the caller's; `constraints` run against
 /// the same environment after the rule (`rule_core.rs`), so their names count too. A relation's
@@ -388,12 +389,16 @@ pub(super) fn bind(
         ClauseKind::RequireEach { .. } | ClauseKind::Budget { .. } | ClauseKind::Llm => None,
     };
     let mut names = BTreeSet::new();
+    // The values counts bind (`as`): text a message alone may interpolate.
+    let mut counted = BTreeSet::new();
     let mut regex_group = false;
     // Sub-node regex group names that no metavariable of the same name shadows.
     let mut node_groups = BTreeSet::new();
     match query {
         Some(Query::Ast { matchers, .. }) => {
+            let mut analysis = CaptureAnalysis::default();
             for grammar in matchers {
+                counted.extend(analysis.counts(&grammar.matcher));
                 ast_captures(
                     &grammar.matcher,
                     &grammar.utils,
@@ -536,8 +541,28 @@ pub(super) fn bind(
     names.extend(transformed.iter().map(String::as_str));
     let references = |template: &Template, field: &str| -> Result<()> {
         for (name, multi) in template.vars() {
+            let sigils = if multi { "$$$" } else { "$" };
+            if counted.contains(name) {
+                if field != "message" {
+                    return Err(invalid(format!(
+                        "{path}/{field}: `{sigils}{name}` is a count's value, which only a \
+                         message may interpolate"
+                    )));
+                }
+                if names.contains(name) {
+                    return Err(invalid(format!(
+                        "{path}/message: `${name}` names both a capture and a count's value; \
+                         rename one"
+                    )));
+                }
+                if multi {
+                    return Err(invalid(format!(
+                        "{path}/message: `$$${name}`: a count's value is text; use `${name}`"
+                    )));
+                }
+                continue;
+            }
             if !names.contains(name) {
-                let sigils = if multi { "$$$" } else { "$" };
                 let hint = if field == "message" {
                     format!("; write `\\{sigils}{name}` for literal text")
                 } else {

@@ -21,6 +21,7 @@ import { bootstrapCodeRuleDslCatalog, bundledCodeRuleDslDirectory } from "../src
 import { codeRuleSchema } from "../src/code-rule-schema.js";
 import type { RuleMode } from "../src/rule-mode.js";
 import { SqliteRuleStore } from "../src/rule-store.js";
+import { steerBlock } from "../src/rerail-steer.js";
 import { rerailOraclesDirectory } from "./oracles.js";
 import { gateStorageAttachments } from "./storage-attach-gate.js";
 import * as native from "../src/native.js";
@@ -765,10 +766,10 @@ describe("mechanical code rule regressions", () => {
       await settled(enforcer);
 
       expect(requestSteer).toHaveBeenCalledTimes(1);
-      expect(requestSteer.mock.calls[0]![2]).toBe([
-        "LOGGER (web/App.tsx:2:15): Log user through the logger",
+      expect(requestSteer.mock.calls[0]![2]).toBe(steerBlock("test:logger", [
+        "Log user through the logger (web/App.tsx:2:15)",
         "  Suggested fix: replace 2:3-2:20 with `logger.info(user)`",
-      ].join("\n"));
+      ].join("\n")));
       expect(auditForPath(audits, "web/App.tsx")?.result).toMatchObject({
         violations: [expect.objectContaining({ fix: { span: expect.objectContaining({ startLine: 1, startColumn: 2 }), text: "logger.info(user)" } })],
       });

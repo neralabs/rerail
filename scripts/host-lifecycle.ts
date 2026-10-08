@@ -20,7 +20,7 @@
  *   1. The extension prints no `Extension error` / `handler timed out` lines.
  *   2. Rerail records exactly one session for the run, opened once, with the prompt and a clean end,
  *      and its session-start row lands within 12 s of the process spawn.
- *   3. Rerail's ledger holds exactly one `steer` delivery carrying SQL_EXECUTE_FSTRING for the first
+ *   3. Rerail's ledger holds exactly one `steer` delivery attributed to rerail-lifecycle:sql-execute-fstring for the first
  *      tool result that writes api/probe.py; later model-chosen edits are outside this assertion.
  *   4. The host's own session transcript recorded receiving that steer (the `custom_message` entry
  *      `sendMessage` appends, tagged `customType: "rerail.rule"` by both extensions), and an assistant
@@ -100,7 +100,10 @@ const LedgerEntry = z.union([
     type: z.literal("sample"),
     item: z.object({ metadata: z.object({ fields: z.object({ eventId: z.string(), sampleSource: z.string(), boundary: z.string() }) }) }),
   }),
-  z.object({ type: z.literal("delivery"), delivery: z.object({ requested: z.string(), mechanism: z.string(), content: z.string() }) }),
+  z.object({
+    type: z.literal("delivery"),
+    delivery: z.object({ requested: z.string(), mechanism: z.string(), content: z.string(), ruleIds: z.array(z.string()).default([]) }),
+  }),
   z.object({ type: z.string().refine((type) => type !== "sample" && type !== "delivery") }).transform(() => ({ type: "other" as const })),
 ]);
 /** Rerail session event payload for a `result` event; enough to name the tool and its target. */
@@ -129,10 +132,10 @@ type RerailRecords = {
   /** Milliseconds from process spawn to the first session's start row; NaN when no session was recorded. */
   startMs: number;
 };
-/** What Rerail's ledger says about the SQL_EXECUTE_FSTRING steer produced by the requested probe write. */
+/** What Rerail's ledger says about the rerail-lifecycle:sql-execute-fstring steer produced by the requested probe write. */
 type SteerRecord = {
   deliveries: number;
-  /** `steer` deliveries carrying SQL_EXECUTE_FSTRING whose producing tool result writes the requested probe. */
+  /** `steer` deliveries attributed to the policy whose producing tool result writes the requested probe. */
   steers: number;
   /** Text of the first matching probe-write steer; "" when there is none. */
   content: string;
@@ -304,7 +307,7 @@ function readRerailRecords(databasePath: string, spawnedAt: number): RerailRecor
   return { events, shapes, startMs: startedAt === undefined ? Number.NaN : startedAt - spawnedAt };
 }
 
-/** Rerail's ledger (`.rerail/sessions/<id>/events.jsonl`): the SQL_EXECUTE_FSTRING steer produced by the first requested probe write. */
+/** Rerail's ledger (`.rerail/sessions/<id>/events.jsonl`): the code rule's steer produced by the first requested probe write. */
 export async function readLedger(root: string, events: readonly SessionEventRecord[]): Promise<SteerRecord> {
   const directory = join(root, ".rerail", "sessions");
   const directories = (await readdir(directory, { withFileTypes: true }).catch(() => [])).filter((entry) => entry.isDirectory());
@@ -312,7 +315,7 @@ export async function readLedger(root: string, events: readonly SessionEventReco
   const ledger = texts.flatMap((text) => text.split("\n").filter(Boolean).map((line) => LedgerEntry.parse(JSON.parse(line))));
   const deliveries = ledger.filter((entry) => entry.type === "delivery");
   const steers = ledger.flatMap((entry, index) =>
-    entry.type === "delivery" && entry.delivery.requested === "steer" && entry.delivery.content.includes(CODE)
+    entry.type === "delivery" && entry.delivery.requested === "steer" && entry.delivery.ruleIds.includes(CODE_RULE.id)
       ? [{ index, content: entry.delivery.content }]
       : [],
   );
@@ -346,13 +349,17 @@ export async function readLedger(root: string, events: readonly SessionEventReco
   };
 }
 
+/** The adapter makes the runtime's relative `Why?` links absolute for the workspace's dashboard; compare without the origin. */
+const withoutDashboardOrigin = (text: string): string => text.replaceAll(/Why\? → \S*?#rule\//gu, "Why? → #rule/");
+
 /** The host's session jsonl under `sessionDir`: the steer entry, and the assistant messages around it. */
 async function readHostTranscript(sessionDir: string, steerContent: string): Promise<HostTranscript> {
   const files = await jsonlFiles(sessionDir);
   const lines = (await Promise.all(files.map((file) => readFile(file, "utf8")))).flatMap((text) => text.split("\n").filter(Boolean));
   const entries = lines.map((line) => HostEntry.parse(JSON.parse(line)));
   const steerEntries = entries.flatMap((entry, index) =>
-    steerContent !== "" && entry.type === "custom_message" && entry.customType === RULE_MESSAGE_TYPE && textOf(entry.content) === steerContent ? [index] : [],
+    steerContent !== "" && entry.type === "custom_message" && entry.customType === RULE_MESSAGE_TYPE
+      && withoutDashboardOrigin(textOf(entry.content)) === withoutDashboardOrigin(steerContent) ? [index] : [],
   );
   const assistants = entries.flatMap((entry, index) => (entry.type === "message" && entry.message.role === "assistant" ? [index] : []));
   const steerEntry = steerEntries[0] ?? -1;
@@ -401,8 +408,8 @@ function report(host: Host, { run, rerail, steer, transcript }: Evidence): void 
     `${rerail.shapes.length} session(s); per session: ${perSession}`,
   );
 
-  // Rerail's ledger: exactly one SQL_EXECUTE_FSTRING steer produced by the first requested probe write.
-  check(assertions, "probe violation steered exactly once", steer.steers === 1, `${steer.steers} probe-write ${CODE} steer(s); ${steer.deliveries} deliveries total`);
+  // Rerail's ledger: exactly one steer for the policy produced by the first requested probe write.
+  check(assertions, "probe violation steered exactly once", steer.steers === 1, `${steer.steers} probe-write ${CODE_RULE.id} steer(s); ${steer.deliveries} deliveries total`);
   check(
     assertions,
     "steer produced on the probe write's tool result",
@@ -428,7 +435,7 @@ function report(host: Host, { run, rerail, steer, transcript }: Evidence): void 
   check(assertions, `${host} put the steer in the model's context`, transcript.assistantAfter !== undefined, placement);
   infos.push(
     `assistant's last reply: ${transcript.lastReply.replace(/\s+/gu, " ").trim().slice(0, 240) || "(none)"}`,
-    `assistant mentioned the policy by name: ${/SQL_EXECUTE_FSTRING|f-string|raw sql/iu.test(transcript.lastReply)}`,
+    `assistant mentioned the policy by name: ${/sql-execute-fstring|f-string|raw sql/iu.test(transcript.lastReply)}`,
   );
   if (run.exitCode !== 0 || transcript.replies === 0) {
     const tail = `${run.stdout}\n${run.stderr}`.trim().split("\n").slice(-3).join(" | ").slice(0, 400);

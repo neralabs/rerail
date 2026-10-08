@@ -1,0 +1,55 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "complexity",
+  "name": "Cyclomatic complexity (limit 6)",
+  "category": "language",
+  "covers": "Flags a Python, TypeScript or JavaScript function whose cyclomatic complexity, with lizard 1.24.0's decision points, is above 6.",
+  "reason": "chosen by hand; a limit of 6 is strict for most existing code, so it is never recommended",
+  "rules": [
+    {
+      "id": "complexity:cyclomatic-python",
+      "title": "Keep Python functions at cyclomatic complexity 6 or lower",
+      "group": "Complexity",
+      "examples": {
+        "caught": {
+          "path": "src/grade.py",
+          "text": "def grade(score, curve, late, extra):\n    if score > 90 and not late:\n        return \"A\"\n    elif score > 80 or extra:\n        return \"B\"\n    elif score > 70:\n        return \"C\"\n    for bonus in curve:\n        if bonus:\n            score += bonus\n    return \"F\"\n"
+        },
+        "passes": {
+          "path": "src/grade.py",
+          "text": "def grade(score, late):\n    if late:\n        return \"F\"\n    if score > 90:\n        return \"A\"\n    return \"B\"\n"
+        }
+      }
+    },
+    {
+      "id": "complexity:cyclomatic-typescript",
+      "title": "Keep TypeScript functions at cyclomatic complexity 6 or lower",
+      "group": "Complexity",
+      "examples": {
+        "caught": {
+          "path": "src/grade.ts",
+          "text": "export function grade(score: number, late: boolean, extra: boolean): string {\n  if (score > 90 && !late) return \"A\";\n  if (score > 80 || extra) return \"B\";\n  if (score > 70) return \"C\";\n  for (const bonus of [1, 2]) {\n    if (bonus > score) return \"D\";\n  }\n  return \"F\";\n}\n"
+        },
+        "passes": {
+          "path": "src/grade.ts",
+          "text": "export function grade(score: number, late: boolean): string {\n  if (late) return \"F\";\n  return score > 90 ? \"A\" : \"B\";\n}\n"
+        }
+      }
+    },
+    {
+      "id": "complexity:cyclomatic-javascript",
+      "title": "Keep JavaScript functions at cyclomatic complexity 6 or lower",
+      "group": "Complexity",
+      "examples": {
+        "caught": {
+          "path": "src/grade.js",
+          "text": "export function grade(score, late, extra) {\n  if (score > 90 && !late) return \"A\";\n  if (score > 80 || extra) return \"B\";\n  if (score > 70) return \"C\";\n  for (const bonus of [1, 2]) {\n    if (bonus > score) return \"D\";\n  }\n  return \"F\";\n}\n"
+        },
+        "passes": {
+          "path": "src/grade.js",
+          "text": "export function grade(score, late) {\n  if (late) return \"F\";\n  return score > 90 ? \"A\" : \"B\";\n}\n"
+        }
+      }
+    }
+  ]
+}

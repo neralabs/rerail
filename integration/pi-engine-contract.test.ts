@@ -2,7 +2,8 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { seedContractCodeRuleForRoot } from "./contract-code-rule.js";
+import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedContractCodeRuleForRoot } from "./contract-code-rule.js";
+import { steerText } from "./steer-text.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -23,7 +24,7 @@ afterEach(async () => {
 });
 
 describe("Pi native code rule engine", () => {
-  it("delivers a CURSOR_EXECUTE code rule violation through Pi's native session queue", async () => {
+  it("delivers the contract cursor-execute code rule violation through Pi's native session queue", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "rerail-pi-kernel-"));
     process.env.RERAIL_HOME = join(cwd, "home");
     startTestRepository(cwd);
@@ -95,11 +96,12 @@ describe("Pi native code rule engine", () => {
         details: undefined,
         isError: false,
       });
+      const steer = await steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, `${CONTRACT_CURSOR_EXECUTE_MESSAGE} (api/route.py:2:5)`, cwd);
       await expect.poll(() => sessionManager.getBranch(), { timeout: 10_000, interval: 10 }).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             type: "custom_message",
-            content: expect.stringContaining("CURSOR_EXECUTE"),
+            content: expect.stringContaining(steer),
           }),
         ]),
       );

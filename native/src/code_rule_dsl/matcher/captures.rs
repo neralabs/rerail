@@ -25,11 +25,13 @@ pub(in crate::code_rule_dsl) struct CaptureAnalysis {
     binds: UtilitySummary<UtilKey, Names>,
     reads: UtilitySummary<UtilKey, Names>,
     mentions: UtilitySummary<UtilKey, Names>,
+    counts: UtilitySummary<UtilKey, Names>,
 }
 
 impl CaptureAnalysis {
     /// Names a matcher may bind into the environment it runs in. `not` and `count` keep what they
-    /// bind to themselves; a stop rule runs in an environment of its own.
+    /// bind to themselves; a stop rule runs in an environment of its own. A count's own value
+    /// (`as`) is not among them: no other term reads it (`counts`).
     pub(in crate::code_rule_dsl) fn binds(&mut self, matcher: &AstMatcher) -> Names {
         let mut names = Names::new();
         collect_binds(matcher, &mut self.binds, &mut names);
@@ -56,11 +58,73 @@ impl CaptureAnalysis {
         collect_mentions(matcher, &mut self.mentions, &mut names);
         names
     }
+
+    /// The names counts bind their values under (`as`) in the environment a matcher runs in: not
+    /// under `not` or inside a count (a probe each), in a stop rule (a fresh environment), or in a
+    /// call's frame. Only a finding's message reads them.
+    pub(in crate::code_rule_dsl) fn counts(&mut self, matcher: &AstMatcher) -> Names {
+        let mut names = Names::new();
+        collect_counts(matcher, &mut self.counts, &mut names);
+        names
+    }
 }
 
 /// `CaptureAnalysis::binds` in an analysis of its own.
 pub(in crate::code_rule_dsl) fn binds(matcher: &AstMatcher) -> Names {
     CaptureAnalysis::default().binds(matcher)
+}
+
+/// `CaptureAnalysis::counts` in an analysis of its own.
+pub(in crate::code_rule_dsl) fn counts(matcher: &AstMatcher) -> Names {
+    CaptureAnalysis::default().counts(matcher)
+}
+
+fn collect_counts(
+    matcher: &AstMatcher,
+    summaries: &mut UtilitySummary<UtilKey, Names>,
+    names: &mut Names,
+) {
+    match matcher {
+        AstMatcher::Count(count) => {
+            names.extend(count.binding.iter().map(|binding| binding.name.clone()));
+        }
+        AstMatcher::All(items) | AstMatcher::Any(items) => {
+            for item in items {
+                collect_counts(item, summaries, names);
+            }
+        }
+        AstMatcher::Inside(item, _)
+        | AstMatcher::Has(item, _)
+        | AstMatcher::Precedes(item, _)
+        | AstMatcher::Follows(item, _) => collect_counts(item, summaries, names),
+        AstMatcher::Field(relation) => collect_counts(&relation.rule, summaries, names),
+        AstMatcher::NthChild(nth) => {
+            if let Some(rule) = &nth.of_rule {
+                collect_counts(rule, summaries, names);
+            }
+        }
+        AstMatcher::Util(util) => {
+            names.extend(
+                summaries.summarize(util.summary_key(), Names::new(), |summaries| {
+                    let mut names = Names::new();
+                    util.with_target(|rule| collect_counts(rule, summaries, &mut names));
+                    names
+                }),
+            );
+        }
+        AstMatcher::Constrained(core) => collect_counts(&core.rule, summaries, names),
+        // Semantic sub-rules are not followed: a count there is not one a message may name.
+        AstMatcher::Pattern(_)
+        | AstMatcher::Kind(_)
+        | AstMatcher::Regex(_)
+        | AstMatcher::Not(_)
+        | AstMatcher::Compare(_)
+        | AstMatcher::Call(_)
+        | AstMatcher::Semantic(_)
+        | AstMatcher::Never => {}
+        #[cfg(test)]
+        AstMatcher::TestUnknown(_) => {}
+    }
 }
 
 fn collect_binds(
@@ -285,7 +349,10 @@ fn collect_mentions(
                 collect_mentions(rule, summaries, names);
             }
         }
-        AstMatcher::Count(count) => collect_mentions(&count.relation, summaries, names),
+        AstMatcher::Count(count) => {
+            names.extend(count.binding.iter().map(|binding| binding.name.clone()));
+            collect_mentions(&count.relation, summaries, names);
+        }
         AstMatcher::Util(util) => {
             names.extend(
                 summaries.summarize(util.summary_key(), Names::new(), |summaries| {

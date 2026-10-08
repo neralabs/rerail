@@ -15,6 +15,8 @@ import type { ModelFingerprint } from "./native.js";
 import type { NativeSemanticToolRuntime } from "./native-semantic-tools.js";
 import { NativeSemanticRuntime } from "./native-semantic-runtime.js";
 import type { NativeSessionClient } from "./native-session-client.js";
+import { createOmpPresentation } from "./omp-presentation.js";
+import { linkDeliveries } from "./session-presentation.js";
 import { PiNativeSession } from "./pi-native-session.js";
 import { registerPiHostAdapter } from "./pi-host-adapter.js";
 import { ConversationRuleRegistry, type RuleMatch } from "./registry.js";
@@ -69,6 +71,7 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
     let turn = 0;
     const pendingBackgroundDeliveries = new Map<RerailRuntime, AdapterDelivery[]>();
     let semantic: NativeSemanticRuntime | undefined;
+    const presentation = createOmpPresentation("pi");
 
     const activeRegistry = (): ConversationRuleRegistry => {
       if (registry === undefined) throw new Error("cosine-rules extension received an event before session_start");
@@ -157,8 +160,9 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
       attaching = pending;
       return pending;
     };
-    const sendDeliveries = (current: RerailRuntime | NativeSessionClient, deliveries: readonly AdapterDelivery[]): Promise<void> =>
-      sendNativeDeliveries(deliveries, (message, options_) => pi.sendMessage(message, options_),
+    // The runtime keeps steer links relative; they point at this checkout's dashboard only here.
+    const sendDeliveries = async (current: RerailRuntime | NativeSessionClient, deliveries: readonly AdapterDelivery[]): Promise<void> =>
+      sendNativeDeliveries(await linkDeliveries(deliveries, (native.context() ?? currentContext)?.cwd), (message, options_) => pi.sendMessage(message, options_),
         (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds));
     const native = new PiNativeSession({
       entries: context => (context ?? currentContext)?.sessionManager.getBranch() ?? [],
@@ -200,11 +204,16 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
       if (!isRerailStarted(ctx.cwd, configuredDatabasePath(options, ctx.cwd))) {
         await closeRuntimeNow();
         currentContext = ctx;
+        // Nothing runs here, and nothing autostarts, so the footer says so without asking a daemon (as OMP does).
+        presentation.start(ctx, { off: true });
         return;
       }
       const session = { host: "pi", sessionId: ctx.sessionManager.getSessionId(), cwd: ctx.cwd } satisfies AdapterSession & { host: "pi" };
       const activation = await native.initialize(ctx, session, options_.rebuild === true, options);
-      if (activation === "attached") return;
+      if (activation === "attached") {
+        presentation.start(ctx);
+        return;
+      }
       semantic ??= new NativeSemanticRuntime({
         modelPath: options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath(),
         sourceId: "pi:message",
@@ -215,6 +224,7 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
         turn = replaySessionState(registry, ctx.sessionManager.getBranch());
         currentContext = ctx;
         runtime?.recordRuleCoverage(current.sessionId);
+        presentation.start(ctx);
         return;
       }
       const built = await build(ctx, session);
@@ -244,6 +254,7 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
       const previous = detach();
       attach(built);
       await retire(previous);
+      presentation.start(ctx);
     };
 
     const build = async (ctx: ExtensionContext, session: AdapterSession): Promise<Attached> => {
@@ -303,6 +314,7 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
       close: closeRuntime,
       shutdown: async () => {
         try {
+          presentation.stop();
           await closeRuntime();
         } finally {
           currentContext = undefined;

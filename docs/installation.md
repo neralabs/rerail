@@ -40,9 +40,9 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
    updates never touch harness config:
    - OMP: symlink `~/.omp/agent/extensions/rerail → current`, plus a `rerail` MCP server entry in `~/.omp/agent/mcp.json`
    - Pi: `packages` entry in `~/.pi/agent/settings.json`
-   - Claude Code: `hooks` in `~/.claude/settings.json` running `current/dist/claude-hook.js` (on Windows as exec-form entries that Claude Code 2.1.139+ spawns without Git Bash: `node` from `PATH` starts `dist/hook-launcher.js`, which prefers the `node.exe` recorded at setup and falls back to the `PATH` node once that binary is gone), the general `/rerail` command, and exact `/rerail-start` / `/rerail-stop` / `/rerail-ui` / `/rerail-session` commands under `~/.claude/commands/` (`/rerail-ui` and `/rerail-session` open the page as a tab in the Orca or Cursor window before falling back to the system browser)
-   - Codex: `~/.codex/hooks.json` running `current/dist/codex-hook.js` (Codex asks you to trust it once via `/hooks`; it cannot expose an exact third-party slash-command name, so use the terminal CLI)
-   - Cursor: `~/.cursor/hooks.json` running `current/dist/cursor-hook.js`, plus exact `/rerail-start` / `/rerail-stop` / `/rerail-ui` commands under `~/.cursor/commands/` (`/rerail-ui` opens the rules page as a tab in the Cursor window before falling back to the system browser)
+   - Claude Code: `hooks` in `~/.claude/settings.json` running `current/dist/claude-hook.js` (on Windows as exec-form entries that Claude Code 2.1.139+ spawns without Git Bash: `node` from `PATH` starts `dist/hook-launcher.js`, which prefers the `node.exe` recorded at setup and falls back to the `PATH` node once that binary is gone), and the Rerail commands (`/rerail`, `/rerail-ui`, `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`, `/rerail-rage-quit`) under `~/.claude/commands/` (`/rerail-ui` opens the dashboard as a tab in the Orca or Cursor window before falling back to the system browser)
+   - Codex: `~/.codex/hooks.json` running `current/dist/codex-hook.js` (Codex asks you to trust it once via `/hooks`), plus one skill per Rerail command under `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-ui`, and so on
+   - Cursor: `~/.cursor/hooks.json` running `current/dist/cursor-hook.js`, plus the same Rerail commands under `~/.cursor/commands/` (`/rerail-ui` opens the dashboard as a tab in the Cursor window before falling back to the system browser)
 
    Existing entries from other tools are preserved byte-for-byte; a backup
    `<file>.<timestamp>.bak` is written only when a file changes. Re-running is
@@ -111,15 +111,12 @@ rerail rules export      # dump global and this project's rules to ~/.rerail/rul
 rerail install --remove  # take Rerail out of every coding agent, stop the daemon, back up the database
 ```
 
-Inside OMP and Pi, `/rerail-settings` opens an editable settings menu and
-`/rerail-scan` chooses full-repository or Git-diff scope; one-shot scans are always log-only.
-Both target the current session automatically. Slash completion also lists the
-native OMP/Pi `/rerail-status`, `/rerail-check`, `/rerail-update`,
-`/rerail-rollback`, and `/rerail-reset` commands. These commands take no
-arguments.
+Every coding agent gets the same commands: `/rerail`, `/rerail-ui`,
+`/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update` and
+`/rerail-rage-quit` (`$rerail`, `$rerail-ui`, and so on in Codex). Settings,
+scans, status, update checks, rollback and reset are the CLI commands above.
 Restart the coding agent after installing or rebuilding to load the commands.
-Claude Code also retains general `/rerail` guidance at
-`~/.claude/commands/rerail.md`; its scan invocation must supply the exact session
+A scan or settings invocation must supply the exact session
 identity. See the [scan and settings contract](../README.md#scan-and-settings-controls)
 for scope, mode, persistence, diagnostics, and background versus next-event
 delivery.

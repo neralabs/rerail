@@ -55,10 +55,9 @@ function registrationArguments(options: ReadonlyMap<string, string>, flags: Read
   };
 }
 
-function registrationOptions(root: string, home: string, parsed: RegistrationArguments, templateRoot?: string): RegistrationOptions {
+function registrationOptions(root: string, home: string, parsed: RegistrationArguments): RegistrationOptions {
   return {
     root,
-    ...(templateRoot === undefined ? {} : { templateRoot }),
     home,
     workspaceDir: process.cwd(),
     ...(parsed.hosts === undefined ? {} : { harnesses: parsed.hosts }),
@@ -184,12 +183,10 @@ export async function runInstallCommand(args: readonly string[], context: SetupC
   const root = explicitRoot === undefined
     ? registrationRoot(context)
     : await activateExplicitRoot(context, explicitRoot, remove, parsed.dryRun);
-  // A dry run never creates `<home>/current`, so packaged templates must come from the checkout itself.
-  const templateRoot = explicitRoot !== undefined && parsed.dryRun && !remove ? explicitRoot : undefined;
   process.stdout.write(`${remove ? "Removing Rerail from" : "Connecting Rerail to"} coding agents for ${root}${parsed.dryRun ? " (dry run)" : ""}\n`);
   const report = remove
     ? await unregisterHarnesses(registrationOptions(root, hostConfigHome(), parsed))
-    : await registerHarnesses(registrationOptions(root, hostConfigHome(), parsed, templateRoot));
+    : await registerHarnesses(registrationOptions(root, hostConfigHome(), parsed));
   printReport(report, parsed.dryRun);
   // Removing every coding agent from the managed install is the uninstall. Removing one coding agent, or a
   // checkout registered with `--root`, leaves the shared rules and history in place.
@@ -230,9 +227,7 @@ export async function runSetupCommand(args: readonly string[], context: SetupCon
     process.stdout.write("Skipping harness registration (--skip-register).\n");
   } else {
     process.stdout.write(`${parsed.dryRun ? "Would register" : "Registering"} harnesses against ${updater.currentLink}:\n`);
-    // A dry run never creates `current`, so packaged templates come from the package that is running.
-    const templateRoot = parsed.dryRun ? context.packageRoot : undefined;
-    const report = await registerHarnesses(registrationOptions(updater.currentLink, hostConfigHome(), parsed, templateRoot));
+    const report = await registerHarnesses(registrationOptions(updater.currentLink, hostConfigHome(), parsed));
     printReport(report, parsed.dryRun);
   }
 

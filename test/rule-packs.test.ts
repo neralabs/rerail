@@ -1,11 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, cpSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRerailApi } from "../src/api/http.js";
+import { languageFor } from "../src/code-rule-enforcer.js";
+import { loadNativeBinding } from "../src/native.js";
 import { operations, type RerailApiStores } from "../src/api/operations.js";
 import { rulePackListSchema, rulePackRecommendationsSchema } from "../src/api/rule-pack-contracts.js";
 import { globPattern } from "../src/rule-pack-matcher.js";
@@ -45,7 +48,10 @@ const bundled = loadBundledRules();
 const pack = (id: string): RulePack => packs.find(candidate => candidate.id === id)!;
 const ids = (found: RulePack) => found.rules.map(rule => rule.id).sort();
 const tslint = pack("tslint");
+const complexity = pack("complexity");
 const optInIds = bundled.filter(document => document.enabledByDefault === false).map(document => document.rule.id).sort();
+const tslintIds = optInIds.filter(id => id.startsWith("tslint:"));
+const complexityIds = optInIds.filter(id => !id.startsWith("tslint:"));
 
 /**
  * The shipped rules and packs plus a neutral repository pack, `acme-api`, of one example rule: core ships no
@@ -69,18 +75,40 @@ async function withRepositoryPack(): Promise<readonly RulePack[]> {
   return readRulePacks(packFolder, rules);
 }
 
+const capabilities = readFileSync(fileURLToPath(new URL("../code-rule-dsl/capabilities.json", import.meta.url)), "utf8");
+const evaluationSchema = z.object({ violations: z.array(z.object({ ruleId: z.string() })).default([]), failures: z.array(z.unknown()).default([]) });
+
+/** Whether the file rule `ruleId`, evaluated on `text` at `path`, reports a violation. */
+function fires(ruleId: string, path: string, text: string): boolean {
+  const document = bundled.find(candidate => candidate.rule.id === ruleId)!;
+  const compiled = loadNativeBinding().CodeRuleDslRuntime!.compile(JSON.stringify(document.rule), "json", capabilities);
+  expect(compiled.inScope(path), `${ruleId} example ${path} is outside the rule's scope`).toBe(true);
+  const input = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files: [{ language: languageFor(path) ?? "text", path, source: text }] });
+  const result = evaluationSchema.parse(JSON.parse(compiled.evaluate(input, "report")));
+  expect(result.failures).toEqual([]);
+  return result.violations.some(violation => violation.ruleId === ruleId);
+}
+
 describe("shipped rule packs", () => {
-  it("are the TSLint pack of the golden TSLint ports, and nothing else", () => {
-    expect(packs.map(candidate => candidate.id)).toEqual(["tslint"]);
-    expect(ids(tslint)).toEqual(optInIds);
+  it("are the complexity pack and the TSLint pack of the golden TSLint ports, and nothing else", () => {
+    expect(packs.map(candidate => candidate.id)).toEqual(["complexity", "tslint"]);
+    expect(ids(tslint)).toEqual(tslintIds);
+    expect(ids(complexity)).toEqual(complexityIds);
+    expect(complexityIds).toEqual(["complexity:cyclomatic-javascript", "complexity:cyclomatic-python", "complexity:cyclomatic-typescript"]);
     expect(bundled.map(document => document.rule.id).sort()).toEqual(optInIds);
-    expect(optInIds.every(id => id.startsWith("tslint:"))).toBe(true);
   });
 
   it("start every rule in the mode its own document has", () => {
     for (const rule of packs.flatMap(found => found.rules)) {
       expect(rule.mode, rule.id).toBe(bundled.find(document => document.rule.id === rule.id)!.rule.mode);
     }
+  });
+
+  const exampled = packs.flatMap(found => found.rules).filter(rule => rule.examples !== undefined && rule.kind === "file");
+  it.each(exampled.map(rule => [rule.id, rule] as const))("%s catches its caught example and lets its passing example pass", (id, rule) => {
+    const { caught, passes } = rule.examples!;
+    expect(fires(id, caught.path!, caught.text)).toBe(true);
+    expect(fires(id, passes.path!, passes.text)).toBe(false);
   });
 
   it("are read from the shipped folder, apart from the bundled rule documents, and add no rule documents of their own", () => {
@@ -195,7 +223,7 @@ describe("recommendRulePacks", () => {
     expect(reasons(root)).toEqual([["TSLint", tslint.rules.length, "matches *.tsx files in web/src"]]);
   });
 
-  it("recommends nothing for a stack no pack covers, outside Git and ignoring dependency folders", async () => {
+  it("recommends nothing for a stack no matching pack covers, not even the hand-picked complexity pack, outside Git and ignoring dependency folders", async () => {
     const root = await temporaryDirectory("rerail-python-");
     writeFiles(root, { "app/main.py": "print(1)\n", "pyproject.toml": "[project]\n", ".venv/lib/site.ts": "export {};\n", "go.mod": "module shop\n" });
     expect(recommendRulePacks(root)).toEqual([]);
@@ -272,8 +300,8 @@ describe("rule pack API", () => {
     try {
       const listed = await get("/api/rule-packs", rulePackListSchema);
       expect(listed.packs.map(found => [found.id, found.category, found.rules.length]))
-        .toEqual([["tslint", "language", tslint.rules.length]]);
-      expect(listed.packs[0]!.rules.find(rule => rule.id === "tslint:triple-equals"))
+        .toEqual([["complexity", "language", complexity.rules.length], ["tslint", "language", tslint.rules.length]]);
+      expect(listed.packs.find(found => found.id === "tslint")!.rules.find(rule => rule.id === "tslint:triple-equals"))
         .toEqual({ id: "tslint:triple-equals", kind: "file", title: tslint.rules.find(rule => rule.id === "tslint:triple-equals")!.title, group: "TSLint", mode: "steer", on: true });
 
       const recommended = await get("/api/rule-packs/recommendations", rulePackRecommendationsSchema);

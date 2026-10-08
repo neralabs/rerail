@@ -4,7 +4,9 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { formatTerminalStatus, readPresentation, readRepositoryState, readRulesDashboard } from "../src/session-presentation.js";
+import { dashboardOrigin, formatTerminalStatus, linkDeliveries, readPresentation, readRepositoryState, readRulesDashboard, readSummaryState } from "../src/session-presentation.js";
+import type { RepositoryStartState } from "../src/repository-start.js";
+import { steerBlock } from "../src/rerail-steer.js";
 import type { presentationResponseSchema, sessionResponseSchema } from "../src/api/session-contracts.js";
 import type { z } from "zod";
 import { openRerailDatabase } from "../src/database.js";
@@ -56,7 +58,7 @@ const read = (onDemand = false) => readPresentation({ sessionId: "session /?&one
 describe("installed session presentation", () => {
   it("renders exact-session counters and three separate navigation links", async () => {
     const result = await read();
-    expect(result.text).toBe("Rerail | 3 rules | steered 2×");
+    expect(result).toMatchObject({ status: "on", text: "Rerail ● 3 rules  ·  steered 2×", counts: { rules: 3, steered: 2 } });
     expect(requested).toHaveLength(1);
     const request = new URL(requested[0]!);
     expect(request.pathname).toBe("/api/presentation");
@@ -71,15 +73,21 @@ describe("installed session presentation", () => {
     expect(rendered.split("\u001b]8;;http")).toHaveLength(4);
   });
 
-  it("honors silent without session/history reads but exposes on-demand history", async () => {
+  it("shows the steered count only once Rerail has steered, and names Engine and audit trouble", async () => {
+    response.context!.session!.hud.steeringCount = 0;
+    expect((await read()).text).toBe("Rerail ● 3 rules");
+    response.context!.daemon.native.ok = false;
+    response.context!.session!.audit = { workspaceRoot: cwd, scope: "touched-files", mode: "steer", status: "failed", violationCount: 0, failureCount: 1 };
+    expect((await read()).text).toBe("Rerail ● 3 rules  ·  engine unavailable  ·  audit failed");
+  });
+
+  it("honors silent without session/history reads but exposes on-demand counts", async () => {
     response.presence = "silent";
     response.context!.session = null;
     expect((await read()).parts).toEqual([]);
     expect(requested.some(url => url.includes("/api/sessions/"))).toBe(false);
     response.context!.session = structuredClone(sessionContext);
-    const onDemand = await read(true);
-    expect(onDemand.presence).toBe("silent");
-    expect(onDemand.text).toContain("healthy | not evaluated");
+    expect(await read(true)).toMatchObject({ presence: "silent", status: "on", counts: { rules: 3, steered: 2 } });
   });
 
   it.each(["host", "cwd", "sessionId"])("refuses navigation and counts for mismatched %s", async dimension => {
@@ -89,7 +97,7 @@ describe("installed session presentation", () => {
     if (dimension === "sessionId") session.sessionId = "another-session";
     await mkdir(join(cwd, "nested"));
     const result = await read();
-    expect(result.text).toBe("Rerail | session unavailable");
+    expect(result).toMatchObject({ status: "unavailable", text: "Rerail ● session unavailable" });
     expect(result.parts.every(part => part.url === null)).toBe(true);
   });
 
@@ -97,7 +105,7 @@ describe("installed session presentation", () => {
     const nested = join(cwd, "nested");
     await mkdir(nested);
     const result = await readPresentation({ sessionId, host: "claude-code", cwd: nested });
-    expect(result.text).toBe("Rerail | 3 rules | steered 2×");
+    expect(result.text).toBe("Rerail ● 3 rules  ·  steered 2×");
     expect(new URL(requested[0]!).searchParams.get("repository")).toBe(await realpath(nested));
   });
 
@@ -107,21 +115,38 @@ describe("installed session presentation", () => {
     expect((await read()).parts.every(part => part.url === null)).toBe(true);
     response.context!.session = session;
     session.hud = { activeRuleCount: null, steeringCount: null };
-    expect((await read()).text).toBe("Rerail | rules unavailable | steering unavailable");
+    expect((await read()).text).toBe("Rerail ● rules unavailable  ·  steering unavailable");
   });
 
   it("reports not on here, with the state the daemon gave, where Rerail is stopped or was never started", async () => {
     response.repositoryState = "stopped";
     const stopped = await read();
-    expect(stopped).toMatchObject({ text: "Rerail | not on here", repositoryState: "stopped" });
+    expect(stopped).toMatchObject({ status: "not-on-here", text: "Rerail ○ not on here", repositoryState: "stopped" });
     expect(stopped.parts.every(part => part.url === null)).toBe(true);
     // A new session in a repository that was never started has no recorded session at all.
     response.repositoryState = "never";
     response.context!.session = null;
-    expect(await read()).toMatchObject({ text: "Rerail | not on here", repositoryState: "never" });
+    expect(await read()).toMatchObject({ text: "Rerail ○ not on here", repositoryState: "never" });
     expect((await read(true)).repositoryState).toBe("never");
     response.presence = "silent";
     expect(await read()).toMatchObject({ parts: [], repositoryState: "never" });
+  });
+
+  it("with no daemon, is not on here unless the caller's start state says the checkout is started", async () => {
+    await rm(join(home, "daemon.json"));
+    const withState = (startState: () => RepositoryStartState) => readPresentation({ sessionId, host: "claude-code", cwd, startState });
+    expect(await withState(() => "never")).toMatchObject({ status: "not-on-here", text: "Rerail ○ not on here", repositoryState: "never" });
+    expect(await withState(() => "stopped")).toMatchObject({ status: "not-on-here", repositoryState: "stopped" });
+    expect(await withState(() => "started")).toMatchObject({ status: "not-running", text: "Rerail ✕ not running" });
+    expect(await withState(() => { throw new Error("database unreadable"); })).toMatchObject({ status: "not-running" });
+    expect(await read()).toMatchObject({ status: "not-running" });
+    expect(requested).toEqual([]);
+  });
+
+  it("summarizes a repository without a session from the daemon first, else the local state", async () => {
+    await rm(join(home, "daemon.json"));
+    expect(await readSummaryState(cwd, "cursor", () => "never")).toBe("never");
+    expect(await readSummaryState(cwd, "cursor", () => "started")).toBeNull();
   });
 
   it("rereads the daemon locator after restart", async () => {
@@ -134,7 +159,7 @@ describe("installed session presentation", () => {
 
   it("rejects replaced daemon identity, remote locators, and oversized responses", async () => {
     response.context!.daemon.pid++;
-    expect((await read()).text).toBe("Rerail | daemon unavailable");
+    expect(await read()).toMatchObject({ status: "not-running", text: "Rerail ✕ not running" });
     response.context!.daemon.pid = process.pid;
     response.context!.session!.session.sessionId = "x".repeat(1_048_576);
     expect((await read()).url).toBeNull();
@@ -146,7 +171,7 @@ describe("installed session presentation", () => {
   });
 
   it("strips terminal control injection from labels and link targets", () => {
-    const rendered = formatTerminalStatus({ text: "", url: null, presence: "compact", repositoryState: "started", parts: [
+    const rendered = formatTerminalStatus({ status: "on", text: "", url: null, presence: "compact", repositoryState: "started", counts: null, parts: [
       { text: "Rerail\u001b\n\u202e", url: "http://127.0.0.1/\u001b\u0007\u202e" },
       { text: "2 rules", url: "http://127.0.0.1/#rules" },
     ] });
@@ -156,6 +181,23 @@ describe("installed session presentation", () => {
     expect(rendered).toContain("\u001b]8;;http://127.0.0.1/\u0007\u001b[38;2;77;95;218mRerail\u001b[39m\u001b]8;;\u0007");
     expect(rendered).toContain("\u001b]8;;http://127.0.0.1/#rules\u00072 rules\u001b]8;;\u0007");
     expect(rendered).not.toContain("\u001b\\");
+  });
+});
+
+describe("dashboard links", () => {
+  const steer = { sessionId: "s", requested: "steer" as const, mechanism: "additional-context" as const, content: steerBlock("a:b", "Fix it."), ruleIds: ["a:b"] };
+
+  it("links steers to the Rerail home daemon when it is bound to loopback", async () => {
+    expect(await dashboardOrigin(cwd)).toBe("http://127.0.0.1:4737/");
+    const [linked] = await linkDeliveries([steer], cwd);
+    expect(linked?.content).toContain("Why? → http://127.0.0.1:4737/#rule/a%3Ab");
+  });
+
+  it("keeps links relative for a daemon bound to 0.0.0.0, which no browser should be sent to", async () => {
+    await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, host: "0.0.0.0", url: "http://0.0.0.0:4737/" }));
+    expect(await dashboardOrigin(cwd)).toBeUndefined();
+    const [linked] = await linkDeliveries([steer], cwd);
+    expect(linked?.content).toContain("Why? → #rule/a%3Ab");
   });
 });
 

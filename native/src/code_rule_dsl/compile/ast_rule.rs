@@ -167,9 +167,9 @@ pub(super) fn validate_ast_rule(
     }
     if let Some(count) = rule.get("count") {
         let count_path = format!("{path}/count");
-        let (key, relation, _, _) = count_bounds(count, &count_path)?;
-        let relation_path = format!("{count_path}/{key}");
-        if validate_relation(relation, &relation_path, limits, utils)?.is_some() {
+        let spec = count_bounds(count, &count_path)?;
+        let relation_path = format!("{count_path}/{}", spec.key);
+        if validate_relation(spec.relation, &relation_path, limits, utils)?.is_some() {
             return Err(invalid(format!(
                 "{relation_path}/field: field is not supported in count"
             )));
@@ -694,22 +694,24 @@ pub(crate) fn compile_ast_rule(
             }
         }
     }
-    // Counts and comparisons bind nothing and come last, so they read what every other term
-    // bound. A count rule this grammar cannot express counts no node; whether that passes is up
-    // to `min`.
+    // Counts and comparisons bind nothing other terms read and come last, so they read what every
+    // other term bound. A count rule this grammar cannot express counts no node; whether that
+    // passes is up to `min`.
     if let Some(count) = rule.get("count") {
         let count_path = format!("{path}/count");
-        let (key, relation, min, max) = count_bounds(count, &count_path)?;
-        let relation_path = format!("{count_path}/{key}");
-        let (inner, stop, _) = compile_relation(relation, language, &relation_path, gaps, utils)?;
+        let spec = count_bounds(count, &count_path)?;
+        let relation_path = format!("{count_path}/{}", spec.key);
+        let (inner, stop, _) =
+            compile_relation(spec.relation, language, &relation_path, gaps, utils)?;
         let constructor = AST_RELATIONS
             .iter()
-            .find_map(|(name, constructor)| (*name == key).then_some(*constructor))
+            .find_map(|(name, constructor)| (*name == spec.key).then_some(*constructor))
             .expect("count_bounds returns a relation key");
         terms.push(AstMatcher::Count(Box::new(Count {
             relation: constructor(Related::new(inner), stop),
-            min,
-            max,
+            min: spec.min,
+            max: spec.max,
+            binding: spec.binding,
         })));
     }
     if let Some(compare) = rule.get("compare") {

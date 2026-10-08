@@ -6,7 +6,7 @@ use super::resolve::{BINDING_KEYS, OCCURRENCE_KEY};
 use super::utils::UtilDef;
 use crate::code_rule_dsl::json::{invalid, non_empty_str, object, reject_unknown};
 use crate::code_rule_dsl::matcher::{
-    Collation, CompareOp, CompareText, Comparison, UtilitySummary,
+    Collation, CompareOp, CompareText, Comparison, CountBinding, UtilitySummary,
 };
 #[cfg(test)]
 use crate::code_rule_dsl::test_support::{Walk, record_walk};
@@ -14,15 +14,23 @@ use napi::Result;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// A `count` object's one relation (key and value) and its `min`/`max` bounds.
-pub(super) fn count_bounds<'a>(
-    value: &'a Value,
-    path: &str,
-) -> Result<(&'static str, &'a Value, usize, Option<usize>)> {
+/// A `count` object: its one relation (key and value), its bounds, and what it binds (`as`).
+pub(super) struct CountSpec<'a> {
+    pub(super) key: &'static str,
+    pub(super) relation: &'a Value,
+    pub(super) min: usize,
+    pub(super) max: Option<usize>,
+    pub(super) binding: Option<CountBinding>,
+}
+
+/// A `count` object's one relation, its `min`/`max` bounds, and its `as`/`offset`.
+pub(super) fn count_bounds<'a>(value: &'a Value, path: &str) -> Result<CountSpec<'a>> {
     let count = object(value, path)?;
     reject_unknown(
         count,
-        &["inside", "has", "precedes", "follows", "min", "max"],
+        &[
+            "inside", "has", "precedes", "follows", "min", "max", "as", "offset",
+        ],
         path,
     )?;
     let relations = AST_RELATIONS
@@ -55,7 +63,43 @@ pub(super) fn count_bounds<'a>(
     if max.is_some_and(|max| max < min) {
         return Err(invalid(format!("{path}: min must not exceed max")));
     }
-    Ok((key, relation, min, max))
+    let offset = count
+        .get("offset")
+        .map(|value| {
+            value
+                .as_i64()
+                .ok_or_else(|| invalid(format!("{path}/offset must be an integer")))
+        })
+        .transpose()?;
+    let binding = match count.get("as") {
+        None if offset.is_some() => {
+            return Err(invalid(format!(
+                "{path}/offset is added to the value `as` binds; set `as`"
+            )));
+        }
+        None => None,
+        Some(name) => {
+            // A bare name, as `compare` takes it.
+            let name = non_empty_str(Some(name), &format!("{path}/as"))?;
+            let valid = |c: char| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_';
+            if !name.chars().all(valid) {
+                return Err(invalid(format!(
+                    "{path}/as: `{name}` is not a metavariable name (A-Z, 0-9, _, without `$`)"
+                )));
+            }
+            Some(CountBinding {
+                name: name.to_owned(),
+                offset: offset.unwrap_or(0),
+            })
+        }
+    };
+    Ok(CountSpec {
+        key,
+        relation,
+        min,
+        max,
+        binding,
+    })
 }
 
 /// A `compare` object; its names are checked against the whole query once it compiled.
@@ -1095,6 +1139,23 @@ mod tests {
         assert_eq!(
             reject(json!({ "has": { "kind": "if_statement", "stopBy": "far" }, "min": 1 })),
             "/clauses/0/forbid/ast/rule/count/has/stopBy has unsupported value `far`; expected \"neighbor\", \"end\" or a rule object"
+        );
+        // `as` names a metavariable; `offset` is an integer, and only shifts what `as` binds.
+        assert_eq!(
+            reject(json!({ "has": has, "min": 1, "offset": 1 })),
+            "/clauses/0/forbid/ast/rule/count/offset is added to the value `as` binds; set `as`"
+        );
+        for name in ["ccn", "$CCN"] {
+            assert_eq!(
+                reject(json!({ "has": has, "min": 1, "as": name })),
+                format!(
+                    "/clauses/0/forbid/ast/rule/count/as: `{name}` is not a metavariable name (A-Z, 0-9, _, without `$`)"
+                )
+            );
+        }
+        assert_eq!(
+            reject(json!({ "has": has, "min": 1, "as": "CCN", "offset": 0.5 })),
+            "/clauses/0/forbid/ast/rule/count/offset must be an integer"
         );
         // A count is a matcher on its own; comparisons inside it are checked like any other.
         compile_typescript_rule(json!({ "count": { "has": has, "min": 1 } })).expect("count alone");

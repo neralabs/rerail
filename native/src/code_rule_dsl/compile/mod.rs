@@ -1283,8 +1283,8 @@ fn parse_violation(value: &Value, path: &str) -> Result<ViolationSpec> {
 }
 
 /// The captures a rule declares, with where: a pattern's metavariables (as the first grammar that
-/// compiles it reads them), a `capture`, and the names a parameterized call returns into. Nested
-/// rules at any depth; `matches` by name is not followed.
+/// compiles it reads them), a `capture`, the names a parameterized call returns into, and a count's
+/// `as`. Nested rules at any depth; `matches` by name is not followed.
 fn declared_captures(
     value: &Value,
     path: &str,
@@ -1326,6 +1326,12 @@ fn declared_captures(
                         );
                     }
                     ("capture", Value::String(name)) => found.push((name.clone(), at)),
+                    ("count", Value::Object(count)) => {
+                        if let Some(Value::String(name)) = count.get("as") {
+                            found.push((name.clone(), format!("{at}/as")));
+                        }
+                        declared_captures(item, &at, languages, found);
+                    }
                     ("matches", Value::Object(calls)) => {
                         for (util, arguments) in calls {
                             for (parameter, argument) in arguments.as_object().into_iter().flatten()
