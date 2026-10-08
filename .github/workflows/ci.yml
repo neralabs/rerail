@@ -56,6 +56,17 @@ jobs:
         with:
           node-version: "24"
           cache: "npm"
+          cache-dependency-path: |
+            package-lock.json
+            playground/package-lock.json
+
+      - name: Set up just
+        uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
+        with:
+          just-version: "1.57.0"
+
+      - name: Check the Justfile
+        run: just --fmt --check --unstable
 
       # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
       # so the toolchain installed here must be the same channel.
@@ -96,6 +107,16 @@ jobs:
 
       - name: Build and test
         run: npm run test:all
+
+      # The rule playground is a development tool with its own lockfile; it type-checks against dist/.
+      - name: Check, build, and test the rule playground
+        run: |
+          npm ci --prefix playground # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
+          npm --prefix playground run check
+          npm --prefix playground run build
+          npm --prefix playground test
+          npm --prefix playground run test:ui
+          npm --prefix playground run test:integration
 
       - name: Exercise host parity and command-hook runtimes
         run: >-

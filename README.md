@@ -667,6 +667,25 @@ Rerail's own toolchain is Node only. OMP remains an external Bun-hosted runtime;
 
 `npm run conformance:languages -- --pack <pack>` scores a language pack's ported linter rules (`conformance/languages/<pack>/`) through the production workspace against the upstream rule fixtures from `fixtures/` (or `RERAIL_FIXTURES_DIR`) and, with corpora checked out under `.rerail/corpora/<pack>/`, the linter's output on pinned corpora; `--write` saves the report under `.rerail/reports/`. `npm run conformance:languages:check` is the fixtures-only gate.
 
+### Operational commands (`just`)
+
+The root [`Justfile`](Justfile) wraps the day-to-day operations; `just` lists them. Each recipe runs a script under `scripts/` (or `playground/`, `conformance/`, `benchmark/`), so the same command works without `just`.
+
+| Recipe | Does |
+| --- | --- |
+| `just rerail [--tag next] [setup args]` | Installs the published package on this machine (`npx @neralabs/rerail setup`). Until launch the package is restricted: `npm login` with an account that has `@neralabs` access first. `RERAIL_TAG` selects the dist-tag; `--restore [dir]` then restores a `nuke-rerail` backup. |
+| `just nuke-rerail [--dry-run \| --yes]` | Removes Rerail from this machine (daemon, coding-agent registrations, `~/.rerail`, every checkout's dev daemon), moving it all to `~/.rerail-clean-YYYYMMDD[-HHMMSS]/` for `just rerail --restore`. |
+| `just rerail-native` | Installs rustup and the pinned toolchain if needed, then builds the native engine. |
+| `just rerail-setup` | Reserves this checkout's dev instance (`.rerail/dev/instance.json`: a stable loopback port in 35000–35999 and the home `.rerail/dev/home`) without starting anything. |
+| `just rerail-dev [--install-bridge] [--restore [dir]]` | Rebuilds whatever is stale and (re)starts this checkout's dev daemon on its own home and port, serving `ui/` live. `--install-bridge` registers this checkout's build with every coding agent (`rerail install --root`); hooks always use the default home, so a bridged checkout's dev daemon runs on `~/.rerail` until another `rerail setup` replaces the bridge. `--restore` loads a `nuke-rerail` backup's database. |
+| `just rerail-status`, `just rerail-down`, `just rerail-reset` | Shows the dev instance and build freshness; stops its daemon (state kept); deletes this repository's session history from the dev database (rules kept). |
+| `just rerail-playground` | The development rule playground beside the dev daemon (attended macOS only; see [playground/README.md](playground/README.md)). |
+| `just rerail-smoke` | Packs this checkout, publishes it to a throwaway authenticated local registry, and drives install, update, `nuke-rerail`/`--restore` and `install --remove` in a sandbox `HOME` (`KEEP=1` keeps it). |
+| `just rerail-conformance`, `just rerail-language-conformance`, `just rerail-promote-tslint` | TSLint and language-pack conformance, and promotion of a proven TSLint port. |
+| `just rerail-query-parity --corpus <dir> --manifest <paths.json>` | Compares a reference native addon (`RERAIL_QUERY_PARITY_REFERENCE_ADDON`) with this checkout's on a corpus. |
+
+`npm run test:scripts` runs the recipes' tests.
+
 ### Live harness smoke (macOS)
 
 Run the real-provider smoke as the final acceptance step, after the deterministic regression suite:

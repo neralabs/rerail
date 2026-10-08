@@ -1,0 +1,45 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bench:resolves:s603-subprocess-call",
+  "revision": 1,
+  "mode": "log",
+  "description": "Tier 2 (Ruff S603-like): subprocess and os.system calls through the file's imports.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "s603-subprocess-call",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "subprocess.run",
+                  "subprocess.call",
+                  "subprocess.Popen",
+                  "subprocess.check_call",
+                  "subprocess.check_output",
+                  "os.system"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "S603_SUBPROCESS_CALL",
+        "message": "s603-subprocess-call"
+      }
+    }
+  ]
+}
