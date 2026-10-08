@@ -1,14 +1,14 @@
-// Records eslint-plugin-n 18.4.1 for the Node pack (rerail/conformance/languages/node/pack.json).
+// Records eslint-plugin-n 18.4.1 for the Node pack (rerail/packs/node/conformance.json).
 //
 // Pins: eslint 10.11.0, eslint-plugin-n 18.4.1, @typescript-eslint/parser 8.70.1, typescript 5.9.3, globals 17.13.0;
 // upstream eslint-plugin-n v18.4.1 = f1d47aff402b9e009578f4b3155b84f7d8beef9b; corpora fastify @
 // 0d945819bebc08f4ca666d8283c03a26ed9706a0, prettier @ 5927216227411bc2cdaf30d50559e0a475ab4832. Refuses any other.
 //
-// Usage (offline, never in CI): node rerail-fixtures/node/rules/eslint-plugin-n/generate.mjs
+// Usage (offline, never in CI): node packs/node/upstream/eslint-plugin-n/generate.mjs
 //   [--tools <dir>] (default: the nearest .rerail/tools/node) [--corpora <dir>] (default: the nearest .rerail/corpora/node)
 //   [--fixtures-only] [--summary <file>] (writes the run summary, incl. per-case count mismatches, as JSON)
 //
-// 1. Copies the chosen rules' upstream tests verbatim to tests/lib/rules/ and runs them with tests/stub-test-helpers.js
+// 1. Copies the chosen rules' upstream tests verbatim to tests/lib/rules/ and runs them with stub-test-helpers.js
 //    (ours), which captures every RuleTester case; each case's `code` becomes one file under fixtures/<rule>/.
 // 2. Runs the pinned plugin (ESLint Node API, one config, default rule options, every chosen rule on) over every
 //    fixture file and every pinned corpus file, and writes fixtures.expected.json and corpus-<name>.expected.json.
@@ -25,7 +25,7 @@ import { registerHooks } from "node:module";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertCommit, corpusFiles, lint, pack, pinnedRequire, REPOSITORY, writeRecording } from "../../../frameworks/eslint_record.mjs";
+import { assertCommit, corpusFiles, lint, pack, pinnedRequire, REPOSITORY, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOL = "eslint-plugin-n";
@@ -130,7 +130,7 @@ async function record(tools, cwd, files) {
 // ---- 1. upstream tests → fixtures -------------------------------------------------------------------------------
 
 const TESTS = join(HERE, "tests");
-const STUB = pathToFileURL(join(TESTS, "stub-test-helpers.js")).href;
+const STUB = pathToFileURL(join(HERE, "stub-test-helpers.js")).href;
 const EMPTY_MODULE = "data:text/javascript,export default {}";
 
 function installHooks(toolsDirectory) {
@@ -262,16 +262,17 @@ function writeLicenses(upstream, cases, manifests) {
   mkdirSync(directory, { recursive: true });
   copyFileSync(join(upstream, "LICENSE"), join(directory, "LICENSE"));
   const rows = [];
-  for (const rule of RULES) rows.push(`|\`rules/${TOOL}/tests/lib/rules/${rule}.js\`|\`tests/lib/rules/${rule}.js\`|verbatim|`);
-  for (const [copy, original] of [...manifests].sort()) rows.push(`|\`rules/${TOOL}/fixtures/${copy}\`|\`${original}\`|verbatim (test data a case's \`filename\` reads)|`);
-  for (const entry of cases) rows.push(`|\`rules/${TOOL}/fixtures/${entry.path}\`|\`${entry.testFile}\`|extracted from ${entry.testFile} ${entry.origin}|`);
+  for (const rule of RULES) rows.push(`|\`upstream/${TOOL}/tests/lib/rules/${rule}.js\`|\`tests/lib/rules/${rule}.js\`|verbatim|`);
+  rows.push(`|\`upstream/${TOOL}/fixtures/package.json\`|none|Rerail's own, not copied: the fixtures' source type and engines (\`fixturePackageJson\`), under the pack's \`LICENSE\`|`);
+  for (const [copy, original] of [...manifests].sort()) rows.push(`|\`upstream/${TOOL}/fixtures/${copy}\`|\`${original}\`|verbatim (test data a case's \`filename\` reads)|`);
+  for (const entry of cases) rows.push(`|\`upstream/${TOOL}/fixtures/${entry.path}\`|\`${entry.testFile}\`|extracted from ${entry.testFile} ${entry.origin}|`);
   const text = `# eslint-plugin-n ${VERSION}
 
 Upstream: [eslint-community/eslint-plugin-n](${UPSTREAM_REPOSITORY}/tree/${UPSTREAM_COMMIT}) at tag \`v${VERSION}\` (commit \`${UPSTREAM_COMMIT}\`). License: MIT (Copyright (c) 2015 Toru Nagashima); [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the upstream rule tests of the rules the Node pack records (Rerail's \`conformance/languages/node/pack.json\`, \`rules/${TOOL}/generate.mjs\`), the upstream test data they read, and one file per test case holding that case's \`code\` verbatim; they remain under eslint-plugin-n's license. Every other file under \`rules/${TOOL}/\` is Rerail's, under the Apache License 2.0 (this repository's \`LICENSE\`): \`generate.mjs\`, \`tests/stub-test-helpers.js\` (stands in for upstream's \`tests/test-helpers.js\` and only captures cases), \`fixtures/package.json\` (the fixtures' source type and engines), and the recordings written by running eslint-plugin-n.
+The files listed below are the upstream rule tests of the rules the Node pack records (\`conformance.json\`, \`upstream/${TOOL}/generate.mjs\`), the upstream test data they read, and one file per test case holding that case's \`code\` verbatim; they remain under eslint-plugin-n's license. One listed file is Rerail's and says so in its row: \`upstream/${TOOL}/fixtures/package.json\` (the fixtures' source type and engines), listed because it sits among the copied fixtures. Every other file in this pack is Rerail's, under the Apache License 2.0 (the pack's \`LICENSE\`): the rule documents in \`rules/\` and \`candidates/\`, the recorder \`upstream/${TOOL}/generate.mjs\`, \`upstream/${TOOL}/stub-test-helpers.js\` (stands in for upstream's \`tests/test-helpers.js\` and only captures cases), and the \`*.expected.json\` recordings written by running eslint-plugin-n.
 
-Paths are relative to \`node/\`.
+Paths are relative to the pack directory, \`packs/node/\`.
 
 |File|Upstream path|Copy|
 |---|---|---|

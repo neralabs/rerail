@@ -3,7 +3,7 @@
 
 Run offline by a maintainer, never in CI:
 
-    python3 rerail-fixtures/node/policies/generate.py [--tools <dir>] [--root <dir>]
+    python3 packs/node/candidates/generate.py [--tools <dir>] [--root <dir>]
 
 --tools defaults to the nearest `.rerail/tools/node` above the repository (eslint-plugin-n 18.4.1 and globals 17.13.0
 installed there; the script refuses other versions). --root (default: the repository) is where the files are
@@ -14,10 +14,10 @@ Data read from the pinned tools (through `node`):
 - eslint-plugin-n 18.4.1 `lib/rules/no-deprecated-api.js` rawModules and globals (the deprecation trace map);
 - globals 17.13.0 `node` (Node's globals).
 
-Writes (every other policy of the pack is hand-written: rerail/conformance/languages/node/rules/n-no-process-exit.json):
-- rerail/conformance/languages/node/rules/<id>.json: every ported rule but n-no-process-exit;
-- rerail-fixtures/node/candidates/rules/<id>.json: n-no-deprecated-api, n-hashbang;
-- rerail-fixtures/node/probes/rules/<id>.json: the seven probes.
+Writes (every other policy of the pack is hand-written: packs/node/rules/n-no-process-exit.json):
+- packs/node/rules/<id>.json: every ported rule but n-no-process-exit;
+- packs/node/candidates/rules/<id>.json: n-no-deprecated-api, n-hashbang;
+- packs/node/candidates/probes/rules/<id>.json: the seven probes.
 The pack manifests, recordings and the probes' hand-labelled expectations are not written here.
 
 The utilities emulate @eslint-community/eslint-utils' ReferenceTracker (legacy mode) and ESTree shapes over
@@ -33,8 +33,8 @@ import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPOSITORY = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
-# This pack's directory in the fixtures checkout, relative to the core checkout holding it.
-NODE_FIXTURES = os.path.relpath(os.path.dirname(HERE), REPOSITORY)
+# The pack's directory, packs/node, relative to the repository.
+PACK = os.path.relpath(os.path.dirname(HERE), REPOSITORY)
 PINS = {"eslint-plugin-n": "18.4.1", "globals": "17.13.0"}
 
 INCLUDE = ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]
@@ -630,13 +630,12 @@ def main():
     parser.add_argument("--root", default=REPOSITORY)
     args = parser.parse_args()
     builtins, globals_node, trace = load_data(os.path.abspath(args.tools or nearest_tools()))
-    rules = "conformance/languages/node/rules"
     for doc in syntax_docs() + prefer_global_docs() + prefer_promises_docs() + [no_path_concat_doc(), prefer_node_protocol_doc(builtins)]:
-        write(args.root, rules, doc)
-    write(args.root, os.path.join(NODE_FIXTURES, "candidates", "rules"), no_deprecated_api_doc(trace), compact=True)
-    write(args.root, os.path.join(NODE_FIXTURES, "candidates", "rules"), hashbang_doc())
+        write(args.root, os.path.join(PACK, "rules"), doc)
+    write(args.root, os.path.join(PACK, "candidates", "rules"), no_deprecated_api_doc(trace), compact=True)
+    write(args.root, os.path.join(PACK, "candidates", "rules"), hashbang_doc())
     for doc in probe_docs(builtins, globals_node):
-        write(args.root, os.path.join(NODE_FIXTURES, "probes", "rules"), doc)
+        write(args.root, os.path.join(PACK, "candidates", "probes", "rules"), doc)
 
 
 if __name__ == "__main__":
