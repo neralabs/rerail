@@ -477,6 +477,7 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut pending = vec![
         root.join("packs/tslint/rules"),
+        root.join("packs/complexity/rules"),
         root.join("packs/python/rules"),
     ];
     // Each query with its document's `define` clauses, which declare the options and utilities
