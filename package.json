@@ -129,7 +129,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "24.10.0",
     "@vitest/coverage-v8": "^5.0.0",
-    "drizzle-kit": "^0.31.10",
+    "drizzle-kit": "^0.31.11",
     "esbuild": "0.28.2",
     "tsx": "4.23.13",
     "typescript": "5.9.3",
