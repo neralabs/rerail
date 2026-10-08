@@ -1,7 +1,7 @@
 import type { Consolidated } from "./consolidated.js";
 import type { CorpusTiming } from "./corpus.js";
 import type { ExpectedFailure } from "./lint-format.js";
-import { annotationOf, type ActualFinding, type FileResult, type FinalVerdict, type RuleResult } from "./runner.js";
+import { annotationOf, type ActualViolation, type FileResult, type FinalVerdict, type RuleResult } from "./runner.js";
 
 export interface ConformanceReport {
   generatedAt: string;
@@ -160,7 +160,7 @@ function caret(sourceLine: string, startCol: number, endCol: number | undefined)
   return `${" ".repeat(startCol)}^${"~".repeat(width - 1)}`;
 }
 
-function describe(kind: string, failure: ExpectedFailure | ActualFinding, source: string[], detail: string): string[] {
+function describe(kind: string, failure: ExpectedFailure | ActualViolation, source: string[], detail: string): string[] {
   const text = source[failure.startLine] ?? "";
   const gutter = String(failure.startLine + 1).padStart(5);
   const endCol = failure.endLine === failure.startLine ? failure.endCol : undefined;
@@ -266,7 +266,7 @@ export function ruleDetail(rule: RuleResult, showEnds = false): string {
       for (const failure of result.engineFailures) out.push(`    ENGINE ${failure.code} [${failure.clauseId}] ${failure.message}`);
       if (result.partial !== undefined) out.push(`    PARTIAL ${result.partial}`);
       for (const failure of result.missed) out.push(...describe("FN", failure, source, `expected [${failure.message}]`));
-      for (const finding of result.extra) out.push(...describe("FP", finding, source, `clause ${finding.clauseId}`));
+      for (const violation of result.extra) out.push(...describe("FP", violation, source, `clause ${violation.clauseId}`));
     }
   }
 
@@ -301,7 +301,7 @@ export function ruleDetail(rule: RuleResult, showEnds = false): string {
       }
       const source = result.source.split("\n");
       for (const failure of result.missed) out.push(...describe("FN", failure, source, `expected [${failure.message}]`));
-      for (const finding of result.extra) out.push(...describe("FP", finding, source, `clause ${finding.clauseId}`));
+      for (const violation of result.extra) out.push(...describe("FP", violation, source, `clause ${violation.clauseId}`));
       for (const { expected, actual } of showEnds ? result.endMismatches : []) {
         out.push(`    END ${expected.startLine + 1}:${expected.startCol + 1} expected end ${expected.endLine + 1}:${expected.endCol + 1}, got ${actual.endLine + 1}:${actual.endCol + 1}`);
       }

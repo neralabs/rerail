@@ -20,7 +20,7 @@ import {
 } from "../src/rule-packs.js";
 import { bundledRulesDirectory, loadBundledRules } from "../src/rule-bootstrap.js";
 import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
-import { MOCK_COSINE_RULES } from "../src/seed.js";
+import { MOCK_CONVERSATION_RULES } from "../src/seed.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -71,7 +71,7 @@ describe("shipped rule packs", () => {
 });
 
 describe("rule pack definitions", () => {
-  const conversation = { ...MOCK_COSINE_RULES[0]!, id: "test:talk" };
+  const conversation = { ...MOCK_CONVERSATION_RULES[0]!, id: "test:talk" };
   const debuggerRule = bundled.find(document => document.rule.id === "tslint:no-debugger")!;
   const fileRule = { ...debuggerRule.rule, id: "test:no-debugger" };
   async function packFolder(definitions: readonly { id: string }[]): Promise<{ directory: string; bundledDirectory: string }> {
@@ -242,7 +242,7 @@ describe("rule pack API", () => {
     writeFiles(root, { "src/main.ts": "export {};\n" });
     const catalog = ScopedRuleCatalog.open(join(root, "rerail.sqlite"), { repositoryId: "repo-a", workspaceRoot: root });
     catalog.seed(bundled.filter(document => ["tslint:triple-equals", "nera-general:bare-except"].includes(document.rule.id)));
-    catalog.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "ours" });
+    catalog.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "ours" });
     const app = createRerailApi({ rules: () => catalog } as unknown as RerailApiStores, operations, { version: "0.0.0-test" });
     const listedRules = z.object({ rules: z.array(z.object({ rule: z.object({ id: z.string() }), packId: z.string().nullable() })) });
     const get = async <T>(url: string, schema: z.ZodType<T>): Promise<T> => schema.parse(await (await app.request(url)).json());

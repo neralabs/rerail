@@ -22,7 +22,7 @@ export function createPiDevExtension(): ExtensionFactory {
       deliver: (current, deliveries) => sendNativeDeliveries(
         deliveries,
         (message, options) => pi.sendMessage(message, options),
-        (sessionId, receiptId, ruleIds) => current.recordSteeringDelivery(sessionId, receiptId, ruleIds),
+        (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds),
       ),
       // Serialized through `attaching` and dropped once its context stopped being current, so a
       // probe that lost the race to a session switch cannot resurrect the old session.
@@ -87,16 +87,16 @@ export function createPiDevExtension(): ExtensionFactory {
       },
       sessionFor,
       ingest,
-      cosineTool: {
+      conversationRulesTool: {
         remoteExecute: () => {
           const current = native.current();
-          return current === undefined ? undefined : input => current.cosine(input);
+          return current === undefined ? undefined : input => current.conversationRules(input);
         },
       },
-      cosineCommand: {
+      conversationRulesCommand: {
         remoteCommand: () => {
           const current = native.current();
-          return current === undefined ? undefined : args => current.cosine({ action: "command", args });
+          return current === undefined ? undefined : args => current.conversationRules({ action: "command", args });
         },
       },
       packageRoot: resolve(dirname(fileURLToPath(import.meta.url)), ".."),

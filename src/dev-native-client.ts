@@ -20,7 +20,7 @@ const REBUILD_ATTEMPT_LIMIT = 3;
 const REBUILD_BACKOFF_MS = 5_000;
 
 /**
- * A daemon fault as the client sees it. While `open`, the transcript stream (ingest and poll) is
+ * A daemon fault as the client sees it. While `open`, the event stream (ingest and poll) is
  * shut off so a dead or wedged daemon costs the host one line of stderr, not one error per tool
  * call; a probe re-opens the stream once the backoff for `failures` elapses. `rebuilds` counts only
  * the probes that asked the host for a whole new session, so that expensive escalation runs on its
@@ -185,7 +185,7 @@ export class DevNativeClient implements NativeSemanticToolRuntime {
     return this.#request("ingest", { event: superjson.serialize(event), eventEncoding: "superjson" });
   }
 
-  cosine(input: unknown): Promise<unknown> {
+  conversationRules(input: unknown): Promise<unknown> {
     return this.#request("cosine", { input });
   }
 
@@ -215,7 +215,7 @@ export class DevNativeClient implements NativeSemanticToolRuntime {
   relate(leftProjectionId: string, rightProjectionId: string, spec: RelationSpec): Promise<unknown> {
     return this.semantic({ action: "relate", leftProjectionId, rightProjectionId, spec });
   }
-  async recordSteeringDelivery(sessionId: string, receiptId: string, ruleIds: readonly string[] = []): Promise<void> {
+  async recordSteer(sessionId: string, receiptId: string, ruleIds: readonly string[] = []): Promise<void> {
     if (sessionId !== this.#options.sessionId) throw new Error("native steering receipt session mismatch");
     await this.#send("record-steering-delivery", { input: { receiptId, ruleIds: [...ruleIds] } });
   }
@@ -306,7 +306,7 @@ export class DevNativeClient implements NativeSemanticToolRuntime {
     payload: { event?: unknown; eventEncoding?: "superjson"; input?: unknown; entries?: readonly unknown[] } = {},
   ): Promise<unknown> {
     const run = async () => {
-      // The breaker owns only the transcript stream. Explicit operations (tools, reload, reattach)
+      // The breaker owns only the event stream. Explicit operations (tools, reload, reattach)
       // always reach the daemon and carry their own error to the caller: a rejected reload is a
       // fact about that reload, not about the live session. Any success reopens the stream.
       const streamed = operation === "ingest" || operation === "poll";

@@ -3,13 +3,13 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ExecutablePolicyBridge, generatedEditPaths } from "../src/executable-policy-bridge.js";
-import type { ExecutablePolicyEditBatch, ExecutablePolicyEvaluator } from "../src/executable-policy.js";
-import { languageFor, NativeExecutablePolicyEnforcer } from "../src/executable-policy-enforcer.js";
-import type { PolicyExecutionRecorder, PolicyRunInput, PolicyRunResult } from "../src/policy-execution.js";
-import { bootstrapPolicyDslCatalog, bundledPolicyDslDirectory } from "../src/policy-dsl-catalog.js";
-import { policyDialectForPath } from "../src/policy-languages.js";
-import { policyRuleSchema } from "../src/policy-schema.js";
+import { CodeRuleBridge, generatedEditPaths } from "../src/code-rule-bridge.js";
+import type { CodeRuleEditBatch, CodeRuleAuditor } from "../src/code-rule.js";
+import { languageFor, NativeCodeRuleEnforcer } from "../src/code-rule-enforcer.js";
+import type { AuditRecorder, AuditInput, AuditResult } from "../src/audit.js";
+import { bootstrapCodeRuleDslCatalog, bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
+import { codeRuleDialectForPath } from "../src/code-rule-languages.js";
+import { codeRuleSchema } from "../src/code-rule-schema.js";
 import { SqliteRuleStore } from "../src/rule-store.js";
 
 const roots: string[] = [];
@@ -42,7 +42,7 @@ const ROUTES: ReadonlyArray<readonly [string, "python" | undefined]> = [
   ["notebooks/analysis.ipynb", undefined],
 ];
 
-/** The files a scan must leave alone: Python files under ignored directories, at the root and nested. */
+/** The files an audit must leave alone: Python files under ignored directories, at the root and nested. */
 const IGNORED_FILES = [
   ".venv/lib/python3.13/site-packages/pkg/core.py",
   "pkg/__pycache__/module.py",
@@ -54,8 +54,8 @@ const IGNORED_FILES = [
 /** A program in which a `python` query finds `routed`. */
 const SOURCE = "routed = 1\n";
 
-function routedPolicy() {
-  return policyRuleSchema.parse({
+function routedCodeRule() {
+  return codeRuleSchema.parse({
     format: "rerail.policy/v1", id: "routing:python", revision: 1, mode: "steer",
     scope: { include: ["**/*"], exclude: [] },
     clauses: [{
@@ -66,30 +66,30 @@ function routedPolicy() {
   });
 }
 
-/** One log-only repository scan: the policies reporting on each path, and its failures. */
-async function scanRouting(workspaceRoot: string) {
+/** One log-only repository audit: the code rules reporting on each path, and its failures. */
+async function auditRouting(workspaceRoot: string) {
   const home = await directory("rerail-py-routing-catalog-");
   const capabilitiesPath = join(home, "capabilities.json");
-  await writeFile(capabilitiesPath, await readFile(join(bundledPolicyDslDirectory(), "capabilities.json")));
-  const databasePath = join(home, "policies.sqlite");
+  await writeFile(capabilitiesPath, await readFile(join(bundledCodeRuleDslDirectory(), "capabilities.json")));
+  const databasePath = join(home, "code-rules.sqlite");
   const store = new SqliteRuleStore(databasePath);
-  store.upsertPolicy(routedPolicy());
+  store.upsertCodeRule(routedCodeRule());
   store.close();
-  const catalog = bootstrapPolicyDslCatalog({ capabilitiesPath, databasePath });
-  const runs = new Map<string, PolicyRunInput & { result?: PolicyRunResult }>();
-  const recorder: PolicyExecutionRecorder = {
-    start(input) { const runId = `run-${runs.size + 1}`; runs.set(runId, { ...input }); return runId; },
-    finish(runId, result) { runs.get(runId)!.result = result; },
-    progress(runId, result) { runs.get(runId)!.result = { status: "completed", ...result }; },
+  const catalog = bootstrapCodeRuleDslCatalog({ capabilitiesPath, databasePath });
+  const audits = new Map<string, AuditInput & { result?: AuditResult }>();
+  const recorder: AuditRecorder = {
+    start(input) { const auditId = `run-${audits.size + 1}`; audits.set(auditId, { ...input }); return auditId; },
+    finish(auditId, result) { audits.get(auditId)!.result = result; },
+    progress(auditId, result) { audits.get(auditId)!.result = { status: "completed", ...result }; },
     interrupt() {},
   };
-  const enforcer = new NativeExecutablePolicyEnforcer(catalog, { workspaceRoot, delivery: { requestDelivery: async () => undefined }, executions: recorder });
+  const enforcer = new NativeCodeRuleEnforcer(catalog, { workspaceRoot, steerDelivery: { requestSteer: async () => undefined }, audits: recorder });
   try {
     await enforcer.openWorkspace("routing");
-    const [runId] = await enforcer.scan("routing", { scope: "repository", mode: "log" });
-    const result = runs.get(runId!)?.result;
+    const [auditId] = await enforcer.audit("routing", { scope: "repository", mode: "log" });
+    const result = audits.get(auditId!)?.result;
     const routed: Record<string, string[]> = {};
-    for (const finding of result?.violations ?? []) (routed[finding.path ?? ""] ??= []).push(finding.ruleId);
+    for (const violation of result?.violations ?? []) (routed[violation.path ?? ""] ??= []).push(violation.ruleId);
     return { status: result?.status, routed, failures: (result?.failures ?? []).map(failure => `${failure.path ?? ""} ${failure.code}`) };
   } finally {
     await enforcer.close();
@@ -114,28 +114,28 @@ async function routingTree(git: boolean): Promise<string> {
 describe("Python host routing", () => {
   it.each(ROUTES)("routes %s to %s through every host table", (path, dialect) => {
     expect(languageFor(path)).toBe(dialect);
-    expect(policyDialectForPath(path)).toBe(dialect);
+    expect(codeRuleDialectForPath(path)).toBe(dialect);
     expect(generatedEditPaths("write", { path })).toEqual(dialect === undefined ? [] : [path]);
   });
 
   it.each([
     ["the native repository index (Git checkout)", true],
     ["the host's directory walk", false],
-  ])("scans each file as Python through %s, never under ignored directories", async (_name, git) => {
+  ])("audits each file as Python through %s, never under ignored directories", async (_name, git) => {
     const root = await routingTree(git);
     const expected = Object.fromEntries(ROUTES.flatMap(([path, dialect]) => dialect === undefined ? [] : [[path, ["routing:python"]]]));
-    await expect(scanRouting(root)).resolves.toEqual({ status: "completed", routed: expected, failures: [] });
+    await expect(auditRouting(root)).resolves.toEqual({ status: "completed", routed: expected, failures: [] });
   });
 
   it("labels the files a command writes as Python, skipping ignored directories and other names", async () => {
     const root = await directory("rerail-py-routing-bridge-");
-    const evaluateGeneratedEdits = vi.fn(async (_sessionId: string, batch: ExecutablePolicyEditBatch) => ({
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => ({
       revision: batch.revision, disposition: "continue" as const, violations: [], failures: [],
     }));
-    const evaluator: ExecutablePolicyEvaluator = {
-      openWorkspace: vi.fn(async () => undefined), acceptsPath: () => true, evaluateGeneratedEdits, close: vi.fn(async () => undefined),
+    const auditor: CodeRuleAuditor = {
+      openWorkspace: vi.fn(async () => undefined), acceptsPath: () => true, auditGeneratedEdits, close: vi.fn(async () => undefined),
     };
-    const bridge = new ExecutablePolicyBridge(root, evaluator);
+    const bridge = new CodeRuleBridge(root, auditor);
     try {
       await bridge.openWorkspace("session-1");
       await bridge.begin("shell-1", "shell", { command: "python -m pip install -e ." });
@@ -144,7 +144,7 @@ describe("Python host routing", () => {
         await writeFile(join(root, path), SOURCE);
       }
       await bridge.finish("shell-1");
-      const edits = evaluateGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => [edit.path, edit.language]));
+      const edits = auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => [edit.path, edit.language]));
       expect(Object.fromEntries(edits)).toEqual(Object.fromEntries(ROUTES.filter(([, dialect]) => dialect !== undefined)));
     } finally {
       await bridge.close();

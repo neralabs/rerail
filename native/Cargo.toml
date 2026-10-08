@@ -8,7 +8,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [features]
-policy-profile = []
+code-rule-profile = []
 bench-backends = ["dep:metal"]
 [dependencies]
 ast-grep-core = "=0.45.3"

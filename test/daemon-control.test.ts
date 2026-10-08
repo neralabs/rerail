@@ -21,15 +21,15 @@ vi.mock("node:child_process", async () => {
       opener.intercept?.(command, args) ?? actual.spawn(command, args, options),
   };
 });
-import { defaultKernelSocketPath, RerailDaemon, type DaemonState } from "../src/daemon.js";
+import { defaultEngineSocketPath, RerailDaemon, type DaemonState } from "../src/daemon.js";
 import {
   autostartDaemon,
   DAEMON_STATE_FILE,
   daemonUsesPackageRoot,
   findRunningDaemon,
-  isUsableKernelSocketPath,
+  isUsableEngineSocketPath,
   lookupDaemon,
-  openPage,
+  openDashboard,
   processAlive,
   readDaemonState,
   startDaemon,
@@ -51,7 +51,7 @@ function stateFor(overrides: Partial<DaemonState>): DaemonState {
     url: "http://127.0.0.1:1/",
     version: "0.0.0-test",
     databasePath: "/nowhere/rerail.sqlite",
-    kernelSocketPath: "/nowhere/kernel.sock",
+    kernelSocketPath: "/nowhere/engine.sock",
     ui: "dev",
     startedAt: 0,
     packageRoot: "/nowhere/rerail",
@@ -59,14 +59,14 @@ function stateFor(overrides: Partial<DaemonState>): DaemonState {
   };
 }
 
-describe("kernel IPC endpoints", () => {
+describe("engine service IPC endpoints", () => {
   it("uses a valid per-database Windows named pipe", () => {
-    const first = defaultKernelSocketPath(String.raw`C:\work\one\rerail.sqlite`, "win32");
-    const second = defaultKernelSocketPath(String.raw`C:\work\two\rerail.sqlite`, "win32");
+    const first = defaultEngineSocketPath(String.raw`C:\work\one\rerail.sqlite`, "win32");
+    const second = defaultEngineSocketPath(String.raw`C:\work\two\rerail.sqlite`, "win32");
     expect(first).toMatch(/^\\\\\.\\pipe\\rerail-[a-f0-9]{24}$/u);
     expect(second).not.toBe(first);
-    expect(isUsableKernelSocketPath(first, "win32")).toBe(true);
-    expect(isUsableKernelSocketPath(String.raw`C:\temp\kernel.sock`, "win32")).toBe(false);
+    expect(isUsableEngineSocketPath(first, "win32")).toBe(true);
+    expect(isUsableEngineSocketPath(String.raw`C:\temp\engine.sock`, "win32")).toBe(false);
   });
 });
 
@@ -286,7 +286,7 @@ describe("Rerail daemon control", () => {
   }, 15_000);
 });
 
-describe("openPage", () => {
+describe("openDashboard", () => {
   const url = "http://127.0.0.1:4737/#rules";
   const desktopOpener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "rundll32" : "xdg-open";
   const underOrca = { ORCA_TAB_ID: "tab-1" };
@@ -324,31 +324,31 @@ describe("openPage", () => {
 
   it("uses the desktop browser outside Orca", async () => {
     const commands = interceptSpawns(() => { throw new Error("orca must not be spawned"); });
-    expect(await openPage(url, {}, candidates)).toBe("system-browser");
+    expect(await openDashboard(url, {}, candidates)).toBe("system-browser");
     expect(commands).toEqual([desktopOpener]);
   });
 
   it.skipIf(process.platform === "win32")("opens a tab in the Orca window through its installed absolute path", async () => {
     const commands = interceptSpawns(child => child.emit("exit", 0, null));
-    expect(await openPage(url, underOrca, candidates)).toBe("orca-tab");
+    expect(await openDashboard(url, underOrca, candidates)).toBe("orca-tab");
     expect(commands).toEqual([orca]);
   });
 
   it("uses the desktop browser without consulting PATH when no Orca CLI is installed", async () => {
     const commands = interceptSpawns(() => { throw new Error("orca must not be spawned"); });
-    expect(await openPage(url, underOrca, [join(scratch, "missing", "orca")])).toBe("system-browser");
+    expect(await openDashboard(url, underOrca, [join(scratch, "missing", "orca")])).toBe("system-browser");
     expect(commands).toEqual([desktopOpener]);
   });
 
   it.skipIf(process.platform === "win32")("falls back to the desktop browser when orca cannot be spawned", async () => {
     const commands = interceptSpawns(child => child.emit("error", Object.assign(new Error("spawn orca EACCES"), { code: "EACCES" })));
-    expect(await openPage(url, underOrca, candidates)).toBe("system-browser");
+    expect(await openDashboard(url, underOrca, candidates)).toBe("system-browser");
     expect(commands).toEqual([orca, desktopOpener]);
   });
 
   it.skipIf(process.platform === "win32")("falls back to the desktop browser when orca fails", async () => {
     const commands = interceptSpawns(child => child.emit("exit", 1, null));
-    expect(await openPage(url, underOrca, candidates)).toBe("system-browser");
+    expect(await openDashboard(url, underOrca, candidates)).toBe("system-browser");
     expect(commands).toEqual([orca, desktopOpener]);
   });
 });

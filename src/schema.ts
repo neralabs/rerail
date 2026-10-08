@@ -1,20 +1,20 @@
 import { sql, type SQL } from "drizzle-orm";
 import { blob, check, index, integer, primaryKey, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "./adapter-contract.js";
-import type { ExecutablePolicyFinding } from "./executable-policy.js";
+import type { CodeRuleViolation } from "./code-rule.js";
 import {
-  POLICY_MODES,
-  POLICY_RUN_STATUSES,
-  POLICY_SCOPES,
-  type PolicyExecutionFailure,
-  type PolicyMode,
-  type PolicyRunStatus,
-  type PolicyScope,
-  type RuleEvaluationProvenance,
-} from "./policy-execution.js";
-import { POLICY_FORMAT, type PolicyCheck, type PolicyScope as PolicyRuleScope } from "./policy-schema.js";
+  AUDIT_MODES,
+  AUDIT_STATUSES,
+  AUDIT_SCOPES,
+  type AuditFailure,
+  type AuditMode,
+  type AuditStatus,
+  type AuditScope,
+  type AuditRuleProvenance,
+} from "./audit.js";
+import { CODE_RULE_FORMAT, type CodeRuleClause, type CodeRuleScope } from "./code-rule-schema.js";
 import { RULE_MODES } from "./rule-mode.js";
-import type { CosineRule } from "./rule-schema.js";
+import type { ConversationRule } from "./rule-schema.js";
 import type { RuleDocument } from "./rule-store.js";
 
 /**
@@ -88,19 +88,19 @@ export const rules = sqliteTable(
     sourceDigest: text("source_digest"),
 
     // kind = 'file': one column per top-level field of the executable
-    // `rerail.policy/v1` document the kernel compiles. Nested structures are
-    // JSON validated by policyRuleSchema at the write boundary.
-    format: text("format", { enum: [POLICY_FORMAT] }),
+    // `rerail.policy/v1` document the engine compiles. Nested structures are
+    // JSON validated by codeRuleSchema at the write boundary.
+    format: text("format", { enum: [CODE_RULE_FORMAT] }),
     description: text("description"),
-    policyScope: text("scope_json", { mode: "json" }).$type<PolicyRuleScope>(),
-    clauses: text("clauses_json", { mode: "json" }).$type<PolicyCheck[]>(),
+    codeRuleScope: text("scope_json", { mode: "json" }).$type<CodeRuleScope>(),
+    clauses: text("clauses_json", { mode: "json" }).$type<CodeRuleClause[]>(),
 
     // kind = 'conversation': one column per top-level field of the conversation rule schema.
     reference: text("reference"),
-    match: text("match_json", { mode: "json" }).$type<CosineRule["match"]>(),
-    sample: text("sample_json", { mode: "json" }).$type<CosineRule["sample"]>(),
-    action: text("action_json", { mode: "json" }).$type<CosineRule["action"]>(),
-    repeat: text("repeat_json", { mode: "json" }).$type<NonNullable<CosineRule["repeat"]>>(),
+    match: text("match_json", { mode: "json" }).$type<ConversationRule["match"]>(),
+    sample: text("sample_json", { mode: "json" }).$type<ConversationRule["sample"]>(),
+    action: text("action_json", { mode: "json" }).$type<ConversationRule["action"]>(),
+    repeat: text("repeat_json", { mode: "json" }).$type<NonNullable<ConversationRule["repeat"]>>(),
   },
   table => [
     index("rules_kind_enabled").on(table.kind, table.enabled),
@@ -109,8 +109,8 @@ export const rules = sqliteTable(
     check("rules_revision", sql`${table.revision} > 0`),
     check("rules_enabled", sql`${table.enabled} IN (0, 1)`),
     check("rules_scope", sql`${table.scope} IN (${sql.raw(inList(RULE_SCOPES))})`),
-    check("rules_format", sql`${table.format} IS NULL OR ${table.format} = ${sql.raw(`'${POLICY_FORMAT}'`)}`),
-    check("rules_scope_json", sql`${table.policyScope} IS NULL OR json_type(${table.policyScope}) = 'object'`),
+    check("rules_format", sql`${table.format} IS NULL OR ${table.format} = ${sql.raw(inList([CODE_RULE_FORMAT]))}`),
+    check("rules_scope_json", sql`${table.codeRuleScope} IS NULL OR json_type(${table.codeRuleScope}) = 'object'`),
     check("rules_clauses_json", sql`${table.clauses} IS NULL OR json_type(${table.clauses}) = 'array'`),
     check("rules_match_json", sql`${table.match} IS NULL OR json_type(${table.match}) = 'object'`),
     check("rules_sample_json", sql`${table.sample} IS NULL OR json_type(${table.sample}) = 'object'`),
@@ -138,7 +138,7 @@ export const rules = sqliteTable(
         AND ${table.action} IS NOT NULL
         AND ${table.format} IS NULL
         AND ${table.description} IS NULL
-        AND ${table.policyScope} IS NULL
+        AND ${table.codeRuleScope} IS NULL
         AND ${table.clauses} IS NULL
       )`,
     ),
@@ -345,39 +345,39 @@ export const workLinks = sqliteTable(
 );
 
 /**
- * Durable execution bookkeeping. This deliberately has no session foreign key:
- * evaluation can begin before a harness has recorded its session row, and a
+ * Durable audit bookkeeping. This deliberately has no session foreign key:
+ * evaluation can begin before a host has recorded its session row, and a
  * reset must not make a live evaluator unable to finish its run.
  */
-export const policyRuns = sqliteTable(
+export const audits = sqliteTable(
   "audits",
   {
     auditId: text("audit_id").primaryKey(),
     sessionId: text("session_id").notNull(),
     workspaceRoot: text("workspace_root").notNull(),
-    scope: text("scope", { enum: POLICY_SCOPES }).$type<PolicyScope>().notNull(),
-    mode: text("mode", { enum: POLICY_MODES }).$type<PolicyMode>().notNull(),
+    scope: text("scope", { enum: AUDIT_SCOPES }).$type<AuditScope>().notNull(),
+    mode: text("mode", { enum: AUDIT_MODES }).$type<AuditMode>().notNull(),
     revision: integer("revision").notNull(),
     /** Immutable catalog digest used by this run; null is honest legacy provenance. */
     catalogRevision: text("catalog_revision"),
     /** Exact rule revisions compiled for this run; empty only for legacy provenance. */
     ruleRevisions: text("rule_revisions_json", { mode: "json" }).$type<Array<{ ruleId: string; revision: number }>>().notNull().default([]),
-    ruleProvenance: text("rule_provenance_json", { mode: "json" }).$type<RuleEvaluationProvenance[]>().notNull(),
+    ruleProvenance: text("rule_provenance_json", { mode: "json" }).$type<AuditRuleProvenance[]>().notNull(),
     paths: text("paths_json", { mode: "json" }).$type<string[]>().notNull(),
     startedAt: integer("started_at").notNull(),
     finishedAt: integer("finished_at"),
-    status: text("status", { enum: POLICY_RUN_STATUSES }).$type<PolicyRunStatus>().notNull(),
-    violations: text("violations_json", { mode: "json" }).$type<ExecutablePolicyFinding[]>().notNull(),
-    failures: text("failures_json", { mode: "json" }).$type<PolicyExecutionFailure[]>().notNull(),
+    status: text("status", { enum: AUDIT_STATUSES }).$type<AuditStatus>().notNull(),
+    violations: text("violations_json", { mode: "json" }).$type<CodeRuleViolation[]>().notNull(),
+    failures: text("failures_json", { mode: "json" }).$type<AuditFailure[]>().notNull(),
   },
   table => [
     index("audits_session_started").on(table.sessionId, table.startedAt, table.auditId),
     index("audits_status").on(table.status),
     index("audits_scope").on(table.scope),
     index("audits_mode").on(table.mode),
-    check("audits_scope", sql`${table.scope} IN (${sql.raw(inList(POLICY_SCOPES))})`),
-    check("audits_mode", sql`${table.mode} IN (${sql.raw(inList(POLICY_MODES))})`),
-    check("audits_status", sql`${table.status} IN (${sql.raw(inList(POLICY_RUN_STATUSES))})`),
+    check("audits_scope", sql`${table.scope} IN (${sql.raw(inList(AUDIT_SCOPES))})`),
+    check("audits_mode", sql`${table.mode} IN (${sql.raw(inList(AUDIT_MODES))})`),
+    check("audits_status", sql`${table.status} IN (${sql.raw(inList(AUDIT_STATUSES))})`),
     check("audits_revision", sql`${table.revision} >= 0`),
     check("audits_rule_provenance_json", sql`json_type(${table.ruleProvenance}) = 'array'`),
     check("audits_paths_json", sql`json_type(${table.paths}) = 'array'`),
@@ -386,16 +386,16 @@ export const policyRuns = sqliteTable(
   ],
 );
 
-/** Workspace-owned ongoing policy defaults; first-repository diagnostics are fixed log-only scans. */
-export const policyRunResultPages = sqliteTable(
+/** Workspace-owned ongoing audit defaults; first-repository audits are fixed log-only audits. */
+export const auditResultPages = sqliteTable(
   "audit_result_pages",
   {
     auditId: text("audit_id")
       .notNull()
-      .references(() => policyRuns.auditId, { onDelete: "cascade" }),
+      .references(() => audits.auditId, { onDelete: "cascade" }),
     pageIndex: integer("page_index").notNull(),
-    violations: text("violations_json", { mode: "json" }).$type<ExecutablePolicyFinding[]>().notNull(),
-    failures: text("failures_json", { mode: "json" }).$type<PolicyExecutionFailure[]>().notNull(),
+    violations: text("violations_json", { mode: "json" }).$type<CodeRuleViolation[]>().notNull(),
+    failures: text("failures_json", { mode: "json" }).$type<AuditFailure[]>().notNull(),
   },
   table => [
     primaryKey({ columns: [table.auditId, table.pageIndex] }),
@@ -405,14 +405,14 @@ export const policyRunResultPages = sqliteTable(
   ],
 );
 
-export const policySettings = sqliteTable("audit_settings", {
+export const auditSettings = sqliteTable("audit_settings", {
   workspaceRoot: text("workspace_root").primaryKey(),
-  settings: text("settings_json", { mode: "json" }).$type<{ scope: PolicyScope; mode: PolicyMode }>().notNull(),
+  settings: text("settings_json", { mode: "json" }).$type<{ scope: AuditScope; mode: AuditMode }>().notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
 
-/** One repository diagnostic lifecycle per workspace, retried only after a failed or interrupted attempt. */
-export const policyRepositoryDiagnostics = sqliteTable("repository_audits", {
+/** One repository audit lifecycle per workspace, retried only after a failed or interrupted attempt. */
+export const repositoryAudits = sqliteTable("repository_audits", {
   workspaceRoot: text("workspace_root").primaryKey(),
   sessionId: text("session_id").notNull(),
   auditId: text("audit_id"),
@@ -424,15 +424,15 @@ export const policyRepositoryDiagnostics = sqliteTable("repository_audits", {
   check("repository_audits_status", sql`${table.status} IN ('running', 'completed', 'failed', 'interrupted')`),
 ]);
 
-/** User-created scans are durable work items, claimed only by their owning session runtime. */
-export const policyScanRequests = sqliteTable(
+/** User-created audit requests are durable work items, claimed only by their owning session runtime. */
+export const auditRequests = sqliteTable(
   "audit_requests",
   {
     id: text("id").primaryKey(),
     sessionId: text("session_id").notNull(),
     workspaceRoot: text("workspace_root").notNull(),
-    scope: text("scope", { enum: POLICY_SCOPES }).$type<PolicyScope>().notNull(),
-    mode: text("mode", { enum: POLICY_MODES }).$type<PolicyMode>().notNull(),
+    scope: text("scope", { enum: AUDIT_SCOPES }).$type<AuditScope>().notNull(),
+    mode: text("mode", { enum: AUDIT_MODES }).$type<AuditMode>().notNull(),
     paths: text("paths_json", { mode: "json" }).$type<string[]>().notNull(),
     status: text("status", { enum: ["queued", "running", "completed", "failed", "interrupted"] as const }).notNull(),
     createdAt: integer("created_at").notNull(),
@@ -444,8 +444,8 @@ export const policyScanRequests = sqliteTable(
   table => [
     index("audit_requests_session_created").on(table.sessionId, table.createdAt, table.id),
     index("audit_requests_status").on(table.status),
-    check("audit_requests_scope", sql`${table.scope} IN (${sql.raw(inList(POLICY_SCOPES))})`),
-    check("audit_requests_mode", sql`${table.mode} IN (${sql.raw(inList(POLICY_MODES))})`),
+    check("audit_requests_scope", sql`${table.scope} IN (${sql.raw(inList(AUDIT_SCOPES))})`),
+    check("audit_requests_mode", sql`${table.mode} IN (${sql.raw(inList(AUDIT_MODES))})`),
     check("audit_requests_status_value", sql`${table.status} IN ('queued', 'running', 'completed', 'failed', 'interrupted')`),
     check("audit_requests_paths_json", sql`json_type(${table.paths}) = 'array'`),
     check("audit_requests_audit_ids_json", sql`json_type(${table.auditIds}) = 'array'`),
@@ -477,14 +477,14 @@ export function sessionsOfRepository(repositoryId: string, { ended = false }: { 
  * `audit_result_pages` cascades with `audits`; `sessions` and `policy_session_owners`
  * lose only ended sessions, so running ones keep recording.
  */
-export const SESSION_HISTORY_TABLES = [events, workLinks, policyRuns, policyScanRequests, policyRepositoryDiagnostics] as const;
+export const SESSION_HISTORY_TABLES = [events, workLinks, audits, auditRequests, repositoryAudits] as const;
 
 export type RuleRow = typeof rules.$inferSelect;
 export type NewRuleRow = typeof rules.$inferInsert;
 export type SessionRow = typeof sessions.$inferSelect;
 export type EventRow = typeof events.$inferSelect;
 export type WorkLinkRow = typeof workLinks.$inferSelect;
-export type PolicyRunRow = typeof policyRuns.$inferSelect;
+export type AuditRow = typeof audits.$inferSelect;
 export type PresentationPreference = typeof presentationPreferences.$inferSelect;
 export type PresentationPresence = PresentationPreference["presence"];
 export type CatalogRuleRow = typeof catalogRules.$inferSelect;

@@ -36,7 +36,7 @@ describe("documentShape", () => {
     expect(documentShape(doc([rule]))).toMatchObject({ checks: 1, relations: 4, inside: 1, has: 1, precedes: 1, follows: 1, not: 1, any: 1, all: 1, maxDepth: 6 });
   });
 
-  it("takes the deepest check and ignores relation-named keys outside rule trees", () => {
+  it("takes the deepest clause and ignores relation-named keys outside rule trees", () => {
     const shape = documentShape({
       ...(doc([{ kind: "x" }, { has: { has: { kind: "y" } } }]) as object),
       description: "has inside not",

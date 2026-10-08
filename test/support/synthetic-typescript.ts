@@ -1,4 +1,4 @@
-/** Synthetic but realistic TypeScript and React sources for kernel scale checks; each file logs exactly once. */
+/** Synthetic but realistic TypeScript and React sources for engine scale checks; each file logs exactly once. */
 
 export function reactComponentSource(index: number): string {
   return `import { useCallback, useEffect, useMemo, useState } from "react";

@@ -3,9 +3,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
-import { assertPolicyCompiles, PolicyCompileError } from "./policy-kernel-check.js";
-import { policyRuleSchema, POLICY_FORMAT, type PolicyRule } from "./policy-schema.js";
-import { cosineRuleSchema } from "./rule-schema.js";
+import { assertCodeRuleCompiles, CodeRuleCompileError } from "./code-rule-compile.js";
+import { codeRuleSchema, CODE_RULE_FORMAT, type CodeRule } from "./code-rule-schema.js";
+import { conversationRuleSchema } from "./rule-schema.js";
 import { RULE_APPLICABILITIES, RULE_KINDS, RULE_ORIGINS, RULE_SCOPES } from "./schema.js";
 import { SqliteRuleStore, type BundledRuleDocument, type RuleDocument, type SeedReport, type StoredRule } from "./rule-store.js";
 import { ScopedRuleCatalog } from "./scoped-rule-catalog.js";
@@ -15,9 +15,9 @@ export const RULES_DUMP_VERSION = 5 as const;
 export const SCOPED_RULES_DUMP_VERSION = 4 as const;
 export const RULES_DUMP_FILE = "rules.json";
 
-/** `<package>/policies/executable-policy-dsl/rules`: the documents every project database is seeded with. */
+/** `<package>/code-rule-dsl/rules`: the documents every project database is seeded with. */
 export function bundledRulesDirectory(): string {
-  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "policies", "executable-policy-dsl", "rules");
+  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "code-rule-dsl", "rules");
 }
 
 /** The dump sits beside the database it describes: `<cwd>/.rerail/rules.json`. */
@@ -26,11 +26,11 @@ export function defaultRulesDumpPath(databasePath: string): string {
 }
 
 function parseRuleDocument(value: unknown, label: string): RuleDocument {
-  const isPolicy = typeof value === "object" && value !== null && "format" in value && value.format === POLICY_FORMAT;
-  if (isPolicy) return { kind: "file", rule: policyRuleSchema.parse(value) };
-  const cosine = cosineRuleSchema.safeParse(value);
-  if (cosine.success) return { kind: "conversation", rule: cosine.data };
-  throw new Error(`${label} is neither a ${POLICY_FORMAT} document nor a conversation rule: ${cosine.error.issues[0]?.message ?? "invalid"}`);
+  const isCodeRule = typeof value === "object" && value !== null && "format" in value && value.format === CODE_RULE_FORMAT;
+  if (isCodeRule) return { kind: "file", rule: codeRuleSchema.parse(value) };
+  const conversationRule = conversationRuleSchema.safeParse(value);
+  if (conversationRule.success) return { kind: "conversation", rule: conversationRule.data };
+  throw new Error(`${label} is neither a ${CODE_RULE_FORMAT} document nor a conversation rule: ${conversationRule.error.issues[0]?.message ?? "invalid"}`);
 }
 
 /**
@@ -180,17 +180,17 @@ export function exportScopedRules(store: ScopedRuleCatalog, path: string, now = 
 }
 
 /**
- * Compile every policy of a dump in the kernel before anything is written, so an import is all or nothing:
- * the error lists each rule the kernel rejects, by dump index and id.
+ * Compile every code rule of a dump in the engine before anything is written, so an import is all or nothing:
+ * the error lists each rule the engine rejects, by dump index and id.
  */
 function assertDumpCompiles(path: string, documents: readonly RuleDocument[]): void {
   const problems: string[] = [];
   for (const [index, document] of documents.entries()) {
     if (document.kind !== "file") continue;
     try {
-      assertPolicyCompiles(document.rule);
+      assertCodeRuleCompiles(document.rule);
     } catch (error) {
-      if (!(error instanceof PolicyCompileError)) throw error;
+      if (!(error instanceof CodeRuleCompileError)) throw error;
       problems.push(`  rules[${index}] (${document.rule.id}): ${error.reason}`);
     }
   }
@@ -273,8 +273,8 @@ export function bootstrapRules(store: SqliteRuleStore, options: BootstrapRulesOp
 
 export interface ProjectRulesBootstrap {
   report: BootstrapReport;
-  /** Enabled policy rules, in the shape the kernel compiles. */
-  policies: PolicyRule[];
+  /** Enabled code rules, in the shape the engine compiles. */
+  codeRules: CodeRule[];
 }
 
 /** Open, bootstrap, and close a project database in one step. */
@@ -282,7 +282,7 @@ export function bootstrapProjectRules(databasePath: string, options: BootstrapRu
   const store = new SqliteRuleStore(databasePath);
   try {
     const report = bootstrapRules(store, options);
-    return { report, policies: store.policyRules() };
+    return { report, codeRules: store.codeRules() };
   } finally {
     store.close();
   }

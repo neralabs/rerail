@@ -3,11 +3,11 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startKernelService, type KernelService } from "../src/kernel-service.js";
+import { startEngineService, type EngineService } from "../src/engine-service.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 
 const temporaryDirectories: string[] = [];
-const kernels: KernelService[] = [];
+const engineServices: EngineService[] = [];
 const originalRerailHome = process.env.RERAIL_HOME;
 let isolatedRerailHome: string;
 
@@ -23,7 +23,7 @@ afterAll(async () => {
 });
 
 afterEach(async () => {
-  await Promise.all(kernels.splice(0).map(kernel => kernel.close()));
+  await Promise.all(engineServices.splice(0).map(engineService => engineService.close()));
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
@@ -53,8 +53,8 @@ describe("Cursor packaged event adapter", () => {
     startTestRepository(root);
     const executable = join(process.cwd(), "dist", "cursor-hook.js");
     const common = { conversation_id: "cursor-session", generation_id: "generation-1", cwd: root };
-    const kernelSocketPath = join(root, "kernel.sock");
-    kernels.push(await startKernelService({ socketPath: kernelSocketPath, storageRoot: join(root, ".rerail/sessions"), modelPath: join(process.cwd(), "model") }));
+    const kernelSocketPath = join(root, "engine.sock");
+    engineServices.push(await startEngineService({ socketPath: kernelSocketPath, storageRoot: join(root, ".rerail/sessions"), modelPath: join(process.cwd(), "model") }));
 
     expect(await invokeCursorHook(executable, { ...common, hook_event_name: "sessionStart" }, kernelSocketPath)).toEqual({});
     expect(await invokeCursorHook(executable, {
@@ -77,7 +77,7 @@ describe("Cursor packaged event adapter", () => {
     ]);
   }, 30_000);
 
-  test("does not contact the resident kernel when this repository is not started", async () => {
+  test("does not contact the engine service when this repository is not started", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-cursor-not-started-"));
     temporaryDirectories.push(root);
     const executable = join(process.cwd(), "dist", "cursor-hook.js");
@@ -85,7 +85,7 @@ describe("Cursor packaged event adapter", () => {
     expect(await invokeCursorHook(
       executable,
       { conversation_id: "cursor-session", generation_id: "generation-1", cwd: root, hook_event_name: "sessionStart" },
-      join(root, "missing-kernel.sock"),
+      join(root, "missing-engine.sock"),
     )).toEqual({});
     await expect(readdir(join(root, ".rerail", "sessions"))).rejects.toMatchObject({ code: "ENOENT" });
   });

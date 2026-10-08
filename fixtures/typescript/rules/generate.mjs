@@ -35,7 +35,7 @@ const CHECKOUTS = {
   eslint: { repository: "https://github.com/eslint/eslint", commit: "3c0b7c6e1fe2dec778b97a996018126f22d437ae" },
   "typescript-eslint": { repository: "https://github.com/typescript-eslint/typescript-eslint", commit: "23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7" },
 };
-/** The host's `IGNORED_DIRECTORIES` (rerail/src/executable-policy-enforcer.ts), which the runner's walk skips. */
+/** The host's `IGNORED_DIRECTORIES` (rerail/src/code-rule-enforcer.ts), which the runner's walk skips. */
 const IGNORED_DIRECTORIES = new Set([".git", ".hg", ".svn", ".rerail", ".nera", ".venv", "__pycache__", "node_modules", "dist", "build", ".next", ".turbo", "coverage", "target", "vendor"]);
 const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 const TYPESCRIPT_EXTENSIONS = [".d.ts", ".ts", ".tsx", ".mts", ".cts"];

@@ -1,6 +1,6 @@
 import { createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
-import { policyRuns, PRESENTATION_PRESENCES, sessions } from "../schema.js";
+import { audits, PRESENTATION_PRESENCES, sessions } from "../schema.js";
 
 /** Shared by HTTP/OpenAPI and passive native readers, without importing server handlers. */
 export const sessionSummarySchema = createSelectSchema(sessions)
@@ -12,7 +12,7 @@ export const sessionResponseSchema = z.object({
     activeRuleCount: z.number().int().nonnegative().nullable(),
     steeringCount: z.number().int().nonnegative().nullable(),
   }),
-  audit: createSelectSchema(policyRuns)
+  audit: createSelectSchema(audits)
     .pick({ workspaceRoot: true, scope: true, mode: true, status: true })
     .extend({ violationCount: z.number().int().nonnegative(), failureCount: z.number().int().nonnegative() }).nullable(),
 });

@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { defaultRerailDatabasePath } from "../src/database.js";
 import { openScopedRuleCatalog, resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
-import { MOCK_COSINE_RULES } from "../src/seed.js";
-import { SqliteTranscriptReader, SqliteTranscriptStore } from "../src/transcript-store.js";
+import { MOCK_CONVERSATION_RULES } from "../src/seed.js";
+import { SqliteSessionReader, SqliteSessionStore } from "../src/session-store.js";
 
 const roots: string[] = [];
 let previousRerailHome: string | undefined;
@@ -49,14 +49,14 @@ describe("rule scope integration", () => {
     const primary = openScopedRuleCatalog(primaryPath);
     primary.assignRepository("project-shared", "Shared", primaryRepository.repositoryId, 1_000);
     primary.assignRepository("project-shared", "Shared", secondRepository.repositoryId, 1_001);
-    primary.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "shared" }, { applicability: "project", now: 1_100 });
+    primary.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "shared" }, { applicability: "project", now: 1_100 });
 
     const worktree = openScopedRuleCatalog(worktreePath);
     const second = openScopedRuleCatalog(secondPath);
     const unrelated = openScopedRuleCatalog(unrelatedPath);
-    expect(worktree.cosineRules().map(rule => rule.id)).toEqual(["shared"]);
-    expect(second.cosineRules().map(rule => rule.id)).toEqual(["shared"]);
-    expect(unrelated.cosineRules()).toEqual([]);
+    expect(worktree.conversationRules().map(rule => rule.id)).toEqual(["shared"]);
+    expect(second.conversationRules().map(rule => rule.id)).toEqual(["shared"]);
+    expect(unrelated.conversationRules()).toEqual([]);
 
     const database = defaultRerailDatabasePath();
     expect(primary.path).toBe(database);
@@ -65,14 +65,14 @@ describe("rule scope integration", () => {
       [worktreeRepository, worktreePath, "worktree-session"],
       [secondRepository, secondPath, "second-session"],
     ] as const) {
-      const history = new SqliteTranscriptStore(database, { repositoryId: repository.repositoryId });
+      const history = new SqliteSessionStore(database, { repositoryId: repository.repositoryId });
       history.openSession({ host: "omp", sessionId, cwd }, 2_000);
       history.append({ sessionId, eventId: "prompt", kind: "user-prompt", observedAt: 2_001, payload: { text: sessionId } });
       history.close();
     }
-    const primaryHistory = new SqliteTranscriptReader(database, { repositoryId: primaryRepository.repositoryId });
-    const secondHistory = new SqliteTranscriptReader(database, { repositoryId: secondRepository.repositoryId });
-    const unrelatedHistory = new SqliteTranscriptReader(database, { repositoryId: unrelatedRepository.repositoryId });
+    const primaryHistory = new SqliteSessionReader(database, { repositoryId: primaryRepository.repositoryId });
+    const secondHistory = new SqliteSessionReader(database, { repositoryId: secondRepository.repositoryId });
+    const unrelatedHistory = new SqliteSessionReader(database, { repositoryId: unrelatedRepository.repositoryId });
     // Worktrees share their repository's history; other repositories, even in the same project, do not.
     expect(primaryHistory.sessions().map(session => session.sessionId)).toEqual(["primary-session", "worktree-session"]);
     expect(secondHistory.sessions().map(session => session.sessionId)).toEqual(["second-session"]);
@@ -82,8 +82,8 @@ describe("rule scope integration", () => {
     secondHistory.close();
     unrelatedHistory.close();
 
-    worktree.upsertCosine(
-      { ...MOCK_COSINE_RULES[0]!, id: "shared", action: { content: "Updated once" } },
+    worktree.upsertConversationRule(
+      { ...MOCK_CONVERSATION_RULES[0]!, id: "shared", action: { content: "Updated once" } },
       { applicability: "project", now: 3_000 },
     );
     second.close();

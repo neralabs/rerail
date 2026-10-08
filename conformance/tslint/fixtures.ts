@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { PolicySourceLanguage } from "../../src/executable-policy.js";
+import type { CodeRuleSourceLanguage } from "../../src/code-rule.js";
 import { parseLintFile, type ParsedLintFile } from "./lint-format.js";
 import { compareDeterministicStrings } from "../../src/stable-json.js";
 
@@ -105,9 +105,9 @@ export interface RuleConfig {
 export interface FixtureFile {
   /** Path relative to the variant directory, e.g. `test.ts.lint` or `edge-case/test.ts.lint`. */
   lintPath: string;
-  /** Snapshot path handed to the kernel: `<rule>/<variant>/<file without .lint>`. */
+  /** Snapshot path handed to the engine: `<rule>/<variant>/<file without .lint>`. */
   path: string;
-  language: Extract<PolicySourceLanguage, "typescript" | "tsx" | "javascript">;
+  language: Extract<CodeRuleSourceLanguage, "typescript" | "tsx" | "javascript">;
   /** TSLint enables `jsRules` for JavaScript fixtures. */
   javascript: boolean;
   config: RuleConfig;

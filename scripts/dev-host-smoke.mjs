@@ -4,8 +4,8 @@ import { resolve } from "node:path";
 import { z } from "zod";
 
 // This driver exercises the installed bridge's real extension factories against
-// the real container. The minimal harness port supplies registrations/session entries;
-// native kernels, SQLite, policy execution and semantic operations are not mocked.
+// the real container. The minimal host port supplies registrations/session entries;
+// native engines, SQLite, audit and semantic operations are not mocked.
 const [bridge, host] = process.argv.slice(2);
 assert.ok(host === "omp" || host === "pi");
 const extension = await import(pathToFileURL(resolve(bridge, "dist", host === "omp" ? "default-extension.js" : "pi-extension.js")).href);

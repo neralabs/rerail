@@ -1,10 +1,10 @@
 import type { AgentToolResult, ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import type { CosineRuleRegistry } from "./registry.js";
+import type { ConversationRuleRegistry } from "./registry.js";
 import { MUTATION_ENTRY_TYPE, type RuleMutation } from "./session-state.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "./rule-schema.js";
 
-export interface CosineRulesToolRuntime {
-  registry?: () => CosineRuleRegistry;
+export interface ConversationRulesToolRuntime {
+  registry?: () => ConversationRuleRegistry;
   turn?: () => number;
   remoteExecute?: () => ((input: unknown) => Promise<unknown>) | undefined;
 }
@@ -16,7 +16,7 @@ function toolResult(details: Record<string, unknown>): AgentToolResult<Record<st
   };
 }
 
-export function registerCosineRulesTool(pi: ExtensionAPI, runtime: CosineRulesToolRuntime): void {
+export function registerConversationRulesTool(pi: ExtensionAPI, runtime: ConversationRulesToolRuntime): void {
   const z = pi.zod;
   const sampleSchema = z.object({
     source: z.string(),

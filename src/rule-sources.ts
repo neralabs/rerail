@@ -1,11 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
-import { parseCosineRuleDocument, type CosineRule } from "./rule-schema.js";
+import { parseConversationRuleDocument, type ConversationRule } from "./rule-schema.js";
 
-export interface CosineRuleSourceOptions {
+export interface ConversationRuleSourceOptions {
   /** Rules supplied by the embedding host; lowest precedence. */
-  rules?: readonly CosineRule[];
+  rules?: readonly ConversationRule[];
   /** JSON rule documents; every listed file must exist. Unset falls back to `defaultFile` when present. */
   ruleFiles?: readonly string[];
 }
@@ -23,28 +23,28 @@ function predatesRuleModes(document: unknown): boolean {
   });
 }
 
-/** Parse a JSON cosine rule file; one written before rule modes throws {@link RetiredRuleFileError}. */
-export function parseCosineRuleFile(text: string, path: string): CosineRule[] {
+/** Parse a JSON conversation rule file; one written before rule modes throws {@link RetiredRuleFileError}. */
+export function parseConversationRuleFile(text: string, path: string): ConversationRule[] {
   const document = parseJsonWithoutDuplicateKeys(text, path);
   if (predatesRuleModes(document)) {
     throw new RetiredRuleFileError("it was written before rule modes; give each rule a mode (log, steer, or block) instead of action.delivery");
   }
-  return parseCosineRuleDocument(document);
+  return parseConversationRuleDocument(document);
 }
 
-export interface LegacyCosineRuleSource {
+export interface LegacyConversationRuleSource {
   path: string;
   /** Reads the rules on call, so a source the catalog already imported is never parsed again. */
-  rules: () => readonly CosineRule[];
+  rules: () => readonly ConversationRule[];
 }
 
 /** Resolve legacy host and JSON inputs so callers can import each source once. */
-export function loadLegacyCosineRuleSources(
-  options: CosineRuleSourceOptions,
+export function loadLegacyConversationRuleSources(
+  options: ConversationRuleSourceOptions,
   cwd: string,
   defaultFile: string,
-): LegacyCosineRuleSource[] {
-  const sources: LegacyCosineRuleSource[] = [];
+): LegacyConversationRuleSource[] {
+  const sources: LegacyConversationRuleSource[] = [];
   if (options.rules !== undefined) {
     const embedded = options.rules;
     sources.push({ path: resolve(cwd, ".rerail", "embedded-cosine-rules"), rules: () => embedded });
@@ -56,33 +56,33 @@ export function loadLegacyCosineRuleSources(
       if (options.ruleFiles === undefined) continue;
       throw new Error(`cosine rule file does not exist: ${path}`);
     }
-    sources.push({ path, rules: () => parseCosineRuleFile(readFileSync(path, "utf8"), path) });
+    sources.push({ path, rules: () => parseConversationRuleFile(readFileSync(path, "utf8"), path) });
   }
   return sources;
 }
 
-/** What the project database says about cosine rules: the enabled rows, and every id it holds at all. */
-export interface DatabaseCosineRules {
-  enabled: readonly CosineRule[];
+/** What the project database says about conversation rules: the enabled rows, and every id it holds at all. */
+export interface DatabaseConversationRules {
+  enabled: readonly ConversationRule[];
   /** Ids of every `conversation` row, disabled ones included: a JSON-file rule with one of these ids never shows through. */
   ids: ReadonlySet<string>;
 }
 
 /**
- * Assemble the cosine rule set for a session: host-supplied rules, then JSON
+ * Assemble the conversation rule set for a session: host-supplied rules, then JSON
  * files, then database rows. Later sources replace earlier ones by id so the
  * database stays the source of truth while legacy JSON files keep working. The
  * database owns every id it has a row for: a disabled row means "off", not
  * "fall back to the file copy".
  */
-export function loadCosineRules(
-  options: CosineRuleSourceOptions,
+export function loadConversationRules(
+  options: ConversationRuleSourceOptions,
   cwd: string,
   defaultFile: string,
-  database: DatabaseCosineRules,
-): CosineRule[] {
-  const merged = new Map<string, CosineRule>();
-  for (const source of loadLegacyCosineRuleSources(options, cwd, defaultFile)) {
+  database: DatabaseConversationRules,
+): ConversationRule[] {
+  const merged = new Map<string, ConversationRule>();
+  for (const source of loadLegacyConversationRuleSources(options, cwd, defaultFile)) {
     for (const rule of source.rules()) merged.set(rule.id, rule);
   }
   for (const id of database.ids) merged.delete(id);

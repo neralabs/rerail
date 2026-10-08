@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerPiCosineRulesTool } from "../src/pi-tool.js";
+import { registerPiConversationRulesTool } from "../src/pi-tool.js";
 import { MUTATION_ENTRY_TYPE } from "../src/session-state.js";
 
 interface RegisteredTool {
@@ -25,7 +25,7 @@ function createHarness() {
       entries.push({ customType, data });
     },
   } as unknown as ExtensionAPI;
-  registerPiCosineRulesTool(pi, { registry: () => registry as never, turn: () => 4 });
+  registerPiConversationRulesTool(pi, { registry: () => registry as never, turn: () => 4 });
   if (tool === undefined) throw new Error("tool was not registered");
   return { entries, tool };
 }

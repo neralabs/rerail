@@ -12,8 +12,8 @@ Only rules that already exist ship as packs (decided 2026-10-07):
 
 | Pack | Category | Rules | Where it applies | What it is |
 |---|---|--:|---|---|
-| TSLint | language | 74 | the `typescript` dependency, `*.ts` or `*.tsx` files | The golden TSLint ports in `policies/executable-policy-dsl/rules/opt-in/tslint/`: each passed TSLint's own test suite in the conformance harness, with TSLint's default options. Group: TSLint. |
-| nera-landing | repository | 92 | the `api/nera_api` package | The rules written for this repository's own conventions, in `policies/executable-policy-dsl/rules/*.json`. Groups: the rule id prefix (`nera-api`, `nera-data-layer`, `nera-web`, `nera-sql`, …). |
+| TSLint | language | 74 | the `typescript` dependency, `*.ts` or `*.tsx` files | The golden TSLint ports in `code-rule-dsl/rules/opt-in/tslint/`: each passed TSLint's own test suite in the conformance harness, with TSLint's default options. Group: TSLint. |
+| nera-landing | repository | 92 | the `api/nera_api` package | The rules written for this repository's own conventions, in `code-rule-dsl/rules/*.json`. Groups: the rule id prefix (`nera-api`, `nera-data-layer`, `nera-web`, `nera-sql`, …). |
 
 The rule lists are the pack files themselves: `policies/rule-packs/tslint.json` and `policies/rule-packs/nera-landing.json`. A rule's title comes from its document's description.
 

@@ -15,15 +15,15 @@ import Database from "better-sqlite3";
 import { RULE_MESSAGE_TYPE } from "../src/adapter-contract.js";
 import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistory } from "../src/database.js";
 import { resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
-import { createPiCosineRulesExtension } from "../src/pi-extension.js";
-import { SqliteScanControlStore } from "../src/scan-control.js";
+import { createPiConversationRulesExtension } from "../src/pi-extension.js";
+import { SqliteAuditControlStore } from "../src/audit-control.js";
 import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../src/session-state.js";
-import { SqliteTranscriptStore } from "../src/transcript-store.js";
-import type { CosineRule } from "../src/rule-schema.js";
+import { SqliteSessionStore } from "../src/session-store.js";
+import type { ConversationRule } from "../src/rule-schema.js";
 import type { RerailCommandContext } from "../src/rerail-command.js";
 import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
 
-// Every test here builds real sessions (native model, kernel, rule catalog); on a loaded CI runner a
+// Every test here builds real sessions (native model, engine, rule catalog); on a loaded CI runner a
 // build alone can pass the 5 s default, whichever test happens to pay the cold start.
 vi.setConfig({ testTimeout: 30_000 });
 type Handler = (event: unknown, context: ExtensionContext) => unknown;
@@ -120,7 +120,7 @@ function receiptCount(harness: PiHarness, sessionId = "pi-test-session"): number
   }
 }
 
-const messageRule: CosineRule = {
+const messageRule: ConversationRule = {
   id: "checkout",
   mode: "steer",
   reference: "Guest checkout remains available.",
@@ -130,8 +130,8 @@ const messageRule: CosineRule = {
   repeat: { mode: "always" },
 };
 
-function install(harness: PiHarness, rules: readonly CosineRule[] = [messageRule]) {
-  createPiCosineRulesExtension({
+function install(harness: PiHarness, rules: readonly ConversationRule[] = [messageRule]) {
+  createPiConversationRulesExtension({
     modelPath: resolve("model"),
     rules,
     registerTool: false,
@@ -140,7 +140,7 @@ function install(harness: PiHarness, rules: readonly CosineRule[] = [messageRule
   return harness.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, harness.context);
 }
 
-describe("Pi cosine-rules extension", () => {
+describe("Pi conversation-rules extension", () => {
   it.each(["steer", "block"] as const)("evaluates a finalized assistant message when Pi emits no text deltas, and ignores a replayed end event (%s)", async mode => {
     const harness = createHarness();
     await install(harness, [{ ...messageRule, mode }]);
@@ -215,7 +215,7 @@ describe("Pi cosine-rules extension", () => {
   it("hands off remaining native guidance when an earlier receipt cannot be stored", async () => {
     const harness = createHarness();
     await install(harness, [messageRule, { ...messageRule, id: "second", action: { content: "Second guidance." } }]);
-    const receipt = vi.spyOn(SqliteTranscriptStore.prototype, "recordSteeringDelivery").mockImplementationOnce(() => { throw new Error("receipt unavailable"); });
+    const receipt = vi.spyOn(SqliteSessionStore.prototype, "recordSteer").mockImplementationOnce(() => { throw new Error("receipt unavailable"); });
     const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
       await harness.handlers.get("message_end")?.({
@@ -312,7 +312,7 @@ describe("Pi cosine-rules extension", () => {
       { type: "custom", customType: MATCH_ENTRY_TYPE, data: { ruleId: "checkout", turn: 3 } },
       { type: "custom", customType: TURN_ENTRY_TYPE, data: { turn: 3 } },
     ]);
-    createPiCosineRulesExtension({
+    createPiConversationRulesExtension({
       modelPath: resolve("model"),
       rules: [{ ...messageRule, repeat: { mode: "once" } }],
       registerTool: false,
@@ -336,9 +336,9 @@ describe("Pi cosine-rules extension", () => {
     expect(harness.messages).toEqual([]);
     expect(harness.entries.filter((entry) => entry.customType === MATCH_ENTRY_TYPE)).toEqual([]);
   });
-  it("contains malformed tool-call payloads without recording a sample", async () => {
+  it("contains malformed call inputs without recording a sample", async () => {
     const harness = createHarness();
-    const toolRule: CosineRule = {
+    const toolRule: ConversationRule = {
       ...messageRule,
       id: "tool-input",
       reference: '{"a":"Guest checkout remains available.","z":1}',
@@ -360,11 +360,11 @@ describe("Pi cosine-rules extension", () => {
     );
     expect(harness.entries.filter((entry) => entry.customType === MATCH_ENTRY_TYPE)).toHaveLength(1);
 
-    const toolCall = harness.handlers.get("tool_call");
-    if (toolCall === undefined) throw new Error("Pi extension did not register tool_call handler");
-    await expect(Promise.resolve(toolCall({ type: "tool_call", toolName: "submit", input: circular }, harness.context))).resolves.toBeUndefined();
+    const call = harness.handlers.get("tool_call");
+    if (call === undefined) throw new Error("Pi extension did not register tool_call handler");
+    await expect(Promise.resolve(call({ type: "tool_call", toolName: "submit", input: circular }, harness.context))).resolves.toBeUndefined();
     await expect(
-      Promise.resolve(toolCall({ type: "tool_call", toolName: "submit", input: { checkout: 1n } }, harness.context)),
+      Promise.resolve(call({ type: "tool_call", toolName: "submit", input: { checkout: 1n } }, harness.context)),
     ).resolves.toBeUndefined();
     expect(harness.entries.filter((entry) => entry.customType === MATCH_ENTRY_TYPE)).toHaveLength(1);
 
@@ -376,9 +376,9 @@ describe("Pi cosine-rules extension", () => {
     );
   });
 
-  it("rebuilds the Pi session owner after rerail reset so policy scans remain active", async () => {
+  it("rebuilds the Pi session owner after rerail reset so audits remain active", async () => {
     const harness = createHarness();
-    createPiCosineRulesExtension({
+    createPiConversationRulesExtension({
       modelPath: resolve("model"),
       rules: [messageRule],
       registerTool: false,
@@ -403,9 +403,9 @@ describe("Pi cosine-rules extension", () => {
     } });
     const database = openRerailDatabase(defaultRerailDatabasePath());
     try {
-      const controls = new SqliteScanControlStore(defaultRerailDatabasePath(), database);
+      const controls = new SqliteAuditControlStore(defaultRerailDatabasePath(), database);
       expect(controls.getSettings("pi-test-session").active).toBe(true);
-      expect(controls.requestScan("pi-test-session", { scope: "repository" }).status).toBe("queued");
+      expect(controls.requestAudit("pi-test-session", { scope: "repository" }).status).toBe("queued");
     } finally {
       database.$client.close();
     }
@@ -414,7 +414,7 @@ describe("Pi cosine-rules extension", () => {
   it("reattaches the retained dev checkout after rerail-stop closes its native client", async () => {
     const harness = createHarness();
     const dev = stubDevInstance(harness.context.cwd);
-    createPiCosineRulesExtension({
+    createPiConversationRulesExtension({
       modelPath: resolve("model"),
       rules: [messageRule],
       registerTool: false,
@@ -449,7 +449,7 @@ describe("Pi cosine-rules extension", () => {
     const tools = new Map<string, RegisteredTool>();
     Object.assign(harness.pi, { registerTool(tool: RegisteredTool) { tools.set(tool.name, tool); } });
     const dev = stubDevInstance(harness.context.cwd);
-    createPiCosineRulesExtension({
+    createPiConversationRulesExtension({
       modelPath: resolve("model"),
       rules: [messageRule],
       registerCommand: false,

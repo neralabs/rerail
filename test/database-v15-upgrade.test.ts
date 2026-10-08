@@ -6,15 +6,15 @@ import { deserialize, serialize } from "node:v8";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openRerailDatabase, resetRepositoryHistory } from "../src/database.js";
-import { SqlitePolicyExecutionReader, SqlitePolicyExecutionStore } from "../src/policy-execution-store.js";
-import { policyRuleSchema, type PolicyRule } from "../src/policy-schema.js";
+import { SqliteAuditReader, SqliteAuditStore } from "../src/audit-store.js";
+import { codeRuleSchema, type CodeRule } from "../src/code-rule-schema.js";
 import { loadBundledRules } from "../src/rule-bootstrap.js";
-import type { CosineRule } from "../src/rule-schema.js";
+import type { ConversationRule } from "../src/rule-schema.js";
 import { SqliteRuleStore, type RuleDocument } from "../src/rule-store.js";
-import { SqliteScanControlStore } from "../src/scan-control.js";
+import { SqliteAuditControlStore } from "../src/audit-control.js";
 import { RERAIL_SCHEMA_COMPATIBILITY_FLOOR, RERAIL_SCHEMA_VERSION } from "../src/schema.js";
 import { ScopedRuleCatalog, scopedRuleSignature } from "../src/scoped-rule-catalog.js";
-import { MOCK_COSINE_RULES } from "../src/seed.js";
+import { MOCK_CONVERSATION_RULES } from "../src/seed.js";
 import { ruleDocumentDigest, stableJsonText } from "../src/stable-json.js";
 import { createV14Database, v14TableStatement } from "./support/v14-database.js";
 
@@ -38,15 +38,15 @@ async function temporaryDatabase(name = "transcripts.sqlite"): Promise<string> {
 const digestOf = (kind: string, rule: unknown): string => ruleDocumentDigest({ kind, rule } as unknown as RuleDocument);
 
 const BUNDLED = loadBundledRules().flatMap(document => (document.kind === "file" ? [document.rule] : []));
-const BUNDLED_POLICY: PolicyRule = BUNDLED[0]!;
-const EDITED_POLICY: PolicyRule = BUNDLED[1]!;
-const COSINE: CosineRule = MOCK_COSINE_RULES[0]!;
+const BUNDLED_POLICY: CodeRule = BUNDLED[0]!;
+const EDITED_POLICY: CodeRule = BUNDLED[1]!;
+const COSINE: ConversationRule = MOCK_CONVERSATION_RULES[0]!;
 /** A define clause reports nothing, so it has no violation; rule modes and the contract leave it as it is. */
 const DEFINE_CLAUSE = { id: "options", define: { options: { strict: { type: "boolean", default: true } } } };
-const DEFINE_POLICY: PolicyRule = policyRuleSchema.parse({ ...BUNDLED[2]!, id: "with-define", clauses: [DEFINE_CLAUSE, ...BUNDLED[2]!.clauses] });
+const DEFINE_POLICY: CodeRule = codeRuleSchema.parse({ ...BUNDLED[2]!, id: "with-define", clauses: [DEFINE_CLAUSE, ...BUNDLED[2]!.clauses] });
 
 /** A policy body exactly as v14 wrote it: the v14 format, `checks`, and each clause's `finding`. */
-function v14Policy(rule: PolicyRule): Record<string, unknown> {
+function v14Policy(rule: CodeRule): Record<string, unknown> {
   const { clauses, ...body } = rule;
   return {
     ...body,
@@ -63,7 +63,7 @@ function legacySeverity(mode: string): string {
 }
 
 /** A policy body as main's v13 stored it: no rule mode, the v14 format and keys, a severity on each reporting check. */
-function mainPolicy(rule: PolicyRule): Record<string, unknown> {
+function mainPolicy(rule: CodeRule): Record<string, unknown> {
   const { mode, clauses, ...body } = rule;
   const severity = legacySeverity(mode);
   return {
@@ -74,7 +74,7 @@ function mainPolicy(rule: PolicyRule): Record<string, unknown> {
 }
 
 /** A cosine body as main's v13 stored it: no rule mode, `action.delivery` instead. */
-function mainCosine(rule: CosineRule): Record<string, unknown> {
+function mainCosine(rule: ConversationRule): Record<string, unknown> {
   const { mode, action, ...body } = rule;
   return { ...body, action: { delivery: mode === "log" ? "observe" : "steer", ...action } };
 }
@@ -96,7 +96,7 @@ function insertRepositoryProject(database: Database.Database, repositoryId: stri
   database.prepare("INSERT INTO rule_project_repositories (project_id, repository_id, added_at) VALUES (?, ?, 1)").run(`repository:${repositoryId}`, repositoryId);
 }
 
-function insertV14Policy(database: Database.Database, rule: PolicyRule, sourceDigest: string | null): void {
+function insertV14Policy(database: Database.Database, rule: CodeRule, sourceDigest: string | null): void {
   const body = v14Policy(rule);
   database.prepare(
     "INSERT INTO rules (id, kind, mode, revision, enabled, scope, created_at, updated_at, source_digest, format, description, scope_json, checks_json) "
@@ -105,7 +105,7 @@ function insertV14Policy(database: Database.Database, rule: PolicyRule, sourceDi
     rule.scope === undefined ? null : JSON.stringify(rule.scope), JSON.stringify(body.checks));
 }
 
-function insertV14Cosine(database: Database.Database, rule: CosineRule, sourceDigest: string | null): void {
+function insertV14Cosine(database: Database.Database, rule: ConversationRule, sourceDigest: string | null): void {
   database.prepare(
     "INSERT INTO rules (id, kind, mode, revision, enabled, scope, created_at, updated_at, source_digest, reference, match_json, sample_json, action_json, repeat_json) "
     + "VALUES (?, 'cosine', ?, 4, 0, 'global', 1, 2, ?, ?, ?, ?, ?, ?)",
@@ -195,7 +195,7 @@ function seedV14Checkout(path: string): { bundledBody: Record<string, unknown>; 
     insertV14Policy(database, BUNDLED_POLICY, digestOf("policy", bundledBody));
     insertV14Policy(database, EDITED_POLICY, digestOf("policy", seededFrom));
     insertV14Cosine(database, COSINE, digestOf("cosine", { id: COSINE.id, mode: COSINE.mode, reference: COSINE.reference, match: COSINE.match, sample: COSINE.sample, action: COSINE.action, repeat: COSINE.repeat }));
-    insertV14Cosine(database, { ...MOCK_COSINE_RULES[1]!, id: "user-cosine" }, null);
+    insertV14Cosine(database, { ...MOCK_CONVERSATION_RULES[1]!, id: "user-cosine" }, null);
 
     const insertRun = database.prepare(
       "INSERT INTO policy_runs (run_id, session_id, workspace_root, scope, mode, revision, catalog_revision, rule_revisions_json, "
@@ -342,27 +342,27 @@ describe("schema v15 upgrade", () => {
       store.close();
     }
 
-    const executions = new SqlitePolicyExecutionStore(path);
+    const executions = new SqliteAuditStore(path);
     try {
       expect(executions.get("run-steer")).toMatchObject({ auditId: "run-steer", mode: "steer", violations: [v15Violation], failures: [v15Failure] });
-      expect(executions.listRepositoryDiagnosticEntries({ auditId: "run-log" })).toBeUndefined();
-      expect(executions.listRepositoryDiagnosticEntries({ auditId: "run-steer", kind: "violation" }))
+      expect(executions.listRepositoryAuditEntries({ auditId: "run-log" })).toBeUndefined();
+      expect(executions.listRepositoryAuditEntries({ auditId: "run-steer", kind: "violation" }))
         .toEqual({ entries: [{ kind: "violation", payload: v15Violation }], total: 1 });
-      expect(executions.listRepositoryDiagnosticEntries({ auditId: "run-steer", q: "clause-a" })?.total).toBe(2);
-      expect(executions.listRepositoryDiagnostics().repositories).toEqual([expect.objectContaining({
+      expect(executions.listRepositoryAuditEntries({ auditId: "run-steer", q: "clause-a" })?.total).toBe(2);
+      expect(executions.listRepositoryAudits().repositories).toEqual([expect.objectContaining({
         repositoryAudit: expect.objectContaining({ auditId: "run-steer", status: "completed" }),
         audit: expect.objectContaining({ auditId: "run-steer", violationCount: 1, failureCount: 1 }),
       })]);
       expect(executions.ruleActivity(0).get(BUNDLED_POLICY.id)).toEqual({ distinctViolations: 1, sessions: 1, lastSeenAt: 1, audits: 0 });
-      expect(executions.listFindingHistory({ since: 0, ruleId: BUNDLED_POLICY.id }).violations)
+      expect(executions.listViolationHistory({ since: 0, ruleId: BUNDLED_POLICY.id }).violations)
         .toEqual([{ violation: v15Violation, sessionId: "s1", auditId: "run-steer", at: 1 }]);
     } finally {
       executions.close();
     }
-    const controls = new SqliteScanControlStore(path);
+    const controls = new SqliteAuditControlStore(path);
     try {
       expect(controls.getWorkspaceSettings("/workspace")).toEqual({ scope: "touched-files", mode: "steer" });
-      expect(controls.listScans("s1").map(scan => [scan.id, scan.mode, scan.auditIds])).toEqual([
+      expect(controls.listAuditRequests("s1").map(scan => [scan.id, scan.mode, scan.auditIds])).toEqual([
         ["request-steer", "steer", ["run-steer"]],
         ["request-log", "log", ["run-log", "run-steer"]],
       ]);
@@ -400,8 +400,8 @@ describe("schema v15 upgrade", () => {
     insertV14CatalogRule(legacy, { ownerKind: "project", ownerId: project, kind: "policy", rule: bundledBody, sourceDigest: digestOf("policy", bundledBody), origin: "bundled", syncState: "local-only", upstreamRuleId: null });
     insertV14CatalogRule(legacy, { ownerKind: "project", ownerId: project, kind: "policy", rule: v14Policy(EDITED_POLICY), sourceDigest: digestOf("policy", editedFrom), origin: "local", syncState: "synced", upstreamRuleId: "up-edited" });
     insertV14CatalogRule(legacy, { ownerKind: "global", ownerId: "global", kind: "cosine", rule: cosineBody, sourceDigest: digestOf("cosine", cosineBody), origin: "bundled", syncState: "pending", upstreamRuleId: null });
-    insertV14CatalogRule(legacy, { ownerKind: "project", ownerId: project, kind: "cosine", rule: { ...MOCK_COSINE_RULES[1]!, id: "migrated" }, sourceDigest: null, origin: "migrated", syncState: "local-only", upstreamRuleId: null });
-    insertV14CatalogRule(legacy, { ownerKind: "global", ownerId: "global", kind: "cosine", rule: { ...MOCK_COSINE_RULES[1]!, id: "from-nera" }, sourceDigest: null, origin: "nera", syncState: "synced", upstreamRuleId: "nera-1" });
+    insertV14CatalogRule(legacy, { ownerKind: "project", ownerId: project, kind: "cosine", rule: { ...MOCK_CONVERSATION_RULES[1]!, id: "migrated" }, sourceDigest: null, origin: "migrated", syncState: "local-only", upstreamRuleId: null });
+    insertV14CatalogRule(legacy, { ownerKind: "global", ownerId: "global", kind: "cosine", rule: { ...MOCK_CONVERSATION_RULES[1]!, id: "from-nera" }, sourceDigest: null, origin: "nera", syncState: "synced", upstreamRuleId: "nera-1" });
     legacy.close();
 
     const catalog = ScopedRuleCatalog.open(path, repository);
@@ -551,7 +551,7 @@ describe("schema v15 upgrade", () => {
         kind: "file", rule: DEFINE_POLICY, catalogOrigin: "rerail",
         payloadHash: digestOf("file", DEFINE_POLICY), sourceDigest: digestOf("file", DEFINE_POLICY),
       });
-      expect((catalog.get(DEFINE_POLICY.id)?.rule as PolicyRule).clauses[0]).toEqual(DEFINE_CLAUSE);
+      expect((catalog.get(DEFINE_POLICY.id)?.rule as CodeRule).clauses[0]).toEqual(DEFINE_CLAUSE);
       expect(catalog.get(COSINE.id)).toMatchObject({ kind: "conversation", rule: COSINE, applicability: "global", catalogOrigin: "user" });
     } finally {
       catalog.close();
@@ -581,15 +581,15 @@ describe("schema v15 upgrade", () => {
       upgraded.close();
     }
 
-    const reader = new SqlitePolicyExecutionReader(path, { repositoryId: "repo-a" });
+    const reader = new SqliteAuditReader(path, { repositoryId: "repo-a" });
     try {
       expect(reader.list()).toMatchObject({ audits: [{ auditId: "run-a", violations: [v15Violation] }], total: 1 });
-      expect(reader.listRepositoryDiagnostics().repositories).toEqual([expect.objectContaining({
+      expect(reader.listRepositoryAudits().repositories).toEqual([expect.objectContaining({
         workspaceRoot: "/a",
         repositoryAudit: expect.objectContaining({ auditId: "run-a" }),
         audit: expect.objectContaining({ auditId: "run-a", violationCount: 1 }),
       })]);
-      expect(reader.listFindingHistory({ since: 0 }).violations).toEqual([{ violation: v15Violation, sessionId: "s-a", auditId: "run-a", at: 2 }]);
+      expect(reader.listViolationHistory({ since: 0 }).violations).toEqual([{ violation: v15Violation, sessionId: "s-a", auditId: "run-a", at: 2 }]);
     } finally {
       reader.close();
     }
@@ -716,7 +716,7 @@ describe("schema v15 upgrade", () => {
     const checkoutPath = join(workspaceRoot, ".rerail", "transcripts.sqlite");
     const checkout = createV14Database(checkoutPath);
     insertV14Policy(checkout, DEFINE_POLICY, digestOf("policy", v14Policy(DEFINE_POLICY)));
-    insertV14Cosine(checkout, { ...MOCK_COSINE_RULES[1]!, id: "checkout-cosine" }, null);
+    insertV14Cosine(checkout, { ...MOCK_CONVERSATION_RULES[1]!, id: "checkout-cosine" }, null);
     checkout.close();
 
     const catalog = ScopedRuleCatalog.open(join(home, "rerail.sqlite"), { repositoryId: "repo", workspaceRoot });
@@ -724,7 +724,7 @@ describe("schema v15 upgrade", () => {
       expect(catalog.get(DEFINE_POLICY.id)).toMatchObject({
         kind: "file", rule: DEFINE_POLICY, applicability: "project", catalogOrigin: "user", sourceDigest: digestOf("file", DEFINE_POLICY),
       });
-      expect((catalog.get(DEFINE_POLICY.id)?.rule as PolicyRule).clauses[0]).toEqual(DEFINE_CLAUSE);
+      expect((catalog.get(DEFINE_POLICY.id)?.rule as CodeRule).clauses[0]).toEqual(DEFINE_CLAUSE);
       expect(catalog.get("checkout-cosine")).toMatchObject({ kind: "conversation", applicability: "project", catalogOrigin: "user" });
       expect(catalog.migrateCheckoutRules()).toBe(0);
     } finally {

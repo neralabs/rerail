@@ -4,11 +4,11 @@ import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, realpathSync,
 import { basename, dirname, join, resolve } from "node:path";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { defaultRerailDatabasePath, legacyCheckoutDatabasePath, openRerailDatabase, type RerailDatabase } from "./database.js";
-import { readStoredPolicyRule, reportQuarantinedRule, storedDocumentDigest, type QuarantinedRule } from "./legacy-policy-rule.js";
-import { assertPolicyCompiles } from "./policy-kernel-check.js";
-import { policyRuleSchema, type PolicyRule } from "./policy-schema.js";
-import { assertKernelRegexes } from "./rule-regexes.js";
-import { parseCosineRule, type CosineRule } from "./rule-schema.js";
+import { readStoredCodeRule, reportQuarantinedRule, storedDocumentDigest, type QuarantinedRule } from "./legacy-code-rule.js";
+import { assertCodeRuleCompiles } from "./code-rule-compile.js";
+import { codeRuleSchema, type CodeRule } from "./code-rule-schema.js";
+import { assertEngineRegexes } from "./rule-regexes.js";
+import { parseConversationRule, type ConversationRule } from "./rule-schema.js";
 import { RetiredRuleFileError } from "./rule-sources.js";
 import {
   catalogRules,
@@ -291,22 +291,22 @@ export class ScopedRuleCatalog {
     return removed;
   }
 
-  /** Validate against the schema, then compile in the kernel, before storing; a rule the kernel rejects is never written. */
-  upsertPolicy(input: unknown, options: ScopedRuleWriteOptions = {}): ScopedStoredRule {
-    const rule = policyRuleSchema.parse(input);
-    assertPolicyCompiles(rule);
+  /** Validate against the schema, then compile in the engine, before storing; a rule the engine rejects is never written. */
+  upsertCodeRule(input: unknown, options: ScopedRuleWriteOptions = {}): ScopedStoredRule {
+    const rule = codeRuleSchema.parse(input);
+    assertCodeRuleCompiles(rule);
     return this.#upsert({ kind: "file", rule }, { ...options, revision: rule.revision });
   }
 
-  upsertCosine(input: unknown, options: ScopedRuleWriteOptions = {}): ScopedStoredRule {
-    const rule = parseCosineRule(input);
+  upsertConversationRule(input: unknown, options: ScopedRuleWriteOptions = {}): ScopedStoredRule {
+    const rule = parseConversationRule(input);
     return this.#upsert({ kind: "conversation", rule }, options);
   }
 
   upsertDocument(document: RuleDocument, options: ScopedRuleWriteOptions = {}): ScopedStoredRule {
     return document.kind === "file"
-      ? this.upsertPolicy(document.rule, options)
-      : this.upsertCosine(document.rule, options);
+      ? this.upsertCodeRule(document.rule, options)
+      : this.upsertConversationRule(document.rule, options);
   }
 
   get(id: string): ScopedStoredRule | undefined {
@@ -341,15 +341,15 @@ export class ScopedRuleCatalog {
     });
   }
 
-  cosineRules(): CosineRule[] {
+  conversationRules(): ConversationRule[] {
     return this.list({ kind: "conversation", enabled: true }).flatMap(stored => stored.kind === "conversation" ? [stored.rule] : []);
   }
 
-  cosineIds(): Set<string> {
+  conversationRuleIds(): Set<string> {
     return new Set(this.list({ kind: "conversation" }).map(stored => stored.rule.id));
   }
 
-  policyRules(): PolicyRule[] {
+  codeRules(): CodeRule[] {
     return this.list({ kind: "file", enabled: true }).flatMap(stored => stored.kind === "file" ? [stored.rule] : []);
   }
 
@@ -520,10 +520,10 @@ export class ScopedRuleCatalog {
    * first import. A file written before rule modes is skipped with a notice and left unrecorded, so it cannot block a
    * session from starting and a corrected file is imported on a later start; any other invalid source still fails.
    */
-  migrateCosineRules(sourcePath: string, rules: readonly CosineRule[] | (() => readonly CosineRule[]), now = Date.now()): number {
+  migrateConversationRules(sourcePath: string, rules: readonly ConversationRule[] | (() => readonly ConversationRule[]), now = Date.now()): number {
     const source = resolve(sourcePath);
     if (this.#migrated(source)) return 0;
-    let parsed: readonly CosineRule[];
+    let parsed: readonly ConversationRule[];
     try {
       parsed = typeof rules === "function" ? rules() : rules;
     } catch (error) {
@@ -579,8 +579,8 @@ export class ScopedRuleCatalog {
   }
 
   #upsert(document: RuleDocument, options: InternalScopedRuleWriteOptions): ScopedStoredRule {
-    // Every catalog write lands here; the kernel compiles a session's rules all or nothing.
-    if (document.kind === "conversation") assertKernelRegexes(document.rule);
+    // Every catalog write lands here; the engine compiles a session's rules all or nothing.
+    if (document.kind === "conversation") assertEngineRegexes(document.rule);
     const stored = this.#database.transaction(() => {
       const owner = this.#owner(options.applicability ?? "project");
       this.#database.insert(ruleCatalogIdentities).values({ ruleId: document.rule.id, kind: document.kind })
@@ -721,7 +721,7 @@ export class ScopedRuleCatalog {
     return undefined;
   }
 
-  /** Legacy policy fields are normalized first; a row that still fails validation is quarantined, never thrown. */
+  /** Legacy code-rule fields are normalized first; a row that still fails validation is quarantined, never thrown. */
   #stored(row: CatalogRuleRow): { ok: true; stored: ScopedStoredRule } | { ok: false; quarantined: QuarantinedRule } {
     const quarantine = (reason: string) => ({
       ok: false as const,
@@ -730,13 +730,13 @@ export class ScopedRuleCatalog {
     let document: RuleDocument;
     let sourceDigest = row.sourceDigest;
     if (row.kind === "file") {
-      const read = readStoredPolicyRule(row.document.rule, row.sourceDigest);
+      const read = readStoredCodeRule(row.document.rule, row.sourceDigest);
       if (!read.ok) return quarantine(read.reason);
       document = { kind: "file", rule: read.rule };
       sourceDigest = read.sourceDigest;
     } else {
       try {
-        document = { kind: "conversation", rule: parseCosineRule(row.document.rule) };
+        document = { kind: "conversation", rule: parseConversationRule(row.document.rule) };
       } catch (error) {
         return quarantine(error instanceof Error ? error.message : String(error));
       }

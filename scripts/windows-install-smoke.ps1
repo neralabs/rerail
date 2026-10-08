@@ -1,8 +1,8 @@
 # Release gate for native Windows: install a packed @neralabs/rerail tarball through the real `just rerail` installer
 # (scripts/rerail-setup.mjs) from a throwaway authenticated Verdaccio, in a sandbox profile, then exercise the managed
-# runtime: launcher, `current` junction, daemon and native kernel, Claude Code's exec-form hook, the Codex hook as
-# Codex runs it (PowerShell), update check, and harness removal. Uses `node` from PATH, so the runner's architecture
-# decides which native kernel is exercised.
+# runtime: launcher, `current` junction, daemon and native engine, Claude Code's exec-form hook, the Codex hook as
+# Codex runs it (PowerShell), update check, and coding-agent registration removal. Uses `node` from PATH, so the runner's architecture
+# decides which native engine is exercised.
 param([Parameter(Mandatory)][string]$Tarball)
 
 $ErrorActionPreference = "Stop"

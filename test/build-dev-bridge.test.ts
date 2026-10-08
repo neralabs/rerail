@@ -94,7 +94,7 @@ describe("Rerail development bridge CLI", () => {
     expect(await readFile(localPath, "utf8")).toBe(original);
   });
 
-  it("persists exactly one steering receipt through the checkout daemon for one bridged hook delivery", async () => {
+  it("persists exactly one steer receipt through the checkout daemon for one bridged hook delivery", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-bridge-hook-"));
     temporaryDirectories.push(root);
     const daemon = await RerailDaemon.start({ version: "test", databasePath: join(root, ".rerail", "rerail.sqlite"), workspaceRoot: root, port: 0 });

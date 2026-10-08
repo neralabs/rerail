@@ -116,7 +116,7 @@ async function relayRequest(
 
 /**
  * Immutable host-side MCP bridge. Its process cwd selects a checkout instance
- * once, so a harness session can never be redirected by another worktree.
+ * once, so a host session can never be redirected by another worktree.
  * A failed request answers its own ids with a JSON-RPC error; only stdin EOF ends the bridge.
  */
 export async function runRerailMcpBridge(options: RerailMcpBridgeOptions = {}): Promise<void> {

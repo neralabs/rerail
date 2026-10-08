@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { readLedger } from "../scripts/harness-lifecycle.js";
-import { hasCompletedViolation } from "../scripts/harness-smoke.js";
+import { readLedger } from "../scripts/host-lifecycle.js";
+import { hasCompletedViolation } from "../scripts/host-smoke.js";
 import {
   PARITY_HOSTS,
   REQUIRED_CAPABILITIES,
@@ -39,7 +39,7 @@ describe("parityMatrix", () => {
     const cases = parityMatrix({ adapters: adapters(), scenarios: scenarios() });
     expect(cases).toHaveLength(PARITY_HOSTS.length * REQUIRED_CAPABILITIES.length);
     expect(cases.map(item => item.name)).toContain("[codex] automatic-delivery");
-    expect(cases.map(item => item.name)).toContain("[omp] transcript-persistence");
+    expect(cases.map(item => item.name)).toContain("[omp] session-persistence");
   });
 
   it("rejects a missing adapter or required scenario before registration", () => {
@@ -73,7 +73,7 @@ describe("parityMatrix", () => {
 });
 
 describe("live harness evidence", () => {
-  it("correlates steering across bookkeeping entries but rejects malformed proof records", async () => {
+  it("correlates steers across bookkeeping entries but rejects malformed proof records", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-ledger-proof-"));
     const directory = join(root, ".rerail", "sessions", "s");
     const event = { sequence: 1, sessionId: "s", eventId: "write", kind: "result", observedAt: 1, payload: { toolName: "write", input: { path: "api/probe.py" } } };

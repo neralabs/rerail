@@ -26,7 +26,7 @@ export function prepareGuidanceOutput(output: HookOutput, ruleIds: readonly stri
   return output;
 }
 
-export function bindSteeringReceipt(output: HookOutput, record: ReceiptRecorder): HookOutput {
+export function bindSteerReceipt(output: HookOutput, record: ReceiptRecorder): HookOutput {
   const prepared = preparedGuidance.get(output);
   if (prepared !== undefined) prepared.record = record;
   return output;
@@ -76,7 +76,7 @@ export async function readPending(path: string): Promise<AdapterDelivery[]> {
           && typeof delivery.mechanism === "string"
           && typeof delivery.content === "string";
       })
-      // Files written before re-rail attribution carry no rule ids.
+      // Files written before steer attribution carry no rule ids.
       .map(delivery => ({
         ...delivery,
         ruleIds: Array.isArray(delivery.ruleIds) ? delivery.ruleIds.filter(id => typeof id === "string") : [],
@@ -118,10 +118,10 @@ export async function routeDeliveries(
   deliveries: readonly AdapterDelivery[],
   contextEvents: EventTable,
 ): Promise<AdapterDelivery[]> {
-  const steering = [...await readPending(path), ...deliveries.filter(delivery => steers(delivery.requested))];
+  const pendingSteers = [...await readPending(path), ...deliveries.filter(delivery => steers(delivery.requested))];
   const carried = contextEvents[hook] === true;
-  await replacePending(path, carried ? [] : steering);
-  return carried ? steering : [];
+  await replacePending(path, carried ? [] : pendingSteers);
+  return carried ? pendingSteers : [];
 }
 
 interface LockOwner {

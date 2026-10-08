@@ -7,7 +7,7 @@ import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { KernelReceiptSchema, parseKernelRequest, startKernelService, type KernelRequest, type KernelService } from "./kernel-service.js";
+import { SessionSteerReceiptSchema, parseEngineRequest, startEngineService, type EngineRequest, type EngineService } from "./engine-service.js";
 import { DevNativeServer } from "./dev-native-server.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono, type Context } from "hono";
@@ -25,9 +25,9 @@ import {
   ScopedRuleCatalog,
   type RepositoryContext,
 } from "./scoped-rule-catalog.js";
-import { SqlitePolicyExecutionReader } from "./policy-execution-store.js";
-import { SqliteScanControlStore } from "./scan-control.js";
-import { SqliteTranscriptReader, SqliteTranscriptStore } from "./transcript-store.js";
+import { SqliteAuditReader } from "./audit-store.js";
+import { SqliteAuditControlStore } from "./audit-control.js";
+import { SqliteSessionReader, SqliteSessionStore } from "./session-store.js";
 import { acquireMainInstance } from "./main-instance.js";
 import { currentRerailBuild, isMainRerailBuild } from "./rerail-build.js";
 import { SqlitePresentationPreferenceStore } from "./presentation-preference-store.js";
@@ -44,7 +44,7 @@ export interface DaemonState {
   version: string;
   /** The Rerail database: rules and every repository's history. */
   databasePath: string;
-  /** Local IPC endpoint used by harness adapters: a Unix socket or Windows named pipe. */
+  /** Local IPC endpoint used by host adapters: a Unix socket or Windows named pipe. */
   kernelSocketPath: string;
   /**
    * `bundled` serves the packaged page from `dist/ui`; `dev` is a daemon started with `--dev`
@@ -69,7 +69,7 @@ export interface DaemonHealth extends Pick<DaemonState, "version" | "pid" | "ui"
   uptimeMs: number;
   database: { path: string; exists: boolean };
   native: NativeStatus;
-  /** Absolute checkout path accepted by the private dev kernel bridge. */
+  /** Absolute checkout path accepted by the private dev engine bridge. */
   workspaceRoot: string;
   /** Stable identity of the repository the page, listings, and rule context are scoped to. */
   repositoryId: string;
@@ -95,7 +95,7 @@ export interface RerailDaemonOptions {
   /** Written once the server is listening and removed on close. */
   stateFile?: string;
   nativeHealth?: () => NativeHealth;
-  /** Local IPC endpoint for the resident kernel; mainly useful for isolated embedding and tests. */
+  /** Local IPC endpoint for the engine service; mainly useful for isolated embedding and tests. */
   kernelSocketPath?: string;
 }
 
@@ -133,20 +133,20 @@ function rejectBridgeRequest(context: Context, bridge: "kernel" | "native"): Res
 }
 
 /**
- * The daemon is the one process that writes rules, work links, and presentation settings; harness
+ * The daemon is the one process that writes rules, work links, and presentation settings; host
  * extensions only read. Every store opens the one Rerail database; listings are scoped to the
  * daemon's repository. Writable handles open on first use so a daemon with no sessions yet
  * does not create the database until asked to.
  */
 class DaemonStores implements RerailApiStores {
-  readonly reader: SqliteTranscriptReader;
-  readonly executions: SqlitePolicyExecutionReader;
+  readonly reader: SqliteSessionReader;
+  readonly audits: SqliteAuditReader;
   readonly #path: string;
   readonly #repository: RepositoryContext;
   #rules: ScopedRuleCatalog | undefined;
-  #transcripts: SqliteTranscriptStore | undefined;
+  #sessionStore: SqliteSessionStore | undefined;
   #preferences: SqlitePresentationPreferenceStore | undefined;
-  #scanControls: SqliteScanControlStore | undefined;
+  #auditControls: SqliteAuditControlStore | undefined;
   #database: RerailDatabase | undefined;
   #startStates: ((workspace: string) => RepositoryStartState) | undefined;
 
@@ -159,8 +159,8 @@ class DaemonStores implements RerailApiStores {
     this.#repository = repository;
     // The read-only views never upgrade, so bring an existing database to the current schema first.
     if (existsSync(path)) openRerailDatabase(path).$client.close();
-    this.reader = new SqliteTranscriptReader(path, { repositoryId: repository.repositoryId });
-    this.executions = new SqlitePolicyExecutionReader(path, { repositoryId: repository.repositoryId });
+    this.reader = new SqliteSessionReader(path, { repositoryId: repository.repositoryId });
+    this.audits = new SqliteAuditReader(path, { repositoryId: repository.repositoryId });
   }
 
   rules(): ScopedRuleCatalog {
@@ -168,9 +168,9 @@ class DaemonStores implements RerailApiStores {
     return this.#rules;
   }
 
-  transcripts(): SqliteTranscriptStore {
-    this.#transcripts ??= new SqliteTranscriptStore(this.#path, { repositoryId: this.#repository.repositoryId });
-    return this.#transcripts;
+  sessionStore(): SqliteSessionStore {
+    this.#sessionStore ??= new SqliteSessionStore(this.#path, { repositoryId: this.#repository.repositoryId });
+    return this.#sessionStore;
   }
 
   preferences(): SqlitePresentationPreferenceStore {
@@ -178,9 +178,9 @@ class DaemonStores implements RerailApiStores {
     return this.#preferences;
   }
 
-  scanControls(): SqliteScanControlStore {
-    this.#scanControls ??= new SqliteScanControlStore(this.#path);
-    return this.#scanControls;
+  auditControls(): SqliteAuditControlStore {
+    this.#auditControls ??= new SqliteAuditControlStore(this.#path);
+    return this.#auditControls;
   }
 
   database(): RerailDatabase {
@@ -198,9 +198,9 @@ class DaemonStores implements RerailApiStores {
   close(): void {
     this.reader.close();
     this.#rules?.close();
-    this.#transcripts?.close();
-    this.#scanControls?.close();
-    this.executions.close();
+    this.#sessionStore?.close();
+    this.#auditControls?.close();
+    this.audits.close();
     this.#preferences?.close();
     this.#database?.$client.close();
   }
@@ -216,8 +216,8 @@ export function sourceUiRoot(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "..", "ui");
 }
 
-/** A short, database-derived local IPC endpoint isolates each Rerail home's resident kernel. */
-export function defaultKernelSocketPath(
+/** A short, database-derived local IPC endpoint isolates each Rerail home's engine service. */
+export function defaultEngineSocketPath(
   databasePath: string,
   platform: NodeJS.Platform = process.platform,
 ): string {
@@ -249,7 +249,7 @@ export class RerailDaemon {
   readonly url: string;
   readonly startedAt: number;
   readonly #server: Server;
-  readonly #kernel: KernelService;
+  readonly #engineService: EngineService;
   readonly #stores: DaemonStores;
   readonly #ui: DaemonState["ui"];
   readonly #native: NativeStatus;
@@ -262,10 +262,10 @@ export class RerailDaemon {
   #closed = false;
 
   private constructor({
-    server, kernel, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken,
+    server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken,
   }: {
     server: Server;
-    kernel: KernelService;
+    engineService: EngineService;
     kernelSocketPath: string;
     stores: DaemonStores;
     options: RerailDaemonOptions;
@@ -282,7 +282,7 @@ export class RerailDaemon {
     this.url = `http://${this.host}:${this.port}/`;
     this.startedAt = Date.now();
     this.#server = server;
-    this.#kernel = kernel;
+    this.#engineService = engineService;
     this.kernelSocketPath = kernelSocketPath;
     this.#stores = stores;
     this.#options = options;
@@ -307,12 +307,12 @@ export class RerailDaemon {
     const ui: DaemonState["ui"] = uiRoot === undefined || options.dev === true ? "dev" : "bundled";
     const native = readNativeStatus(options.nativeHealth ?? loadNativeHealth);
     const databasePath = resolve(options.databasePath ?? defaultRerailDatabasePath());
-    const kernelSocketPath = options.kernelSocketPath ?? defaultKernelSocketPath(databasePath);
+    const kernelSocketPath = options.kernelSocketPath ?? defaultEngineSocketPath(databasePath);
     const workspaceRoot = resolve(options.workspaceRoot ?? process.cwd());
     const storageRoot = join(workspaceRoot, ".rerail", "sessions");
     const repository = options.repositoryContext ?? resolveRepositoryContext(workspaceRoot);
     const modelPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "model");
-    const kernel = await startKernelService({
+    const engineService = await startEngineService({
       socketPath: kernelSocketPath,
       storageRoot,
       modelPath,
@@ -331,9 +331,9 @@ export class RerailDaemon {
     app.post("/kernel/events", async (context) => {
       const rejected = rejectBridgeRequest(context, "kernel");
       if (rejected !== undefined) return rejected;
-      let request: KernelRequest;
+      let request: EngineRequest;
       try {
-        request = parseKernelRequest(await context.req.json());
+        request = parseEngineRequest(await context.req.json());
       } catch {
         return context.json({ error: "kernel-request-invalid" }, 400);
       }
@@ -346,16 +346,16 @@ export class RerailDaemon {
       ) {
         return context.json({ error: "kernel-workspace-mismatch" }, 403);
       }
-      const deliveries = await kernel.ingest(event, { storageRoot, modelPath, databasePath, workspaceRoot });
+      const deliveries = await engineService.ingest(event, { storageRoot, modelPath, databasePath, workspaceRoot });
       return context.json({ eventId: event.eventId, deliveries });
     });
     app.post("/kernel/steering-receipts", async (context) => {
       const rejected = rejectBridgeRequest(context, "kernel");
       if (rejected !== undefined) return rejected;
-      const receipt = KernelReceiptSchema.safeParse(await context.req.json().catch(() => undefined));
+      const receipt = SessionSteerReceiptSchema.safeParse(await context.req.json().catch(() => undefined));
       if (!receipt.success) return context.json({ error: "kernel-request-invalid" }, 400);
       if (!withinCheckout(workspaceRoot, receipt.data.session.cwd)) return context.json({ error: "kernel-workspace-mismatch" }, 403);
-      stores.transcripts().recordSteeringDelivery(receipt.data.session, receipt.data.receiptId, receipt.data.ruleIds);
+      stores.sessionStore().recordSteer(receipt.data.session, receipt.data.receiptId, receipt.data.ruleIds);
       return context.json({ receiptId: receipt.data.receiptId });
     });
     app.post("/native/session", async (context) => {
@@ -402,7 +402,7 @@ export class RerailDaemon {
     try {
       await listen(server, options.port ?? DEFAULT_DAEMON_PORT, bindHost);
       daemon = new RerailDaemon({
-        server, kernel, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken,
+        server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken,
       });
       if (options.stateFile !== undefined) {
         const temporaryStateFile = `${options.stateFile}.${process.pid}.tmp`;
@@ -420,7 +420,7 @@ export class RerailDaemon {
       } finally {
         try {
           await nativeServer.close();
-          await kernel.close();
+          await engineService.close();
         } finally {
           stores.close();
         }
@@ -471,7 +471,7 @@ export class RerailDaemon {
     } finally {
       try {
         await this.#nativeServer.close();
-        await this.#kernel.close();
+        await this.#engineService.close();
       } finally {
         this.#stores.close();
         if (this.#options.stateFile !== undefined) await rm(this.#options.stateFile, { force: true });

@@ -1,7 +1,7 @@
 //! Rust-only content-addressed storage for workspace source and syntax tapes.
 //!
 //! JavaScript does not receive connections, SQL, row identifiers, or hash lanes.
-//! The policy runtime will call this module through coarse Rust operations.
+//! The code-rule runtime will call this module through coarse Rust operations.
 
 mod compression;
 mod connection;
@@ -47,7 +47,7 @@ const STRING_PATH: i64 = 1;
 const STRING_REPOSITORY: i64 = 2;
 const STRING_OWNER: i64 = 3;
 const STRING_PATH_COMPONENT: i64 = 4;
-const STRING_CHECK_KEY: i64 = 5;
+const STRING_CLAUSE_KEY: i64 = 5;
 
 const DEFAULT_COMPRESSION_LEVEL: i32 = 3;
 const MAX_PUBLICATION_BATCH: usize = 64;
@@ -295,7 +295,7 @@ pub struct WorkspaceRegistration<'a> {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CandidateCatalogIdentity {
-    policy_catalog: HashKey,
+    code_rule_catalog: HashKey,
     grammar_set: HashKey,
     scanner_version: i64,
     tape_format_version: i64,
@@ -303,7 +303,7 @@ pub struct CandidateCatalogIdentity {
 
 impl CandidateCatalogIdentity {
     pub fn new(
-        policy_catalog: HashKey,
+        code_rule_catalog: HashKey,
         grammar_set: HashKey,
         scanner_version: i64,
         tape_format_version: i64,
@@ -314,7 +314,7 @@ impl CandidateCatalogIdentity {
             ));
         }
         Ok(Self {
-            policy_catalog,
+            code_rule_catalog,
             grammar_set,
             scanner_version,
             tape_format_version,
@@ -323,7 +323,7 @@ impl CandidateCatalogIdentity {
 
     fn key(self) -> HashKey {
         let mut bytes = Vec::with_capacity(96);
-        for key in [self.policy_catalog, self.grammar_set] {
+        for key in [self.code_rule_catalog, self.grammar_set] {
             bytes.extend_from_slice(&key.algorithm.to_be_bytes());
             for lane in key.lanes {
                 bytes.extend_from_slice(&lane.to_be_bytes());
@@ -336,9 +336,9 @@ impl CandidateCatalogIdentity {
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct CandidateCheck {
-    pub policy: HashKey,
-    pub check: String,
+pub struct CandidateClause {
+    pub rule: HashKey,
+    pub clause: String,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -381,12 +381,12 @@ pub struct SnapshotFilePublication<'a> {
     pub aliases: &'a [HashKey],
     pub tape: Option<TapePayload<'a>>,
     pub catalog: CandidateCatalogIdentity,
-    pub candidates: &'a [CandidateCheck],
+    pub candidates: &'a [CandidateClause],
 }
 
 #[derive(Clone, Debug)]
 pub struct LocalResultPublication {
-    pub candidate: CandidateCheck,
+    pub candidate: CandidateClause,
     pub context: HashKey,
     pub raw_length: usize,
     pub frame: Vec<u8>,
@@ -394,7 +394,7 @@ pub struct LocalResultPublication {
 
 #[derive(Clone, Debug)]
 pub struct StoredLocalResult {
-    pub candidate: CandidateCheck,
+    pub candidate: CandidateClause,
     pub bytes: Vec<u8>,
 }
 
@@ -432,7 +432,7 @@ pub struct OverlayFilePublication<'a> {
     pub aliases: &'a [HashKey],
     pub tape: Option<TapePayload<'a>>,
     pub catalog: CandidateCatalogIdentity,
-    pub candidates: &'a [CandidateCheck],
+    pub candidates: &'a [CandidateClause],
     pub local_results: &'a [LocalResultPublication],
     pub candidates_current: bool,
 }

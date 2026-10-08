@@ -1,5 +1,5 @@
 """Runs PHPStan's `variable.undefined` over PHP corpora for `benchmark_php_definedness_corpus`
-(rerail/native/src/policy_dsl/scope/php/tests.rs). Offline, not in CI:
+(rerail/native/src/code_rule_dsl/scope/php/tests.rs). Offline, not in CI:
 
     python3 generate_corpus.py <composer project with phpstan/phpstan 2.2.16> <output.json> \
         <name>=<path>[,<path>...] ...

@@ -11,9 +11,9 @@ import { fileURLToPath } from "node:url";
 export const ORACLES = dirname(dirname(fileURLToPath(import.meta.url)));
 export const REPOSITORY = dirname(ORACLES);
 
-/** The host's ignored directories (`IGNORED_DIRECTORIES`, rerail/src/executable-policy-enforcer.ts). */
+/** The host's ignored directories (`IGNORED_DIRECTORIES`, rerail/src/code-rule-enforcer.ts). */
 const IGNORED = new Set([".git", ".hg", ".svn", ".rerail", ".nera", ".venv", "__pycache__", "node_modules", "dist", "build", ".next", ".turbo", "coverage", "target", "vendor"]);
-/** The ecma family's extensions (`POLICY_DIALECTS`, rerail/src/policy-languages.ts). */
+/** The ecma family's extensions (`CODE_RULE_DIALECTS`, rerail/src/code-rule-languages.ts). */
 export const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 
 /** The pack manifest `rerail/conformance/languages/<pack>/pack.json`. */

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { loadNativeBinding } from "./native.js";
-import type { NativeCosineKernel } from "./native.js";
+import type { NativeConversationEngine } from "./native.js";
 import type {
   ContentItem,
   ContentSource,
@@ -124,25 +124,25 @@ export class InMemoryWatermarkStore implements WatermarkStore {
   }
 }
 export class NativeSemanticEmbedder implements SemanticEmbedder {
-  readonly #kernel: NativeCosineKernel;
+  readonly #engine: NativeConversationEngine;
 
   constructor(modelPath: string, maxInputTokens = 256) {
-    this.#kernel = loadNativeBinding().CosineKernel.load(modelPath, maxInputTokens);
+    this.#engine = loadNativeBinding().ConversationEngine.load(modelPath, maxInputTokens);
   }
 
   fingerprint() {
-    return this.#kernel.fingerprint();
+    return this.#engine.fingerprint();
   }
 
   async embed(texts: readonly string[]): Promise<readonly Float32Array[]> {
-    return this.#kernel.embedTexts([...texts]);
+    return this.#engine.embedTexts([...texts]);
   }
   async fitToTokenLimit(
     texts: readonly string[],
     maximumTokens: number,
     overflow: "truncate-start" | "truncate-end" | "reject",
   ): Promise<readonly string[]> {
-    return this.#kernel.fitTexts([...texts], maximumTokens, overflow);
+    return this.#engine.fitTexts([...texts], maximumTokens, overflow);
   }
 }
 

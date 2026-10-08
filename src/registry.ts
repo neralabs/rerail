@@ -1,14 +1,14 @@
 import {
   loadNativeBinding,
   type ModelFingerprint,
-  type NativeCosineKernel,
+  type NativeConversationEngine,
   type NativeRuleInput,
   type NativeSample,
 } from "./native.js";
-import { isSimilarityMatch, parseCosineRule, type CosineRule, type MatchOperator } from "./rule-schema.js";
+import { isSimilarityMatch, parseConversationRule, type ConversationRule, type MatchOperator } from "./rule-schema.js";
 import type { RuleMode } from "./rule-mode.js";
 
-export interface CosineRuleRegistryOptions {
+export interface ConversationRuleRegistryOptions {
   modelPath: string;
   maxInputTokens?: number;
   maxRules?: number;
@@ -23,11 +23,11 @@ export interface RuleMatch {
   operator?: MatchOperator;
   tokenCount?: number;
   mode: RuleMode;
-  action: CosineRule["action"];
+  action: ConversationRule["action"];
 }
 
 export interface RuleInspection {
-  rule: CosineRule;
+  rule: ConversationRule;
   lastDeliveredTurn?: number;
 }
 
@@ -36,30 +36,30 @@ export interface MatchOptions {
   respectRepeat?: boolean;
 }
 
-function toNative(rule: CosineRule): NativeRuleInput {
+function toNative(rule: ConversationRule): NativeRuleInput {
   const base = { id: rule.id, source: rule.sample.source, boundary: rule.sample.boundary, minimumTokens: rule.sample.minimumTokens ?? 1 };
   if (!isSimilarityMatch(rule.match)) return { ...base, conditions: JSON.stringify(rule.match) };
   return { ...base, reference: rule.reference, operator: rule.match.operator, threshold: rule.match.threshold };
 }
 
 
-export class CosineRuleRegistry {
-  readonly #kernel: NativeCosineKernel;
+export class ConversationRuleRegistry {
+  readonly #engine: NativeConversationEngine;
   readonly #maxRules: number;
-  #rules = new Map<string, CosineRule>();
+  #rules = new Map<string, ConversationRule>();
   readonly #lastDeliveredTurn = new Map<string, number>();
 
-  constructor(options: CosineRuleRegistryOptions) {
+  constructor(options: ConversationRuleRegistryOptions) {
     const maxInputTokens = options.maxInputTokens ?? 256;
     this.#maxRules = options.maxRules ?? 4_096;
     if (!Number.isInteger(this.#maxRules) || this.#maxRules <= 0) {
       throw new RangeError("maxRules must be a positive integer");
     }
-    this.#kernel = loadNativeBinding().CosineKernel.load(options.modelPath, maxInputTokens);
+    this.#engine = loadNativeBinding().ConversationEngine.load(options.modelPath, maxInputTokens);
   }
 
   fingerprint(): ModelFingerprint {
-    return this.#kernel.fingerprint();
+    return this.#engine.fingerprint();
   }
 
   get count(): number {
@@ -70,22 +70,22 @@ export class CosineRuleRegistry {
     if (input.length > this.#maxRules) {
       throw new RangeError(`rule count exceeds configured maximum ${this.#maxRules}`);
     }
-    const parsed = input.map((value, index) => parseCosineRule(value, `rules[${index}]`));
-    const next = new Map<string, CosineRule>();
+    const parsed = input.map((value, index) => parseConversationRule(value, `rules[${index}]`));
+    const next = new Map<string, ConversationRule>();
     for (const rule of parsed) {
       if (next.has(rule.id)) throw new TypeError(`duplicate rule id: ${rule.id}`);
       next.set(rule.id, rule);
     }
 
-    this.#kernel.replaceRules(parsed.map(toNative));
+    this.#engine.replaceRules(parsed.map(toNative));
     this.#rules = next;
     for (const id of this.#lastDeliveredTurn.keys()) {
       if (!next.has(id)) this.#lastDeliveredTurn.delete(id);
     }
   }
 
-  upsert(input: unknown, options: { replace?: boolean } = {}): CosineRule {
-    const rule = parseCosineRule(input);
+  upsert(input: unknown, options: { replace?: boolean } = {}): ConversationRule {
+    const rule = parseConversationRule(input);
     if (this.#rules.has(rule.id) && options.replace !== true) {
       throw new Error(`rule ${rule.id} already exists; pass replace: true`);
     }
@@ -93,7 +93,7 @@ export class CosineRuleRegistry {
       throw new RangeError(`rule count exceeds configured maximum ${this.#maxRules}`);
     }
 
-    this.#kernel.upsertRules([toNative(rule)]);
+    this.#engine.upsertRules([toNative(rule)]);
     this.#rules.set(rule.id, rule);
     return structuredClone(rule);
   }
@@ -105,7 +105,7 @@ export class CosineRuleRegistry {
    */
   remove(ids: readonly string[], options: { forgetDelivery?: boolean } = {}): number {
     const uniqueIds = [...new Set(ids)];
-    const removed = this.#kernel.removeRules(uniqueIds);
+    const removed = this.#engine.removeRules(uniqueIds);
     for (const id of uniqueIds) {
       this.#rules.delete(id);
       if (options.forgetDelivery !== false) this.#lastDeliveredTurn.delete(id);
@@ -116,7 +116,7 @@ export class CosineRuleRegistry {
   match(sample: NativeSample, options: MatchOptions = {}): RuleMatch[] {
     const turn = options.turn ?? 0;
     const respectRepeat = options.respectRepeat ?? true;
-    return this.#kernel
+    return this.#engine
       .matchText(sample)
       .filter(match => {
         const rule = this.#rules.get(match.ruleId);
@@ -157,7 +157,7 @@ export class CosineRuleRegistry {
       });
   }
 
-  #eligible(rule: CosineRule, turn: number): boolean {
+  #eligible(rule: ConversationRule, turn: number): boolean {
     const repeat = rule.repeat ?? { mode: "once" as const };
     if (repeat.mode === "always") return true;
     const previous = this.#lastDeliveredTurn.get(rule.id);

@@ -31,7 +31,7 @@ def sha256(path: Path) -> str:
 
 
 def main() -> None:
-    with tempfile.TemporaryDirectory(prefix="omp-cosine-model-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="embedding-model-") as temporary:
         snapshot = snapshot_download(
             repo_id=MODEL_ID,
             revision=REVISION,

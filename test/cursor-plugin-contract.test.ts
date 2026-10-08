@@ -116,7 +116,7 @@ describe("Cursor plugin contract", () => {
     expect(cursorHookOutput("stop", [delivery])).toEqual({});
   });
 
-  it("maps Cursor session and assistant lifecycle hooks to the shared transcript event vocabulary", () => {
+  it("maps Cursor session and assistant lifecycle hooks to the shared session event vocabulary", () => {
     const common = { conversation_id: "cursor-session", generation_id: "generation-1", workspace_roots: ["/workspace"] };
 
     expect(cursorHookEvent({ ...common, hook_event_name: "sessionStart" })).toMatchObject({
@@ -141,7 +141,7 @@ describe("Cursor plugin contract", () => {
     });
   });
 
-  it("preserves pre-tool policy diagnostics until Cursor can expose them after the tool", async () => {
+  it("preserves pre-tool code rule violations until Cursor can expose them after the tool", async () => {
     const root = await temporaryDirectory();
     const storage = join(root, "sessions");
     const common = {
@@ -169,7 +169,7 @@ describe("Cursor plugin contract", () => {
     )).toEqual({});
   });
 
-  it("durably carries prompt steering to the next tool result, then clears it when the session ends", async () => {
+  it("durably carries prompt steers to the next tool result, then clears them when the session ends", async () => {
     const root = await temporaryDirectory();
     const common = { conversation_id: "cursor-session", generation_id: "generation-1", workspace_roots: [root] };
     const toolResult = { ...common, hook_event_name: "postToolUse", tool_use_id: "read-1", tool_name: "Read", tool_output: "ok" };

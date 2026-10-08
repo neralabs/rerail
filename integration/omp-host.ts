@@ -7,7 +7,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { stopDaemon } from "../src/daemon-control.js";
-import { seedContractPolicy } from "./contract-policy.js";
+import { seedContractCodeRule } from "./contract-code-rule.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 import type { OmpSessionEntryLike } from "../src/omp-semantic.js";
 
@@ -41,7 +41,7 @@ export class OmpHost {
     child.on("error", error => { this.failure = error; });
     child.on("close", code => { this.closed = true; this.exitCode = code; });
   }
-  static async start(cwd: string, responses: HostResponse[], options: { extension?: "default" | "kernel" | "none"; authPath?: string } = {}): Promise<OmpHost> {
+  static async start(cwd: string, responses: HostResponse[], options: { extension?: "default" | "engine" | "none"; authPath?: string } = {}): Promise<OmpHost> {
     const executable = process.env.RERAIL_OMP_EXECUTABLE;
     if (!executable || !isAbsolute(executable)) {
       throw new Error("Real standalone OMP required: set RERAIL_OMP_EXECUTABLE to its absolute executable path");
@@ -54,9 +54,9 @@ export class OmpHost {
     await mkdir(join(cwd, "host-home"), { recursive: true });
     await mkdir(join(cwd, "host-agent"), { recursive: true });
     const extension = options.extension ?? "default";
-    if (extension !== "none") seedContractPolicy(join(cwd, "home"), cwd);
+    if (extension !== "none") seedContractCodeRule(join(cwd, "home"), cwd);
     startTestRepository(cwd, join(cwd, "home", "rerail.sqlite"));
-    await writeFile(config, JSON.stringify({ responses, kernel: extension === "kernel",
+    await writeFile(config, JSON.stringify({ responses, engine: extension === "engine",
       extension: extension === "none" ? undefined : join(root, "dist", "default-extension.js"),
       modelPath: join(root, "model"), evidencePath: join(cwd, "host-evidence.json"), authPath: options.authPath,
     }));
@@ -103,7 +103,7 @@ export class OmpHost {
     const from = this.frames.length;
     const response = await this.command({ type: "prompt", message });
     await this.waitFor(frame => frame.type === "agent_end" || (frame.type === "prompt_result" && frame.id === response.id), from);
-    // agent_end observers and queued steering may still be settling; the command's idle barrier handles both.
+    // agent_end observers and queued steers may still be settling; the command's idle barrier handles both.
     await this.snapshot();
   }
   async snapshot(): Promise<HostEvidence> {

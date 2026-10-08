@@ -22,7 +22,7 @@ pub(super) struct PreparedRelationshipPass<'a> {
     statements: Vec<PreparedSqlStatement>,
     /// The distinct contexts of `results`, as the JSON array of their hash parameters.
     contexts: Option<String>,
-    /// Each local result as its source, the index of its context in `contexts`, its check, its
+    /// Each local result as its source, the index of its context in `contexts`, its clause, its
     /// raw length, and its frame.
     results: Vec<(SourceId, usize, i64, i64, &'a [u8])>,
     results_per_statement: usize,
@@ -80,11 +80,11 @@ pub(super) fn prepare_relationship_pass<'a>(
             .ok_or(StoreError::Busy)?;
         for result in publication.local_results {
             let check_id = *interned
-                .checks
+                .clauses
                 .get(&(
                     catalog_id,
-                    result.candidate.policy,
-                    result.candidate.check.clone(),
+                    result.candidate.rule,
+                    result.candidate.clause.clone(),
                 ))
                 .ok_or(StoreError::Busy)?;
             let raw_length = i64::try_from(result.raw_length).map_err(|_| {

@@ -92,7 +92,7 @@ function hasDaemonStateFields(value: unknown): value is Record<string, unknown> 
     && (record.workspaceRoot === undefined || typeof record.workspaceRoot === "string");
 }
 
-export function isUsableKernelSocketPath(
+export function isUsableEngineSocketPath(
   value: unknown,
   platform: NodeJS.Platform = process.platform,
 ): value is string {
@@ -102,13 +102,13 @@ export function isUsableKernelSocketPath(
 }
 
 function isDaemonState(value: unknown): value is DaemonState {
-  return hasDaemonStateFields(value) && isUsableKernelSocketPath(value.kernelSocketPath);
+  return hasDaemonStateFields(value) && isUsableEngineSocketPath(value.kernelSocketPath);
 }
 
 type LegacyDaemonState = Omit<DaemonState, "kernelSocketPath">;
 
 function isLegacyDaemonState(value: unknown): value is LegacyDaemonState {
-  return hasDaemonStateFields(value) && !isUsableKernelSocketPath(value.kernelSocketPath);
+  return hasDaemonStateFields(value) && !isUsableEngineSocketPath(value.kernelSocketPath);
 }
 
 export async function readDaemonState(stateFile: string): Promise<DaemonState | undefined> {
@@ -301,7 +301,7 @@ export async function startDaemon(control: DaemonControl, options: DaemonLaunchO
 
 /**
  * Starts a daemon from `control.packageRoot`, replacing a healthy daemon from
- * another managed package. Hooks use this before sending kernel configuration:
+ * another managed package. Hooks use this before sending engine service configuration:
  * an older daemon cannot safely accept fields introduced by the active hook.
  */
 export async function startDaemonForPackage(control: DaemonControl, options: DaemonLaunchOptions): Promise<StartDaemonResult> {
@@ -333,13 +333,13 @@ export async function daemonUsesPackageRoot(daemon: Pick<DaemonState, "packageRo
 }
 
 /**
- * The kernel socket main harness clients send events to; only the daemon evaluates them, since it alone opens
+ * The engine service socket main host clients send events to; only the daemon evaluates them, since it alone opens
  * the machine-wide content store. `replaceOtherPackage` brings up this package's daemon in place of one from
  * another package, which is how a hook keeps an older daemon from receiving fields it predates; a client that
  * outlives an update passes false after its first event so it keeps using the newer daemon instead of displacing
  * it. `RERAIL_AUTOSTART=0` starts nothing and requires a running daemon.
  */
-export async function daemonKernelSocket(replaceOtherPackage: boolean): Promise<string> {
+export async function daemonEngineSocket(replaceOtherPackage: boolean): Promise<string> {
   const home = defaultRerailHome();
   const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   const control = { home, packageRoot };
@@ -424,7 +424,7 @@ async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions)
 let autostartAttempted = false;
 
 /**
- * Bring the daemon up from inside a harness session so the browser view is
+ * Bring the daemon up from inside a host session so the browser view is
  * live without anyone running `rerail daemon start`. One attempt per process;
  * `RERAIL_AUTOSTART=0` disables it.
  *
@@ -433,11 +433,11 @@ let autostartAttempted = false;
  * would leave its probes and poll timers on the event loop, and a one-shot
  * hook would then sit through daemon startup, or the 15 s timeout, before
  * it could exit. The launcher's own output goes to `daemon.log`; a failure
- * is visible there and through `rerail status`, never in the harness.
+ * is visible there and through `rerail status`, never in the host.
  *
  * Every session records into the one database in the Rerail home. The first
  * session to start wins the daemon, and with it the repository its page lists;
- * later sessions in other repositories reuse it for their kernel and status.
+ * later sessions in other repositories reuse it for their engine service and status.
  */
 export function autostartDaemon(): void {
   if (autostartAttempted) return;
@@ -539,7 +539,7 @@ export function orcaExecutable(candidates: readonly string[] = ORCA_EXECUTABLES)
  * an Orca CLI installed at one of its fixed locations), otherwise in the desktop browser. Never
  * throws: an Orca failure falls back to the desktop browser.
  */
-export async function openPage(
+export async function openDashboard(
   url: string,
   env: NodeJS.ProcessEnv = process.env,
   candidates: readonly string[] = ORCA_EXECUTABLES,

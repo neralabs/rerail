@@ -7,9 +7,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "./adapter-contract.js";
 import { claudeWorkspace } from "./claude-event-adapter.js";
-import { readPresentation, readRulesPage } from "./session-presentation.js";
+import { readPresentation, readRulesDashboard } from "./session-presentation.js";
 import {
-  assertLocalPolicyKernelEntitlement,
+  assertLocalEngineEntitlement,
   authorizedUpdateChannel,
   runActivateCommand,
   runActivationRequestCommand,
@@ -26,7 +26,7 @@ import { defaultRerailDatabasePath, RERAIL_DATABASE_FILE } from "./database.js";
 import {
   lookupDaemon,
   openInBrowser,
-  openPage,
+  openDashboard,
   startDaemon,
   stopDaemon,
   DAEMON_LOG_FILE,
@@ -35,10 +35,10 @@ import {
 import { deviceSecretStore } from "./device-keystore.js";
 import { runRerailMcpBridge } from "./dev-bridge.js";
 import { runResetCommand, runRulesCommand, snapshotDatabaseBeforeUpdate } from "./project-cli.js";
-import { MOCK_COSINE_RULES, MOCK_POLICY_RULES, seedRerailDatabase } from "./seed.js";
-import { runScanCommand } from "./scan-cli.js";
+import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
+import { runAuditCommand } from "./audit-cli.js";
 import { openScopedRuleCatalog } from "./scoped-rule-catalog.js";
-import { parseHarnessNames, runInstallCommand, runSetupCommand } from "./setup-cli.js";
+import { parseHostNames, runInstallCommand, runSetupCommand } from "./setup-cli.js";
 import { defaultRerailHome } from "./rerail-home.js";
 import {
   ManagedUpdater,
@@ -191,15 +191,15 @@ function runSeedCommand(args: readonly string[]): number {
   const catalog = openScopedRuleCatalog(process.cwd(), database);
   let result;
   try {
-    for (const rule of MOCK_POLICY_RULES) catalog.upsertPolicy(rule);
-    for (const [index, rule] of MOCK_COSINE_RULES.entries()) catalog.upsertCosine(rule, { enabled: index === 0 });
+    for (const rule of MOCK_CODE_RULES) catalog.upsertCodeRule(rule);
+    for (const [index, rule] of MOCK_CONVERSATION_RULES.entries()) catalog.upsertConversationRule(rule, { enabled: index === 0 });
     result = seedRerailDatabase(database, { repositoryId: catalog.context().repositoryId });
   } finally {
     catalog.close();
   }
   process.stdout.write(
-    `Seeded ${database}: ${result.policyRules} policy rules, `
-    + `${result.cosineRules} cosine rules, ${result.sessions} session, ${result.events} events, `
+    `Seeded ${database}: ${result.codeRules} policy rules, `
+    + `${result.conversationRules} cosine rules, ${result.sessions} session, ${result.events} events, `
     + `${result.workLinks} work links.\n`,
   );
   return 0;
@@ -208,13 +208,13 @@ function runSeedCommand(args: readonly string[]): number {
 /** The rules page of the daemon serving this checkout; `--print` only reports the URL. */
 async function runUiCommand(args: readonly string[]): Promise<number> {
   const { flags } = parseArguments(args, { flags: ["--print"], options: [] }, argument => `Unknown ui option: ${argument}\n\n${usage()}`);
-  const page = await readRulesPage({ cwd: claudeWorkspace(process.cwd()) });
+  const page = await readRulesDashboard({ cwd: claudeWorkspace(process.cwd()) });
   if (page.url === null) {
     process.stdout.write(`Rerail is not running for this checkout (${page.reason}). Check rerail status, or start the daemon with rerail daemon start --open.\n`);
     return 3;
   }
   process.stdout.write(`${page.url}\n`);
-  if (!flags.has("--print") && await openPage(page.url) === "orca-tab") process.stdout.write("Opened in the Orca window.\n");
+  if (!flags.has("--print") && await openDashboard(page.url) === "orca-tab") process.stdout.write("Opened in the Orca window.\n");
   return 0;
 }
 
@@ -228,9 +228,9 @@ async function dispatchToManagedVersion(args: readonly string[], updater: Manage
   return await runChild(process.execPath, [managedCli, MANAGED_CHILD_ARGUMENT, ...args]);
 }
 
-/** The persistent event stream for out-of-process harnesses. It never checks for or installs updates; `rerail update` is the only way a new version arrives. */
+/** The persistent event stream for out-of-process hosts. It never checks for or installs updates; `rerail update` is the only way a new version arrives. */
 async function runEvents(policy?: SignedUpdatePolicy): Promise<number> {
-  assertLocalPolicyKernelEntitlement(policy);
+  assertLocalEngineEntitlement(policy);
   return await runChild(process.execPath, [join(packageRoot, "dist", "event-stream.js")]);
 }
 
@@ -281,7 +281,7 @@ async function runSessionCommand(rawArgs: readonly string[]): Promise<number> {
   process.stdout.write(`${presentation.text}${link}\n`);
   if (!open) return 0;
   if (presentation.url === null) return 3;
-  if (await openPage(presentation.url) === "orca-tab") process.stdout.write("Opened in the Orca window.\n");
+  if (await openDashboard(presentation.url) === "orca-tab") process.stdout.write("Opened in the Orca window.\n");
   return 0;
 }
 
@@ -326,9 +326,9 @@ async function runRepositoryCommand(command: "start" | "stop", args: readonly st
   const agents = options.get("--agents");
   await startRerail(workspace, io, {
     ...(databasePath === undefined ? {} : { databasePath }),
-    ...(agents === undefined ? {} : { agents: parseHarnessNames(agents.split(",").map(name => name.trim()).filter(Boolean)) }),
+    ...(agents === undefined ? {} : { agents: parseHostNames(agents.split(",").map(name => name.trim()).filter(Boolean)) }),
   });
-  const page = await readRulesPage({ cwd: workspace });
+  const page = await readRulesDashboard({ cwd: workspace });
   if (page.url !== null) process.stdout.write(`  ${page.url}\n`);
   return 0;
 }
@@ -428,7 +428,7 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (daemonExit !== undefined) return daemonExit;
   if (command === "start" || command === "stop") return await runRepositoryCommand(command, args);
   if (command === "state") return runStateCommand(args);
-  if (command === "scan" || command === "settings") return await runScanCommand(command, args, { home });
+  if (command === "scan" || command === "settings") return await runAuditCommand(command, args, { home });
   return undefined;
 }
 

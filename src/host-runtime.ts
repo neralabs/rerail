@@ -147,7 +147,7 @@ export class RerailHostRuntime {
     await this.#sample(event, "assistant-text", "message", finished.message);
   }
 
-  requestDelivery(
+  requestSteer(
     sessionId: string,
     requested: RuleMode,
     content: string,

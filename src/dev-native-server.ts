@@ -3,16 +3,16 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import superjson from "superjson";
 import type { AdapterDelivery, AdapterEvent, AdapterSample, AdapterSession, RerailHost } from "./adapter-contract.js";
-import { LiveCosineRules } from "./cosine-rule-sync.js";
+import { LiveConversationRules } from "./conversation-rule-sync.js";
 import { AdapterEventSchema } from "./event-protocol.js";
 import type { OmpSessionEntryLike } from "./omp-semantic.js";
 import type { ProjectionSpec, RelationSpec, SelectionSpec, WatermarkChange } from "./semantic-types.js";
 import { SessionLanes } from "./session-lanes.js";
 import { NativeSemanticRuntime } from "./native-semantic-runtime.js";
-import { CosineRuleRegistry, type RuleMatch } from "./registry.js";
+import { ConversationRuleRegistry, type RuleMatch } from "./registry.js";
 import { loadBundledRules } from "./rule-bootstrap.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "./rule-schema.js";
-import { loadLegacyCosineRuleSources, type CosineRuleSourceOptions } from "./rule-sources.js";
+import { loadLegacyConversationRuleSources, type ConversationRuleSourceOptions } from "./rule-sources.js";
 import { openScopedRuleCatalog } from "./scoped-rule-catalog.js";
 import { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE, type RuleMutation } from "./session-state.js";
 import { RerailRuntime } from "./runtime.js";
@@ -32,8 +32,8 @@ const NATIVE_SESSION_SWEEP_INTERVAL_MS = 5_000;
 interface NativeSession {
   trusted: boolean;
   session: AdapterSession;
-  registry: CosineRuleRegistry;
-  ruleSync: LiveCosineRules;
+  registry: ConversationRuleRegistry;
+  ruleSync: LiveConversationRules;
   runtime: RerailRuntime;
   semantic: NativeSemanticRuntime;
   entries: readonly SessionEntry[];
@@ -44,7 +44,7 @@ interface NativeSession {
 }
 
 type SessionEntry = OmpSessionEntryLike;
-type CosineInput = { action: string; rule?: unknown; replace?: boolean; ids?: unknown; sample?: unknown; args?: unknown };
+type ConversationRulesInput = { action: string; rule?: unknown; replace?: boolean; ids?: unknown; sample?: unknown; args?: unknown };
 
 const objectSchema = z.object({}).passthrough();
 const requestSchema = objectSchema.extend({
@@ -60,12 +60,12 @@ const requestSchema = objectSchema.extend({
 });
 
 const entriesSchema = z.array(z.object({ type: z.string(), id: z.string(), timestamp: z.string() }).passthrough());
-/** A client from a build without re-rail attribution sends the bare receipt id. */
-const steeringReceiptSchema = z.union([
+/** A client from a build without steer attribution sends the bare receipt id. */
+const steerReceiptSchema = z.union([
   z.string().min(1).transform(receiptId => ({ receiptId, ruleIds: [] as string[] })),
   z.object({ receiptId: z.string().min(1), ruleIds: z.array(z.string()).default([]) }),
 ]);
-const cosineInputSchema = objectSchema.extend({ action: z.string() });
+const conversationRulesInputSchema = objectSchema.extend({ action: z.string() });
 
 
 /** Branch entries carry arbitrary host payloads, so the client encodes them; plain JSON stays accepted. */
@@ -150,8 +150,8 @@ export class DevNativeServer {
     if (session === undefined) throw new Error("native session is not initialized");
     if (input.entries !== undefined) session.entries = entriesSchema.parse(decodeEntries(input)) as SessionEntry[];
     if (input.operation === "record-steering-delivery") {
-      const receipt = steeringReceiptSchema.parse(input.input);
-      session.runtime.recordSteeringDelivery(input.sessionId, receipt.receiptId, receipt.ruleIds);
+      const receipt = steerReceiptSchema.parse(input.input);
+      session.runtime.recordSteer(input.sessionId, receipt.receiptId, receipt.ruleIds);
       return { deliveries: [], entries: [] };
     }
     if (input.operation === "poll") {
@@ -168,7 +168,7 @@ export class DevNativeServer {
       return this.#reply(session);
     }
     if (input.operation === "cosine") {
-      const result = await this.#cosine(session, cosineInputSchema.parse(input.input) as CosineInput, (customType, data) => session.appendEntries.push({ customType, data }));
+      const result = await this.#conversationRules(session, conversationRulesInputSchema.parse(input.input) as ConversationRulesInput, (customType, data) => session.appendEntries.push({ customType, data }));
       return { ...this.#reply(session), result };
     }
     const semantic = await this.#semantic(session, input.input);
@@ -217,7 +217,7 @@ export class DevNativeServer {
       maxInputTokens: z.number().int().positive().optional(),
       maxRules: z.number().int().positive().optional(),
       rebuild: z.boolean().optional(),
-    }).parse(input.input ?? {}) as CosineRuleSourceOptions & {
+    }).parse(input.input ?? {}) as ConversationRuleSourceOptions & {
       cwd?: string; modelPath?: string; databasePath?: string; storageRoot?: string;
       maxInputTokens?: number; maxRules?: number; rebuild?: boolean;
     };
@@ -233,18 +233,18 @@ export class DevNativeServer {
     }
     const { modelPath, databasePath, storageRoot } = this.#sessionPaths(options, cwd, trusted);
     const session: AdapterSession = { host: input.host as RerailHost, sessionId: input.sessionId, cwd };
-    const registry = new CosineRuleRegistry({
+    const registry = new ConversationRuleRegistry({
       modelPath,
       ...(options.maxInputTokens === undefined ? {} : { maxInputTokens: options.maxInputTokens }),
       ...(options.maxRules === undefined ? {} : { maxRules: options.maxRules }),
     });
     const store = openScopedRuleCatalog(cwd, databasePath);
-    const ruleSync = new LiveCosineRules(store, registry, database => database.enabled);
+    const ruleSync = new LiveConversationRules(store, registry, database => database.enabled);
     let runtime: RerailRuntime | undefined;
     let semantic: NativeSemanticRuntime | undefined;
     try {
-      for (const legacy of loadLegacyCosineRuleSources(options, cwd, input.host === "omp" ? ".omp/conversation-rules.json" : ".pi/conversation-rules.json").reverse()) {
-        store.migrateCosineRules(legacy.path, legacy.rules);
+      for (const legacy of loadLegacyConversationRuleSources(options, cwd, input.host === "omp" ? ".omp/conversation-rules.json" : ".pi/conversation-rules.json").reverse()) {
+        store.migrateConversationRules(legacy.path, legacy.rules);
       }
       store.seed(loadBundledRules());
       ruleSync.prime();
@@ -291,7 +291,7 @@ export class DevNativeServer {
     }
   }
 
-  async #cosine(session: NativeSession, input: CosineInput, append: (customType: string, data: unknown) => void): Promise<unknown> {
+  async #conversationRules(session: NativeSession, input: ConversationRulesInput, append: (customType: string, data: unknown) => void): Promise<unknown> {
     const registry = session.registry;
     if (input.action === "add") {
       if (input.rule === undefined) throw new TypeError("rule is required for action=add");
@@ -314,7 +314,7 @@ export class DevNativeServer {
     throw new TypeError(`unsupported cosine action: ${input.action}`);
   }
 
-  #test(registry: CosineRuleRegistry, turn: number, sample: unknown): unknown {
+  #test(registry: ConversationRuleRegistry, turn: number, sample: unknown): unknown {
     const parsed = objectSchema.extend({
       source: z.string(),
       boundary: z.enum(SAMPLE_BOUNDARIES),
@@ -396,6 +396,6 @@ export class DevNativeServer {
   }
 }
 
-function matchEntry(registry: CosineRuleRegistry, match: RuleMatch, sample: AdapterSample, turn: number): unknown {
+function matchEntry(registry: ConversationRuleRegistry, match: RuleMatch, sample: AdapterSample, turn: number): unknown {
   return { ruleId: match.ruleId, kind: match.kind, similarity: match.similarity, threshold: match.threshold, operator: match.operator, tokenCount: match.tokenCount, source: sample.source, boundary: sample.boundary, mode: match.mode, turn, modelFingerprint: registry.fingerprint() };
 }

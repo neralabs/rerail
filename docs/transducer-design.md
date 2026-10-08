@@ -217,7 +217,7 @@ python3 rerail/scripts/test_transducer_design.py
 ```
 
 They check one-word encoding and its boundaries.
-The native implementation is `native/src/policy_dsl/transducer.rs`.
+The native implementation is `native/src/code_rule_dsl/transducer.rs`.
 It implements every instruction above, table validation, path ordering, capture isolation, cycle checks, and shared kind dispatch.
 
 ## Implemented ast-grep comparison
@@ -256,7 +256,7 @@ The source corpus contained 95,697,853 bytes.
 The artifact, preserved at commit `83f3eae6e`, is `benchmark/history/ner-1562-transducer-comparison-2026-09-27.json`.
 The benchmark is reproducible with its recorded command.
 This result applies only to the exact root-terminal compiler subset.
-It does not establish structural-pattern, metavariable, relation, or full-policy speedups.
+It does not establish structural-pattern, metavariable, relation, or full-code-rule speedups.
 
 ## Batch and anchor contract
 

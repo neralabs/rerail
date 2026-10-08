@@ -30,7 +30,7 @@
 // with nikic/php-parser 5.9.0 installed by that Composer project.
 //
 // With --corpus it records the same per file over whole corpora instead, for
-// `benchmark_php_names_corpus` (rerail/native/src/policy_dsl/scope/php_names/tests.rs):
+// `benchmark_php_names_corpus` (rerail/native/src/code_rule_dsl/scope/php_names/tests.rs):
 //   /opt/homebrew/Cellar/php/8.5.11/bin/php -n generate_names.php <vendor/autoload.php> \
 //       --corpus <output.json> <name>=<path>[,<path>...] ...
 // Every `*.php` file under a corpus's paths is read, Blade templates (`*.blade.php`) aside;

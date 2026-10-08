@@ -64,7 +64,7 @@ export interface NativeMemoryProfile {
   workerPool: { threads: number };
 }
 
-export interface NativeCosineKernel {
+export interface NativeConversationEngine {
   fingerprint(): ModelFingerprint;
   embedTexts(texts: string[]): Float32Array[];
   tokenCounts(texts: string[]): number[];
@@ -75,25 +75,25 @@ export interface NativeCosineKernel {
   matchText(sample: NativeSample): NativeMatch[];
 }
 
-export interface NativeCosineKernelConstructor {
-  load(modelPath: string, maxInputTokens: number): NativeCosineKernel;
+export interface NativeConversationEngineConstructor {
+  load(modelPath: string, maxInputTokens: number): NativeConversationEngine;
 }
-export type PolicyDslSourceFormat = "json" | "yaml";
-export type PolicyDslEvaluationMode = "decision" | "diagnostic";
+export type CodeRuleDslSourceFormat = "json" | "yaml";
+export type CodeRuleDslEvaluationMode = "decision" | "report";
 
-export interface NativeCompiledPolicyDsl {
+export interface NativeCompiledCodeRuleDsl {
   canonicalJson(): string;
-  /** Whether a repository-relative path is inside the policy's scope; the matcher evaluation uses. */
+  /** Whether a repository-relative path is inside the code rule's scope; the matcher evaluation uses. */
   inScope(path: string): boolean;
   digest(): string;
   requiredCapabilitiesJson(): string;
-  evaluate(snapshotJson: string, mode: PolicyDslEvaluationMode): string;
-  openSession(snapshotJson: string): NativePolicyDslSession;
+  evaluate(snapshotJson: string, mode: CodeRuleDslEvaluationMode): string;
+  openEditor(snapshotJson: string): NativeCodeRuleDslEditor;
 }
 
-export interface NativePolicyDslSession {
-  evaluate(mode: PolicyDslEvaluationMode): string;
-  applyEdit(editJson: string, mode: PolicyDslEvaluationMode): string;
+export interface NativeCodeRuleDslEditor {
+  evaluate(mode: CodeRuleDslEvaluationMode): string;
+  applyEdit(editJson: string, mode: CodeRuleDslEvaluationMode): string;
 }
 
 /**
@@ -106,19 +106,19 @@ export interface NativeStorageAttachment {
 }
 
 /**
- * The bytes of findings a host reads a whole result in per `resultPageAsync` page. Small, since a page is held three
+ * The bytes of violations a host reads a whole result in per `resultPageAsync` page. Small, since a page is held three
  * times while it is read (the JSON, its parse, its validated copy) and V8 keeps what it grew to: 256 KiB pages read
- * django's 15.5k findings (6.8 MB) with 40 MiB less peak RSS than one 8 MiB page.
+ * django's 15.5k violations (6.8 MB) with 40 MiB less peak RSS than one 8 MiB page.
  */
 export const RESULT_PAGE_BYTES = 256 * 1024;
 
-export interface NativePolicyDslWorkspace {
+export interface NativeCodeRuleDslWorkspace {
   /**
    * Attaches the content store at `storePath` (see `contentStorePath`) to the repository containing `root`; the
    * binding never chooses a store itself and refuses an empty path.
    */
   enableStorageAsync(root: string, storePath: string): Promise<NativeStorageAttachment>;
-  addPolicy(compiled: NativeCompiledPolicyDsl): void;
+  addCodeRule(compiled: NativeCompiledCodeRuleDsl): void;
   acceptsPath(path: string): boolean;
   tryApply(requestJson: string): string | null;
   applyAsync(requestJson: string): Promise<string>;
@@ -150,7 +150,7 @@ export interface NativeRepositoryIndexOptions {
   sourceLanguages: Record<string, string>;
 }
 
-export function encodePolicyWorkspaceRequest(request: {
+export function encodeCodeRuleWorkspaceRequest(request: {
   revision: number;
   files: ReadonlyArray<{ path: string; language: string; source: string; module?: string | string[] }>;
   removed: readonly string[];
@@ -180,10 +180,10 @@ export function encodePolicyWorkspaceRequest(request: {
   return Buffer.concat([header, metadata, ...sources], length);
 }
 
-export type NativePolicyDslWorkspaceConstructor = new () => NativePolicyDslWorkspace;
+export type NativeCodeRuleDslWorkspaceConstructor = new () => NativeCodeRuleDslWorkspace;
 
-export interface NativePolicyDslRuntimeConstructor {
-  compile(source: string, format: PolicyDslSourceFormat, capabilitiesJson: string): NativeCompiledPolicyDsl;
+export interface NativeCodeRuleDslRuntimeConstructor {
+  compile(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): NativeCompiledCodeRuleDsl;
 }
 
 /** An OS advisory lock (`flock` / `LockFileEx`) the OS drops when the holding process exits, however it exits. */
@@ -206,9 +206,9 @@ export interface NativeBinding {
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;
-  CosineKernel: NativeCosineKernelConstructor;
-  PolicyDslRuntime: NativePolicyDslRuntimeConstructor;
-  PolicyDslWorkspace: NativePolicyDslWorkspaceConstructor;
+  ConversationEngine: NativeConversationEngineConstructor;
+  CodeRuleDslRuntime: NativeCodeRuleDslRuntimeConstructor;
+  CodeRuleDslWorkspace: NativeCodeRuleDslWorkspaceConstructor;
 }
 
 const require = createRequire(import.meta.url);

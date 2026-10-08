@@ -1,8 +1,8 @@
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
-import { registerCosineRulesCommand } from "../src/command.js";
-import { CosineRuleRegistry } from "../src/registry.js";
+import { registerConversationRulesCommand } from "../src/command.js";
+import { ConversationRuleRegistry } from "../src/registry.js";
 
 const rule = {
   id: "checkout",
@@ -16,7 +16,7 @@ const rule = {
 
 describe("/cosine-rules", () => {
   it("inspects, tests, and reloads the active registry", async () => {
-    const registry = new CosineRuleRegistry({ modelPath: resolve("model") });
+    const registry = new ConversationRuleRegistry({ modelPath: resolve("model") });
     registry.replace([rule]);
     let handler: ((args: string, context: ExtensionCommandContext) => Promise<void>) | undefined;
     const pi = {
@@ -25,7 +25,7 @@ describe("/cosine-rules", () => {
       },
     } as unknown as ExtensionAPI;
     const reload = vi.fn();
-    registerCosineRulesCommand(pi, { registry: () => registry, turn: () => 0, reload });
+    registerConversationRulesCommand(pi, { registry: () => registry, turn: () => 0, reload });
     if (handler === undefined) throw new Error("command was not registered");
     const notifications: string[] = [];
     const context = {

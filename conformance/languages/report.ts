@@ -18,8 +18,8 @@ export type ReportHeader = z.infer<typeof headerSchema>;
 const pointSchema = z.object({ path: z.string(), line: z.number().int().positive(), column: z.number().int().positive().optional() });
 
 /**
- * Files a check unsound under syntax errors skipped (`source-incomplete`, "file has syntax errors") where the grammar
- * reports a syntax error, each at its first one (the kernel's line and column). Attributed to T1, not counted as
+ * Files a clause unsound under syntax errors skipped (`source-incomplete`, "file has syntax errors") where the grammar
+ * reports a syntax error, each at its first one (the engine's line and column). Attributed to T1, not counted as
  * engine failures; upstream findings in them stay FNs.
  */
 const syntaxErrorFilesSchema = z.object({
@@ -45,9 +45,9 @@ export const ruleRowSchema = z.object({
   recall: z.number().nullable(),
   /** Findings, Rerail's and the upstream tool's, on lines the tool did not analyse (`source.unanalysed`); not scored. */
   unanalysed: z.number().int().nonnegative(),
-  /** Failures other than `source-partial` and `syntaxErrorFiles` this rule's policy reported. */
+  /** Failures other than `source-partial` and `syntaxErrorFiles` this rule's code rule reported. */
   engineFailures: z.number().int().nonnegative(),
-  /** Files with syntax errors the policy's AST checks ran around (`source-partial`). */
+  /** Files with syntax errors the code rule's AST clauses ran around (`source-partial`). */
   partialFiles: z.number().int().nonnegative(),
   /** The first 50 files are listed; the count is exact. */
   syntaxErrorFiles: syntaxErrorFilesSchema,
@@ -102,7 +102,7 @@ export const t4ReportSchema = headerSchema.extend({
   rules: z.array(ruleRowSchema),
   /** Divergences whose every source was scored and that explained nothing. */
   staleDivergences: z.array(z.object({ rule: z.string(), source: z.string().optional(), path: z.string(), line: z.number(), kind: z.string() })),
-  /** Configuration errors (missing or mismatched recordings, policies that do not compile, …); each fails the run. */
+  /** Configuration errors (missing or mismatched recordings, code rules that do not compile, …); each fails the run. */
   errors: z.array(z.string()),
   /** No unexplained FP, no unexplained fixture FN (corpus misses are recall), no engine failure, no stale divergence, no error. */
   pass: z.boolean(),

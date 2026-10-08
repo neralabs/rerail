@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { AdapterDelivery, AdapterEvent, AdapterSession } from "./adapter-contract.js";
 import { decodeRerailEventResult } from "./event-protocol.js";
-import type { KernelRuntimeConfiguration } from "./kernel-service.js";
+import type { EngineRuntimeConfiguration } from "./engine-service.js";
 
 const INSTANCE_FILE = ".nera/instance.env";
 
@@ -128,7 +128,7 @@ async function postRerailDev(instance: RerailDevInstance, path: string, body: un
 export async function ingestRerailDevEvent(
   instance: RerailDevInstance,
   event: AdapterEvent,
-  configuration: KernelRuntimeConfiguration,
+  configuration: EngineRuntimeConfiguration,
 ): Promise<readonly AdapterDelivery[]> {
   const body = { event, configuration: { ...configuration, workspaceRoot: instance.workspaceRoot } };
   const result = decodeRerailEventResult(await postRerailDev(instance, "/kernel/events", body, "kernel"));
@@ -136,7 +136,7 @@ export async function ingestRerailDevEvent(
   return result.deliveries;
 }
 
-/** The checkout daemon alone writes its database, so a confirmed hook handoff is persisted through it. */
+/** The checkout daemon alone writes its database, so a confirmed hook steer is persisted through it. */
 export async function recordRerailDevReceipt(
   instance: RerailDevInstance,
   session: AdapterSession,

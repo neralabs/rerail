@@ -253,7 +253,7 @@ describe("repository start state", () => {
       expect(await runtime.ingest({ kind: "session-end", eventId: "end", sessionId: "ending" })).toEqual([]);
       const raw = new Database(databasePath, { readonly: true });
       try {
-        // Closed now, not at dispose: its policy bridge and polling are released while the runtime lives on.
+        // Closed now, not at dispose: its code-rule bridge and polling are released while the runtime lives on.
         expect(raw.prepare("SELECT ended_at FROM sessions WHERE session_id = 'ending'").pluck().get()).not.toBeNull();
         expect(raw.prepare("SELECT event_id FROM events WHERE event_id = 'end'").pluck().all()).toEqual([]);
       } finally {
@@ -283,7 +283,7 @@ describe("repository start state", () => {
     execFileSync("git", ["worktree", "add", "-q", "-b", "sibling", sibling], { cwd: main });
     mkdirSync(join(flagged, ".nera"));
     writeFileSync(join(flagged, ".nera", "instance.env"), 'NERA_RERAIL_ENABLED="true"\nNERA_RERAIL_PUBLIC_URL="http://127.0.0.1:4737"\n');
-    // A gated runtime in this database (the event stream or daemon kernel) runs there through the flag.
+    // A gated runtime in this database (the event stream or engine service) runs there through the flag.
     const runtime = new RerailRuntime({
       storageRoot: join(root, "sessions"), databasePath, workspaceRoot: flagged,
       embedder: testEmbedder, autostart: false, startGate: true,

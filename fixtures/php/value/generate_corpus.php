@@ -1,6 +1,6 @@
 <?php
 // Records every constant expression in PHP corpora, with what PHP 8.5.11 evaluates it to, for
-// `benchmark_php_values_corpus` (rerail/native/src/policy_dsl/value/php/tests.rs). Offline, not in
+// `benchmark_php_values_corpus` (rerail/native/src/code_rule_dsl/value/php/tests.rs). Offline, not in
 // CI:
 //   /opt/homebrew/Cellar/php/8.5.11/bin/php generate_corpus.php \
 //       <composer autoload.php with nikic/php-parser 5.9.0> <output.json> \

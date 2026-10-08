@@ -3,7 +3,7 @@
  * ({ flag: { path, content }, pass: { path, content } }). Fixtures are stored as data, not as source
  * files at their scope paths, so the repository's language-wide scanners never see a deliberately
  * non-compliant snippet. For each rule: the flag content, evaluated at its path, must be inside the
- * rule's scope (the kernel's own inScope) and produce one of the rule's finding codes; the pass content
+ * rule's scope (the engine's own inScope) and produce one of the rule's violation codes; the pass content
  * must be inside the scope and produce none. A rule without a fixture file fails: a default that nothing
  * proves can fire is exactly what this guards against.
  *
@@ -18,29 +18,29 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
-import { languageFor } from "../src/executable-policy-enforcer.js";
-import { loadNativeBinding, type NativeCompiledPolicyDsl } from "../src/native.js";
+import { languageFor } from "../src/code-rule-enforcer.js";
+import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../src/native.js";
 import { bundledRulesDirectory, loadBundledRules } from "../src/rule-bootstrap.js";
 import { PASS_AUDIT } from "../conformance/tslint/audit.js";
 import { emptyGoldenManifest, goldenRules, loadGoldenManifest, PACK_DIRECTORY } from "../conformance/tslint/golden.js";
 import { checkGolden, REQUIRES_CONFIGURATION } from "../conformance/tslint/promote.js";
 import { COMMITTED_PORTS_DIRECTORY, findPort, listPortedRules } from "../conformance/tslint/runner.js";
 
-const POLICY_DIRECTORY = fileURLToPath(new URL("../policies/executable-policy-dsl/", import.meta.url));
+const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../code-rule-dsl/", import.meta.url));
 const FIXTURES = fileURLToPath(new URL("./fixtures/bundled-rules/", import.meta.url));
-const capabilities = readFileSync(join(POLICY_DIRECTORY, "capabilities.json"), "utf8");
-const runtime = loadNativeBinding().PolicyDslRuntime;
+const capabilities = readFileSync(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
+const runtime = loadNativeBinding().CodeRuleDslRuntime;
 const evaluationSchema = z.object({ violations: z.array(z.object({ code: z.string() })).default([]), failures: z.array(z.unknown()).default([]) });
 const ruleFileSchema = z.object({ id: z.string() });
 const fixtureSideSchema = z.object({ path: z.string().min(1), content: z.string() });
 const fixtureSchema = z.object({ flag: fixtureSideSchema, pass: fixtureSideSchema });
 
-function findings(compiled: NativeCompiledPolicyDsl, path: string, source: string): string[] {
+function violations(compiled: NativeCompiledCodeRuleDsl, path: string, source: string): string[] {
   const language = languageFor(path) ?? "text";
   const input = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files: [{ language, path, source }] });
-  const result = evaluationSchema.parse(JSON.parse(compiled.evaluate(input, "diagnostic")));
+  const result = evaluationSchema.parse(JSON.parse(compiled.evaluate(input, "report")));
   expect(result.failures).toEqual([]);
-  return result.violations.map(finding => finding.code);
+  return result.violations.map(violation => violation.code);
 }
 
 const bundled = loadBundledRules(bundledRulesDirectory());
@@ -54,21 +54,21 @@ const stemByRuleId: Record<string, string> = Object.fromEntries(
 );
 
 describe("bundled rules", () => {
-  if (runtime === undefined) throw new Error("Native binding must export PolicyDslRuntime");
+  if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
 
   it.each(documents.map(document => [document.rule.id] as const))("%s fires on its flag fixture and stays silent on its pass fixture", id => {
     const document = documents.find(candidate => candidate.rule.id === id)!;
     expect(document.kind).toBe("file");
     if (document.kind !== "file") return;
     const fixture = fixtureSchema.parse(JSON.parse(readFileSync(join(FIXTURES, `${stemByRuleId[id]!}.json`), "utf8")));
-    const codes: Record<string, true> = Object.fromEntries(document.rule.clauses.map(check => [check.violation?.code, true]));
+    const codes: Record<string, true> = Object.fromEntries(document.rule.clauses.map(clause => [clause.violation?.code, true]));
     const compiled = runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 
     expect(compiled.inScope(fixture.flag.path), `${id} flag fixture ${fixture.flag.path} is outside the rule's scope`).toBe(true);
     expect(compiled.inScope(fixture.pass.path), `${id} pass fixture ${fixture.pass.path} is outside the rule's scope`).toBe(true);
-    const flagHits = findings(compiled, fixture.flag.path, fixture.flag.content).filter(code => codes[code] === true);
+    const flagHits = violations(compiled, fixture.flag.path, fixture.flag.content).filter(code => codes[code] === true);
     expect(flagHits, `${id} flag fixture produced no ${Object.keys(codes).join("/")} finding`).not.toEqual([]);
-    const passHits = findings(compiled, fixture.pass.path, fixture.pass.content).filter(code => codes[code] === true);
+    const passHits = violations(compiled, fixture.pass.path, fixture.pass.content).filter(code => codes[code] === true);
     expect(passHits, `${id} pass fixture produced ${passHits.join(", ")}`).toEqual([]);
   });
 
@@ -81,7 +81,7 @@ describe("bundled rules", () => {
 });
 
 describe("opt-in TSLint pack", () => {
-  if (runtime === undefined) throw new Error("Native binding must export PolicyDslRuntime");
+  if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
   it("is exactly the golden set, consistent with golden.json and the PASS audit", () => {
     expect(relative(bundledRulesDirectory(), PACK_DIRECTORY)).toBe(join("opt-in", "tslint"));
     expect(optIn.map(document => document.rule.id).sort()).toEqual(goldenRules().map(rule => `tslint:${rule}`));

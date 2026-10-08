@@ -28,7 +28,7 @@ const DeliverySchema: z.ZodType<AdapterDelivery> = z.object({
   requested: z.enum(RULE_MODES),
   mechanism: z.enum(["observe", "native-queue", "additional-context", "deferred-context"]),
   content: z.string(),
-  // A kernel from a build without re-rail attribution sends no rule ids.
+  // An engine service from a build without steer attribution sends no rule ids.
   ruleIds: z.array(z.string()).default([]),
 }).strict();
 

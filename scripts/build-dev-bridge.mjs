@@ -83,7 +83,7 @@ const input = Buffer.concat(chunks).toString("utf8");
 const payload = JSON.parse(input);
 const route = await resolveRerailWorkspaceRoute(payload.cwd ?? process.cwd());
 if (route.kind === "workspace") {
-  // The bundled entry records a steering receipt only once the host confirms the write.
+  // The bundled entry records a steer receipt only once the host confirms the write.
   const module = await import("./bundled-${host}.js");
   await module.${serve};
 } else if (route.kind === "host") {

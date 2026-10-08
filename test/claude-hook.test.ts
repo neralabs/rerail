@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { AdapterDelivery } from "../src/adapter-contract.js";
 import { claudeHookOutput, handleClaudeEvent, runClaudeHook } from "../src/claude-hook.js";
 import type { HookOptions } from "../src/hook-host.js";
-import { hookOptions, scriptedLoop, serveText, temporaryDirectories, transcriptQuery, transcriptRows } from "./hook-fixtures.js";
+import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "./hook-fixtures.js";
 import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-claude-hook-");
@@ -15,7 +15,7 @@ function delivery(requested: AdapterDelivery["requested"], content: string, rule
 }
 
 describe("Claude Code one-shot hook", () => {
-  it("persists the documented hook lifecycle into the SQLite transcript across separate hook processes", async () => {
+  it("persists the documented hook lifecycle into the SQLite session store across separate hook processes", async () => {
     const root = await temporaryDirectory();
     const options = hookOptions(root);
     const common = { session_id: "claude-session", cwd: root, transcript_path: "/tmp/transcript.jsonl", permission_mode: "default" };
@@ -37,7 +37,7 @@ describe("Claude Code one-shot hook", () => {
       last_assistant_message: "Done.",
     }, options)).toEqual({});
 
-    expect(transcriptRows(root, ["session-start", "user-prompt", "call", "turn-end"])).toEqual([
+    expect(eventRows(root, ["session-start", "user-prompt", "call", "turn-end"])).toEqual([
       ["claude-session:SessionStart", "session-start"],
       ["claude-session:prompt:p1", "user-prompt"],
       ["claude-session:tool-call:tool-1", "call"],
@@ -52,7 +52,7 @@ describe("Claude Code one-shot hook", () => {
       hookOptions(root),
     );
     expect(output).toEqual({});
-    expect(transcriptQuery(root, "SELECT session_id FROM sessions")).toEqual([]);
+    expect(sessionDatabaseQuery(root, "SELECT session_id FROM sessions")).toEqual([]);
   });
 
   it("records the session at CLAUDE_PROJECT_DIR when the hook cwd has moved below it", async () => {
@@ -65,7 +65,7 @@ describe("Claude Code one-shot hook", () => {
     } finally {
       delete process.env.CLAUDE_PROJECT_DIR;
     }
-    expect(transcriptQuery(root, "SELECT cwd FROM sessions")).toEqual([{ cwd: root }]);
+    expect(sessionDatabaseQuery(root, "SELECT cwd FROM sessions")).toEqual([{ cwd: root }]);
   });
 
   it("does not start or record hook activity where Rerail is not started", async () => {
@@ -78,7 +78,7 @@ describe("Claude Code one-shot hook", () => {
     startTestRepository(root, hookOptions(root).databasePath);
     stopTestRepository(root, hookOptions(root).databasePath);
     expect(await runClaudeHook(start, hookOptions(root))).toEqual({});
-    expect(transcriptQuery(root, "SELECT session_id FROM sessions")).toEqual([]);
+    expect(sessionDatabaseQuery(root, "SELECT session_id FROM sessions")).toEqual([]);
   });
 
   it("answers {} on stdout and exits cleanly when stdin is malformed or the runtime fails", async () => {
@@ -93,7 +93,7 @@ describe("Claude Code one-shot hook", () => {
 
     const runtimeFailure = await serve(
       JSON.stringify({ hook_event_name: "SessionStart", session_id: "s", cwd: root, source: "startup" }),
-      { storageRoot: join(root, "sessions"), kernelSocketPath: join(root, "missing-kernel.sock") },
+      { storageRoot: join(root, "sessions"), kernelSocketPath: join(root, "missing-engine.sock") },
     );
     expect(JSON.parse(runtimeFailure.stdout)).toEqual({});
     expect(runtimeFailure.stderr).toMatch(/^rerail hook: /);

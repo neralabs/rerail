@@ -3,13 +3,13 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ExecutablePolicyBridge, generatedEditPaths } from "../src/executable-policy-bridge.js";
-import type { ExecutablePolicyEditBatch, ExecutablePolicyEvaluator } from "../src/executable-policy.js";
-import { languageFor, NativeExecutablePolicyEnforcer } from "../src/executable-policy-enforcer.js";
-import type { PolicyExecutionRecorder, PolicyRunInput, PolicyRunResult } from "../src/policy-execution.js";
-import { bootstrapPolicyDslCatalog, bundledPolicyDslDirectory } from "../src/policy-dsl-catalog.js";
-import { policyDialectForPath } from "../src/policy-languages.js";
-import { policyRuleSchema } from "../src/policy-schema.js";
+import { CodeRuleBridge, generatedEditPaths } from "../src/code-rule-bridge.js";
+import type { CodeRuleEditBatch, CodeRuleAuditor } from "../src/code-rule.js";
+import { languageFor, NativeCodeRuleEnforcer } from "../src/code-rule-enforcer.js";
+import type { AuditRecorder, AuditInput, AuditResult } from "../src/audit.js";
+import { bootstrapCodeRuleDslCatalog, bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
+import { codeRuleDialectForPath } from "../src/code-rule-languages.js";
+import { codeRuleSchema } from "../src/code-rule-schema.js";
 import { SqliteRuleStore } from "../src/rule-store.js";
 
 const roots: string[] = [];
@@ -23,7 +23,7 @@ async function directory(prefix: string): Promise<string> {
 
 /**
  * Every PHP and Blade routing case: the dialect the path's file is evaluated as, or undefined when the host evaluates
- * no file there. `vendor/` paths route by name like any other; the walks never reach them (see the scan cases).
+ * no file there. `vendor/` paths route by name like any other; the walks never reach them (see the audit cases).
  */
 const ROUTES: ReadonlyArray<readonly [string, "php" | "blade" | undefined]> = [
   ["Kernel.php", "php"],
@@ -43,7 +43,7 @@ const ROUTES: ReadonlyArray<readonly [string, "php" | "blade" | undefined]> = [
   ["src/module.php5", undefined],
 ];
 
-/** The files a scan must leave alone: ignored directories at any depth, and paths no dialect reads. */
+/** The files an audit must leave alone: ignored directories at any depth, and paths no dialect reads. */
 const IGNORED_FILES = [
   "vendor/acme/lib.php",
   "vendor/acme/resources/views/x.blade.php",
@@ -54,8 +54,8 @@ const IGNORED_FILES = [
 /** A PHP program both dialects read: `$routed` is found by a php query on a php file and a blade query on a blade file. */
 const SOURCE = "<?php $routed = 1; ?>\n";
 
-function routedPolicy(language: "php" | "blade") {
-  return policyRuleSchema.parse({
+function routedCodeRule(language: "php" | "blade") {
+  return codeRuleSchema.parse({
     format: "rerail.policy/v1", id: `routing:${language}`, revision: 1, mode: "steer",
     scope: { include: ["**/*"], exclude: [] },
     clauses: [{
@@ -66,30 +66,30 @@ function routedPolicy(language: "php" | "blade") {
   });
 }
 
-/** One log-only repository scan: the policies reporting on each path (`routing:php`, `routing:blade`), and its failures. */
-async function scanRouting(workspaceRoot: string) {
+/** One log-only repository audit: the code rules reporting on each path (`routing:php`, `routing:blade`), and its failures. */
+async function auditRouting(workspaceRoot: string) {
   const home = await directory("rerail-routing-catalog-");
   const capabilitiesPath = join(home, "capabilities.json");
-  await writeFile(capabilitiesPath, await readFile(join(bundledPolicyDslDirectory(), "capabilities.json")));
-  const databasePath = join(home, "policies.sqlite");
+  await writeFile(capabilitiesPath, await readFile(join(bundledCodeRuleDslDirectory(), "capabilities.json")));
+  const databasePath = join(home, "code-rules.sqlite");
   const store = new SqliteRuleStore(databasePath);
-  for (const language of ["php", "blade"] as const) store.upsertPolicy(routedPolicy(language));
+  for (const language of ["php", "blade"] as const) store.upsertCodeRule(routedCodeRule(language));
   store.close();
-  const catalog = bootstrapPolicyDslCatalog({ capabilitiesPath, databasePath });
-  const runs = new Map<string, PolicyRunInput & { result?: PolicyRunResult }>();
-  const recorder: PolicyExecutionRecorder = {
-    start(input) { const runId = `run-${runs.size + 1}`; runs.set(runId, { ...input }); return runId; },
-    finish(runId, result) { runs.get(runId)!.result = result; },
-    progress(runId, result) { runs.get(runId)!.result = { status: "completed", ...result }; },
+  const catalog = bootstrapCodeRuleDslCatalog({ capabilitiesPath, databasePath });
+  const audits = new Map<string, AuditInput & { result?: AuditResult }>();
+  const recorder: AuditRecorder = {
+    start(input) { const auditId = `run-${audits.size + 1}`; audits.set(auditId, { ...input }); return auditId; },
+    finish(auditId, result) { audits.get(auditId)!.result = result; },
+    progress(auditId, result) { audits.get(auditId)!.result = { status: "completed", ...result }; },
     interrupt() {},
   };
-  const enforcer = new NativeExecutablePolicyEnforcer(catalog, { workspaceRoot, delivery: { requestDelivery: async () => undefined }, executions: recorder });
+  const enforcer = new NativeCodeRuleEnforcer(catalog, { workspaceRoot, steerDelivery: { requestSteer: async () => undefined }, audits: recorder });
   try {
     await enforcer.openWorkspace("routing");
-    const [runId] = await enforcer.scan("routing", { scope: "repository", mode: "log" });
-    const result = runs.get(runId!)?.result;
+    const [auditId] = await enforcer.audit("routing", { scope: "repository", mode: "log" });
+    const result = audits.get(auditId!)?.result;
     const routed: Record<string, string[]> = {};
-    for (const finding of result?.violations ?? []) (routed[finding.path ?? ""] ??= []).push(finding.ruleId);
+    for (const violation of result?.violations ?? []) (routed[violation.path ?? ""] ??= []).push(violation.ruleId);
     for (const path of Object.keys(routed)) routed[path]!.sort();
     return { status: result?.status, routed, failures: (result?.failures ?? []).map(failure => `${failure.path ?? ""} ${failure.code}`) };
   } finally {
@@ -115,29 +115,29 @@ async function routingTree(git: boolean): Promise<string> {
 describe("PHP and Blade host routing", () => {
   it.each(ROUTES)("routes %s to %s through every host table", (path, dialect) => {
     expect(languageFor(path)).toBe(dialect);
-    expect(policyDialectForPath(path)).toBe(dialect);
+    expect(codeRuleDialectForPath(path)).toBe(dialect);
     expect(generatedEditPaths("write", { path })).toEqual(dialect === undefined ? [] : [path]);
   });
 
   it.each([
     ["the native repository index (Git checkout)", true],
     ["the host's directory walk", false],
-  ])("scans each file as its dialect through %s, never under ignored directories", async (_name, git) => {
+  ])("audits each file as its dialect through %s, never under ignored directories", async (_name, git) => {
     const root = await routingTree(git);
     const expected = Object.fromEntries(ROUTES.flatMap(([path, dialect]) => dialect === undefined ? [] : [[path, [`routing:${dialect}`]]]));
-    await expect(scanRouting(root)).resolves.toEqual({ status: "completed", routed: expected, failures: [] });
+    await expect(auditRouting(root)).resolves.toEqual({ status: "completed", routed: expected, failures: [] });
   });
 
   it("labels the files a command writes by dialect, skipping ignored directories and other names", async () => {
     const root = await directory("rerail-routing-bridge-");
     await mkdir(join(root, "app"));
-    const evaluateGeneratedEdits = vi.fn(async (_sessionId: string, batch: ExecutablePolicyEditBatch) => ({
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => ({
       revision: batch.revision, disposition: "continue" as const, violations: [], failures: [],
     }));
-    const evaluator: ExecutablePolicyEvaluator = {
-      openWorkspace: vi.fn(async () => undefined), acceptsPath: () => true, evaluateGeneratedEdits, close: vi.fn(async () => undefined),
+    const auditor: CodeRuleAuditor = {
+      openWorkspace: vi.fn(async () => undefined), acceptsPath: () => true, auditGeneratedEdits, close: vi.fn(async () => undefined),
     };
-    const bridge = new ExecutablePolicyBridge(root, evaluator);
+    const bridge = new CodeRuleBridge(root, auditor);
     try {
       await bridge.openWorkspace("session-1");
       await bridge.begin("shell-1", "shell", { command: "php artisan make:view" });
@@ -146,7 +146,7 @@ describe("PHP and Blade host routing", () => {
         await writeFile(join(root, path), SOURCE);
       }
       await bridge.finish("shell-1");
-      const edits = evaluateGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => [edit.path, edit.language]));
+      const edits = auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => [edit.path, edit.language]));
       expect(Object.fromEntries(edits)).toEqual(Object.fromEntries(ROUTES.filter(([, dialect]) => dialect !== undefined)));
     } finally {
       await bridge.close();

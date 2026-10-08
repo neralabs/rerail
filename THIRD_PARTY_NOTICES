@@ -26,7 +26,7 @@ SOFTWARE.
 ----------------------------------------------------------------------
 
 Bundled rule documents: palantir/tslint core rules
-Files: policies/executable-policy-dsl/rules/opt-in/tslint/*.json
+Files: code-rule-dsl/rules/opt-in/tslint/*.json
 Revision: 285fc1db18d1fd24680d6a2282c6445abf1566ee
 Source: https://github.com/palantir/tslint
 License: Apache-2.0
@@ -34,7 +34,7 @@ License: Apache-2.0
 Copyright 2013 Palantir Technologies, Inc.
 
 Modified by the Rerail authors: each rule is re-implemented as a rerail.policy/v1
-document in Rerail's policy DSL, with TSLint's default options. Rule names and
+document in Rerail's code-rule DSL, with TSLint's default options. Rule names and
 the rule descriptions are taken from TSLint's rule metadata. TSLint ships no
 NOTICE file.
 
@@ -97,7 +97,7 @@ END OF TERMS AND CONDITIONS
 ----------------------------------------------------------------------
 
 Bundled data: Unicode Character Database 15.1.0 (character names and name aliases)
-Files: native/src/policy_dsl/value/names/names.bin
+Files: native/src/code_rule_dsl/value/names/names.bin
 Source: https://www.unicode.org/Public/15.1.0/ucd/ (UnicodeData.txt as CPython 3.13's unicodedata reads it, and NameAliases.txt)
 License: Unicode License v3
 
@@ -144,13 +144,13 @@ authorization of the copyright holder.
 ----------------------------------------------------------------------
 
 Bundled data: ESLint's globals per ecmaVersion and for CommonJS
-Files: native/src/policy_dsl/scope/data/es_globals.json
+Files: native/src/code_rule_dsl/scope/data/es_globals.json
 Source: eslint 10.11.0, conf/globals.js and conf/ecma-version.js (https://github.com/eslint/eslint)
 License: MIT
 
 Modified by the Rerail authors: the globals languageOptions resolves for each
 ecmaVersion and for sourceType "commonjs" are written as JSON by
-native/src/policy_dsl/scope/data/generate_es_globals.mjs.
+native/src/code_rule_dsl/scope/data/generate_es_globals.mjs.
 
 Copyright OpenJS Foundation and other contributors, <www.openjsf.org>
 
@@ -175,13 +175,13 @@ THE SOFTWARE.
 ----------------------------------------------------------------------
 
 Bundled data: Ruff's builtin and magic-global names per Python version
-Files: native/src/policy_dsl/scope/data/python_builtins.json
+Files: native/src/code_rule_dsl/scope/data/python_builtins.json
 Source: ruff 0.16.9, crates/ruff_python_stdlib/src/builtins.rs (https://github.com/astral-sh/ruff)
 License: MIT
 
 Modified by the Rerail authors: the names Ruff resolves at module level without
 a binding, for each Python minor version Ruff targets, are written as JSON by
-native/src/policy_dsl/scope/data/generate_python_builtins.py.
+native/src/code_rule_dsl/scope/data/generate_python_builtins.py.
 
 MIT License
 
@@ -208,7 +208,7 @@ SOFTWARE.
 ----------------------------------------------------------------------
 
 Bundled data: typescript-eslint's TypeScript lib globals
-Files: native/src/policy_dsl/scope/data/ts_lib_globals.json
+Files: native/src/code_rule_dsl/scope/data/ts_lib_globals.json
 Source: @typescript-eslint/scope-manager 8.70.1, dist/lib (https://github.com/typescript-eslint/typescript-eslint),
   which typescript-eslint generates from TypeScript's lib.*.d.ts files (https://github.com/microsoft/TypeScript)
 License: MIT (typescript-eslint); Apache-2.0 (TypeScript)
@@ -216,7 +216,7 @@ License: MIT (typescript-eslint); Apache-2.0 (TypeScript)
 Modified by the Rerail authors: the global variables the scope manager defines
 for each TypeScript lib, the namespaces each is valid in, and the libs each lib
 includes are written as JSON by
-native/src/policy_dsl/scope/data/generate_ts_lib_globals.mjs.
+native/src/code_rule_dsl/scope/data/generate_ts_lib_globals.mjs.
 
 MIT License
 
@@ -246,7 +246,7 @@ License, Version 2.0; the full text is under the palantir/tslint entry above.
 ----------------------------------------------------------------------
 
 Ported code: ast-grep-config 0.45.3 string case conversions
-Files: native/src/policy_dsl/matcher/transform/string_case.rs
+Files: native/src/code_rule_dsl/matcher/transform/string_case.rs
 Source: ast-grep-config 0.45.3, src/transform/string_case.rs (https://github.com/ast-grep/ast-grep)
 License: MIT
 
@@ -278,13 +278,13 @@ SOFTWARE.
 ----------------------------------------------------------------------
 
 Bundled data: typescript-eslint's JSX character entity table
-Files: native/src/policy_dsl/value/ecma/entities.rs
+Files: native/src/code_rule_dsl/value/ecma/entities.rs
 Source: @typescript-eslint/typescript-estree 8.70.1, dist/jsx/xhtml-entities.js (https://github.com/typescript-eslint/typescript-eslint)
 License: MIT
 
 Modified by the Rerail authors: the 253 names and their characters are
 written as a sorted Rust table of UTF-16 code units by
-native/src/policy_dsl/value/ecma/generate_entities.mjs.
+native/src/code_rule_dsl/value/ecma/generate_entities.mjs.
 
 MIT License
 
@@ -311,14 +311,14 @@ SOFTWARE.
 ----------------------------------------------------------------------
 
 Bundled data: eslint-utils' getStaticValue allowlists
-Files: native/src/policy_dsl/value/ecma/builtins.rs
+Files: native/src/code_rule_dsl/value/ecma/builtins.rs
 Source: @eslint-community/eslint-utils 4.10.1, index.mjs (https://github.com/eslint-community/eslint-utils)
 License: MIT
 
 Modified by the Rerail authors: builtinNames, callAllowed, callPassThrough
 and getterAllowed are evaluated from the package's source and written as
 sorted Rust lists of the paths that reach each function by
-native/src/policy_dsl/value/ecma/generate_builtins.mjs.
+native/src/code_rule_dsl/value/ecma/generate_builtins.mjs.
 
 MIT License
 

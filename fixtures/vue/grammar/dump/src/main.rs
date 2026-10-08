@@ -1,7 +1,7 @@
 //! Offline T1 helper for the Vue pack (`../measure.mjs` runs it; never CI).
 //!
 //! `rerail-vue-grammar-dump <grammar.dylib> [--repeat N]` loads `tree_sitter_vue` from the shared library, reads one
-//! file path per stdin line, parses each file with the tree-sitter 0.27.0 runtime Rerail's kernel links, and prints one
+//! file path per stdin line, parses each file with the tree-sitter 0.27.0 runtime Rerail's engine links, and prints one
 //! JSON line per file: `{ path, bytes, parseNs, error, nodes }`. `parseNs` is the fastest of N parses (default 3).
 //! `nodes` lists every node in preorder as `[kind, startByte, endByte, parent, field, flags]`, where `parent` indexes
 //! `nodes` (-1 for the root), `field` is the field name or null, and `flags` is 1 = ERROR, 2 = MISSING, 4 = extra,

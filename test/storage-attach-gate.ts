@@ -1,10 +1,10 @@
 import { vi } from "vitest";
 import * as native from "../src/native.js";
-import type { NativeBinding, NativePolicyDslWorkspace } from "../src/native.js";
+import type { NativeBinding, NativeCodeRuleDslWorkspace } from "../src/native.js";
 
 export interface GatedWorkspace {
   /** The real native workspace behind the proxy the code under test holds. */
-  readonly native: NativePolicyDslWorkspace;
+  readonly native: NativeCodeRuleDslWorkspace;
   /** Lets this workspace's storage attach start. */
   release(): void;
   /** Settles once the real attach has settled, either way. */
@@ -19,14 +19,14 @@ export interface StorageAttachGate {
   restore(): void;
 }
 
-/** Real native policy workspaces whose storage attach starts only when the test releases it. */
+/** Real native code-rule workspaces whose storage attach starts only when the test releases it. */
 export function gateStorageAttachments(): StorageAttachGate {
   const binding = native.loadNativeBinding();
   const workspaces: GatedWorkspace[] = [];
   const gate: StorageAttachGate = { gated: true, workspaces, restore: () => spy.mockRestore() };
   class Workspace {
     constructor() {
-      const inner = new binding.PolicyDslWorkspace();
+      const inner = new binding.CodeRuleDslWorkspace();
       const start = Promise.withResolvers<void>();
       const attached = Promise.withResolvers<void>();
       if (!gate.gated) start.resolve();
@@ -50,6 +50,6 @@ export function gateStorageAttachments(): StorageAttachGate {
   }
   const spy = vi
     .spyOn(native, "loadNativeBinding")
-    .mockReturnValue(Object.assign(Object.create(binding) as NativeBinding, { PolicyDslWorkspace: Workspace }));
+    .mockReturnValue(Object.assign(Object.create(binding) as NativeBinding, { CodeRuleDslWorkspace: Workspace }));
   return gate;
 }

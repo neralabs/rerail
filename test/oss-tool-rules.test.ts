@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { NativeSample } from "../src/native.js";
-import { CosineRuleRegistry } from "../src/registry.js";
+import { ConversationRuleRegistry } from "../src/registry.js";
 import { importScopedRules } from "../src/rule-bootstrap.js";
-import { parseCosineRule, type CosineRule, type MatchCondition } from "../src/rule-schema.js";
+import { parseConversationRule, type ConversationRule, type MatchCondition } from "../src/rule-schema.js";
 import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
 import { stableJsonText } from "../src/stable-json.js";
 
@@ -50,13 +50,13 @@ function regexes(condition: MatchCondition): string[] {
 }
 
 describe("oss-tool-rules pack", () => {
-  let registry: CosineRuleRegistry;
-  const rules = new Map<string, CosineRule>();
+  let registry: ConversationRuleRegistry;
+  const rules = new Map<string, ConversationRule>();
   const fired = (sample: NativeSample) => registry.match(sample, { respectRepeat: false }).map(match => match.ruleId);
 
   beforeAll(() => {
-    for (const record of pack) rules.set(record.id, parseCosineRule(record.rule, `rules[${record.id}]`));
-    registry = new CosineRuleRegistry({ modelPath: resolve("model") });
+    for (const record of pack) rules.set(record.id, parseConversationRule(record.rule, `rules[${record.id}]`));
+    registry = new ConversationRuleRegistry({ modelPath: resolve("model") });
     registry.replace([...rules.values()]);
   });
 
@@ -129,7 +129,7 @@ describe("oss-tool-rules import bundle", () => {
     try {
       expect(importScopedRules(catalog, bundle)).toBe(pack.length);
       expect(catalog.list().map(stored => stored.kind)).toEqual(pack.map(() => "conversation"));
-      expect(catalog.cosineRules().map(rule => rule.id).sort()).toEqual(enabled.map(id => `oss:${id}`).sort());
+      expect(catalog.conversationRules().map(rule => rule.id).sort()).toEqual(enabled.map(id => `oss:${id}`).sort());
     } finally {
       catalog.close();
     }

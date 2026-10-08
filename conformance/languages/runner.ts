@@ -3,10 +3,10 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, matchesGlob, relative, sep } from "node:path";
 import { z } from "zod";
-import type { PolicySourceLanguage } from "../../src/executable-policy.js";
-import { IGNORED_DIRECTORIES, languageFor } from "../../src/executable-policy-enforcer.js";
-import { encodePolicyWorkspaceRequest, loadNativeBinding, nativePlatformSuffix, type NativeCompiledPolicyDsl } from "../../src/native.js";
-import { POLICY_AST_LANGUAGES, POLICY_DIALECTS, policyLanguageFamily } from "../../src/policy-languages.js";
+import type { CodeRuleSourceLanguage } from "../../src/code-rule.js";
+import { IGNORED_DIRECTORIES, languageFor } from "../../src/code-rule-enforcer.js";
+import { encodeCodeRuleWorkspaceRequest, loadNativeBinding, nativePlatformSuffix, type NativeCompiledCodeRuleDsl } from "../../src/native.js";
+import { CODE_RULE_AST_LANGUAGES, CODE_RULE_DIALECTS, codeRuleLanguageFamily } from "../../src/code-rule-languages.js";
 import { compareDeterministicStrings } from "../../src/stable-json.js";
 import { capabilitiesJson, INFORMATIONAL_FAILURE_CODES } from "../tslint/runner.js";
 import {
@@ -29,14 +29,14 @@ import {
 import { EXAMPLE_LIMIT, REPORT_FORMAT, type RuleRow, type SourceSummary, type SyntaxErrorLocation, type T4Report } from "./report.js";
 import { precisionRecall, scoreSource, type Point } from "./score.js";
 
-/** The production repository scan's batching and paging (`executable-policy-enforcer.ts`). */
-const SCAN_BATCH_FILES = 32;
-const SCAN_CHUNK_BYTES = 1024 * 1024;
+/** The production repository audit's batching and paging (`code-rule-enforcer.ts`). */
+const AUDIT_BATCH_FILES = 32;
+const AUDIT_CHUNK_BYTES = 1024 * 1024;
 const RESULT_PAGE_BYTES = 8 * 1024 * 1024;
 
 interface SourceFile {
   path: string;
-  language: PolicySourceLanguage;
+  language: CodeRuleSourceLanguage;
   source: string;
 }
 
@@ -56,65 +56,65 @@ const pageSchema = z.object({
 type Page = z.infer<typeof pageSchema>;
 
 interface Evaluation {
-  findings: Page["violations"];
+  violations: Page["violations"];
   failures: Page["failures"];
   ms: number;
 }
 
 /**
- * The repository scan's path through the production workspace: every policy added to one workspace, sources applied
+ * The repository audit's path through the production workspace: every code rule added to one workspace, sources applied
  * in 32-file / 1 MiB batches with global relations deferred, one closing apply, then results paged out.
  */
-async function evaluateWorkspace(policies: readonly NativeCompiledPolicyDsl[], files: readonly SourceFile[]): Promise<Evaluation> {
-  const workspace = new (loadNativeBinding().PolicyDslWorkspace)();
+async function evaluateWorkspace(codeRules: readonly NativeCompiledCodeRuleDsl[], files: readonly SourceFile[]): Promise<Evaluation> {
+  const workspace = new (loadNativeBinding().CodeRuleDslWorkspace)();
   const started = performance.now();
   try {
-    for (const policy of policies) workspace.addPolicy(policy);
+    for (const codeRule of codeRules) workspace.addCodeRule(codeRule);
     let revision = 0;
     let batch: SourceFile[] = [];
     let bytes = 0;
     const flush = async (): Promise<void> => {
       revision += 1;
-      await workspace.applyBufferAsync(encodePolicyWorkspaceRequest({ revision, files: batch, removed: [], deferGlobal: true, quiet: true }));
+      await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: batch, removed: [], deferGlobal: true, quiet: true }));
       batch = [];
       bytes = 0;
     };
     for (const file of files) {
       batch.push(file);
       bytes += Buffer.byteLength(file.source);
-      if (batch.length >= SCAN_BATCH_FILES || bytes >= SCAN_CHUNK_BYTES) await flush();
+      if (batch.length >= AUDIT_BATCH_FILES || bytes >= AUDIT_CHUNK_BYTES) await flush();
     }
     if (batch.length > 0) await flush();
     revision += 1;
-    await workspace.applyBufferAsync(encodePolicyWorkspaceRequest({ revision, files: [], removed: [], quiet: true }));
-    const findings: Page["violations"] = [];
+    await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: [], removed: [], quiet: true }));
+    const violations: Page["violations"] = [];
     const failures: Page["failures"] = [];
     for (let cursor = 0; ; ) {
       const page = pageSchema.parse(JSON.parse(await workspace.resultPageAsync(cursor, RESULT_PAGE_BYTES)));
-      findings.push(...page.violations);
+      violations.push(...page.violations);
       failures.push(...page.failures);
       if (page.done) break;
       if (page.cursor <= cursor) throw new Error("native result stream did not advance");
       cursor = page.cursor;
     }
-    return { findings, failures, ms: performance.now() - started };
+    return { violations, failures, ms: performance.now() - started };
   } finally {
     workspace.close();
   }
 }
 
 /**
- * How a check that is unsound under syntax errors (an error region could hide a binding it reads) skips a file the
+ * How a clause that is unsound under syntax errors (an error region could hide a binding it reads) skips a file the
  * grammar reads with errors. Those errors are T1's to classify, so such a failure is attributed to T1, not counted
  * as an engine failure, once the probe below confirms the grammar reports a syntax error in that file.
  */
 const SYNTAX_ERROR_FAILURE = { code: "source-incomplete", message: "file has syntax errors" } as const;
-/** The kernel's `source-partial` message names the first error region (`first at line L, column C`, both 1-based). */
+/** The engine's `source-partial` message names the first error region (`first at line L, column C`, both 1-based). */
 const FIRST_SYNTAX_ERROR = /first at line (\d+), column (\d+)$/u;
 
 /**
- * The first syntax error the grammar reports in each of `files` that skipped a check with `SYNTAX_ERROR_FAILURE`.
- * A probe check sound under errors (it matches `ERROR` nodes, which are never witnesses, so it reports nothing) is
+ * The first syntax error the grammar reports in each of `files` that skipped a clause with `SYNTAX_ERROR_FAILURE`.
+ * A probe clause sound under errors (it matches `ERROR` nodes, which are never witnesses, so it reports nothing) is
  * evaluated over those files through the same workspace path; its `source-partial` failure confirms the syntax error
  * and locates it.
  */
@@ -126,8 +126,8 @@ async function syntaxErrorLocations(loaded: LoadedPack, evaluation: Evaluation, 
   );
   const locations = new Map<string, SyntaxErrorLocation>();
   if (failed.size === 0) return locations;
-  const runtime = loadNativeBinding().PolicyDslRuntime;
-  const probes = POLICY_AST_LANGUAGES.filter(language => policyLanguageFamily(language) === loaded.pack.family).map(language =>
+  const runtime = loadNativeBinding().CodeRuleDslRuntime;
+  const probes = CODE_RULE_AST_LANGUAGES.filter(language => codeRuleLanguageFamily(language) === loaded.pack.family).map(language =>
     runtime.compile(
       JSON.stringify({
         format: "rerail.policy/v1",
@@ -152,25 +152,25 @@ async function syntaxErrorLocations(loaded: LoadedPack, evaluation: Evaluation, 
 
 interface CompiledRule {
   rule: PackRule;
-  /** The policy document's `id`, which every violation and failure of the rule carries as `ruleId`. */
+  /** The code rule document's `id`, which every violation and failure of the rule carries as `ruleId`. */
   policyId: string;
-  compiled: NativeCompiledPolicyDsl;
+  compiled: NativeCompiledCodeRuleDsl;
 }
 
-const policyDocumentSchema = z.object({
+const codeRuleDocumentSchema = z.object({
   id: z.string(),
   clauses: z.array(z.object({ id: z.string(), violation: z.object({ code: z.string() }).optional() })).min(1),
 });
 
-/** Compiles each rule's policy; a policy whose clauses report another code than the upstream rule is an error. */
+/** Compiles each rule's code rule; a code rule whose clauses report another code than the upstream rule is an error. */
 function compileRules(loaded: LoadedPack, rules: readonly PackRule[], errors: string[]): CompiledRule[] {
-  const runtime = loadNativeBinding().PolicyDslRuntime;
+  const runtime = loadNativeBinding().CodeRuleDslRuntime;
   const seen = new Map<string, string>();
   return rules.flatMap(rule => {
     const path = join(loaded.directory, rule.policy);
     try {
       const text = readFileSync(path, "utf8");
-      const document = policyDocumentSchema.parse(JSON.parse(text));
+      const document = codeRuleDocumentSchema.parse(JSON.parse(text));
       const other = seen.get(document.id);
       if (other !== undefined) throw new Error(`policy id ${document.id} is also ${other}'s`);
       seen.set(document.id, rule.id);
@@ -186,14 +186,14 @@ function compileRules(loaded: LoadedPack, rules: readonly PackRule[], errors: st
   });
 }
 
-/** Byte offset → upstream coordinates: the kernel's line (the family's linter's terminators), code points from line start. */
-function pointOf(finding: Page["violations"][number], sources: ReadonlyMap<string, Buffer>): Point {
-  if (finding.path === undefined || finding.span === undefined) throw new Error(`${finding.ruleId}: a finding without a path or span cannot be scored`);
-  const source = sources.get(finding.path);
-  if (source === undefined) throw new Error(`${finding.ruleId}: finding in ${finding.path}, which was not evaluated`);
-  const lineStart = finding.span.startByte - finding.span.startColumn;
-  const column = [...source.subarray(lineStart, finding.span.startByte).toString("utf8")].length + 1;
-  return { path: finding.path, line: finding.span.startLine + 1, column };
+/** Byte offset → upstream coordinates: the engine's line (the family's linter's terminators), code points from line start. */
+function pointOf(violation: Page["violations"][number], sources: ReadonlyMap<string, Buffer>): Point {
+  if (violation.path === undefined || violation.span === undefined) throw new Error(`${violation.ruleId}: a finding without a path or span cannot be scored`);
+  const source = sources.get(violation.path);
+  if (source === undefined) throw new Error(`${violation.ruleId}: finding in ${violation.path}, which was not evaluated`);
+  const lineStart = violation.span.startByte - violation.span.startColumn;
+  const column = [...source.subarray(lineStart, violation.span.startByte).toString("utf8")].length + 1;
+  return { path: violation.path, line: violation.span.startLine + 1, column };
 }
 
 /** What Rerail reported for one pack rule over one source. */
@@ -202,7 +202,7 @@ interface RuleActual {
   /** Failures other than `source-partial` and the syntax-error skips below. */
   engineFailures: number;
   partialPaths: Set<string>;
-  /** Files this rule's checks skipped with `SYNTAX_ERROR_FAILURE`, at the grammar's first syntax error. */
+  /** Files this rule's clauses skipped with `SYNTAX_ERROR_FAILURE`, at the grammar's first syntax error. */
   syntaxErrorFiles: Map<string, SyntaxErrorLocation>;
 }
 
@@ -220,7 +220,7 @@ interface SourceRun {
   summary: SourceSummary;
 }
 
-/** Collects each rule's findings and failures; `syntaxErrors` holds the probe-confirmed syntax-error files. */
+/** Collects each rule's violations and failures; `syntaxErrors` holds the probe-confirmed syntax-error files. */
 function collectActual(
   compiled: readonly CompiledRule[],
   evaluation: Evaluation,
@@ -228,19 +228,19 @@ function collectActual(
   syntaxErrors: ReadonlyMap<string, SyntaxErrorLocation>,
   actual: SourceRun["actual"],
 ): void {
-  const byPolicy = new Map(compiled.map(entry => [entry.policyId, entry.rule.id]));
+  const byCodeRule = new Map(compiled.map(entry => [entry.policyId, entry.rule.id]));
   const slot = (rule: string): RuleActual => {
     let entry = actual.get(rule);
     if (entry === undefined) actual.set(rule, (entry = { points: [], engineFailures: 0, partialPaths: new Set(), syntaxErrorFiles: new Map() }));
     return entry;
   };
   for (const entry of compiled) slot(entry.rule.id);
-  for (const finding of evaluation.findings) {
-    const rule = byPolicy.get(finding.ruleId);
-    if (rule !== undefined) slot(rule).points.push(pointOf(finding, sources));
+  for (const violation of evaluation.violations) {
+    const rule = byCodeRule.get(violation.ruleId);
+    if (rule !== undefined) slot(rule).points.push(pointOf(violation, sources));
   }
   for (const failure of evaluation.failures) {
-    const rule = failure.ruleId === undefined ? undefined : byPolicy.get(failure.ruleId);
+    const rule = failure.ruleId === undefined ? undefined : byCodeRule.get(failure.ruleId);
     if (rule === undefined) continue;
     const located = failure.path === undefined ? undefined : syntaxErrors.get(failure.path);
     if (INFORMATIONAL_FAILURE_CODES.has(failure.code)) {
@@ -252,7 +252,7 @@ function collectActual(
 }
 
 function familyLanguages(loaded: LoadedPack): Set<string> {
-  return new Set(Object.values(POLICY_DIALECTS).filter(dialect => dialect.family === loaded.pack.family).map(dialect => dialect.label));
+  return new Set(Object.values(CODE_RULE_DIALECTS).filter(dialect => dialect.family === loaded.pack.family).map(dialect => dialect.label));
 }
 
 /** The recording at `path`, checked against the pack's pins, or why it cannot be used. */
@@ -412,7 +412,7 @@ export interface RunOptions {
   date: string;
 }
 
-function kernelInfo(): { path: string; version: string } {
+function engineInfo(): { path: string; version: string } {
   const path = process.env.RERAIL_NATIVE_KERNEL_PATH ?? join(RERAIL_ROOT, "native", `omp_cosine_rules.${nativePlatformSuffix()}.node`);
   let built = "";
   try {
@@ -531,7 +531,7 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
     pack: pack.pack,
     tier: "t4-rules",
     date: options.date,
-    kernel: kernelInfo(),
+    kernel: engineInfo(),
     corpora: pack.corpora.map(({ name, repository, commit }) => ({ name, repository, commit })),
     tools: pack.tools,
     ticket: pack.ticket,

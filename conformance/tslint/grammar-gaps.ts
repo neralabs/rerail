@@ -4,9 +4,9 @@ import { applyToWorkspace, capabilitiesJson, PARSE_FAILURE_CODES } from "./runne
 
 /**
  * Constructs that TSLint fixtures (or ports) suggested tree-sitter-typescript cannot handle. Each is checked two
- * ways: tsc (is it valid TypeScript? syntax and grammar diagnostics only, codes 1xxx and 17xxx-18xxx) and the kernel
+ * ways: tsc (is it valid TypeScript? syntax and grammar diagnostics only, codes 1xxx and 17xxx-18xxx) and the engine
  * (does the file parse, or does `misparse` match, showing a tree shape TypeScript would not build).
- * A `grammar-gap` is valid TypeScript that the kernel rejects or misparses; anything tsc rejects is a fixture artifact.
+ * A `grammar-gap` is valid TypeScript that the engine rejects or misparses; anything tsc rejects is a fixture artifact.
  */
 export interface GrammarProbe {
   id: string;
@@ -69,7 +69,7 @@ function tscErrors(code: string): string[] {
     .map(diagnostic => `TS${diagnostic.code} ${ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")}`);
 }
 
-async function kernelVerdict(probe: GrammarProbe): Promise<GrammarProbeResult["kernel"]> {
+async function engineVerdict(probe: GrammarProbe): Promise<GrammarProbeResult["kernel"]> {
   const binding = loadNativeBinding();
   const rule = probe.misparse ?? { kind: "program" };
   const document = JSON.stringify({
@@ -81,9 +81,9 @@ async function kernelVerdict(probe: GrammarProbe): Promise<GrammarProbeResult["k
     scope: { include: ["**/*"], exclude: [] },
     clauses: [{ id: "probe", forbid: { ast: { language: "typescript", rule } }, violation: { anchor: "witness.span", code: "PROBE", message: "probe" } }],
   });
-  const workspace = new binding.PolicyDslWorkspace();
+  const workspace = new binding.CodeRuleDslWorkspace();
   try {
-    workspace.addPolicy(binding.PolicyDslRuntime.compile(document, "json", capabilitiesJson()));
+    workspace.addCodeRule(binding.CodeRuleDslRuntime.compile(document, "json", capabilitiesJson()));
     const payload = JSON.stringify({ revision: 1, files: [{ path: "probe.ts", language: "typescript", source: probe.code }], removed: [] });
     const { evaluation } = JSON.parse(await applyToWorkspace(workspace, payload)) as { evaluation: { violations: unknown[]; failures: Array<{ code: string }> } };
     // `source-partial` (clauses ran around the errors) and `source-incomplete` (a clause skipped the file) both mean
@@ -96,13 +96,17 @@ async function kernelVerdict(probe: GrammarProbe): Promise<GrammarProbeResult["k
   }
 }
 
+function verdictOf(tscErrorCount: number, engine: GrammarProbeResult["kernel"]): GrammarProbeResult["verdict"] {
+  if (engine === "parses") return "not a gap";
+  return tscErrorCount > 0 ? "fixture-artifact" : "grammar-gap";
+}
+
 export async function runGrammarProbes(): Promise<GrammarProbeResult[]> {
   const results: GrammarProbeResult[] = [];
   for (const probe of GRAMMAR_PROBES) {
     const errors = tscErrors(probe.code);
-    const kernel = await kernelVerdict(probe);
-    const verdict = errors.length > 0 ? (kernel === "parses" ? "not a gap" : "fixture-artifact") : kernel === "parses" ? "not a gap" : "grammar-gap";
-    results.push({ ...probe, tscErrors: errors, kernel, verdict });
+    const engine = await engineVerdict(probe);
+    results.push({ ...probe, tscErrors: errors, kernel: engine, verdict: verdictOf(errors.length, engine) });
   }
   return results;
 }

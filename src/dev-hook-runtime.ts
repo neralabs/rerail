@@ -2,7 +2,7 @@ import { join } from "node:path";
 import type { AdapterSession, RerailEventLoop } from "./adapter-contract.js";
 import { ingestRerailDevEvent, recordRerailDevReceipt, resolveRerailWorkspaceRoute } from "./dev-routing.js";
 import {
-  bindSteeringReceipt,
+  bindSteerReceipt,
   withSessionLock,
   type HookHost,
   type HookOutput,
@@ -30,6 +30,6 @@ export async function runDevHostHook(
       workspaceRoot: instance.workspaceRoot,
     };
     const output = await handle({ ingest: event => ingestRerailDevEvent(instance, event, configuration) }, storageRoot);
-    return bindSteeringReceipt(output, receiptId => recordRerailDevReceipt(instance, session, receiptId));
+    return bindSteerReceipt(output, receiptId => recordRerailDevReceipt(instance, session, receiptId));
   });
 }

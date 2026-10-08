@@ -2,12 +2,12 @@
 
 Scores `rerail.policy/v1` ports of the TSLint core rules against TSLint's own rule test fixtures
 (`test/rules/**/*.lint` at a pinned palantir/tslint SHA). Each rule gets an objective verdict, so the
-answer to "can the policy DSL express this rule?" rests on fixture evidence.
+answer to "can the code-rule DSL express this rule?" rests on fixture evidence.
 
 **Equivalence set: 163 core rules, 14 excluded, 149 scored.** The 14 pure formatter rules (align, eofline, indent,
 jsdoc-format, max-line-length, no-consecutive-blank-lines, no-trailing-whitespace, one-line, semicolon,
 space-before-function-paren, space-within-parens, trailing-comma, typedef-whitespace, whitespace) were removed from
-the equivalence set by decision on 2026-09-23: whitespace and layout belong to a formatter, not the policy DSL. They
+the equivalence set by decision on 2026-09-23: whitespace and layout belong to a formatter, not the code-rule DSL. They
 are listed in `excluded-rules.json` with that reason; the harness never evaluates them, and reports and summaries list
 them separately instead of counting them as `NO_PORT`. Other TSLint "Format"-category rules (quotemark, new-parens,
 arrow-parens, import-spacing, linebreak-style, no-irregular-whitespace, number-literal-format, newline-before-return)
@@ -18,7 +18,7 @@ stay in. Reports committed before the decision still show the formatter rules.
 ```sh
 just rerail-conformance fetch                  # once; sparse, shallow checkout into tmp/tslint-fixtures (idempotent)
 just rerail-conformance --rule no-var-keyword  # evaluate one port, print every miss/extra with line text and caret
-just rerail-conformance --rule quotemark --ends   # also list findings whose start matches but end differs
+just rerail-conformance --rule quotemark --ends   # also list violations whose start matches but end differs
 RERAIL_TSLINT_PORTS=<dir> just rerail-conformance --rule curly   # score scratch copies of the ports instead of rules/
 just rerail-conformance golden                 # golden gate only: every golden rule meets its golden.json entry
 just rerail-conformance --label all --no-corpus # all rules; writes the consolidated report + summary (see below)
@@ -52,8 +52,8 @@ conformance/tslint/
   audit.ts                          PASS honesty classes (genuine / bounded / fixture-fit / option-baked / requires-config / poisoned)
   rename.ts poison.ts               identifier rename of fixtures and the normal-vs-renamed score comparison
   literal-scan.ts                   identifier literals in ports that only the fixtures use
-  grammar-gaps.ts                   constructs checked against tsc and the kernel (valid TS the grammar rejects)
-  engine-probes.ts                  minimal repros of kernel relation/pattern behaviour vs upstream ast-grep
+  grammar-gaps.ts                   constructs checked against tsc and the engine (valid TS the grammar rejects)
+  engine-probes.ts                  minimal repros of engine relation/pattern behaviour vs upstream ast-grep
   consolidated.ts                   effective verdicts, primitive histogram, type-layer needs
   port-size.ts                      port size metrics: bytes, docs, checks, relation/not/any/all nodes, rule depth
   summary.ts                        one-row-per-rule summary JSON and the `--compare` delta
@@ -73,7 +73,7 @@ A full run writes, relative to the repo root:
 | `report-<date>-<label>.json` | `tmp/rerail-conformance/` (gitignored) | no: ~3.5 MB of per-fixture detail, regenerable |
 
 `docs/design/data_history/` is the one `data_history/` directory `.gitignore` does not ignore. Every full run also
-re-runs the grammar-gap and engine probes against the current kernel and puts them in the report.
+re-runs the grammar-gap and engine probes against the current engine and puts them in the report.
 
 The **summary** has one scalar row per rule: raw and effective verdict, TP/FP/FN, engine failures, partial files,
 primary primitive, eval ms, and the port's size (`port-size.ts`, summed over the default doc and every override):
@@ -107,12 +107,12 @@ Automatic, per rule:
 | `PASS` | every evaluated fixture matches exactly: no misses, no extras, no engine failures |
 | `PARTIAL` | anything else; report shows TP/FP/FN, precision/recall, end-position agreement |
 
-`source-partial` is not an engine failure. The kernel reports it for a file with syntax errors when it still ran
-the AST checks outside the error regions. Findings lost inside a region already count as FNs, so TP/FP/FN decide
+`source-partial` is not an engine failure. The engine reports it for a file with syntax errors when it still ran
+the AST clauses outside the error regions. Violations lost inside a region already count as FNs, so TP/FP/FN decide
 the verdict. The report lists these files per rule: `Np` in the rules table, and `partial files` plus `PARTIAL`
-lines in `--rule`. `source-incomplete` means a check that is unsound under errors skipped the file, and it still
+lines in `--rule`. `source-incomplete` means a clause that is unsound under errors skipped the file, and it still
 counts as an engine failure (`+Ne`).
-| `COMPILE_ERROR` | a port document fails `PolicyDslRuntime.compile` (message shown) |
+| `COMPILE_ERROR` | a port document fails `CodeRuleDslRuntime.compile` (message shown) |
 | `NO_PORT` | no default doc (pack doc or `rules/<rule>.json`) and no overrides |
 
 Manual, from `rules/<rule>.verdict.json` (never read for a golden rule; `golden.json` carries its notes). Its verdict replaces the automatic one in the report; the automatic
@@ -134,13 +134,13 @@ metrics stay visible.
   cross-file resolution, or file bytes and encoding.
 - `AUTO`: use the automatic verdict. Add the sidecar anyway when the reason is worth recording (for a PASS that is a
   stand-in, `primitive` names what a genuine port would need).
-- `primitive` is the ONE capability whose absence accounts for the most unmatched findings on valid code. Invalid
+- `primitive` is the ONE capability whose absence accounts for the most unmatched violations on valid code. Invalid
   fixture syntax (`fixture-artifact`) is primary only when it is the sole blocker; `grammar-gap` counts as a real
   blocker, because real code hits it too. Everything else the reason mentions goes in `secondary`.
 - Vocabulary: `constraints` (single-metavar predicate) · `metavar-compare` (ordering/equality between two captures) ·
   `utils` · `stopBy-rule` · `shared-metavar-env` · `field` · `nthChild/position` · `per-subrule-dialect` ·
-  `finding-anchor:capture` (finding starts at a capture group or sub-span, i.e. what lookbehind would give) ·
-  `finding-anchor:node-end` (finding starts at a node's end) · `regex-ast-context` (keep or drop regex matches by the
+  `finding-anchor:capture` (violation starts at a capture group or sub-span, i.e. what lookbehind would give) ·
+  `finding-anchor:node-end` (violation starts at a node's end) · `regex-ast-context` (keep or drop regex matches by the
   enclosing AST node) · `count-aggregate` · `file-name` · `file-bytes` · `cross-file` · `scope-graph` · `control-flow` ·
   `constant-eval` · `type-checker` · `trivia/whitespace` · `jsdoc-parse` · `tslint-disable` · `fixture-artifact` ·
   `grammar-gap` · `harness-bug`.
@@ -176,7 +176,7 @@ structure the rule is about. Two checks catch it:
   string contents and comments are untouched. Protected: keywords, names declared in TypeScript's `lib.es*.d.ts`, a
   host/React list, identifier literals in the rule's TSLint source, and words and regex patterns from the variant's
   options. A rule whose TP/FP/FN moves is a poisoning candidate; rules that compare names lexically
-  (`NAME_ORDER_RULES` in `poison.ts`) move by construction. Renamer problems (changed TypeScript diagnostics or kernel
+  (`NAME_ORDER_RULES` in `poison.ts`) move by construction. Renamer problems (changed TypeScript diagnostics or engine
   error regions, names without a free replacement) are listed per file. The command exits 1 when a golden rule
   moves, and `rename.test.ts` runs the same gate for every golden rule.
 - `literals` lists identifier-like tokens in each port's patterns, contexts, selectors, regexes and templates that
@@ -187,7 +187,7 @@ structure the rule is about. Two checks catch it:
 ## Golden set
 
 The golden set is the ports Rerail ships, disabled, in the opt-in pack
-(`policies/executable-policy-dsl/rules/opt-in/tslint/<rule>.json`, rule id `tslint:<rule>`; see its README). The pack
+(`code-rule-dsl/rules/opt-in/tslint/<rule>.json`, rule id `tslint:<rule>`; see its README). The pack
 folder decides membership and holds each golden rule's default doc, so there is no `rules/<rule>.json` or
 `rules/<rule>.verdict.json` for it; its option-variant overrides stay in `rules/<rule>/`. `RERAIL_TSLINT_PORTS`
 replaces the non-golden defaults, the overrides and the sidecars, never a golden default: to change one, edit the
@@ -218,8 +218,8 @@ rule keeps a port default or sidecar in `rules/`.
 1. Write one document per rule, plus per-variant overrides only where options differ.
 2. Don't invent engine features. If the DSL can't express part of a rule, write the best partial port anyway. Then
    add a sidecar that names the missing primitive and cites the fixture lines that prove it.
-3. Findings are matched on **start position** (line and UTF-16 column, exactly as TSLint reports). End positions
-   are scored separately (the `end` column). The kernel reports the whole matched node, so match the node that
+3. Violations are matched on **start position** (line and UTF-16 column, exactly as TSLint reports). End positions
+   are scored separately (the `end` column). The engine reports the whole matched node, so match the node that
    starts where TSLint's failure starts. For example, `pattern: "var"` matches the bare `var` keyword token.
 4. Don't tune a port to one fixture's quirks. The same doc must stay sensible on real code: `--corpus web/src`
    runs it over the whole frontend.
@@ -230,11 +230,11 @@ rule keeps a port default or sidecar in `rules/`.
   multi-line `~~~` continuations, `~nil` zero-width marks, `[0]`-style ids, `name % ('arg')` message templates,
   the first-line `[typescript]: <range>` gate, and `#if typescript` blocks. Version checks treat TypeScript as
   4.0.2, TSLint's last pinned version, so fixtures gated to older TypeScript are skipped.
-- Each fixture file is evaluated in its own `PolicyDslWorkspace`, the same API and `tryApply`/`applyAsync` path
+- Each fixture file is evaluated in its own `CodeRuleDslWorkspace`, the same API and `tryApply`/`applyAsync` path
   the enforcer uses. Snapshot path: `<rule>/<variant>/<file>` without `.lint`, so scope globs see the real
   extension (`.ts`, `.tsx`, `.d.ts`).
 - Language labels: `.tsx` → `tsx`; `.js`, `.jsx`, `.mjs` and `.cjs` → `javascript`; everything else → `typescript`.
-  Policies remain `typescript`, so they compile across TypeScript, TSX, and JavaScript dialects; JavaScript fixtures
+  Code rules remain `typescript`, so they compile across TypeScript, TSX, and JavaScript dialects; JavaScript fixtures
   use the JavaScript grammar and TSLint's `jsRules` options.
 - **Fixes are not scored.** When a port document declares `violation.fix` and a fixture has a TSLint `<file>.fix`,
   `--rule` applies every emitted fix the way TSLint's `Replacement.applyAll` does (by end, then start, descending)
@@ -247,8 +247,8 @@ rule keeps a port default or sidecar in `rules/`.
 ### Fixture quirks to know
 
 - **Syntax errors.** If a fixture has a syntax error (some are deliberate, e.g. `quotemark/invalid-*`, and some
-  are accidental, e.g. `quotemark/jsx-*` never closes a paren), the kernel reports only the AST witnesses outside
-  the error regions and marks the file `source-partial` (`PARTIAL` lines). A check whose result an error could flip
+  are accidental, e.g. `quotemark/jsx-*` never closes a paren), the engine reports only the AST witnesses outside
+  the error regions and marks the file `source-partial` (`PARTIAL` lines). A clause whose result an error could flip
   (`inside`/`precedes`/`follows` under a `not`, or a `not` inside one of them) skips the file with
   `source-incomplete`
   instead (`ENGINE` lines). TSLint's parser recovers and still reports, so failures inside an error region show up
@@ -268,5 +268,5 @@ rule keeps a port default or sidecar in `rules/`.
   the bindings made so far, and a relation binds from the first related node that matches (no backtracking).
   Composite terms (`all`/`any`/`not`) run before relational ones in the same rule object. A contextual pattern
   matches its `selector` node alone; the `context` only guides parsing.
-- **Kernel behavior.** A sub-rule that uses a tsx-only kind such as `jsx_attribute` never matches on `.ts` files:
+- **Engine behavior.** A sub-rule that uses a tsx-only kind such as `jsx_attribute` never matches on `.ts` files:
   it drops out of an `any` and satisfies a `not`. The rest of the rule still fires on `.ts`.

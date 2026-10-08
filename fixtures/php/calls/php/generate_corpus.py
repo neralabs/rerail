@@ -1,5 +1,5 @@
 """Runs PHPStan's call-target reflection (rerail-fixtures/php/calls/php/phpstan) over sampled PHP corpora
-for `benchmark_php_calls_corpus` (rerail/native/src/policy_dsl/calls/php_tests.rs). Offline, not
+for `benchmark_php_calls_corpus` (rerail/native/src/code_rule_dsl/calls/php_tests.rs). Offline, not
 in CI:
 
     python3 generate_corpus.py <composer project with phpstan/phpstan 2.2.16> <output.json> \

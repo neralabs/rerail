@@ -240,7 +240,7 @@ describe("daemon native client branch encoding", () => {
     });
     try {
       await client.initialize({ cwd: root, modelPath: resolve("model"), rules: [] });
-      const listed = await client.cosine({ action: "list" }) as { rules: Array<{ rule: { id: string } }> };
+      const listed = await client.conversationRules({ action: "list" }) as { rules: Array<{ rule: { id: string } }> };
       expect(listed.rules.map(entry => entry.rule.id)).toContain("branch-encoded");
     } finally {
       await client.close();
@@ -284,7 +284,7 @@ describe("daemon native client polling resilience", () => {
     expect(received).toEqual(["background"]);
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining("Rerail native runtime unavailable"));
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining("Rerail native runtime recovered"));
-    await expect(client.cosine({ action: "list" })).resolves.toEqual({ ok: true });
+    await expect(client.conversationRules({ action: "list" })).resolves.toEqual({ ok: true });
     await client.close();
   });
 
@@ -412,7 +412,7 @@ describe("daemon native client polling resilience", () => {
     // Probes back off while the daemon stays broken, and explicit tools still see the real fault.
     await vi.advanceTimersByTimeAsync(100 + 200 + 400);
     expect(operations.filter(operation => operation === "poll")).toHaveLength(3);
-    await expect(client.cosine({ action: "list" })).rejects.toThrow("database disk image is malformed");
+    await expect(client.conversationRules({ action: "list" })).rejects.toThrow("database disk image is malformed");
     expect(stderr).toHaveBeenCalledTimes(1);
 
     healthy = true;
@@ -446,7 +446,7 @@ describe("daemon native client polling resilience", () => {
     });
     await client.initialize({});
     await client.activate();
-    await expect(client.cosine({ action: "bogus" })).rejects.toThrow("unknown action");
+    await expect(client.conversationRules({ action: "bogus" })).rejects.toThrow("unknown action");
     await expect(client.ingest({ kind: "user-prompt", sessionId: "explicit", eventId: "next", text: "next" })).resolves.toEqual({ ok: true });
     await vi.advanceTimersByTimeAsync(300);
     expect(operations.filter(operation => operation === "poll")).toHaveLength(3);
@@ -468,7 +468,7 @@ describe("daemon native client polling resilience", () => {
     });
     await client.initialize({});
     await client.activate();
-    await expect(client.cosine({ action: "list" })).rejects.toThrow("Rerail native response has an invalid shape");
+    await expect(client.conversationRules({ action: "list" })).rejects.toThrow("Rerail native response has an invalid shape");
     expect(delivered).toEqual([]);
     await client.close();
   });

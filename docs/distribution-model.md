@@ -4,24 +4,24 @@
 
 Rerail ships as one customer-neutral local runtime. Customer identity, control-plane location, policy trust, release channel, and entitlement are supplied by a signed activation profile rather than compiled into the package.
 
-The policy kernel and latency-sensitive evaluation run on the customer's machine. Network services provide distribution, activation, entitlement renewal, and signed policy delivery; they are not in the evaluation path.
+The engine and latency-sensitive evaluation run on the customer's machine. Network services provide distribution, activation, entitlement renewal, and signed policy delivery; they are not in the evaluation path.
 
 The initial distribution channel is the restricted npm package `@neralabs/rerail`, served from a private Azure Artifacts feed until launch (see [Pre-launch registry](#pre-launch-registry)). A customer download portal may replace npm access management later without changing the runtime artifact or activation model.
 
 ## System shape
 
 ```text
-Harnesses                        Customer environment              Nera infrastructure
----------                        --------------------              -------------------
+Coding agents                    Customer environment              Nera infrastructure
+-------------                    --------------------              -------------------
 OMP / Pi -----------\
 Claude Code ---------+---------> local Rerail runtime <-----------> customer control plane
-Codex ---------------+           local policy kernel               (shared or dedicated)
+Codex ---------------+           local engine                      (shared or dedicated)
 Cursor --------------/                    ^
                                            |
                                            +----------------------- signed software updates
 ```
 
-Harness adapters normalize native lifecycle events and pass them to the same local runtime. Customer-specific behavior belongs in signed policy and configuration, not in adapter forks.
+Host adapters normalize native lifecycle events and pass them to the same local runtime. Customer-specific behavior belongs in signed policy and configuration, not in adapter forks.
 
 ## Distribution artifact
 
@@ -55,7 +55,7 @@ Each developer authenticates with their own organization-scoped, read-only perso
 
 Nobody outside the organization can install Rerail yet. The options considered, each set aside for now:
 
-- Public npmjs: publishes the compiled package, native kernels included, to anyone.
+- Public npmjs: publishes the compiled package, native engines included, to anyone.
 - A shared read token embedded in the install script: it leaks with the script and expires on a schedule nobody owns.
 - A read-through proxy in front of the feed: more infrastructure to run, secure, and keep up.
 - A feed in a public Azure DevOps project: Azure DevOps is retiring public projects.
@@ -97,7 +97,7 @@ The bytes must not be rebuilt between channels. Production publication uses npm 
 
 npm is the authenticated artifact transport for updates. Rerail uses the customer's existing npm authentication to resolve and install the restricted package; it never copies, logs, or sends npm credentials to a control plane.
 
-Harness configurations invoke the stable `rerail` launcher rather than a version-specific file. Managed versions live below the Rerail home directory:
+Coding-agent configurations invoke the stable `rerail` launcher rather than a version-specific file. Managed versions live below the Rerail home directory:
 
 ```text
 ~/.rerail/
@@ -122,7 +122,7 @@ rerail update rollback
 rerail events
 ```
 
-Updates are explicit. `rerail events`, the harness hooks, and the daemon run the active version and never contact a registry; a new version arrives only when a person runs `rerail update` (or `/rerail-update` inside OMP and Pi, `/rerail update` inside Claude Code). Auto-updating a machine's global package without consent is out of scope. A successful update becomes active only for newly started harness sessions; an already running event-loop process continues on its original version, but it evaluates nothing itself: like every managed client it sends events to the machine's one main daemon, which the first hook or session of the new version replaces (see "One main instance" in `docs/installation.md`).
+Updates are explicit. `rerail events`, the coding-agent hooks, and the daemon run the active version and never contact a registry; a new version arrives only when a person runs `rerail update` (or `/rerail-update` inside OMP and Pi, `/rerail update` inside Claude Code). Auto-updating a machine's global package without consent is out of scope. A successful update becomes active only for newly started coding-agent sessions; an already running event-loop process continues on its original version, but it evaluates nothing itself: like every managed client it sends events to the machine's one main daemon, which the first hook or session of the new version replaces (see "One main instance" in `docs/installation.md`).
 
 An update:
 
@@ -179,11 +179,11 @@ Activation exchanges a short-lived, one-use code for:
 - Product features and npm release channel.
 - Entitlement and offline-grace expiration.
 
-The device generates an Ed25519 key pair. Its private key and returned device credential are stored in macOS Keychain, Linux Secret Service, or Windows Credential Manager and are never placed in npm configuration, harness manifests, profile files, logs, or the package. The profile contains the RFC 7638 thumbprint of the public key, so copying a profile to another device fails verification.
+The device generates an Ed25519 key pair. Its private key and returned device credential are stored in macOS Keychain, Linux Secret Service, or Windows Credential Manager and are never placed in npm configuration, coding-agent manifests, profile files, logs, or the package. The profile contains the RFC 7638 thumbprint of the public key, so copying a profile to another device fails verification.
 
 `rerail profile status`, `rerail --profile <name> profile select`, and `rerail --profile <name> profile remove` inspect, select, and remove profiles. Removing a profile deletes its public activation state and its operating-system credential-store entry.
 
-Harness configuration invokes only the stable local `rerail` launcher:
+Coding-agent configuration invokes only the stable local `rerail` launcher:
 
 ```json
 {
@@ -283,7 +283,7 @@ Customer data must never be combined implicitly. Profiles have separate credenti
 ~/.rerail/profiles/<customer>/<deployment>/
 ```
 
-A managed harness binding may select a profile explicitly:
+A managed coding-agent binding may select a profile explicitly:
 
 ```sh
 rerail --profile acme events

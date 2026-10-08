@@ -4,21 +4,21 @@ Status: the predicate-aware index supersedes the initial kind/literal implementa
 
 ## Goal
 
-Rerail should use a revision-correct structural index to select where an AST policy could match, then run its existing matcher only on those candidates—preserving findings, captures, and failure handling.
+Rerail should use a revision-correct structural index to select where an AST code rule could match, then run its existing matcher only on those candidates—preserving violations, captures, and failure handling.
 
-This is an execution optimization, not a new policy language or matcher.
+This is an execution optimization, not a new code-rule language or matcher.
 
 Source: *Rerail indexing and matching*, September 2026, especially slides 35 and 39. Local PDF: `/Users/jeff/Downloads/Rerail indexing and matching exploration.pdf`.
 
 ## Reference behavior before Phase A
 
-The document simplifies the original filtering. In the reference `rerail/native/src/policy_dsl/workspace.rs`:
+The document simplifies the original filtering. In the reference `rerail/native/src/code_rule_dsl/workspace.rs`:
 
-- `make_file()` filters policies by scope and language.
+- `make_file()` filters code rules by scope and language.
 - `root_kinds()` extracts possible root kinds from patterns and combines them through `all` and `any`.
-- `Candidates.by_kind` dispatches relevant checks at each node; `unrestricted` retains checks without kind constraints.
+- `Candidates.by_kind` dispatches relevant clauses at each node; `unrestricted` retains clauses without kind constraints.
 - Incremental evaluation reuses eligible witnesses outside changed regions.
-- `evaluate_ast_file()` still traverses the entire tree and selects checks as it encounters each node.
+- `evaluate_ast_file()` still traverses the entire tree and selects clauses as it encounters each node.
 
 Phase A extends existing filtering into indexed candidate selection. It does not introduce filtering from scratch.
 
@@ -26,13 +26,13 @@ Phase A extends existing filtering into indexed candidate selection. It does not
 
 | Area | Required behavior |
 | --- | --- |
-| Policy preparation | Derive conservative anchor requirements from compiled matchers once, rather than repeatedly per file. Use normalized pattern structure, not searches over policy text. |
+| Code-rule preparation | Derive conservative anchor requirements from compiled matchers once, rather than repeatedly per file. Use normalized pattern structure, not searches over code-rule text. |
 | File indexing | After parsing, record preorder, parent/sibling/subtree relationships, kind postings, bounded exact node values, and free-text prefix postings. Keep the existing resident tree. |
-| File-level rejection | Skip a check's matching work when the file lacks a necessary anchor. The initial parse needed to build the index is still required. |
+| File-level rejection | Skip a clause's matching work when the file lacks a necessary anchor. The initial parse needed to build the index is still required. |
 | Node-level selection | Enumerate candidate match roots from postings instead of walking every node to discover them. |
 | Verification | Pass candidates to the existing `AstMatcher`. The index selects possibilities; the matcher decides matches and produces captures. |
 | Incremental updates | Update or rebuild the changed file's index before evaluation. Never reuse positions from its previous tree. Preserve existing witness invalidation rules. |
-| Fallback | Retain current evaluation for checks without safe anchors. Unsupported optimization must never become unsupported policy behavior. |
+| Fallback | Retain current evaluation for clauses without safe anchors. Unsupported optimization must never become unsupported code-rule behavior. |
 
 ## Example
 
@@ -60,18 +60,18 @@ Every actual match must be included in the candidate set. Extra candidates are a
 - `any`: retain candidates from every branch. An unanchored branch cannot be silently dropped.
 - `not`: do not treat the negated pattern's anchors as requirements of the outer match.
 - Relations: distinguish the matched root from anchors in ancestors, descendants, or surrounding code.
-- Ordering: preserve deterministic candidate order and deduplicate roots so findings and witness limits remain predictable.
+- Ordering: preserve deterministic candidate order and deduplicate roots so violations and witness limits remain predictable.
 - Incomplete input: syntax errors, interrupted indexing, and budget exhaustion remain explicit failures, not “no matches.”
 
 Budget accounting needs an explicit design decision. Today `visited_nodes` also drives work limits. Fewer candidate visits must not make index construction unmetered or silently redefine the existing limit. Completed semantic results must match; runtime-dependent budget outcomes must be evaluated separately and remain explicit.
 
 ## Acceptance criteria
 
-1. Semantic parity: indexed and existing execution produce identical completed findings, identities, spans, captures, and ordering across bundled AST policies. The document names all 80 AST queries as the parity gate; use the actual checkout's inventory when implementing.
+1. Semantic parity: indexed and existing execution produce identical completed violations, identities, spans, captures, and ordering across bundled AST code rules. The document names all 80 AST queries as the parity gate; use the actual checkout's inventory when implementing.
 2. Lifecycle correctness: parity survives edits introducing/removing anchors, shifting offsets, deleting files, and breaking/repairing syntax.
-3. Safe fallback: unanchorable checks continue working without policy changes.
-4. Measured work reduction: selective policies invoke the matcher on fewer roots. Separate index construction, candidate selection, and matching measurements.
-5. Net performance improvement: compare the same corpus and policies with indexing enabled/disabled. Include index-build cost, edit p50/p95, and additional resident memory.
+3. Safe fallback: unanchorable clauses continue working without code-rule changes.
+4. Measured work reduction: selective code rules invoke the matcher on fewer roots. Separate index construction, candidate selection, and matching measurements.
+5. Net performance improvement: compare the same corpus and code rules with indexing enabled/disabled. Include index-build cost, edit p50/p95, and additional resident memory.
 
 The document establishes no numerical Phase A speedup gate. Its recorded spike speedups are supporting evidence, not a promised Rerail result.
 
@@ -80,7 +80,7 @@ The document establishes no numerical Phase A speedup gate. Its recorded spike s
 - Replacing resident trees with tapes (Phase B).
 - Matching directly on tapes (Phase C).
 - Joins, counts, absence checks, or cross-file identity (Phase D and later).
-- Changing finding serialization to changed-file deltas; that is a separate bottleneck/change.
+- Changing violation serialization to changed-file deltas; that is a separate bottleneck/change.
 - Databases, external providers, or network calls in the edit path.
 - Claiming the 1 GB memory target is achieved in Phase A.
 
@@ -103,7 +103,7 @@ These are in-memory mechanisms over Rerail's existing tree, not the spike's SQL/
 
 File-level word filtering is not needed for correctness here: arbitrary interior/comment/string regexes can use complete node-text confirmation. It is not substituted for positional anchors. The optional S265 dictionary-trigram index is not added. Required-word extraction, byte-class/Bloom probes, persistent cross-file dictionaries, and a replacement matcher are not part of this implementation.
 
-`policy_dsl/anchors.rs` owns planning and the temporary index; `policy_dsl/anchors/text.rs` owns the conservative HIR analysis. `AstMatcher` retains its original ordering and capture behavior. Its regex arm now holds the same `regex::Regex` that `RegexMatcher` wraps and performs the identical `is_match(node.text())` operation, avoiding a second compiled regex solely for indexing. Compile-error presentation is preserved.
+`code_rule_dsl/anchors.rs` owns planning and the temporary index; `code_rule_dsl/anchors/text.rs` owns the conservative HIR analysis. `AstMatcher` retains its original ordering and capture behavior. Its regex arm now holds the same `regex::Regex` that `RegexMatcher` wraps and performs the identical `is_match(node.text())` operation, avoiding a second compiled regex solely for indexing. Compile-error presentation is preserved.
 
 ### Correctness argument
 
@@ -119,10 +119,10 @@ Every positive selection contains every possible matching root:
 
 ### Current proof and measurements
 
-- **Complete pinned corpus:** 5,725 files; all 79 AST-bearing policy documents / 80 queries. The independent standalone oracle compared 159,145 completed policy/file pairs and 120,753 ordered findings with zero mismatches. The same 16 known parser-incomplete pairs remain explicit.
-- **All-policy workspace:** 185 documents compiled, 100 registered for this corpus. Initial load and all 20 edits match the original baseline's finding hashes, statuses, and complete failure arrays. Initial findings: 169,014.
-- **Boundaries:** 98 native runtime cases, including dense Python/TypeScript vocabularies and long Unicode free text; explicit/default neighbor relations across sibling subtrees, punctuation and document boundaries; unrestricted fallback mixed with indexed checks; a multi-rule single-file node-budget boundary; and dense capturing patterns after selective same-node narrowing in both conjunction orders. The existing 56 integration/related cases and five Rust HIR-soundness tests, including a deterministic generated pattern/text cross-product, remain the broader proof.
-- **Real surface:** a temporary-SQLite enforcer performed repository scan → predicate-matching generated edit → repair, producing 0 → 1 → 0 findings with checked byte spans and captures. No daemon or plugin was enabled.
+- **Complete pinned corpus:** 5,725 files; all 79 AST-bearing code-rule documents / 80 queries. The independent standalone oracle compared 159,145 completed code-rule/file pairs and 120,753 ordered violations with zero mismatches. The same 16 known parser-incomplete pairs remain explicit.
+- **All-code-rule workspace:** 185 documents compiled, 100 registered for this corpus. Initial load and all 20 edits match the original baseline's violation hashes, statuses, and complete failure arrays. Initial violations: 169,014.
+- **Boundaries:** 98 native runtime cases, including dense Python/TypeScript vocabularies and long Unicode free text; explicit/default neighbor relations across sibling subtrees, punctuation and document boundaries; unrestricted fallback mixed with indexed clauses; a multi-rule single-file node-budget boundary; and dense capturing patterns after selective same-node narrowing in both conjunction orders. The existing 56 integration/related cases and five Rust HIR-soundness tests, including a deterministic generated pattern/text cross-product, remain the broader proof.
+- **Real surface:** a temporary-SQLite enforcer performed repository audit → predicate-matching generated edit → repair, producing 0 → 1 → 0 violations with checked byte spans and captures. No daemon or plugin was enabled.
 - **Regression sensitivity:** four isolated faulty native builds are rejected by the new boundary tests: reversed neighbor traversal, discarded unrestricted fallback, per-rule traversal charging, and discarded pre-narrowed pattern candidates. Both explicit and default neighbor cases fail the traversal mutant; all five targeted cases pass against the unmodified addon. The production addon stayed unchanged; mutation definitions, distinct addon hashes, and build/test/control reports are retained under `.rerail/phase-a-regression-proof/`.
 
 The CPU experiment compared the previous kind/literal index (`indexed-worker-cpu.node`) with the predicate index (`predicate-v1-profile.node`), using the same 538-file sample, catalog, and one edit. One warmup per variant, four balanced randomized pairs, seed 174239, a hard 60-second experiment deadline, and no retries or sample extensions were declared before running. It completed in 20.47 seconds. Every child preserved exact semantic hashes/statuses/failures.
@@ -152,7 +152,7 @@ The shared candidate cache now follows live file ownership rather than retaining
 
 The workspace benchmark now uses the runtime's single native-path resolver. Parent-run baseline and paired modes copy the selected binaries into unique private run snapshots before sampling. Every warmup and measured child reports its canonical loaded path and SHA-256, performs load-adjacent identity checks, and must match its expected pinned variant. Standalone child reports also identify the binary actually selected. Comparative mode rejects identical bytes, including copies at different paths; original-path rebuilds cannot change later samples. Private snapshots are removed on success and failure. Copying/fingerprinting setup is attributed separately from native-call timing. These checks identify pinned bytes, not source ancestry, and do not claim protection against adversarial swap-and-restore races.
 
-Follow-up proof: **9 Rust unit tests, 102 native runtime contracts, and 9 actual-CLI benchmark regressions passed**, with no CLI skips. All four new ownership regressions fail against isolated pre-fix source. A deterministic 8,191-subset churn probe retained one live candidate set and zero cache-only sets; final removal left zero payloads, keys, and bucket capacity. Another 500 language changes stayed bounded, and 500 forced-deadline staging no-ops in a disposable source copy preserved only the live set. Baseline, standalone-child, and paired CLI smoke runs preserved ordered findings, statuses, and complete failures across 12 edits, including a positive finding and the expected syntax failure, with both pair orders exercised. Default/all-feature Clippy with warnings denied, formatting, TypeScript, and scoped lint checks passed.
+Follow-up proof: **9 Rust unit tests, 102 native runtime contracts, and 9 actual-CLI benchmark regressions passed**, with no CLI skips. All four new ownership regressions fail against isolated pre-fix source. A deterministic 8,191-subset churn probe retained one live candidate set and zero cache-only sets; final removal left zero payloads, keys, and bucket capacity. Another 500 language changes stayed bounded, and 500 forced-deadline staging no-ops in a disposable source copy preserved only the live set. Baseline, standalone-child, and paired CLI smoke runs preserved ordered violations, statuses, and complete failures across 12 edits, including a positive violation and the expected syntax failure, with both pair orders exercised. Default/all-feature Clippy with warnings denied, formatting, TypeScript, and scoped lint checks passed.
 
 Local follow-up evidence: `.rerail/gabe-fix-proof/interner-evidence.json` and `.rerail/gabe-review-proof/addon-provenance/fix-evidence.json`. These are lifecycle/provenance correctness results, not a rerun of the performance experiment above or an RSS guarantee. Historical measurements and their qualifications remain unchanged.
 
@@ -191,8 +191,8 @@ Spike checkout: `/Users/jeff/workspace/ast-index-spike` (https://github.com/nera
 Evidence inspected:
 
 - `bench/tape_scan.py`: `Index.add_file()` builds inverted file postings for kinds, tokens, ancestor relationships, fields, and sibling relationships. `Index.candidates()` intersects necessary postings, starting with the smallest. `None` means unselective fallback; an empty set means no candidates. `run()` invokes the same native tree-sitter query matcher on all files and on candidate files.
-- `bench/query_decompose.py`: extracts necessary structural constraints; skips optional/alternative/negated constraints it cannot safely require. This is tree-sitter query decomposition, not a Rerail ast-grep policy compiler.
-- `results/tape_scan.txt`: recorded 567 queries, 199,469 files, zero match-count mismatches, 1.45x overall matching speedup, 1.63x constrained-query speedup, 110 fallback queries. Index construction was 251.47 seconds, reported separately from query timings. The benchmark compares aggregate match counts, not full finding/capture identity; do not overstate this as full Rerail semantic parity.
+- `bench/query_decompose.py`: extracts necessary structural constraints; skips optional/alternative/negated constraints it cannot safely require. This is tree-sitter query decomposition, not a Rerail ast-grep code-rule compiler.
+- `results/tape_scan.txt`: recorded 567 queries, 199,469 files, zero match-count mismatches, 1.45x overall matching speedup, 1.63x constrained-query speedup, 110 fallback queries. Index construction was 251.47 seconds, reported separately from query timings. The benchmark compares aggregate match counts, not full violation/capture identity; do not overstate this as full Rerail semantic parity.
 - `bench/tape_anchor.py:164-196`: `choose_anchor()` selects the rarest mandatory concrete pattern node kind and records parent-hop depth to recover candidate roots. Optional nodes/ancestors cannot serve as mandatory anchors. No suitable anchor yields fallback. This belongs to the tape/IR experiment, not a drop-in native Rerail implementation.
 - `results/interior_text_anchor_probe.txt`: indexed leaf versus unindexed interior text measurements. These are different structural queries, not a same-query end-to-end Rerail A/B benchmark.
 - `results/predicate_table_probe.txt`: adding 10 predicate postings reduced recorded probes from 3,018 ms to 38 ms with unchanged answers.
@@ -221,14 +221,14 @@ An attempted lookup of Go's AST inspector package at its unversioned documentati
 
 ### Decisions established during planning
 
-- The current checkout contains 185 policy documents and 80 AST query occurrences, all Python. These counts were measured from the bundled JSON policies. Cover all 80, plus TypeScript contract cases because the runtime supports that language.
+- The current checkout contains 185 code-rule documents and 80 AST query occurrences, all Python. These counts were measured from the bundled JSON code rules. Cover all 80, plus TypeScript contract cases because the runtime supports that language.
 - Keep the existing `AstMatcher` authoritative. Do not reorder its boolean branches or change capture binding.
 - Compile anchor plans once per AST query and reuse them, including synthetic AST leaves produced by `select_when`.
 - Use ast-grep-core 0.45.3's public `Pattern.node`, `PatternNode`, and `Pattern.strictness` APIs. No debug-string parsing, CLI subprocess, dependency fork, or replacement pattern parser is needed.
-- Build one temporary, borrowed-node index per evaluated file, shared across that file's checks. Drop it after evaluation. The current workspace evaluates dirty files and caches findings; retaining indexes for untouched files has no demonstrated benefit and would worsen resident memory.
+- Build one temporary, borrowed-node index per evaluated file, shared across that file's clauses. Drop it after evaluation. The current workspace evaluates dirty files and caches violations; retaining indexes for untouched files has no demonstrated benefit and would worsen resident memory.
 - Rebuild the changed file's temporary index after the existing incremental parse. Do not attempt incremental posting-list surgery in Phase A.
 - Retain current source/node/witness limits and failure precedence. Do not raise budgets to make the optimization pass.
-- No public runtime flag, policy syntax, findings schema, or production metrics schema change. Detailed counters and reference execution belong to benchmark/test instrumentation.
+- No public runtime flag, code-rule syntax, violations schema, or production metrics schema change. Detailed counters and reference execution belong to benchmark/test instrumentation.
 - User decision: measure the baseline first, then agree the numerical performance target before implementation. Do not substitute the spike's 1.45x result or an arbitrary percentage as the acceptance gate.
 
 ### Stage 1 — Establish a reproducible baseline and agree the performance gate
@@ -236,14 +236,14 @@ An attempted lookup of Go's AST inspector package at its unversioned documentati
 Deliverables:
 
 1. Inventory the 80 AST query occurrences by root-kind constraint, mandatory exact identifier, contextual pattern, boolean composition, relation, and fallback reason. Include synthetic `select_when` leaves.
-2. Pin the Rerail commit, policy catalog hash, grammar/dependency versions, data-layer corpus commit, machine/build settings, and corpus manifest. The document used data-layer `fce4dc7`; prefer that snapshot if available. This workspace's `nera-data-layer` directory is currently empty, so obtain a read-only sample checkout/artifact rather than silently benchmarking an empty directory.
+2. Pin the Rerail commit, code-rule catalog hash, grammar/dependency versions, data-layer corpus commit, machine/build settings, and corpus manifest. The document used data-layer `fce4dc7`; prefer that snapshot if available. This workspace's `nera-data-layer` directory is currently empty, so obtain a read-only sample checkout/artifact rather than silently benchmarking an empty directory.
 3. Define two workloads: a reproducible development subset preserving original paths/scopes, and the full data-layer corpus. Add a small TypeScript semantic fixture corpus separately; do not represent the Python-only catalog as TypeScript performance evidence.
 4. Run current release-mode Rerail on initial workspace load, full evaluation, and a fixed edit sequence. Include edits that add/remove anchors, shift UTF-8 spans, change enclosing context, and introduce/repair syntax errors.
 5. Measure parsing, reference traversal/matching, serialization, wall time, CPU, peak RSS, and output/failure counts. Separate process startup and filesystem collection from native evaluation, but report end-to-end scan/edit timings too.
 6. Use repeated, interleaved comparable runs, with warmup and run counts recorded. Do not treat failed or timed-out evaluations as successful faster scans.
 7. Agree and record numeric full-scan improvement, allowed edit p50/p95 regression, and peak-memory overhead before writing the optimization.
 
-The existing `rerail/benchmark/kernel.ts` benchmarks cosine matching, not AST policies; do not repurpose its numbers. Add a focused AST workspace benchmark if no reusable profiling harness is recovered.
+The existing `rerail/benchmark/conversation-engine.ts` benchmarks cosine matching, not AST code rules; do not repurpose its numbers. Add a focused AST workspace benchmark if no reusable profiling harness is recovered.
 
 Gate: reproducible baseline artifacts, anchor coverage report, and a user-approved numerical performance contract. Until then, Phase A is planned, not performance-qualified.
 
@@ -253,7 +253,7 @@ Use small throwaway Rust probes before expanding production code:
 
 1. Walk actual compiled `PatternNode` values for ordinary and contextual patterns. Prove which identifier terminals and paths are necessary under the installed Smart matching semantics. Exercise variadic metavariables, repeated captures, and comments.
 2. Build candidate postings over a live `SharedDoc`, recover exact candidate roots, and pass them to the unchanged matcher. Confirm lifetimes remain tied to that document without unsafe code or fabricated node handles.
-3. Demonstrate that `$OBJ.execute($$$ARGS)` narrows to relevant call roots, not all calls, and that comments or unrelated `execute` identifiers cannot become false findings.
+3. Demonstrate that `$OBJ.execute($$$ARGS)` narrows to relevant call roots, not all calls, and that comments or unrelated `execute` identifiers cannot become false violations.
 4. Check what normalized patterns do not expose: `PatternNode` does not carry field IDs. Do not infer mandatory fields or fixed parent-hop counts from source text when normalization/strictness can invalidate them. Use field pruning only with a proved mapping; otherwise broaden the candidate set and let the matcher verify.
 
 Gate: exact root/capture equality on the probes and a concrete safe node-access strategy. A root-kind-only optimization does not satisfy the complete Phase A goal.
@@ -262,9 +262,9 @@ Gate: exact root/capture equality on the probes and a concrete safe node-access 
 
 Primary implementation sites:
 
-- `rerail/native/src/policy_dsl/compile/`: attach derived anchor metadata to compiled AST queries without changing policy canonicalization or digests.
-- A small private module such as `rerail/native/src/policy_dsl/anchors.rs`: own anchor-plan algebra, index keys, and candidate selection. Keep it private and specific to this matcher, not a generic query framework.
-- `compile_query_plan()` in `policy_dsl/workspace.rs`: ensure cloned synthetic leaves reuse their compiled plans.
+- `rerail/native/src/code_rule_dsl/compile/`: attach derived anchor metadata to compiled AST queries without changing code-rule canonicalization or digests.
+- A small private module such as `rerail/native/src/code_rule_dsl/anchors.rs`: own anchor-plan algebra, index keys, and candidate selection. Keep it private and specific to this matcher, not a generic query framework.
+- `compile_query_plan()` in `code_rule_dsl/workspace.rs`: ensure cloned synthetic leaves reuse their compiled plans.
 
 Proposed conceptual contracts, not final Rust declarations:
 
@@ -302,18 +302,18 @@ Gate: every accepted plan demonstrably produces a superset of reference roots; u
 
 ### Stage 4 — Integrate indexed dispatch into the existing workspace lifecycle
 
-Primary site: `rerail/native/src/policy_dsl/workspace.rs`, especially `evaluate_ast_file()`.
+Primary site: `rerail/native/src/code_rule_dsl/workspace.rs`, especially `evaluate_ast_file()`.
 
 1. Keep existing scope/language filtering, input-budget checks, incremental parsing, syntax checks, and witness reuse.
 2. Build the temporary index once from the successfully parsed tree. Collect only useful posting categories; intern or borrow identifier text rather than copying source text per occurrence.
 3. Account for the traversal needed to build the index. Phase A removes repeated matching work; it does not eliminate the once-per-evaluated-file indexing traversal.
 4. Select candidate roots and combine them with existing changed-region eligibility and full invalidation of context-dependent matchers.
-5. Preserve DFS/preorder and per-node check order when merging candidates and fallback work. Deduplicate candidate roots without reordering matcher branches.
-6. Run the existing matcher, witness construction, and finding assembly unchanged.
-7. Keep unanchorable checks on a shared ordered fallback traversal, not one full tree walk per check.
-8. Ensure a no-candidate result clears obsolete witnesses/failures appropriately and updates synthetic leaf presence; it must not leave stale findings or cross-file conditions.
+5. Preserve DFS/preorder and per-node clause order when merging candidates and fallback work. Deduplicate candidate roots without reordering matcher branches.
+6. Run the existing matcher, witness construction, and violation assembly unchanged.
+7. Keep unanchorable clauses on a shared ordered fallback traversal, not one full tree walk per clause.
+8. Ensure a no-candidate result clears obsolete witnesses/failures appropriately and updates synthetic leaf presence; it must not leave stale violations or cross-file conditions.
 9. On file removal or language replacement, no borrowed index survives. Syntax errors, parser cancellation, and incomplete index construction must not publish a complete negative result.
-10. Keep existing policy registration timing: policies are registered before evaluation. This phase does not add live policy mutation to a workspace.
+10. Keep existing code-rule registration timing: code rules are registered before evaluation. This phase does not add live code-rule mutation to a workspace.
 
 Budget handling:
 
@@ -326,18 +326,18 @@ Gate: the production workspace uses indexed selection, including AST leaves of `
 
 ### Stage 5 — Prove semantic parity and lifecycle behavior
 
-Reuse the current reference evaluator in `policy_dsl/eval/` as an independent semantic oracle. Preserve it where it serves existing standalone APIs; do not silently optimize both sides of the parity comparison.
+Reuse the current reference evaluator in `code_rule_dsl/eval/` as an independent semantic oracle. Preserve it where it serves existing standalone APIs; do not silently optimize both sides of the parity comparison.
 
-Primary test file: `rerail/test/native-policy-dsl-runtime.test.ts`. Extend existing behavioral tests instead of duplicating their coverage.
+Primary test file: `rerail/test/native-code-rule-dsl-runtime.test.ts`. Extend existing behavioral tests instead of duplicating their coverage.
 
 Required evidence:
 
-- All 80 bundled AST queries on the pinned corpus, comparing full finding values: identities, paths, spans, captures, ordering, and variables—not just aggregate counts.
+- All 80 bundled AST queries on the pinned corpus, comparing full violation values: identities, paths, spans, captures, ordering, and variables—not just aggregate counts.
 - Focused adversarial cases for `any` with an unanchored branch, negation, contextual selectors, variadic and repeated metavariables, relation-only conditions, nested call shapes, and anonymous/named node distinctions.
 - Python and TypeScript behavior, with language-specific identifier kinds and field semantics.
 - Edits that add/remove the last anchor; unchanged-tree-shape token edits; UTF-8 byte shifts; enclosing-context changes; deletion/recreation; language replacement; syntax damage/recovery; and source/witness/node budget boundaries.
 - Existing cached `select_when` behavior, including removal of its last matching evidence and incomplete evidence.
-- Deterministic generated small trees/edit sequences if needed to exercise candidate-superset invariants; retain only tests that catch plausible missed/extra findings or lifecycle failures.
+- Deterministic generated small trees/edit sequences if needed to exercise candidate-superset invariants; retain only tests that catch plausible missed/extra violations or lifecycle failures.
 
 The existing test at approximately lines 1277–1290 asserts one-traversal `visitedNodes` equality. Remove the incidental traversal assertion rather than repinning it to the new implementation; retain its semantic parity and fallback coverage.
 
@@ -363,22 +363,22 @@ Validation from `rerail/`:
 
 ```sh
 npm run build:native
-npm run test:policy-dsl-runtime
+npm run test:code-rule-dsl-runtime
 npm run test:native
 npm run check:native
 npm run check
-npm run test:integration:policy-runtime
+npm run test:integration:code-rule-runtime
 ```
 
 Run broader existing Rerail checks once integration is stable. Apply repository ESLint to any changed TypeScript benchmark/test files. No web UI, FastAPI route, or generated API contract changes are planned.
 
-Exercise the real built Rerail scan/edit path on the sample workspace, beyond direct matcher tests. Record actual findings before and after a violating edit and its repair.
+Exercise the real built Rerail audit/edit path on the sample workspace, beyond direct matcher tests. Record actual violations before and after a violating edit and its repair.
 
 After proof, update this document and the existing changelog with the accepted implementation, exact benchmark results, and remaining fallback coverage. Remove throwaway probes and temporary reference-source scaffolding. Keep the reproducible benchmark, justified regression cases, and local raw reports/provenance needed to audit the results.
 
 ## Completion definition
 
-Phase A is complete when production Rerail uses safe file/root candidate selection, catalog and lifecycle parity pass, the user-approved qualification method is exercised and reported at its actual scope, and the real scan/edit path is exercised. The original wall-clock/RSS gates were replaced with the bounded CPU-work experiment documented below after the user identified competing workloads on this machine. The matcher, policy language, public finding contract, resident-tree architecture, and serialization contract remain unchanged.
+Phase A is complete when production Rerail uses safe file/root candidate selection, catalog and lifecycle parity pass, the user-approved qualification method is exercised and reported at its actual scope, and the real audit/edit path is exercised. The original wall-clock/RSS gates were replaced with the bounded CPU-work experiment documented below after the user identified competing workloads on this machine. The matcher, code-rule language, public violation contract, resident-tree architecture, and serialization contract remain unchanged.
 
 ## Session disposition
 
@@ -395,11 +395,11 @@ The session integration remains disabled through `.rerail/disabled`. These measu
 - Actual locked dependencies: ast-grep-core/language 0.45.3, tree-sitter 0.27.0, tree-sitter-python 0.25.0, tree-sitter-typescript 0.23.2. The existing capability document advertises Python `@0.23`; it is preserved unchanged, not treated as the authoritative build-version record.
 - macOS rejected the default stripped dylib with `mis-aligned LINKEDIT string pool`. Both reference and diagnostic addons use `CARGO_PROFILE_RELEASE_STRIP=none`; the repository release profile is unchanged. Reference addon SHA-256: `487da7522d64a6c8431d0c8cfb687bb519824afa22f1ecd2b9bb73bda86a2267`.
 - Each workload has one discarded warmup and five measured fresh child processes, with 20 edits per process. Filesystem caches are not flushed. Workloads run sequentially without simultaneous builds/tests. Later reference/indexed comparisons must interleave the two variants.
-- Edits cover ASCII/UTF-8 offset shifts, creation, required-identifier addition/removal, enclosing-function changes, syntax damage/recovery, and deletion. All result findings are hashed in original order with spans, captures, and variables. Failure arrays and statuses are retained separately.
-- Native call time includes scheduling, request decode, evaluation, and serialization of all resident findings. End-to-end initial time also includes collection/hashing, policy loading/compilation/registration, result validation, and observation. Edit end-to-end time includes request encoding and result validation/hashing. Neither is a matcher-only number.
-- CPU is process-wide. Peak RSS is each child process's high-water mark across initial load and edits; it includes resident trees, findings, JSON, and JavaScript allocations. Report its median and range, not an index-only allocation estimate.
+- Edits cover ASCII/UTF-8 offset shifts, creation, required-identifier addition/removal, enclosing-function changes, syntax damage/recovery, and deletion. All result violations are hashed in original order with spans, captures, and variables. Failure arrays and statuses are retained separately.
+- Native call time includes scheduling, request decode, evaluation, and serialization of all resident violations. End-to-end initial time also includes collection/hashing, code-rule loading/compilation/registration, result validation, and observation. Edit end-to-end time includes request encoding and result validation/hashing. Neither is a matcher-only number.
+- CPU is process-wide. Peak RSS is each child process's high-water mark across initial load and edits; it includes resident trees, violations, JSON, and JavaScript allocations. Report its median and range, not an index-only allocation estimate.
 
-`rerail/benchmark/policy-workspace.ts` is the reproducible runner. The native `policy-profile` feature adds stderr-only phase timings, matcher-call counts, and compiled-pattern/root-kind inventory. Default builds contain no profiling instrumentation. Diagnostic-build timings are attribution evidence, not authoritative speed measurements.
+`rerail/benchmark/code-rule-workspace.ts` is the reproducible runner. The native `code-rule-profile` feature adds stderr-only phase timings, matcher-call counts, and compiled-pattern/root-kind inventory. Default builds contain no profiling instrumentation. Diagnostic-build timings are attribution evidence, not authoritative speed measurements.
 
 Local evidence lives under ignored `.rerail/phase-a-baseline/`: manifests, corpus/source hashes, environment and build metadata, raw benchmark reports, compiled anchor inventory, and separate semantic probes. Keep these artifacts until the reference/indexed comparison is finished.
 
@@ -407,7 +407,7 @@ Example from `rerail/`, with Node 24 on `PATH`:
 
 ```sh
 RERAIL_NATIVE_KERNEL_PATH="$PWD/../.rerail/phase-a-baseline/reference.node" \
-  node --import tsx benchmark/policy-workspace.ts \
+  node --import tsx benchmark/code-rule-workspace.ts \
   --corpus ../.rerail/phase-a-baseline/corpus \
   --manifest ../.rerail/phase-a-baseline/subset-manifest.json \
   --iterations 5 --edits 20 \
@@ -418,7 +418,7 @@ RERAIL_NATIVE_KERNEL_PATH="$PWD/../.rerail/phase-a-baseline/reference.node" \
 
 ### Compiled anchor coverage
 
-All 185 policy documents compile. They contain 80 AST query occurrences, all Python; no contextual patterns or TypeScript queries. The sole `select_when` policy has regex-only leaves, so it adds no synthetic AST queries to this inventory.
+All 185 code-rule documents compile. They contain 80 AST query occurrences, all Python; no contextual patterns or TypeScript queries. The sole `select_when` code rule has regex-only leaves, so it adds no synthetic AST queries to this inventory.
 
 Actual compiled `root_kinds()` results restrict 76/80 queries. Four remain unrestricted:
 
@@ -449,7 +449,7 @@ Keep the complete-corpus run as failure-parity evidence, **not a successful scan
 
 Each row summarizes five measured fresh processes after one warmup. Initial times are medians. Edit percentiles pool 95 completed edits for the subset/parseable workloads; the five intentional syntax-break revisions are excluded from successful-latency percentiles and retained in the raw reports.
 
-| Workload | Initial status | Findings | Native initial | End-to-end initial | Native edit p50 / p95 | Median peak RSS |
+| Workload | Initial status | Violations | Native initial | End-to-end initial | Native edit p50 / p95 | Median peak RSS |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | Development subset, 538 files | Completed | 14,043 | 2.416 s | 2.633 s | 36.15 / 40.39 ms | 753.4 MiB |
 | Parseable supplement, 5,722 files | Completed | 168,978 | 22.414 s | 23.926 s | 440.41 / 499.40 ms | 6,908.8 MiB |
@@ -459,15 +459,15 @@ Each row summarizes five measured fresh processes after one warmup. Initial time
 - Completed edit end-to-end p50/p95: subset 64.52/72.21 ms; parseable supplement 791.92/866.59 ms.
 - Initial native ranges: subset 2.406–2.438 s; parseable supplement 22.336–22.485 s.
 - Peak RSS ranges: subset 741.3–885.0 MiB; parseable supplement 6,306.0–6,966.2 MiB. JavaScript/JSON allocation and GC contribute to variability; use comparable repeated-process medians, not one run.
-- Scope filtering registers 96 applicable policies for the subset and 100 for the full/parseable corpus, out of all 185 compiled documents. No policy scope was broadened to manufacture workload coverage.
-- Findings/statuses/failure arrays agree across all six processes for each workload. The completed workloads have zero unexpected failure revisions and detect every deliberate syntax failure.
+- Scope filtering registers 96 applicable code rules for the subset and 100 for the full/parseable corpus, out of all 185 compiled documents. No code-rule scope was broadened to manufacture workload coverage.
+- Violations/statuses/failure arrays agree across all six processes for each workload. The completed workloads have zero unexpected failure revisions and detect every deliberate syntax failure.
 - The defined edits touch the first accepted real file and a small synthetic Python file. These edit percentiles are evidence for that sequence, not a claim about every large-file edit.
 
 `subset-baseline.json`, `full-baseline.json`, `parseable-baseline.json`, and `baseline-summary.json` retain raw measurements and source/catalog hashes.
 
 ### Diagnostic attribution, not speed qualification
 
-One separately instrumented run of each completed workload produced exactly the same ordered finding hashes, statuses, and failure arrays as the reference for the initial load and all 20 edits.
+One separately instrumented run of each completed workload produced exactly the same ordered violation hashes, statuses, and failure arrays as the reference for the initial load and all 20 edits.
 
 | Initial phase | Subset | Parseable supplement |
 | --- | ---: | ---: |
@@ -481,9 +481,9 @@ One separately instrumented run of each completed workload produced exactly the 
 
 Request decode/scheduling and other assembly work are not all included in these phase timers. Diagnostic numbers are not subtracted from the uninstrumented baseline to claim a speedup.
 
-AST dispatch accounts for approximately 71% of the parseable initial apply. For this small-file edit sequence, full-result serialization accounts for more than 99% of measured native edit apply time: median 396.589 ms out of 396.901 ms on the parseable corpus. The initial result is 81,300,513 bytes, and the API serializes all resident findings again on each edit. Anchor indexing cannot remove that serialization cost; changed-file result deltas remain out of scope.
+AST dispatch accounts for approximately 71% of the parseable initial apply. For this small-file edit sequence, full-result serialization accounts for more than 99% of measured native edit apply time: median 396.589 ms out of 396.901 ms on the parseable corpus. The initial result is 81,300,513 bytes, and the API serializes all resident violations again on each edit. Anchor indexing cannot remove that serialization cost; changed-file result deltas remain out of scope.
 
-The separate TypeScript native probe records 0 → 1 → 1 → 0 findings across literal introduction, a UTF-8 prefix shift, and literal removal. The match's byte offsets advance by the exact 12-byte prefix. Comment text and an unrelated `execute` identifier do not become findings. This is semantic evidence only, not TypeScript catalog performance evidence.
+The separate TypeScript native probe records 0 → 1 → 1 → 0 violations across literal introduction, a UTF-8 prefix shift, and literal removal. The match's byte offsets advance by the exact 12-byte prefix. Comment text and an unrelated `execute` identifier do not become violations. This is semantic evidence only, not TypeScript catalog performance evidence.
 
 ### Original performance contract (superseded)
 
@@ -494,7 +494,7 @@ The user approved the following contract after reviewing the measured baseline:
 1. At least **5% lower median native initial-scan time** on the completed 5,722-file corpus, including parse, index construction, selection, matching, and serialization. The current reference would correspond to at most 21.294 s, but use freshly interleaved reference/indexed runs for qualification rather than treating this machine-time number as universal.
 2. No more than **5% regression** in subset initial scan, initial end-to-end scan, or completed edit native/end-to-end p50 and p95 for either completed workload.
 3. No more than **10% increase in median peak process RSS** for either completed workload; report ranges and absolute memory too. This is not the later 1 GiB architecture target.
-4. Zero unexplained differences in ordered findings/captures/spans and completed statuses; retain the exact existing parser-failure identities on the complete corpus and the deliberate syntax-break/recovery behavior. Never qualify by skipping failed files silently or increasing budgets.
+4. Zero unexplained differences in ordered violations/captures/spans and completed statuses; retain the exact existing parser-failure identities on the complete corpus and the deliberate syntax-break/recovery behavior. Never qualify by skipping failed files silently or increasing budgets.
 5. Demonstrate reduced candidate/matcher work for selective anchors and report fallback behavior. This diagnostic improvement alone does not satisfy the elapsed-time gate.
 
 Approval explicitly uses the 5,722-file parseable supplement for the speed gate and retains all 5,725 files for failure parity. Parser-support repair is outside this change. A 10% speedup is not the agreed requirement.
@@ -525,11 +525,11 @@ The temporary test hook and source were removed after the passing run. Permanent
 
 ## Implementation and exploratory timing history
 
-`policy_dsl/anchors.rs` derives conservative plans from compiled Smart patterns. Concrete kinds and exact named terminals are necessary conditions; metavariables, anonymous terminals, negation, and unsupported constraints do not narrow candidates. Boolean plans retain their structure rather than expanding into DNF. An unrestricted `any` branch broadens the result. Positive relations can prove file-level absence, but the existing matcher still verifies their relationships.
+`code_rule_dsl/anchors.rs` derives conservative plans from compiled Smart patterns. Concrete kinds and exact named terminals are necessary conditions; metavariables, anonymous terminals, negation, and unsupported constraints do not narrow candidates. Boolean plans retain their structure rather than expanding into DNF. An unrestricted `any` branch broadens the result. Positive relations can prove file-level absence, but the existing matcher still verifies their relationships.
 
 Each successfully parsed changed file gets one temporary preorder index: borrowed tree-sitter nodes, parent/subtree intervals, kind postings, and requested exact-terminal postings. Candidate ancestors are selected from rare postings and verified through safe `Root::adopt()` on the same document. Fields, ordering, multiplicity, and captures remain verifier responsibilities. Incomplete indexes cannot prove absence. Indexes are dropped after evaluation; immutable compiled plans and the existing resident trees remain.
 
-Dispatch preserves preorder, check order, witness construction, failure precedence, and incremental witness reuse. Logical visited-node accounting and node/source/witness limits are unchanged. There is no retained per-file structural index, dense node-by-rule mask, unsafe node reconstruction, or serializer change.
+Dispatch preserves preorder, clause order, witness construction, failure precedence, and incremental witness reuse. Logical visited-node accounting and node/source/witness limits are unchanged. There is no retained per-file structural index, dense node-by-rule mask, unsafe node reconstruction, or serializer change.
 
 ### First candidate: correctness proof and exploratory measurements
 
@@ -537,12 +537,12 @@ Candidate addon SHA-256: `19179a6cc5fab1fe932f8a35a524292616eed37d450861e9b3f4cd
 
 The full 5,725-file standalone-versus-workspace oracle covered all 79 AST-bearing documents / 80 AST queries, preserving their original scopes and budgets:
 
-- 159,145 completed policy/file pairs; 120,753 ordered findings compared.
+- 159,145 completed code-rule/file pairs; 120,753 ordered violations compared.
 - 293,114 out-of-scope pairs; 16 known parser-incomplete pairs.
 - Zero mismatches, unexpected failures, or missing expected failures.
 - The workspace's complete failure values and ordering also matched the original full-corpus baseline.
 
-All 76 native runtime tests passed against both reference and indexed addons using Node 24. Ten integration tests and 46 related policy tests passed using Node 25, which matches this checkout's existing `better-sqlite3` binary ABI. Shared dependencies were not rebuilt. A real temporary-SQLite enforcer smoke exercised repository scan, a generated edit adding `db.execute(row)`, and repair removing its finding; no plugin or daemon was enabled.
+All 76 native runtime tests passed against both reference and indexed addons using Node 24. Ten integration tests and 46 related code-rule tests passed using Node 25, which matches this checkout's existing `better-sqlite3` binary ABI. Shared dependencies were not rebuilt. A real temporary-SQLite enforcer smoke exercised repository scan, a generated edit adding `db.execute(row)`, and repair removing its violation; no plugin or daemon was enabled.
 
 Fresh five-pair measurements alternated reference/indexed child order after one warmup per variant. Negative values below mean improvement:
 
@@ -558,13 +558,13 @@ These measurements crossed the original scan/RSS cutoffs, but cannot establish a
 
 A separate instrumented full-supplement run attributed 1.280 s to index construction, 29.6 ms to selection, and 13.437 s to AST dispatch. Matcher calls fell from 54,083,554 to 52,097,433; 37,641 of 159,145 rule/file combinations were rejected and 12,199 used unrestricted fallback. The peak capacity-based index estimate was 8,694,544 bytes, excluding allocator metadata, trees, sources, compiled plans, and selection buffers.
 
-The next candidate shares immutable dispatch metadata between files with identical eligible checks, replaces hot-loop terminal-kind hashing with dense lookup, and amortizes index deadline reads over bounded batches while retaining the same deadline, exact node cap, and a final completion check. Its timing observations below are also exploratory.
+The next candidate shares immutable dispatch metadata between files with identical eligible clauses, replaces hot-loop terminal-kind hashing with dense lookup, and amortizes index deadline reads over bounded batches while retaining the same deadline, exact node cap, and a final completion check. Its timing observations below are also exploratory.
 
 ### Second candidate: further exploratory measurements
 
 Candidate SHA-256: `88b354cdeecad9bbb344b705cbbb1369131fd6c3d1b97edac32119b8ebb628cd`.
 
-The repeated full oracle again compared 159,145 completed pairs and 120,753 findings with zero mismatches and the same 16 known incomplete pairs. A separate all-policy workspace run preserved the exact ordered finding hashes, statuses, and failure arrays of the original 5,725-file baseline for initial load and all 20 edits. All 132 native/runtime tests and the real enforcer add/repair smoke passed again.
+The repeated full oracle again compared 159,145 completed pairs and 120,753 violations with zero mismatches and the same 16 known incomplete pairs. A separate all-code-rule workspace run preserved the exact ordered violation hashes, statuses, and failure arrays of the original 5,725-file baseline for initial load and all 20 edits. All 132 native/runtime tests and the real enforcer add/repair smoke passed again.
 
 Five fresh interleaved pairs produced:
 
@@ -585,12 +585,12 @@ The user identified uncontrolled competing workloads and approved replacing the 
 
 The fixed protocol was recorded before execution:
 
-- The same pinned 538-file / 8,616,974-byte sample and all 185 compiled policy documents, with 96 registered by their original scopes.
+- The same pinned 538-file / 8,616,974-byte sample and all 185 compiled code-rule documents, with 96 registered by their original scopes.
 - One discarded warmup per variant, then **four measured pairs**; balanced pair order randomized with seed `943581429`: indexed/reference, reference/indexed, indexed/reference, reference/indexed.
 - A **60-second hard wall limit** for the entire experiment, including warmups. No retries, sample extensions, removed files, or budget changes.
 - `CLOCK_THREAD_CPUTIME_ID` measured on the native apply worker, from before request JSON decoding through full-result serialization. Queue wait, JavaScript validation/GC, result hashing, and diagnostic reporting are outside this CPU interval.
 - Both builds used the same opt-in profiling module and matching per-matcher/phase counters. The reference came from `a7bfde8ec102cb7f83be0abfe7c5e3db5484634f`, with instrumentation only; its patch is preserved.
-- Every child also performed one edit. Exact initial/edit ordered finding hashes, statuses, counts, and complete failure arrays had to match the original reference snapshot. The single edit is a correctness check, not an edit-latency distribution.
+- Every child also performed one edit. Exact initial/edit ordered violation hashes, statuses, counts, and complete failure arrays had to match the original reference snapshot. The single edit is a correctness check, not an edit-latency distribution.
 - Classification was fixed as consistently less CPU, consistently more CPU, or inconclusive according to the direction of all four valid pairs. This is descriptive evidence, not a statistical confidence bound or a replacement 5% numerical claim.
 
 The complete experiment finished in **32.462 seconds**:
@@ -602,7 +602,7 @@ The complete experiment finished in **32.462 seconds**:
 | 3 | 2,442.731 ms | 2,340.025 ms | 4.205% |
 | 4 | 2,424.440 ms | 2,330.817 ms | 3.862% |
 
-Result: **consistently less worker CPU**, with a **4.670% median paired reduction**. Every warmup and measured run preserved the expected initial findings and edit results; there were no incomplete or replacement samples.
+Result: **consistently less worker CPU**, with a **4.670% median paired reduction**. Every warmup and measured run preserved the expected initial violations and edit results; there were no incomplete or replacement samples.
 
 Deterministic scan counters were stable across the pairs:
 
@@ -614,16 +614,16 @@ Deterministic scan counters were stable across the pairs:
 
 Scope: CPU time avoids charging descheduled time but remains sensitive to CPU frequency, cache contention, and memory bandwidth. These four pairs support lower CPU consumption on this sample. They do not certify a full-corpus CPU improvement, wall-clock latency, edit p95, or process-RSS bound.
 
-Reproduction evidence under `.rerail/phase-a-baseline/`: `worker-cpu-plan.json`, `worker-cpu-results.json`, per-child `cpu-*.json` / `cpu-*.log`, and `cpu-reference-instrumentation.patch`. Each child uses the existing `benchmark/policy-workspace.ts --child --corpus … --manifest …/subset-manifest.json --edits 1` runner with an explicitly selected addon; the plan records order and the hard deadline. Build both addons with `policy-profile` and the same Cargo lockfile/settings. This macOS run used the same unstripped-release workaround as the baseline. Unsupported thread CPU clocks report null rather than substituting wall time.
+Reproduction evidence under `.rerail/phase-a-baseline/`: `worker-cpu-plan.json`, `worker-cpu-results.json`, per-child `cpu-*.json` / `cpu-*.log`, and `cpu-reference-instrumentation.patch`. Each child uses the existing `benchmark/code-rule-workspace.ts --child --corpus … --manifest …/subset-manifest.json --edits 1` runner with an explicitly selected addon; the plan records order and the hard deadline. Build both addons with `code-rule-profile` and the same Cargo lockfile/settings. This macOS run used the same unstripped-release workaround as the baseline. Unsupported thread CPU clocks report null rather than substituting wall time.
 
 ## Final correctness and verification
 
-The final indexing implementation's full-corpus standalone oracle compared **159,145 completed policy/file pairs and 120,753 ordered findings**, with **zero mismatches** and the same **16 known parser-incomplete pairs**. The all-policy workspace scan and all 20 edits also matched the original 5,725-file baseline. Evidence: `full-indexed-v3-parity.json` and `full-indexed-v3-all-policy-parity.json`. Subsequent native changes only add opt-in worker CPU instrumentation.
+The final indexing implementation's full-corpus standalone oracle compared **159,145 completed code-rule/file pairs and 120,753 ordered violations**, with **zero mismatches** and the same **16 known parser-incomplete pairs**. The all-code-rule workspace scan and all 20 edits also matched the original 5,725-file baseline. Evidence: `full-indexed-v3-parity.json` and `full-indexed-v3-all-policy-parity.json`. Subsequent native changes only add opt-in worker CPU instrumentation.
 
-The native contract suite has 76 cases covering candidate supersets, ordered captures, Python/TypeScript distinctions, contextual and relational checks, repeated/variadic variables, UTF-8 shifts, last-anchor removal, deletion/recreation, language changes, syntax recovery, budgets, and cached `select_when` evidence. The integration and related policy suites add 56 cases. The real temporary-SQLite enforcer smoke observes **0 → 1 → 0 findings** for scan, violating generated edit, and repair.
+The native contract suite has 76 cases covering candidate supersets, ordered captures, Python/TypeScript distinctions, contextual and relational clauses, repeated/variadic variables, UTF-8 shifts, last-anchor removal, deletion/recreation, language changes, syntax recovery, budgets, and cached `select_when` evidence. The integration and related code-rule suites add 56 cases. The real temporary-SQLite enforcer smoke observes **0 → 1 → 0 violations** for scan, violating generated edit, and repair.
 
 Validation includes Rust formatting, default/all-feature Clippy with warnings denied, release compilation, Rerail TypeScript checking, strict standalone benchmark checking, and repository ESLint on the changed TypeScript files. `cargo test --all-features` compiles successfully but contains zero Rust unit tests; the native Vitest suites and executed oracle/smoke provide behavioral proof. Native contract/CPU runs use Node 24; SQLite integration uses Node 25 to match the existing dependency ABI without rebuilding shared dependencies.
 
-Rerail and the session plugin remain disabled. No daemon, harness re-registration, API schema change, parser repair, or serializer change was introduced.
+Rerail and the session plugin remain disabled. No daemon, coding-agent re-registration, API schema change, parser repair, or serializer change was introduced.
 
 Final production-build verification reran all **132** native/runtime cases and the real enforcer smoke successfully. Temporary reference-source scaffolding was removed after preserving its instrumentation patch; raw reports, corpus manifests, and binary hashes remain local audit evidence rather than shipped runtime assets.

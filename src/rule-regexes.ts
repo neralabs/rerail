@@ -1,5 +1,5 @@
 import { loadNativeBinding } from "./native.js";
-import { isSimilarityMatch, type CosineRule, type MatchCondition } from "./rule-schema.js";
+import { isSimilarityMatch, type ConversationRule, type MatchCondition } from "./rule-schema.js";
 
 export interface RegexIssue {
   /** Where the pattern sits, from the rule root: `["match", "all", 1, "regex"]`. */
@@ -15,12 +15,12 @@ function* regexes(condition: MatchCondition, path: (string | number)[]): Generat
 }
 
 /**
- * Patterns in a structural match that the kernel would refuse to compile. The kernel owns the regex
+ * Patterns in a structural match that the engine would refuse to compile. The engine owns the regex
  * dialect and `maxRegexPatternBytes`; this lives apart from `rule-schema.ts` because that module is
- * shared with browser bundles. Without the native binding nothing is reported, and the kernel rejects
+ * shared with browser bundles. Without the native binding nothing is reported, and the engine rejects
  * the pattern when rules load.
  */
-export function kernelRegexIssues(rule: CosineRule): RegexIssue[] {
+export function engineRegexIssues(rule: ConversationRule): RegexIssue[] {
   if (isSimilarityMatch(rule.match)) return [];
   let binding: ReturnType<typeof loadNativeBinding>;
   try {
@@ -39,8 +39,8 @@ export function kernelRegexIssues(rule: CosineRule): RegexIssue[] {
   return issues;
 }
 
-/** Throw on the first pattern the kernel would refuse, located like `parseCosineRule` errors. */
-export function assertKernelRegexes(rule: CosineRule, root = "rule"): void {
-  const [issue] = kernelRegexIssues(rule);
+/** Throw on the first pattern the engine would refuse, located like `parseConversationRule` errors. */
+export function assertEngineRegexes(rule: ConversationRule, root = "rule"): void {
+  const [issue] = engineRegexIssues(rule);
   if (issue !== undefined) throw new TypeError(`${[root, ...issue.path.map(String)].join(".")} ${issue.message}`);
 }

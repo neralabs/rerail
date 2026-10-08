@@ -340,7 +340,7 @@ function startSlashCommandText(context: Context, harness: PromptCommandHarness, 
 
 /**
  * Opens a Rerail page as a tab in the window the agent runs in before falling back to the desktop
- * browser. The CLI's own opener is Orca-first (`openPage`), so the command never needs an `orca`
+ * browser. The CLI's own opener is Orca-first (`openDashboard`), so the command never needs an `orca`
  * grant; Cursor's built-in browser is the one in-window path the CLI cannot reach, and only the
  * Cursor variant of the prompt is read by an agent that has it. The URL is read first so the
  * fallback is the only step that launches anything.

@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-const HARNESSES = ["claude", "codex", "cursor"] as const;
+const HOSTS = ["claude", "codex", "cursor"] as const;
 const STAMPER = resolve("scripts/stamp-plugin-versions.mjs");
 
 // Source manifests carry no version; `npm pack` stamps package.json's version in (prepack) and removes it again (postpack).
@@ -36,7 +36,7 @@ async function json(path: string): Promise<unknown> {
   return JSON.parse(await readFile(resolve(path), "utf8"));
 }
 
-describe("supported harness plugin manifests", () => {
+describe("supported host plugin manifests", () => {
   it("publishes native OMP and Pi extension manifests", async () => {
     const manifest = PackageSchema.parse(await json("package.json"));
 
@@ -59,15 +59,15 @@ describe("supported harness plugin manifests", () => {
   it("publishes transport-neutral Claude, Codex, and Cursor plugin manifests", async () => {
     const packageManifest = PackageSchema.parse(await json("package.json"));
 
-    for (const harness of HARNESSES) {
-      const directory = `.${harness}-plugin`;
+    for (const host of HOSTS) {
+      const directory = `.${host}-plugin`;
       const manifest = PluginManifestSchema.parse(await json(`${directory}/plugin.json`));
 
       expect(manifest).not.toHaveProperty("version");
       expect(packageManifest.files).toContain(directory);
       expect(manifest).not.toHaveProperty("mcpServers");
-      expect(manifest.hooks).toBe(`./hooks/${harness}.json`);
-      expect(packageManifest.scripts[`build:${harness}`]).toContain(`--outfile=dist/${harness}-hook.js`);
+      expect(manifest.hooks).toBe(`./hooks/${host}.json`);
+      expect(packageManifest.scripts[`build:${host}`]).toContain(`--outfile=dist/${host}-hook.js`);
     }
     expect(packageManifest.files).toContain("hooks");
   });
@@ -84,11 +84,11 @@ describe("supported harness plugin manifests", () => {
     try {
       await writeFile(join(root, "package.json"), `${JSON.stringify({ name: "@neralabs/rerail", version: "9.8.7-rc.6" }, null, 2)}\n`);
       const sources = new Map<string, string>();
-      for (const harness of HARNESSES) {
-        const directory = `.${harness}-plugin`;
+      for (const host of HOSTS) {
+        const directory = `.${host}-plugin`;
         await mkdir(join(root, directory));
         await copyFile(resolve(directory, "plugin.json"), join(root, directory, "plugin.json"));
-        sources.set(harness, await readFile(join(root, directory, "plugin.json"), "utf8"));
+        sources.set(host, await readFile(join(root, directory, "plugin.json"), "utf8"));
       }
 
       for (let pass = 0; pass < 2; pass += 1) {
@@ -96,9 +96,9 @@ describe("supported harness plugin manifests", () => {
         expect(stamp.status, stamp.stderr).toBe(0);
         expect(stamp.stdout).toBe("");
       }
-      for (const harness of HARNESSES) {
-        const text = await readFile(join(root, `.${harness}-plugin`, "plugin.json"), "utf8");
-        const source = JSON.parse(sources.get(harness)!) as Record<string, unknown>;
+      for (const host of HOSTS) {
+        const text = await readFile(join(root, `.${host}-plugin`, "plugin.json"), "utf8");
+        const source = JSON.parse(sources.get(host)!) as Record<string, unknown>;
         const stamped = JSON.parse(text) as Record<string, unknown>;
         expect(Object.keys(stamped)).toEqual(["name", "version", ...Object.keys(source).filter((key) => key !== "name")]);
         expect(stamped).toEqual({ ...source, version: "9.8.7-rc.6" });
@@ -109,8 +109,8 @@ describe("supported harness plugin manifests", () => {
         const restore = spawnSync(process.execPath, [STAMPER, "restore", root], { encoding: "utf8" });
         expect(restore.status, restore.stderr).toBe(0);
       }
-      for (const harness of HARNESSES) {
-        expect(await readFile(join(root, `.${harness}-plugin`, "plugin.json"), "utf8")).toBe(sources.get(harness));
+      for (const host of HOSTS) {
+        expect(await readFile(join(root, `.${host}-plugin`, "plugin.json"), "utf8")).toBe(sources.get(host));
       }
     } finally {
       await rm(root, { recursive: true, force: true });

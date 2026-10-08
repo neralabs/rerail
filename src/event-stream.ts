@@ -15,8 +15,8 @@ import {
 } from "./event-protocol.js";
 import { RerailRuntime } from "./runtime.js";
 import { defaultRerailDatabasePath } from "./database.js";
-import { daemonKernelSocket } from "./daemon-control.js";
-import { ingestKernelEvent } from "./kernel-service.js";
+import { daemonEngineSocket } from "./daemon-control.js";
+import { ingestEngineEvent } from "./engine-service.js";
 import { isMainRerailBuild } from "./rerail-build.js";
 import { ingestRerailDevEvent, resolveRerailWorkspaceRoute } from "./dev-routing.js";
 
@@ -123,9 +123,9 @@ export async function runRerailEventStream(options: RunRerailEventStreamOptions 
         // As hooks do: where Rerail is off nothing is recorded, and asking for the socket would autostart the daemon.
         if (!await hookRerailStarted(host, workspaceRoot, explicitDatabase)) return [];
         const socketPath = process.env.RERAIL_KERNEL_SOCKET
-          ?? await daemonKernelSocket(replaceOtherPackage);
+          ?? await daemonEngineSocket(replaceOtherPackage);
         replaceOtherPackage = false;
-        return await ingestKernelEvent(socketPath, event, configuration);
+        return await ingestEngineEvent(socketPath, event, configuration);
       },
     };
     await serveRerailEventStream({ eventLoop, input, output });

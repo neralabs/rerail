@@ -4,26 +4,26 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import type { Context, MiddlewareHandler } from "hono";
 import { duplicateJsonKeyError } from "../json-duplicate-keys.js";
 import {
-  policyAstRelationSchema,
-  policyAstRuleSchema,
-  policyFormatArgsSchema,
-  policyPredicateSchema,
-  policyOptionConditionSchema,
-  policyParseSchema,
-  policyQuerySchema,
-  policyRuleSchema,
-  policyUtilitySchema,
-  policyValueSchema,
-} from "../policy-schema.js";
-import { semanticSchemaComponents } from "../policy-schema-semantic.js";
+  codeRuleAstRelationSchema,
+  codeRuleAstRuleSchema,
+  codeRuleFormatArgsSchema,
+  codeRulePredicateSchema,
+  codeRuleOptionConditionSchema,
+  codeRuleParseSchema,
+  codeRuleQuerySchema,
+  codeRuleSchema,
+  codeRuleUtilitySchema,
+  codeRuleValueSchema,
+} from "../code-rule-schema.js";
+import { semanticSchemaComponents } from "../code-rule-schema-semantic.js";
 
-import { cosineRuleSchema, matchConditionSchema, sampleSourceSchema } from "../rule-schema.js";
-import { policyControlsSchema, scanRequestSchema } from "../scan-control-schema.js";
+import { conversationRuleSchema, matchConditionSchema, sampleSourceSchema } from "../rule-schema.js";
+import { auditControlsSchema, auditRequestSchema } from "../audit-control-schema.js";
 import {
   ApiError,
   eventRecordSchema,
   storedRuleSchema,
-  policyRunRecordSchema,
+  auditRecordSchema,
   presentationPreferenceSchema,
   type Operation,
   type RerailApiStores,
@@ -35,33 +35,33 @@ import { sessionResponseSchema, sessionSummarySchema } from "./session-contracts
 // Registered directly rather than via `.openapi()`: zod 4 copies prototype methods onto instances
 // at construction, so schemas built before the OpenAPI extension loaded lack that method.
 const COMPONENTS: ReadonlyArray<[z.ZodType, string]> = [
-  [policyValueSchema, "PolicyValue"],
-  [policyAstRuleSchema, "PolicyAstRule"],
-  [policyUtilitySchema, "PolicyUtility"],
-  [policyOptionConditionSchema, "PolicyOptionCondition"],
-  [policyAstRelationSchema, "PolicyAstRelation"],
-  ...semanticSchemaComponents(policyParseSchema, policyFormatArgsSchema),
-  [policyPredicateSchema, "PolicyPredicate"],
-  [policyQuerySchema, "PolicyQuery"],
-  [policyRuleSchema, "FileRule"],
+  [codeRuleValueSchema, "PolicyValue"],
+  [codeRuleAstRuleSchema, "PolicyAstRule"],
+  [codeRuleUtilitySchema, "PolicyUtility"],
+  [codeRuleOptionConditionSchema, "PolicyOptionCondition"],
+  [codeRuleAstRelationSchema, "PolicyAstRelation"],
+  ...semanticSchemaComponents(codeRuleParseSchema, codeRuleFormatArgsSchema),
+  [codeRulePredicateSchema, "PolicyPredicate"],
+  [codeRuleQuerySchema, "PolicyQuery"],
+  [codeRuleSchema, "FileRule"],
   [matchConditionSchema, "MatchCondition"],
-  [cosineRuleSchema, "ConversationRule"],
+  [conversationRuleSchema, "ConversationRule"],
   [storedRuleSchema, "StoredRule"],
   [sessionSummarySchema, "SessionSummary"],
   [sessionResponseSchema, "SessionResponse"],
   [eventRecordSchema, "EventRecord"],
-  [policyRunRecordSchema, "AuditRecord"],
+  [auditRecordSchema, "AuditRecord"],
   [presentationPreferenceSchema, "PresentationPreference"],
-  [policyControlsSchema, "AuditControls"],
-  [scanRequestSchema, "AuditRequest"],
+  [auditControlsSchema, "AuditControls"],
+  [auditRequestSchema, "AuditRequest"],
 ];
 for (const [schema, refId] of COMPONENTS) zodToOpenAPIRegistry.add(schema, { _internal: { refId } });
 
 // Preserve recursive nulls and template patterns that the OpenAPI converter loses.
 const valueRegistry = z.registry<{ id: string }>();
-valueRegistry.add(policyValueSchema, { id: "PolicyValue" });
+valueRegistry.add(codeRuleValueSchema, { id: "PolicyValue" });
 const valueSchemas = z.toJSONSchema(valueRegistry, { uri: id => `#/components/schemas/${id}` });
-zodToOpenAPIRegistry.add(policyValueSchema, {
+zodToOpenAPIRegistry.add(codeRuleValueSchema, {
   _internal: { refId: "PolicyValue" },
   // The converter's shared metadata type excludes JSON Schema null; this document is OpenAPI 3.1.
   anyOf: valueSchemas.schemas.PolicyValue!.anyOf as NonNullable<ZodOpenAPIMetadata<unknown>["anyOf"]>,
@@ -87,7 +87,7 @@ const jsonContent = (schema: z.ZodType, description: string) => ({
 const CATALOG_ETAG_OPERATIONS: ReadonlySet<string> = new Set(["rules_list", "rules_get"]);
 
 /**
- * GET operations that read execution history, which has no cheap change token: their tag is a
+ * GET operations that read audit history, which has no cheap change token: their tag is a
  * digest of the result, so the handler runs and only the response body is saved.
  */
 const RESULT_ETAG_OPERATIONS: ReadonlySet<string> = new Set(["rules_activity", "violations_list", "sessions_list"]);

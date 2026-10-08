@@ -23,32 +23,32 @@ export interface SetupContext {
   updater: ManagedUpdater;
 }
 
-/** Harness config lives under the user's home (`~/.cursor`, `~/.claude`, …), not under Rerail's state directory. */
-function harnessHome(): string {
+/** Host config lives under the user's home (`~/.cursor`, `~/.claude`, …), not under Rerail's state directory. */
+function hostConfigHome(): string {
   return process.env.HOME ?? homedir();
 }
 
 interface RegistrationArguments {
-  harnesses: Harness[] | undefined;
+  hosts: Harness[] | undefined;
   projectDir: string | undefined;
   dryRun: boolean;
 }
 
 /** `--harness a,b` or `--agents a,b`: each name must be a coding agent Rerail supports. */
-export function parseHarnessNames(values: readonly string[]): Harness[] {
+export function parseHostNames(values: readonly string[]): Harness[] {
   return values.map(value => {
-    const harness = HARNESSES.find(candidate => candidate === value);
-    if (harness === undefined) throw new Error(`Unknown coding agent: ${value} (expected one of ${HARNESSES.join(", ")})`);
-    return harness;
+    const host = HARNESSES.find(candidate => candidate === value);
+    if (host === undefined) throw new Error(`Unknown coding agent: ${value} (expected one of ${HARNESSES.join(", ")})`);
+    return host;
   });
 }
 
 /** `--harness` may repeat; `parseArguments` keeps the last value, so split a comma list instead. */
 function registrationArguments(options: ReadonlyMap<string, string>, flags: ReadonlySet<string>): RegistrationArguments {
-  const harnessList = options.get("--harness");
+  const hostList = options.get("--harness");
   const projectDir = options.get("--project");
   return {
-    harnesses: harnessList === undefined ? undefined : parseHarnessNames(harnessList.split(",").map(name => name.trim()).filter(Boolean)),
+    hosts: hostList === undefined ? undefined : parseHostNames(hostList.split(",").map(name => name.trim()).filter(Boolean)),
     projectDir: projectDir === undefined ? undefined : resolve(projectDir),
     dryRun: flags.has("--dry-run"),
   };
@@ -60,7 +60,7 @@ function registrationOptions(root: string, home: string, parsed: RegistrationArg
     ...(templateRoot === undefined ? {} : { templateRoot }),
     home,
     workspaceDir: process.cwd(),
-    ...(parsed.harnesses === undefined ? {} : { harnesses: parsed.harnesses }),
+    ...(parsed.hosts === undefined ? {} : { harnesses: parsed.hosts }),
     ...(parsed.projectDir === undefined ? {} : { projectDir: parsed.projectDir }),
     dryRun: parsed.dryRun,
   };
@@ -74,13 +74,13 @@ function printReport(report: RegistrationReport, dryRun: boolean): void {
   for (const note of report.notes) process.stdout.write(`  note: ${note}\n`);
 }
 
-/** Registrations point at `<home>/current` once setup has run, so updates never touch harness config again. */
+/** Registrations point at `<home>/current` once setup has run, so updates never touch host config again. */
 function registrationRoot(context: SetupContext): string {
   const current = context.updater.currentLink;
   return existsSync(join(current, "package.json")) ? current : context.packageRoot;
 }
 
-/** Steps both `setup` and `install --root` earn, since both write the launcher and touch harness config. */
+/** Steps both `setup` and `install --root` earn, since both write the launcher and touch host config. */
 function nextSteps(home: string): string[] {
   return [
     `  add ${join(home, "bin")} to PATH to run \`rerail\` directly`,
@@ -118,7 +118,7 @@ async function activateExplicitRoot(context: SetupContext, root: string, remove:
 function backupRoot(now = new Date()): string {
   const pad = (value: number): string => String(value).padStart(2, "0");
   const day = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
-  const daily = join(harnessHome(), `.rerail-clean-${day}`);
+  const daily = join(hostConfigHome(), `.rerail-clean-${day}`);
   return existsSync(daily) ? `${daily}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}` : daily;
 }
 
@@ -175,12 +175,12 @@ export async function runInstallCommand(args: readonly string[], context: SetupC
   const templateRoot = explicitRoot !== undefined && parsed.dryRun && !remove ? explicitRoot : undefined;
   process.stdout.write(`${remove ? "Removing Rerail from" : "Connecting Rerail to"} coding agents for ${root}${parsed.dryRun ? " (dry run)" : ""}\n`);
   const report = remove
-    ? await unregisterHarnesses(registrationOptions(root, harnessHome(), parsed))
-    : await registerHarnesses(registrationOptions(root, harnessHome(), parsed, templateRoot));
+    ? await unregisterHarnesses(registrationOptions(root, hostConfigHome(), parsed))
+    : await registerHarnesses(registrationOptions(root, hostConfigHome(), parsed, templateRoot));
   printReport(report, parsed.dryRun);
   // Removing every coding agent from the managed install is the uninstall. Removing one coding agent, or a
   // checkout or development bridge registered with `--root`, leaves the shared rules and history in place.
-  const uninstall = remove && parsed.harnesses === undefined && (explicitRoot === undefined || root === context.updater.currentLink);
+  const uninstall = remove && parsed.hosts === undefined && (explicitRoot === undefined || root === context.updater.currentLink);
   if (uninstall) await backUpRulesAndHistory(context.home, parsed.dryRun);
   if (explicitRoot !== undefined && !remove) {
     process.stdout.write(["", "Next:", ...nextSteps(context.home), ""].join("\n"));
@@ -190,7 +190,7 @@ export async function runInstallCommand(args: readonly string[], context: SetupC
 
 /**
  * `npx @neralabs/rerail setup`: make this version the managed install under
- * `<home>/versions`, point harnesses at `<home>/current`, and bring the daemon
+ * `<home>/versions`, point hosts at `<home>/current`, and bring the daemon
  * up. Idempotent, so it doubles as "upgrade and re-register".
  */
 export async function runSetupCommand(args: readonly string[], context: SetupContext): Promise<number> {
@@ -217,7 +217,7 @@ export async function runSetupCommand(args: readonly string[], context: SetupCon
     process.stdout.write("Skipping harness registration (--skip-register).\n");
   } else {
     process.stdout.write(`${parsed.dryRun ? "Would register" : "Registering"} harnesses against ${updater.currentLink}:\n`);
-    const report = await registerHarnesses(registrationOptions(updater.currentLink, harnessHome(), parsed));
+    const report = await registerHarnesses(registrationOptions(updater.currentLink, hostConfigHome(), parsed));
     printReport(report, parsed.dryRun);
   }
 
@@ -226,7 +226,7 @@ export async function runSetupCommand(args: readonly string[], context: SetupCon
   } else if (parsed.dryRun) {
     process.stdout.write("Would start the daemon.\n");
   } else {
-    // A daemon from before this setup keeps serving the old version's UI and kernel; replace it.
+    // A daemon from before this setup keeps serving the old version's UI and engine service; replace it.
     const lookup = await lookupDaemon(home);
     const activeRoot = await realpath(updater.currentLink);
     const runningRoot = lookup.status === "running" && lookup.state.packageRoot !== undefined

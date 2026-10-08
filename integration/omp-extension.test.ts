@@ -8,7 +8,7 @@ import { NativeSemanticEmbedder, SemanticWorkspace } from "../src/semantic-primi
 import { OmpMessageContentSource, OmpWatermarkStore } from "../src/omp-semantic.js";
 import { defaultRerailDatabasePath } from "../src/database.js";
 import { openScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
-import type { CosineRule } from "../src/rule-schema.js";
+import type { ConversationRule } from "../src/rule-schema.js";
 import { SqlitePresentationPreferenceStore } from "../src/presentation-preference-store.js";
 import { OmpHost } from "./omp-host.js";
 import type { HostEvidence } from "./omp-host.js";
@@ -26,7 +26,7 @@ async function isolate(): Promise<string> {
   process.env.RERAIL_HOME = join(cwd, "home");
   return cwd;
 }
-function checkoutRule(id: string): CosineRule {
+function checkoutRule(id: string): ConversationRule {
   return { id, mode: "steer", reference: "Guest checkout remains available.", match: { operator: "gte", threshold: 0.99 },
     sample: { source: "assistant-text", boundary: "sentence", minimumTokens: 1 },
     action: { content: "Check checkout requirements." }, repeat: { mode: "once" } };
@@ -41,7 +41,7 @@ function expectNoExtensionErrors(host: OmpHost): void {
 
 describe("installed OMP extension in standalone host", () => {
   test.each(["compact", "silent"] as const)(
-    "interrupts a real streamed session and persists the handoff with %s presentation",
+    "interrupts a real streamed session and persists the steer with %s presentation",
     async presence => {
       const cwd = await isolate();
       const preferences = new SqlitePresentationPreferenceStore(defaultRerailDatabasePath());
@@ -89,10 +89,10 @@ describe("installed OMP extension in standalone host", () => {
     90_000,
   );
 
-  test("steers on a cosine rule enabled in the catalog after the session started", async () => {
+  test("steers on a conversation rule enabled in the catalog after the session started", async () => {
     const cwd = await isolate();
     const store = openScopedRuleCatalog(cwd);
-    store.upsertCosine(checkoutRule("db:checkout"), { enabled: false });
+    store.upsertConversationRule(checkoutRule("db:checkout"), { enabled: false });
     let host: OmpHost | undefined;
     try {
       host = await OmpHost.start(cwd, [

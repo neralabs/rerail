@@ -1,4 +1,4 @@
-# Policy Domain
+# Rule Domain
 
 ## Rule
 
@@ -6,7 +6,7 @@ A named coding constraint with scope, enforcement, detection, repair guidance, a
 
 ## Generation Check
 
-A rule evaluation performed against generated content before the generation is accepted.
+A rule evaluation performed against generated content before the generation is accepted. The Audit that runs it records its Violations.
 
 ## Exact Generation Check
 
@@ -26,7 +26,7 @@ Context or behavior required by a Ground-Truth Oracle that is unavailable or not
 
 ## File Rule
 
-A Rule over repository source files (kind `file`): one versioned, customer-authored `rerail.policy/v1` document holding its Clauses, Rule Path Criteria, rationale, and Rule Mode. Its applicability is stored separately in the machine rule catalog.
+A Rule over repository source files (kind `file`): one versioned, customer-authored `rerail.policy/v1` document holding its Clauses, its Where It Applies path patterns, rationale, and Rule Mode. Its applicability is stored separately in the machine rule catalog.
 
 ## Clause
 
@@ -38,7 +38,7 @@ What a Clause reports where code breaks it: a stable id, the `ruleId` and `claus
 
 ## Conversation Rule
 
-A Rule over the agent conversation (kind `conversation`): a standing semantic query over one event source and boundary, with a Rule Mode and an action. Stored in the machine rule catalog and refreshed by running kernels after catalog commits, including writes made through the same process or another connection.
+A Rule over the agent conversation (kind `conversation`): a standing semantic query over one event source and boundary, with a Rule Mode and an action. Stored in the machine rule catalog and refreshed by running engines after catalog commits, including writes made through the same process or another connection.
 
 ## Audit
 
@@ -52,7 +52,7 @@ What Rerail does when a rule of either kind fires, set once on every rule docume
 
 Where a rule definition applies: `global` across the user's machine or `project` across the repositories explicitly assigned to one project. Applicability is independent from a File Rule's path criteria and a Conversation Rule's sample boundary.
 
-## Rule Path Criteria
+## Where It Applies
 
 Repository-relative `scope.include` and `scope.exclude` patterns on a File Rule. After Rule Applicability selects a rule, these criteria filter its candidate paths; excludes win. They are distinct from applicability and from an Audit's scope and run mode.
 
@@ -70,7 +70,7 @@ The one user-level SQLite file (`$RERAIL_HOME/rerail.sqlite`, normally `~/.rerai
 
 ## Rule Catalog
 
-The projects, repository membership, global rules, and project rules in the Rerail database. Harness kernels evaluate effective rules but do not own definitions.
+The projects, repository membership, global rules, and project rules in the Rerail database. The engines in each coding agent evaluate effective rules but do not own definitions.
 
 ## Execution History
 

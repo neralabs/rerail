@@ -2,7 +2,7 @@
 """T1 grammar measurement for a candidate Rust pack (offline, run by a maintainer; never in CI).
 
 Measures tree-sitter-rust 0.24.2 on tree-sitter 0.27.0 (the grammar ast-grep-language 0.45.3 ships, which the
-native kernel links) against:
+native engine links) against:
 - rustc 1.99.0's own parser, the acceptance oracle: `RUSTC_BOOTSTRAP=1 rustc +1.99.0 -Zparse-crate-root-only`
   parses one file exactly as rustc does before expansion (out-of-line `mod x;` is not loaded, so every file is
   judged on its own);

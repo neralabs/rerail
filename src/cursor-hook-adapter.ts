@@ -152,7 +152,7 @@ export async function handleCursorEvent(
   }
   const available = await routeDeliveries(path, hook, deliveries, {
     // Cursor only exposes preToolUse.agent_message when a tool is denied.
-    // Preserve steering until a post-tool result can actually carry it.
+    // Preserve the steer until a post-tool result can actually carry it.
     sessionStart: true, postToolUse: true,
   });
   return cursorHookOutput(hook, available);

@@ -63,7 +63,7 @@ export function createOmpPresentation(): OmpPresentation {
     timer = ctx.setInterval(() => {
       if (!pending) void refresh(ctx);
     }, REFRESH_MS);
-    // Daemon reads must not hold up session initialization or policy delivery.
+    // Daemon reads must not hold up session initialization or steer delivery.
     void refresh(ctx);
   }
 

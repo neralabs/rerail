@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { readPresentation, readRulesPage } from "./session-presentation.js";
-import { nodeExecutable, openPage, type PageOpening } from "./daemon-control.js";
-import { policyControlsSchema } from "./scan-control-schema.js";
-import type { PolicyControls, PolicySettings } from "./scan-control-schema.js";
+import { readPresentation, readRulesDashboard } from "./session-presentation.js";
+import { nodeExecutable, openDashboard, type PageOpening } from "./daemon-control.js";
+import { auditControlsSchema } from "./audit-control-schema.js";
+import type { AuditControls, AuditSettings } from "./audit-control-schema.js";
 import { resolveRerailWorkspaceRoute, rerailDevLauncher } from "./dev-routing.js";
 
 /** Minimal command-host surface shared by OMP and Pi. */
@@ -29,7 +29,7 @@ export interface RerailCommandOptions {
   packageRoot: string;
   host?: "omp" | "pi";
   cwd(): string;
-  /** Current host session, injected for scan controls so the launcher never guesses. */
+  /** Current host session, injected for audit controls so the launcher never guesses. */
   sessionId?(): string | undefined;
   /** Release the in-process runtime's database handles before a destructive launcher action. */
   detach?(): Promise<void>;
@@ -50,38 +50,38 @@ const LAUNCHER_COMMANDS = [
   { name: "rerail-reset", description: "Reset this repository's Rerail session history, across all worktrees, after confirmation", argv: ["reset"] },
 ];
 
-interface PolicyChoice<Value extends string = PolicySettings[keyof PolicySettings]> {
+interface AuditChoice<Value extends string = AuditSettings[keyof AuditSettings]> {
   value: Value;
   label: string;
 }
 
-const MODES: readonly PolicyChoice<PolicySettings["mode"]>[] = [
+const MODES: readonly AuditChoice<AuditSettings["mode"]>[] = [
   { value: "log", label: "log — Record diagnostics without steering the agent" },
   { value: "steer", label: "steer — Record diagnostics and send findings to the agent" },
 ];
-const SCOPES: readonly PolicyChoice<PolicySettings["scope"]>[] = [
+const SCOPES: readonly AuditChoice<AuditSettings["scope"]>[] = [
   { value: "repository", label: "repository — All eligible files in this workspace" },
   { value: "touched-files", label: "touched-files — Only selected or changed files" },
   { value: "ai-output", label: "ai-output — Only captured AI-generated edits (automatic scans)" },
 ];
-const EXPLICIT_SCOPES: readonly PolicyChoice<"repository" | "git-diff">[] = [
+const EXPLICIT_SCOPES: readonly AuditChoice<"repository" | "git-diff">[] = [
   { value: "repository", label: "repository — All eligible files in this workspace" },
   { value: "git-diff", label: "git-diff — Tracked and untracked files changed in Git" },
 ];
 const SETTINGS_FIELDS: ReadonlyArray<{
-  key: keyof PolicySettings;
+  key: keyof AuditSettings;
   label: string;
   flag: string;
-  choices: readonly PolicyChoice[];
+  choices: readonly AuditChoice[];
 }> = [
   { key: "scope", label: "Ongoing scope", flag: "--scope", choices: SCOPES },
   { key: "mode", label: "Ongoing mode", flag: "--mode", choices: MODES },
 ];
 
-async function selectPolicyChoice<Value extends string>(
+async function selectAuditChoice<Value extends string>(
   ctx: RerailCommandContext,
   title: string,
-  choices: readonly PolicyChoice<Value>[],
+  choices: readonly AuditChoice<Value>[],
 ): Promise<Value | undefined> {
   const selected = await ctx.ui.select(title, choices.map(choice => choice.label));
   return choices.find(choice => choice.label === selected)?.value;
@@ -118,10 +118,10 @@ async function runLauncher(options: RerailCommandOptions, args: readonly string[
   return promise;
 }
 
-async function runSettings(options: RerailCommandOptions, target: readonly string[], patch: readonly string[] = []): Promise<PolicyControls> {
+async function runSettings(options: RerailCommandOptions, target: readonly string[], patch: readonly string[] = []): Promise<AuditControls> {
   const result = await runLauncher(options, ["settings", ...target, ...patch, "--json"]);
   if (result.code !== 0) throw new Error((result.stdout + result.stderr).trim() || `Settings exited with code ${result.code}`);
-  return policyControlsSchema.strip().parse(JSON.parse(result.stdout));
+  return auditControlsSchema.strip().parse(JSON.parse(result.stdout));
 }
 
 /** The notice for a page that was just opened; an Orca tab says so, the desktop browser needs no qualifier. */
@@ -168,10 +168,10 @@ export function registerRerailCommands(pi: RerailCommandHost, options: RerailCom
   });
 
   register("rerail-ui", "Open the Rerail rules page in the browser", async ctx => {
-    const page = await readRulesPage({ cwd: options.cwd() });
+    const page = await readRulesDashboard({ cwd: options.cwd() });
     // The page needs a reachable daemon; the reason says why there is none.
     if (page.url === null) throw new Error(`no Rerail page to open: ${page.reason}`);
-    ctx.ui.notify(openingNotice(page.url, await openPage(page.url)), "info");
+    ctx.ui.notify(openingNotice(page.url, await openDashboard(page.url)), "info");
   });
 
   register("rerail-session", "Open this session's Rerail page in the browser", async ctx => {
@@ -183,7 +183,7 @@ export function registerRerailCommands(pi: RerailCommandHost, options: RerailCom
     }
     // The page needs a reachable daemon; the presentation text says why there is none.
     if (presentation.url === null) throw new Error(`no Rerail page to open: ${presentation.text}`);
-    ctx.ui.notify(openingNotice(presentation.url, await openPage(presentation.url)), "info");
+    ctx.ui.notify(openingNotice(presentation.url, await openDashboard(presentation.url)), "info");
   });
 
   // Start and stop run the launcher, so the CLI owns the wording; without a terminal it addresses the coding agent's user.
@@ -238,14 +238,14 @@ export function registerRerailCommands(pi: RerailCommandHost, options: RerailCom
           const selected = await ctx.ui.select(`Rerail settings — ${current.workspaceRoot}\nChanges save immediately; running scans keep their settings.`, [...labels, "Done"]);
           const field = SETTINGS_FIELDS.find((_field, index) => labels[index] === selected);
           if (field === undefined) return;
-          const value = await selectPolicyChoice(ctx, `${field.label} (current: ${current.settings[field.key]})`, field.choices);
+          const value = await selectAuditChoice(ctx, `${field.label} (current: ${current.settings[field.key]})`, field.choices);
           if (value === undefined) continue;
           current = await runSettings(launcher, target, [field.flag, value]);
           ctx.ui.notify(`Saved ${field.label.toLowerCase()}: ${current.settings[field.key]}`, "info");
         }
       }
 
-      const scope = await selectPolicyChoice(ctx, "One-shot diagnostic scope", EXPLICIT_SCOPES);
+      const scope = await selectAuditChoice(ctx, "One-shot diagnostic scope", EXPLICIT_SCOPES);
       if (scope === undefined) return;
       const argv = ["scan", ...target, "--scope", scope, "--wait"];
       ctx.ui.notify(`Scanning ${scope} in log-only mode; saved defaults are unchanged.`, "info");

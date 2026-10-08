@@ -3,17 +3,17 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import {
   assistantCompletionEvent,
   assistantDeltaEvent,
-  toolCallEvent,
-  toolResultEvent,
+  callEvent,
+  resultEvent,
   turnEndEvent,
   userPromptEvent,
   type AdapterEvent,
   type AdapterSession,
 } from "./adapter-contract.js";
 import { registerPiSemanticTools, type NativeSemanticToolRuntime } from "./native-semantic-tools.js";
-import { registerPiCosineRulesCommand, type PiCosineRulesCommandRuntime } from "./pi-command.js";
+import { registerPiConversationRulesCommand, type PiConversationRulesCommandRuntime } from "./pi-command.js";
 import { registerRerailCommands } from "./rerail-command.js";
-import { registerPiCosineRulesTool, type PiCosineRulesToolRuntime } from "./pi-tool.js";
+import { registerPiConversationRulesTool, type PiConversationRulesToolRuntime } from "./pi-tool.js";
 
 interface PiMessage {
   role: string;
@@ -36,8 +36,8 @@ export interface PiHostAdapterRuntime {
   shutdown(): Promise<void>;
   sessionFor(): Promise<AdapterSession | undefined>;
   ingest(event: AdapterEvent): Promise<void>;
-  cosineTool: PiCosineRulesToolRuntime;
-  cosineCommand: Omit<PiCosineRulesCommandRuntime, "reload">;
+  conversationRulesTool: PiConversationRulesToolRuntime;
+  conversationRulesCommand: Omit<PiConversationRulesCommandRuntime, "reload">;
   packageRoot: string;
   /** Whether Rerail runs in `cwd`; where it does not, input arriving without a session is ignored. */
   started(cwd: string): boolean;
@@ -103,7 +103,7 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
   };
 
   if (runtime.registerTool !== false) {
-    registerPiCosineRulesTool(pi, runtime.cosineTool);
+    registerPiConversationRulesTool(pi, runtime.conversationRulesTool);
     registerPiSemanticTools(pi, {
       mark: change => runtime.semantic().mark(change),
       select: spec => runtime.semantic().select(spec),
@@ -112,8 +112,8 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
     });
   }
   if (runtime.registerCommand !== false) {
-    registerPiCosineRulesCommand(pi, {
-      ...runtime.cosineCommand,
+    registerPiConversationRulesCommand(pi, {
+      ...runtime.conversationRulesCommand,
       reload: async () => {
         const context = runtime.currentContext();
         if (context === undefined) throw new Error("cannot reload cosine rules before session_start");
@@ -179,7 +179,7 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
   pi.on("tool_call", async event => {
     const session = await runtime.sessionFor();
     if (session === undefined) return;
-    await runtime.ingest(toolCallEvent(
+    await runtime.ingest(callEvent(
       session.sessionId,
       `tool-call:${event.toolCallId}`,
       event.toolCallId,
@@ -190,7 +190,7 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
   pi.on("tool_result", async event => {
     const session = await runtime.sessionFor();
     if (session === undefined) return;
-    await runtime.ingest(toolResultEvent(
+    await runtime.ingest(resultEvent(
       session.sessionId,
       `tool-result:${event.toolCallId}`,
       event.toolCallId,

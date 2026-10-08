@@ -11,12 +11,12 @@ import { publicHostSet } from "../src/api/http.js";
 import { operations } from "../src/api/operations.js";
 import { presentationResponseSchema } from "../src/api/session-contracts.js";
 import { assertHostBindable, parsePublicHosts, RerailDaemon, type DaemonHealth, type RerailDaemonOptions } from "../src/daemon.js";
-import { ingestKernelEvent } from "../src/kernel-service.js";
-import { MOCK_COSINE_RULES, MOCK_POLICY_RULES } from "../src/seed.js";
-import { SqlitePolicyExecutionReader, SqlitePolicyExecutionStore } from "../src/policy-execution-store.js";
-import { SqliteScanControlStore } from "../src/scan-control.js";
+import { ingestEngineEvent } from "../src/engine-service.js";
+import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../src/seed.js";
+import { SqliteAuditReader, SqliteAuditStore } from "../src/audit-store.js";
+import { SqliteAuditControlStore } from "../src/audit-control.js";
 import { RERAIL_V14_SCHEMA_STATEMENTS } from "../src/schema-v14-sql.js";
-import { SqliteTranscriptStore, TRANSCRIPT_EVENT_PAGE_LIMIT } from "../src/transcript-store.js";
+import { SqliteSessionStore, SESSION_EVENT_PAGE_LIMIT } from "../src/session-store.js";
 import { startTestRepositoryById } from "./support/started-repository.js";
 
 const healthyNative = () => ({ ok: true, kernelVersion: "1" });
@@ -197,12 +197,12 @@ describe("Rerail daemon", () => {
     expect((await getJson(daemon, "/healthz")).body).not.toHaveProperty("nativeToken");
   });
 
-  it("serves sessions and paged events read from the transcript store", async () => {
+  it("serves sessions and paged events read from the session store", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const daemon = await start();
     expect(await getJson(daemon, "/api/sessions")).toEqual({ status: 200, body: { sessions: [] } });
 
-    const store = new SqliteTranscriptStore(join(root, "rerail.sqlite"), { repositoryId: "test-repository" });
+    const store = new SqliteSessionStore(join(root, "rerail.sqlite"), { repositoryId: "test-repository" });
     store.openSession({ host: "claude-code", sessionId: "s1", cwd: "/workspace" }, 1_000);
     store.append({ sessionId: "s1", kind: "user-prompt", eventId: "e1", observedAt: 1_001, payload: { text: "hello" } });
     store.append({ sessionId: "s1", kind: "call", eventId: "e2", observedAt: 1_002, payload: { toolName: "read" } });
@@ -226,7 +226,7 @@ describe("Rerail daemon", () => {
           { sequence: 2, sessionId: "s1", eventId: "e2", kind: "call", observedAt: 1_002, payload: { toolName: "read" } },
         ],
         nextAfter: 2,
-        pageLimit: TRANSCRIPT_EVENT_PAGE_LIMIT,
+        pageLimit: SESSION_EVENT_PAGE_LIMIT,
       },
     });
     const secondPage = await getJson<{ events: Array<{ eventId: string }>; nextAfter: number }>(daemon, "/api/sessions/s1/events?after=2");
@@ -272,25 +272,25 @@ describe("Rerail daemon", () => {
     }
   });
 
-  it("keeps session status bounded even when an evaluation contains multi-megabyte findings", async () => {
+  it("keeps session status bounded even when an audit contains multi-megabyte violations", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const path = join(root, "rerail.sqlite");
-    const transcripts = new SqliteTranscriptStore(path, { repositoryId: "test-repository" });
-    transcripts.openSession({ host: "omp", sessionId: "large-run", cwd: root }, 1);
-    transcripts.startHudTracking({ host: "omp", sessionId: "large-run", cwd: root }, true);
-    transcripts.close();
-    const executions = new SqlitePolicyExecutionStore(path);
-    const run = executions.start({ sessionId: "large-run", workspaceRoot: root, scope: "repository", mode: "log", revision: 0, paths: [], catalogRevision: "test", ruleRevisions: [] });
-    executions.finish(run, {
+    const sessionStore = new SqliteSessionStore(path, { repositoryId: "test-repository" });
+    sessionStore.openSession({ host: "omp", sessionId: "large-run", cwd: root }, 1);
+    sessionStore.startHudTracking({ host: "omp", sessionId: "large-run", cwd: root }, true);
+    sessionStore.close();
+    const audits = new SqliteAuditStore(path);
+    const audit = audits.start({ sessionId: "large-run", workspaceRoot: root, scope: "repository", mode: "log", revision: 0, paths: [], catalogRevision: "test", ruleRevisions: [] });
+    audits.finish(audit, {
       status: "failed",
       violations: [{
-        id: "large-finding", ruleId: "policy", clauseId: "check", code: "code",
+        id: "large-violation", ruleId: "policy", clauseId: "check", code: "code",
         mode: "block", message: "x".repeat(2 * 1024 * 1024),
         path: "source.ts", captures: {}, variables: {},
       }],
       failures: [{ clauseId: "scan", code: "budget-exceeded", message: "scan exceeded its budget", stage: "scan" }],
     });
-    executions.close();
+    audits.close();
     const daemon = await start();
     const query = new URLSearchParams({ repository: root, host: "omp", sessionId: "large-run" });
     const response = await fetch(new URL(`/api/presentation?${query}`, daemon.url));
@@ -313,22 +313,22 @@ describe("Rerail daemon", () => {
     expect((await getJson(daemon, `/api/presentation?${query}`)).body).toMatchObject({ presence: "silent", context: { session: null } });
     query.set("onDemand", "true");
     expect((await getJson(daemon, `/api/presentation?${query}`)).body).toMatchObject({ presence: "silent", context: { session: compact.context!.session } });
-    // A harness below the launch root reads the root's session and its silent preference.
+    // A host below the launch root reads the root's session and its silent preference.
     await mkdir(join(root, "nested"));
     query.set("repository", join(root, "nested"));
     expect((await getJson(daemon, `/api/presentation?${query}`)).body).toMatchObject({ presence: "silent", context: { session: compact.context!.session } });
-    const receipt = { session: { host: "omp", sessionId: "large-run", cwd: join(root, "nested") }, receiptId: "bridge-handoff" };
-    expect(await sendJson(daemon, "/kernel/steering-receipts", "POST", receipt)).toEqual({ status: 200, body: { receiptId: "bridge-handoff" } });
-    expect(await sendJson(daemon, "/kernel/steering-receipts", "POST", receipt)).toEqual({ status: 200, body: { receiptId: "bridge-handoff" } });
+    const receipt = { session: { host: "omp", sessionId: "large-run", cwd: join(root, "nested") }, receiptId: "bridge-steer" };
+    expect(await sendJson(daemon, "/kernel/steering-receipts", "POST", receipt)).toEqual({ status: 200, body: { receiptId: "bridge-steer" } });
+    expect(await sendJson(daemon, "/kernel/steering-receipts", "POST", receipt)).toEqual({ status: 200, body: { receiptId: "bridge-steer" } });
     expect(await sendJson(daemon, "/kernel/steering-receipts", "POST", { ...receipt, session: { ...receipt.session, cwd: tmpdir() } }))
       .toEqual({ status: 403, body: { error: "kernel-workspace-mismatch" } });
     expect((await getJson<{ hud: { steeringCount: number } }>(daemon, "/api/sessions/large-run")).body.hud.steeringCount).toBe(1);
   });
 
-  it("reads an encoded transcript session id through the read-only API", async () => {
+  it("reads an encoded session id through the read-only API", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const daemon = await start();
-    const store = new SqliteTranscriptStore(join(root, "rerail.sqlite"), { repositoryId: "test-repository" });
+    const store = new SqliteSessionStore(join(root, "rerail.sqlite"), { repositoryId: "test-repository" });
     const sessionId = "project/a session";
     store.openSession({ host: "claude-code", sessionId, cwd: "/workspace" }, 1_000);
     store.append({ sessionId, kind: "user-prompt", eventId: "encoded-event", observedAt: 1_001, payload: { text: "hello" } });
@@ -343,7 +343,7 @@ describe("Rerail daemon", () => {
       body: {
         events: [{ sequence: 1, sessionId, eventId: "encoded-event", kind: "user-prompt", observedAt: 1_001, payload: { text: "hello" } }],
         nextAfter: 1,
-        pageLimit: TRANSCRIPT_EVENT_PAGE_LIMIT,
+        pageLimit: SESSION_EVENT_PAGE_LIMIT,
       },
     });
   });
@@ -361,8 +361,8 @@ describe("Rerail daemon", () => {
   it("writes and reads rules and work links over HTTP with kind-specific validation", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const daemon = await start();
-    const policy = MOCK_POLICY_RULES[0]!;
-    const cosine = MOCK_COSINE_RULES[0]!;
+    const codeRule = MOCK_CODE_RULES[0]!;
+    const conversationRule = MOCK_CONVERSATION_RULES[0]!;
     expect(await getJson(daemon, "/api/rules")).toEqual({ status: 200, body: { rules: [], quarantined: [] } });
     expect(await getJson(daemon, "/api/rule-context")).toMatchObject({
       status: 200,
@@ -378,38 +378,38 @@ describe("Rerail daemon", () => {
       body: { context: { projectId: "project-shared", projectName: "Shared project" } },
     });
 
-    const created = await sendJson<{ rule: { kind: string; enabled: boolean; revision: number } }>(daemon, `/api/rules/${policy.id}`, "PUT", { kind: "file", rule: policy });
+    const created = await sendJson<{ rule: { kind: string; enabled: boolean; revision: number } }>(daemon, `/api/rules/${codeRule.id}`, "PUT", { kind: "file", rule: codeRule });
     expect(created.status).toBe(200);
-    expect(created.body.rule).toMatchObject({ kind: "file", enabled: true, revision: policy.revision, rule: policy });
-    expect(await sendJson(daemon, `/api/rules/${cosine.id}`, "PUT", { kind: "conversation", rule: cosine, enabled: false, applicability: "global" })).toMatchObject({
+    expect(created.body.rule).toMatchObject({ kind: "file", enabled: true, revision: codeRule.revision, rule: codeRule });
+    expect(await sendJson(daemon, `/api/rules/${conversationRule.id}`, "PUT", { kind: "conversation", rule: conversationRule, enabled: false, applicability: "global" })).toMatchObject({
       status: 200,
-      body: { rule: { kind: "conversation", enabled: false, applicability: "global", origin: { kind: "global" }, revision: 1, rule: cosine } },
+      body: { rule: { kind: "conversation", enabled: false, applicability: "global", origin: { kind: "global" }, revision: 1, rule: conversationRule } },
     });
 
-    expect(await sendJson(daemon, "/api/rules/other", "PUT", { kind: "file", rule: policy })).toMatchObject({ status: 400, body: { error: "rule-id-mismatch" } });
-    expect(await sendJson(daemon, `/api/rules/${cosine.id}`, "PUT", { kind: "file", rule: cosine })).toMatchObject({ status: 400, body: { error: "invalid-request" } });
-    expect(await sendJson(daemon, `/api/rules/${cosine.id}`, "PUT", { kind: "conversation", rule: { ...cosine, match: { operator: "gte", threshold: 2 } } })).toMatchObject({ status: 400, body: { error: "invalid-request" } });
-    expect(await sendJson(daemon, `/api/rules/${cosine.id}`, "PUT", { kind: "file", rule: { ...policy, id: cosine.id } })).toMatchObject({ status: 409, body: { error: "rule-conflict" } });
+    expect(await sendJson(daemon, "/api/rules/other", "PUT", { kind: "file", rule: codeRule })).toMatchObject({ status: 400, body: { error: "rule-id-mismatch" } });
+    expect(await sendJson(daemon, `/api/rules/${conversationRule.id}`, "PUT", { kind: "file", rule: conversationRule })).toMatchObject({ status: 400, body: { error: "invalid-request" } });
+    expect(await sendJson(daemon, `/api/rules/${conversationRule.id}`, "PUT", { kind: "conversation", rule: { ...conversationRule, match: { operator: "gte", threshold: 2 } } })).toMatchObject({ status: 400, body: { error: "invalid-request" } });
+    expect(await sendJson(daemon, `/api/rules/${conversationRule.id}`, "PUT", { kind: "file", rule: { ...codeRule, id: conversationRule.id } })).toMatchObject({ status: 409, body: { error: "rule-conflict" } });
 
-    expect((await getJson<{ rules: Array<{ rule: { id: string } }> }>(daemon, "/api/rules?enabled=false")).body.rules.map(stored => stored.rule.id)).toEqual([cosine.id]);
+    expect((await getJson<{ rules: Array<{ rule: { id: string } }> }>(daemon, "/api/rules?enabled=false")).body.rules.map(stored => stored.rule.id)).toEqual([conversationRule.id]);
     expect((await getJson<{ rules: unknown[] }>(daemon, "/api/rules?kind=file&applicability=project")).body.rules).toHaveLength(1);
     expect(await getJson(daemon, "/api/rules?kind=nope")).toMatchObject({ status: 400 });
-    expect(await sendJson(daemon, "/api/rules", "PATCH", { ids: [cosine.id, "missing"], enabled: true })).toEqual({ status: 200, body: { changed: 1 } });
+    expect(await sendJson(daemon, "/api/rules", "PATCH", { ids: [conversationRule.id, "missing"], enabled: true })).toEqual({ status: 200, body: { changed: 1 } });
     expect((await getJson<{ rules: Array<{ rule: { id: string } }> }>(daemon, "/api/rules?q=console&mode=log")).body.rules).toEqual([]);
     expect((await getJson<{ rules: Array<{ rule: { id: string } }> }>(daemon, "/api/rules?mode=block")).body.rules).toEqual([]);
-    expect((await getJson<{ rules: Array<{ rule: { id: string } }> }>(daemon, "/api/rules?mode=steer")).body.rules.map(stored => stored.rule.id)).toEqual([cosine.id, policy.id]);
+    expect((await getJson<{ rules: Array<{ rule: { id: string } }> }>(daemon, "/api/rules?mode=steer")).body.rules.map(stored => stored.rule.id)).toEqual([conversationRule.id, codeRule.id]);
     expect(await getJson(daemon, "/api/rules?delivery=steer")).toMatchObject({ status: 400, body: { error: "invalid-request" } });
-    expect((await getJson<{ rules: Array<{ rule: { id: string } }> }>(daemon, "/api/rules?q=CONSOLE")).body.rules.map(stored => stored.rule.id)).toEqual([policy.id]);
-    expect((await getJson<{ rules: Array<{ rule: { id: string } }> }>(daemon, "/api/rules?source=assistant-text&boundary=sentence")).body.rules.map(stored => stored.rule.id)).toEqual([cosine.id]);
+    expect((await getJson<{ rules: Array<{ rule: { id: string } }> }>(daemon, "/api/rules?q=CONSOLE")).body.rules.map(stored => stored.rule.id)).toEqual([codeRule.id]);
+    expect((await getJson<{ rules: Array<{ rule: { id: string } }> }>(daemon, "/api/rules?source=assistant-text&boundary=sentence")).body.rules.map(stored => stored.rule.id)).toEqual([conversationRule.id]);
     expect(await sendJson(daemon, "/api/rules", "PATCH", { filter: { q: "console" }, enabled: false })).toEqual({ status: 200, body: { changed: 1 } });
     expect(await sendJson(daemon, "/api/rules", "PATCH", { filter: {}, enabled: true })).toEqual({ status: 200, body: { changed: 1 } });
     expect(await sendJson(daemon, "/api/rules", "PATCH", { enabled: true })).toMatchObject({ status: 400, body: { error: "invalid-request" } });
     expect(await sendJson(daemon, "/api/rules", "PATCH", { ids: ["x"], filter: {}, enabled: true })).toMatchObject({ status: 400 });
-    expect(await getJson(daemon, `/api/rules/${cosine.id}`)).toMatchObject({ body: { rule: { enabled: true, applicability: "project" } } });
-    expect(await sendJson(daemon, `/api/rules/${cosine.id}?applicability=global`, "DELETE")).toEqual({ status: 200, body: { removed: 1 } });
-    expect(await getJson(daemon, `/api/rules/${cosine.id}`)).toMatchObject({ body: { rule: { enabled: true, applicability: "project" } } });
-    expect(await sendJson(daemon, `/api/rules/${cosine.id}`, "DELETE")).toEqual({ status: 200, body: { removed: 1 } });
-    expect(await sendJson(daemon, `/api/rules/${cosine.id}`, "DELETE")).toMatchObject({ status: 404, body: { error: "rule-not-found" } });
+    expect(await getJson(daemon, `/api/rules/${conversationRule.id}`)).toMatchObject({ body: { rule: { enabled: true, applicability: "project" } } });
+    expect(await sendJson(daemon, `/api/rules/${conversationRule.id}?applicability=global`, "DELETE")).toEqual({ status: 200, body: { removed: 1 } });
+    expect(await getJson(daemon, `/api/rules/${conversationRule.id}`)).toMatchObject({ body: { rule: { enabled: true, applicability: "project" } } });
+    expect(await sendJson(daemon, `/api/rules/${conversationRule.id}`, "DELETE")).toEqual({ status: 200, body: { removed: 1 } });
+    expect(await sendJson(daemon, `/api/rules/${conversationRule.id}`, "DELETE")).toMatchObject({ status: 404, body: { error: "rule-not-found" } });
 
     expect(await sendJson(daemon, "/api/sessions/s1/work-links", "PUT", { kind: "linear-issue", reference: "NER-1", url: "https://linear.app/nera/issue/NER-1" })).toMatchObject({
       status: 200,
@@ -420,35 +420,35 @@ describe("Rerail daemon", () => {
     expect((await getJson(daemon, "/healthz")).body).toMatchObject({ database: { exists: true } });
   });
 
-  it("saves workspace defaults and rejects unsupported one-shot scan controls", async () => {
+  it("saves workspace defaults and rejects unsupported one-shot audit controls", async () => {
     root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
     startTestRepositoryById("test-repository", join(root, "rerail.sqlite"));
     const daemon = await start();
-    await ingestKernelEvent(daemon.kernelSocketPath, {
+    await ingestEngineEvent(daemon.kernelSocketPath, {
       kind: "session-start", eventId: "start-controls",
-      session: { host: "claude-code", sessionId: "scan-session", cwd: root },
+      session: { host: "claude-code", sessionId: "audit-session", cwd: root },
     });
-    expect(await sendJson(daemon, "/api/sessions/scan-session/audit-settings", "PATCH", { scope: "repository", mode: "log" })).toMatchObject({
+    expect(await sendJson(daemon, "/api/sessions/audit-session/audit-settings", "PATCH", { scope: "repository", mode: "log" })).toMatchObject({
       status: 200,
       body: { workspaceRoot: root, active: true, delivery: "next-event", settings: { scope: "repository", mode: "log" } },
     });
-    expect(await sendJson(daemon, "/api/sessions/scan-session/audit-settings", "PATCH", { initialMode: "resteer" })).toMatchObject({
+    expect(await sendJson(daemon, "/api/sessions/audit-session/audit-settings", "PATCH", { initialMode: "resteer" })).toMatchObject({
       status: 400,
       body: { error: "invalid-request" },
     });
-    expect(await sendJson(daemon, "/api/sessions/scan-session/audit-requests", "POST", { scope: "ai-output" })).toMatchObject({
+    expect(await sendJson(daemon, "/api/sessions/audit-session/audit-requests", "POST", { scope: "ai-output" })).toMatchObject({
       status: 400,
       body: { error: "invalid-request" },
     });
-    expect(await sendJson(daemon, "/api/sessions/scan-session/audit-requests", "POST", { scope: "repository", mode: "steer" })).toMatchObject({
+    expect(await sendJson(daemon, "/api/sessions/audit-session/audit-requests", "POST", { scope: "repository", mode: "steer" })).toMatchObject({
       status: 400,
       body: { error: "invalid-request" },
     });
-    expect(await getJson(daemon, "/api/sessions/scan-session/audit-requests")).toMatchObject({
+    expect(await getJson(daemon, "/api/sessions/audit-session/audit-requests")).toMatchObject({
       status: 200,
       body: { auditRequests: [] },
     });
-    expect(await getJson(daemon, "/api/sessions/scan-session/audit-settings")).toMatchObject({
+    expect(await getJson(daemon, "/api/sessions/audit-session/audit-settings")).toMatchObject({
       status: 200,
       body: { settings: { scope: "repository", mode: "log" } },
     });
@@ -462,27 +462,27 @@ describe("Rerail daemon", () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const daemon = await start();
     const path = join(root, "rerail.sqlite");
-    const own = new SqliteTranscriptStore(path, { repositoryId: "test-repository" });
-    const other = new SqliteTranscriptStore(path, { repositoryId: "other-repository" });
+    const own = new SqliteSessionStore(path, { repositoryId: "test-repository" });
+    const other = new SqliteSessionStore(path, { repositoryId: "other-repository" });
     own.openSession({ host: "omp", sessionId: "own", cwd: join(root, "own") }, 1_000);
     other.openSession({ host: "omp", sessionId: "foreign", cwd: join(root, "foreign") }, 2_000);
-    own.recordSteeringDelivery({ host: "omp", sessionId: "own", cwd: join(root, "own") }, "own-receipt", ["shared"]);
-    other.recordSteeringDelivery({ host: "omp", sessionId: "foreign", cwd: join(root, "foreign") }, "foreign-receipt", ["shared"]);
+    own.recordSteer({ host: "omp", sessionId: "own", cwd: join(root, "own") }, "own-receipt", ["shared"]);
+    other.recordSteer({ host: "omp", sessionId: "foreign", cwd: join(root, "foreign") }, "foreign-receipt", ["shared"]);
     own.close();
     other.close();
-    const executions = new SqlitePolicyExecutionStore(path);
+    const auditStore = new SqliteAuditStore(path);
     const violation = {
       id: "violation", ruleId: "shared", clauseId: "clause", code: "CODE", mode: "steer" as const,
       message: "m", path: "a.ts", captures: {}, variables: {},
     };
     for (const [sessionId, workspaceRoot] of [["own", join(root, "own")], ["foreign", join(root, "foreign")]] as const) {
-      const run = executions.start({
+      const audit = auditStore.start({
         sessionId, workspaceRoot, scope: "repository", mode: "log", revision: 1, catalogRevision: null,
         ruleRevisions: [{ ruleId: "shared", revision: 1 }], paths: [],
       });
-      executions.finish(run, { status: "completed", violations: [{ ...violation, id: sessionId, path: `${sessionId}.ts` }] });
+      auditStore.finish(audit, { status: "completed", violations: [{ ...violation, id: sessionId, path: `${sessionId}.ts` }] });
     }
-    executions.close();
+    auditStore.close();
 
     const sessions = await getJson<{ sessions: Array<{ sessionId: string }> }>(daemon, "/api/sessions?since=0");
     expect(sessions.body.sessions.map(session => session.sessionId)).toEqual(["own"]);
@@ -495,8 +495,8 @@ describe("Rerail daemon", () => {
     expect(violations.body).toMatchObject({ total: 1, violations: [expect.objectContaining({ sessionId: "own" })] });
     const repositoryAudits = await getJson<{ repositories: Array<{ workspaceRoot: string }> }>(daemon, "/api/repository-audits");
     expect(repositoryAudits.body.repositories.map(repository => repository.workspaceRoot)).toEqual([join(root, "own")]);
-    const scoped = new SqlitePolicyExecutionReader(path, { repositoryId: "test-repository" });
-    const machine = new SqlitePolicyExecutionReader(path);
+    const scoped = new SqliteAuditReader(path, { repositoryId: "test-repository" });
+    const machine = new SqliteAuditReader(path);
     expect(scoped.ruleActivity(0).get("shared")).toMatchObject({ sessions: 1, audits: 1 });
     expect(machine.ruleActivity(0).get("shared")).toMatchObject({ sessions: 2, audits: 2 });
     scoped.close();
@@ -505,16 +505,16 @@ describe("Rerail daemon", () => {
     expect(await getJson(daemon, "/api/sessions/foreign")).toMatchObject({ status: 200, body: { session: { repositoryId: "other-repository" } } });
   });
 
-  it("lists durable policy-run history through the read-only API", async () => {
+  it("lists durable audit history through the read-only API", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const daemon = await start();
     expect(await getJson(daemon, "/api/audits")).toEqual({ status: 200, body: { audits: [], total: 0 } });
 
-    const store = new SqliteTranscriptStore(join(root, "rerail.sqlite"), { repositoryId: "test-repository" });
+    const store = new SqliteSessionStore(join(root, "rerail.sqlite"), { repositoryId: "test-repository" });
     store.openSession({ host: "omp", sessionId: "s1", cwd: "/workspace" });
     store.close();
-    const executions = new SqlitePolicyExecutionStore(join(root, "rerail.sqlite"));
-    const runId = executions.start({
+    const audits = new SqliteAuditStore(join(root, "rerail.sqlite"));
+    const auditId = audits.start({
       sessionId: "s1",
       workspaceRoot: "/workspace",
       scope: "touched-files",
@@ -525,24 +525,24 @@ describe("Rerail daemon", () => {
       paths: ["src/a.ts"],
       ruleProvenance: [],
     });
-    executions.finish(runId, {
+    audits.finish(auditId, {
       status: "failed",
-      failures: [{ clauseId: "check-a", code: "adapter-error", message: "native error", path: "src/a.ts", stage: "scan" }],
+      failures: [{ clauseId: "clause-a", code: "adapter-error", message: "native error", path: "src/a.ts", stage: "scan" }],
     });
-    executions.close();
+    audits.close();
 
     expect(await getJson(daemon, "/api/audits?sessionId=s1&scope=touched-files&mode=log&limit=1")).toMatchObject({
       status: 200,
       body: {
         total: 1,
         audits: [expect.objectContaining({
-          auditId: runId,
+          auditId: auditId,
           status: "failed",
           scope: "touched-files",
           mode: "log",
           paths: ["src/a.ts"],
           violations: [],
-          failures: [{ clauseId: "check-a", code: "adapter-error", message: "native error", path: "src/a.ts", stage: "scan" }],
+          failures: [{ clauseId: "clause-a", code: "adapter-error", message: "native error", path: "src/a.ts", stage: "scan" }],
           catalogRevision: null,
           ruleRevisions: [],
         })],
@@ -552,17 +552,17 @@ describe("Rerail daemon", () => {
     expect(await getJson(daemon, "/api/audits?scope=delivery")).toMatchObject({ status: 400, body: { error: "invalid-request" } });
   });
 
-  it("queries one full diagnostic per historically scanned repository", async () => {
+  it("queries one full audit per historically audited repository", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const path = join(root, "rerail.sqlite");
-    const transcripts = new SqliteTranscriptStore(path, { repositoryId: "test-repository" });
-    transcripts.openSession({ host: "omp", sessionId: "repo-a-session", cwd: "/workspace/repo-a" });
-    transcripts.openSession({ host: "omp", sessionId: "repo-b-session", cwd: "/workspace/repo-b" });
-    transcripts.openSession({ host: "omp", sessionId: "repo-c-session", cwd: "/workspace/repo-c" });
-    const controls = new SqliteScanControlStore(path);
-    expect(controls.claimRepositoryDiagnostic("repo-a-session")).toBe(true);
-    const executions = new SqlitePolicyExecutionStore(path);
-    const baselineRunId = executions.start({
+    const sessionStore = new SqliteSessionStore(path, { repositoryId: "test-repository" });
+    sessionStore.openSession({ host: "omp", sessionId: "repo-a-session", cwd: "/workspace/repo-a" });
+    sessionStore.openSession({ host: "omp", sessionId: "repo-b-session", cwd: "/workspace/repo-b" });
+    sessionStore.openSession({ host: "omp", sessionId: "repo-c-session", cwd: "/workspace/repo-c" });
+    const controls = new SqliteAuditControlStore(path);
+    expect(controls.claimRepositoryAudit("repo-a-session")).toBe(true);
+    const audits = new SqliteAuditStore(path);
+    const repositoryAuditId = audits.start({
       sessionId: "repo-a-session",
       workspaceRoot: "/workspace/repo-a",
       scope: "repository",
@@ -572,7 +572,7 @@ describe("Rerail daemon", () => {
       ruleRevisions: [{ ruleId: "security", revision: 2 }],
       paths: [],
     });
-    executions.finish(baselineRunId, {
+    audits.finish(repositoryAuditId, {
       status: "failed",
       violations: [
         {
@@ -606,8 +606,8 @@ describe("Rerail daemon", () => {
         stage: "read",
       }],
     });
-    controls.finishRepositoryDiagnostic("repo-a-session", baselineRunId, "failed", "Source exceeds the per-file byte budget");
-    const historicalRunId = executions.start({
+    controls.finishRepositoryAudit("repo-a-session", repositoryAuditId, "failed", "Source exceeds the per-file byte budget");
+    const historicalAuditId = audits.start({
       sessionId: "repo-b-session",
       workspaceRoot: "/workspace/repo-b",
       scope: "repository",
@@ -617,8 +617,8 @@ describe("Rerail daemon", () => {
       ruleRevisions: [],
       paths: [],
     });
-    executions.finish(historicalRunId, { status: "completed" });
-    const touchedRunId = executions.start({
+    audits.finish(historicalAuditId, { status: "completed" });
+    const touchedAuditId = audits.start({
       sessionId: "repo-c-session",
       workspaceRoot: "/workspace/repo-c",
       scope: "touched-files",
@@ -628,8 +628,8 @@ describe("Rerail daemon", () => {
       ruleRevisions: [],
       paths: ["src/file.ts"],
     });
-    executions.finish(touchedRunId, { status: "completed" });
-    executions.close(); controls.close(); transcripts.close();
+    audits.finish(touchedAuditId, { status: "completed" });
+    audits.close(); controls.close(); sessionStore.close();
     const daemon = await start();
 
     expect(await getJson(daemon, "/api/repository-audits?limit=10")).toEqual({
@@ -640,14 +640,14 @@ describe("Rerail daemon", () => {
             workspaceRoot: "/workspace/repo-a",
             repositoryAudit: {
               sessionId: "repo-a-session",
-              auditId: baselineRunId,
+              auditId: repositoryAuditId,
               status: "failed",
               startedAt: expect.any(Number),
               finishedAt: expect.any(Number),
               error: "Source exceeds the per-file byte budget",
             },
             audit: {
-              auditId: baselineRunId,
+              auditId: repositoryAuditId,
               scope: "repository",
               status: "failed",
               startedAt: expect.any(Number),
@@ -673,7 +673,7 @@ describe("Rerail daemon", () => {
         total: 3,
       },
     });
-    expect(await getJson(daemon, `/api/repository-audits/${baselineRunId}/entries?kind=violation&mode=block&path=routes&q=redirect&limit=20`)).toEqual({
+    expect(await getJson(daemon, `/api/repository-audits/${repositoryAuditId}/entries?kind=violation&mode=block&path=routes&q=redirect&limit=20`)).toEqual({
       status: 200,
       body: {
         entries: [{
@@ -689,24 +689,24 @@ describe("Rerail daemon", () => {
         total: 1,
       },
     });
-    expect(await getJson(daemon, `/api/repository-audits/${baselineRunId}/entries?mode=steer`)).toMatchObject({
+    expect(await getJson(daemon, `/api/repository-audits/${repositoryAuditId}/entries?mode=steer`)).toMatchObject({
       status: 200,
       body: { entries: [{ kind: "violation", violation: { id: "debug-log", mode: "steer" } }], total: 1 },
     });
-    expect(await getJson(daemon, `/api/repository-audits/${baselineRunId}/entries?severity=error`)).toMatchObject({
+    expect(await getJson(daemon, `/api/repository-audits/${repositoryAuditId}/entries?severity=error`)).toMatchObject({
       status: 400,
       body: { error: "invalid-request" },
     });
-    expect(await getJson(daemon, `/api/repository-audits/${historicalRunId}/entries`)).toMatchObject({
+    expect(await getJson(daemon, `/api/repository-audits/${historicalAuditId}/entries`)).toMatchObject({
       status: 404,
       body: { error: "repository-audit-not-found" },
     });
   });
 
-  it("upgrades a database recorded before rule modes before serving its diagnostics", async () => {
+  it("upgrades a database recorded before rule modes before serving its repository audits", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const path = join(root, "rerail.sqlite");
-    const runId = "legacy-run";
+    const auditId = "legacy-run";
     const legacy = new Database(path);
     for (const statement of RERAIL_V14_SCHEMA_STATEMENTS) legacy.exec(statement);
     legacy.prepare("INSERT INTO sessions (session_id, host, cwd, repository_id, started_at) VALUES (?, ?, ?, ?, ?)")
@@ -714,18 +714,18 @@ describe("Rerail daemon", () => {
     legacy.prepare(
       "INSERT INTO policy_runs (run_id, session_id, workspace_root, scope, mode, revision, rule_provenance_json, paths_json, started_at, finished_at, status, findings_json, failures_json) "
       + "VALUES (?, 'legacy-session', '/workspace/legacy', 'repository', 'log', 1, '[]', '[]', 1000, 2000, 'completed', ?, '[]')",
-    ).run(runId, JSON.stringify([{
+    ).run(auditId, JSON.stringify([{
       id: "debug-log", policyId: "quality", checkId: "logging", code: "DEBUG_LOG", severity: "warning",
       message: "Remove debug logging.", path: "src/logger.ts", captures: {}, variables: {},
     }]));
     legacy.prepare(
       "INSERT INTO policy_repository_diagnostics (workspace_root, session_id, run_id, status, started_at, finished_at) VALUES ('/workspace/legacy', 'legacy-session', ?, 'completed', 1000, 2000)",
-    ).run(runId);
+    ).run(auditId);
     legacy.pragma("user_version = 11");
     legacy.close();
 
     const daemon = await start();
-    expect(await getJson(daemon, `/api/repository-audits/${runId}/entries?mode=steer`)).toMatchObject({
+    expect(await getJson(daemon, `/api/repository-audits/${auditId}/entries?mode=steer`)).toMatchObject({
       status: 200,
       body: { entries: [{ kind: "violation", violation: { id: "debug-log", mode: "steer" } }], total: 1 },
     });
@@ -766,16 +766,16 @@ describe("Rerail daemon", () => {
       expect(Object.keys(upsert.inputSchema.properties ?? {}).sort()).toEqual(["applicability", "enabled", "id", "kind", "revision", "rule"]);
       expect(upsert.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
 
-      const cosine = MOCK_COSINE_RULES[1]!;
-      const created = await client.callTool({ name: "rules_upsert", arguments: { id: cosine.id, kind: "conversation", rule: cosine } });
+      const conversationRule = MOCK_CONVERSATION_RULES[1]!;
+      const created = await client.callTool({ name: "rules_upsert", arguments: { id: conversationRule.id, kind: "conversation", rule: conversationRule } });
       expect(created.isError).toBeFalsy();
-      expect(created.structuredContent).toMatchObject({ rule: { kind: "conversation", enabled: true, rule: cosine } });
+      expect(created.structuredContent).toMatchObject({ rule: { kind: "conversation", enabled: true, rule: conversationRule } });
       const listed = await client.callTool({ name: "rules_list", arguments: { enabled: true } });
       expect((listed.structuredContent as { rules: unknown[] }).rules).toHaveLength(1);
       const missing = await client.callTool({ name: "rules_get", arguments: { id: "nope" } });
       expect(missing.isError).toBe(true);
       expect(missing.content).toEqual([{ type: "text", text: "rule-not-found: rule nope does not exist" }]);
-      expect(await getJson(daemon, `/api/rules/${cosine.id}`)).toMatchObject({ status: 200 });
+      expect(await getJson(daemon, `/api/rules/${conversationRule.id}`)).toMatchObject({ status: 200 });
     } finally {
       await client.close();
     }

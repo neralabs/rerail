@@ -13,11 +13,11 @@ import {
   ScopedRuleCatalog,
 } from "../src/scoped-rule-catalog.js";
 import { exportRules, exportScopedRules, importScopedRules } from "../src/rule-bootstrap.js";
-import { parseCosineRuleDocument } from "../src/rule-schema.js";
-import { loadLegacyCosineRuleSources } from "../src/rule-sources.js";
+import { parseConversationRuleDocument } from "../src/rule-schema.js";
+import { loadLegacyConversationRuleSources } from "../src/rule-sources.js";
 import { SqliteRuleStore } from "../src/rule-store.js";
-import { SqliteTranscriptReader, SqliteTranscriptStore } from "../src/transcript-store.js";
-import { MOCK_COSINE_RULES, MOCK_POLICY_RULES } from "../src/seed.js";
+import { SqliteSessionReader, SqliteSessionStore } from "../src/session-store.js";
+import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../src/seed.js";
 import { ruleDocumentDigest } from "../src/stable-json.js";
 
 const temporaryDirectories: string[] = [];
@@ -48,7 +48,7 @@ async function expectCatalogReservation(
     if (!intercepted) {
       intercepted = true;
       try {
-        contender.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "contender" }, { now: 1_001 });
+        contender.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "contender" }, { now: 1_001 });
       } catch (error) {
         contenderError = error;
       }
@@ -78,7 +78,7 @@ describe("ScopedRuleCatalog", () => {
     const path = await catalogPath();
     const global = ScopedRuleCatalog.open(path, { repositoryId: "repo-a", workspaceRoot: "/repo/a" });
     global.assignRepository("project-a", "Project A", "repo-a", 1_000);
-    global.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "shared" }, { applicability: "global", now: 1_100 });
+    global.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "shared" }, { applicability: "global", now: 1_100 });
     expect(global.setEnabled({ filter: { applicability: "global" } }, false, 1_150)).toBe(1);
     expect(global.get("shared")).toMatchObject({ applicability: "global", enabled: false });
     expect(global.setEnabled({ filter: { applicability: "global" } }, true, 1_175)).toBe(1);
@@ -86,8 +86,8 @@ describe("ScopedRuleCatalog", () => {
     const project = ScopedRuleCatalog.open(path, { repositoryId: "repo-a", workspaceRoot: "/repo/a-worktree" });
     expect(project.get("shared")).toMatchObject({ applicability: "global", origin: { kind: "global" }, enabled: true });
 
-    project.upsertCosine(
-      { ...MOCK_COSINE_RULES[0]!, id: "shared", action: { content: "Project override" } },
+    project.upsertConversationRule(
+      { ...MOCK_CONVERSATION_RULES[0]!, id: "shared", action: { content: "Project override" } },
       { applicability: "project", now: 1_200 },
     );
     expect(project.get("shared")).toMatchObject({
@@ -99,10 +99,10 @@ describe("ScopedRuleCatalog", () => {
     expect(project.list({ applicability: "global" })).toHaveLength(1);
     expect(project.remove(["shared"], 1_250, "global")).toBe(1);
     expect(project.get("shared")).toMatchObject({ applicability: "project" });
-    global.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "shared" }, { applicability: "global", now: 1_275 });
+    global.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "shared" }, { applicability: "global", now: 1_275 });
 
     expect(project.setEnabled({ ids: ["shared"] }, false, 1_300)).toBe(1);
-    expect(project.cosineRules()).toEqual([]);
+    expect(project.conversationRules()).toEqual([]);
     expect(global.get("shared")).toMatchObject({ applicability: "project", enabled: false });
     project.close();
     global.close();
@@ -113,17 +113,17 @@ describe("ScopedRuleCatalog", () => {
     const first = ScopedRuleCatalog.open(path, { repositoryId: "repo-a", workspaceRoot: "/repo/a" });
     first.assignRepository("project-shared", "Shared", "repo-a", 1_000);
     first.assignRepository("project-shared", "Shared", "repo-b", 1_001);
-    first.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "project-rule" }, { applicability: "project", now: 1_100 });
+    first.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "project-rule" }, { applicability: "project", now: 1_100 });
 
     const second = ScopedRuleCatalog.open(path, { repositoryId: "repo-b", workspaceRoot: "/repo/b" });
     const unrelated = ScopedRuleCatalog.open(path, { repositoryId: "repo-c", workspaceRoot: "/repo/c" });
     unrelated.assignRepository("project-c", "Unrelated", "repo-c", 1_200);
 
-    expect(second.cosineRules().map(rule => rule.id)).toEqual(["project-rule"]);
-    expect(unrelated.cosineRules()).toEqual([]);
+    expect(second.conversationRules().map(rule => rule.id)).toEqual(["project-rule"]);
+    expect(unrelated.conversationRules()).toEqual([]);
 
-    first.upsertCosine(
-      { ...MOCK_COSINE_RULES[0]!, id: "project-rule", action: { content: "Updated once" } },
+    first.upsertConversationRule(
+      { ...MOCK_CONVERSATION_RULES[0]!, id: "project-rule", action: { content: "Updated once" } },
       { applicability: "project", now: 1_300 },
     );
     expect(second.get("project-rule")).toMatchObject({ revision: 2, rule: { action: { content: "Updated once" } } });
@@ -134,16 +134,16 @@ describe("ScopedRuleCatalog", () => {
     unrelated.close();
   });
 
-  it("migrates checkout rules into project scope once without changing execution history", async () => {
+  it("migrates checkout rules into project scope once without changing audit history", async () => {
     const path = await catalogPath();
     const legacyPath = join(temporaryDirectories[0]!, "checkout", ".rerail", "transcripts.sqlite");
-    const transcripts = new SqliteTranscriptStore(legacyPath);
-    transcripts.openSession({ host: "omp", sessionId: "same-session", cwd: "/repo/a" }, 900);
-    transcripts.append({ sessionId: "same-session", eventId: "event-1", kind: "user-prompt", observedAt: 950, payload: { text: "keep" } });
-    transcripts.close();
+    const sessionStore = new SqliteSessionStore(legacyPath);
+    sessionStore.openSession({ host: "omp", sessionId: "same-session", cwd: "/repo/a" }, 900);
+    sessionStore.append({ sessionId: "same-session", eventId: "event-1", kind: "user-prompt", observedAt: 950, payload: { text: "keep" } });
+    sessionStore.close();
     const legacy = new SqliteRuleStore(legacyPath);
-    legacy.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "legacy" }, { scope: "global", now: 1_000 });
-    legacy.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "legacy", reference: "edited" }, { now: 2_000 });
+    legacy.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "legacy" }, { scope: "global", now: 1_000 });
+    legacy.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "legacy", reference: "edited" }, { now: 2_000 });
     legacy.close();
 
     const catalog = ScopedRuleCatalog.open(path, { repositoryId: "repo-a", workspaceRoot: "/repo/a" });
@@ -160,13 +160,13 @@ describe("ScopedRuleCatalog", () => {
     expect(catalog.remove(["legacy"], 3_500)).toBe(1);
     const secondLegacyPath = join(temporaryDirectories[0]!, "worktree", ".rerail", "transcripts.sqlite");
     const secondLegacy = new SqliteRuleStore(secondLegacyPath);
-    secondLegacy.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "legacy", reference: "stale copy" }, { now: 1_500 });
+    secondLegacy.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "legacy", reference: "stale copy" }, { now: 1_500 });
     secondLegacy.close();
     expect(catalog.migrateLegacyRules(secondLegacyPath, 4_000)).toBe(0);
     expect(catalog.get("legacy")).toBeUndefined();
     catalog.close();
 
-    const history = new SqliteTranscriptReader(legacyPath);
+    const history = new SqliteSessionReader(legacyPath);
     expect(history.sessions()).toEqual([expect.objectContaining({ sessionId: "same-session", eventCount: 1 })]);
     history.close();
   });
@@ -176,9 +176,9 @@ describe("ScopedRuleCatalog", () => {
     const output = join(temporaryDirectories.at(-1)!, "rules.json");
     const source = ScopedRuleCatalog.open(sourcePath, { repositoryId: "repo-a", workspaceRoot: "/repo/a" });
     source.assignRepository("project-a", "Project A", "repo-a", 1_000);
-    source.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "shared" }, { applicability: "global", now: 1_100 });
-    source.upsertCosine(
-      { ...MOCK_COSINE_RULES[0]!, id: "shared", reference: "project override" },
+    source.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "shared" }, { applicability: "global", now: 1_100 });
+    source.upsertConversationRule(
+      { ...MOCK_CONVERSATION_RULES[0]!, id: "shared", reference: "project override" },
       { applicability: "project", enabled: false, now: 1_200 },
     );
     expect(exportScopedRules(source, output, new Date("2026-01-01T00:00:00Z"))).toBe(2);
@@ -199,20 +199,20 @@ describe("ScopedRuleCatalog", () => {
   });
 
   it("stores, exports, and resolves structural tool-call rules", async () => {
-    const tools = parseCosineRuleDocument(JSON.parse(readFileSync(resolve("test/fixtures/tool-call-rules.json"), "utf8")))
+    const tools = parseConversationRuleDocument(JSON.parse(readFileSync(resolve("test/fixtures/tool-call-rules.json"), "utf8")))
       .sort((left, right) => left.id.localeCompare(right.id));
     const sourcePath = await catalogPath();
     const output = join(temporaryDirectories.at(-1)!, "rules.json");
     const source = ScopedRuleCatalog.open(sourcePath, { repositoryId: "repo-a", workspaceRoot: "/repo/a" });
-    for (const rule of tools) source.upsertCosine(rule, { applicability: "global", now: 1_000 });
-    expect(source.cosineRules()).toEqual(tools);
+    for (const rule of tools) source.upsertConversationRule(rule, { applicability: "global", now: 1_000 });
+    expect(source.conversationRules()).toEqual(tools);
     expect(exportScopedRules(source, output, new Date("2026-01-01T00:00:00Z"))).toBe(tools.length);
     source.close();
 
     const destination = ScopedRuleCatalog.open(await catalogPath(), { repositoryId: "repo-b", workspaceRoot: "/repo/b" });
     expect(importScopedRules(destination, output)).toBe(tools.length);
-    expect(destination.cosineRules()).toEqual(tools);
-    expect(() => destination.upsertCosine({ ...tools[0]!, match: { field: "input.command", regex: "(" } }))
+    expect(destination.conversationRules()).toEqual(tools);
+    expect(() => destination.upsertConversationRule({ ...tools[0]!, match: { field: "input.command", regex: "(" } }))
       .toThrow(/regex/u);
     destination.close();
   });
@@ -221,8 +221,8 @@ describe("ScopedRuleCatalog", () => {
     const sourcePath = await catalogPath();
     const output = join(temporaryDirectories.at(-1)!, "rules.json");
     const source = ScopedRuleCatalog.open(sourcePath, { repositoryId: "source", workspaceRoot: "/source" });
-    source.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "first" });
-    source.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "second" });
+    source.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "first" });
+    source.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "second" });
     exportScopedRules(source, output);
     source.close();
     const dump = JSON.parse(readFileSync(output, "utf8")) as { rules: Array<{ rule: unknown }> };
@@ -237,7 +237,7 @@ describe("ScopedRuleCatalog", () => {
     const legacyPath = join(temporaryDirectories.at(-1)!, "legacy.sqlite");
     const legacyDump = join(temporaryDirectories.at(-1)!, "legacy.json");
     const legacy = new SqliteRuleStore(legacyPath);
-    legacy.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "legacy-v1" }, { now: 1_000 });
+    legacy.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "legacy-v1" }, { now: 1_000 });
     exportRules(legacy, legacyDump);
     legacy.close();
     expect(() => importScopedRules(destination, legacyDump)).toThrow(/is a checkout rules dump; only v4 catalog dumps can be imported/u);
@@ -253,7 +253,7 @@ describe("ScopedRuleCatalog", () => {
   it("masks an inherited global rule per project and reveals it after deleting the mask", async () => {
     const path = await catalogPath();
     const global = ScopedRuleCatalog.open(path, { repositoryId: "repo-global", workspaceRoot: "/repo/global" });
-    global.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "inherited" }, { applicability: "global", now: 1_000 });
+    global.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "inherited" }, { applicability: "global", now: 1_000 });
     const project = ScopedRuleCatalog.open(path, { repositoryId: "repo-project", workspaceRoot: "/repo/project" });
 
     expect(project.setEnabled({ ids: ["inherited"] }, false, 2_000)).toBe(1);
@@ -273,7 +273,7 @@ describe("ScopedRuleCatalog", () => {
   it("rejects toggling a quarantined inherited rule without changing its global definition", async () => {
     const path = await catalogPath();
     const global = ScopedRuleCatalog.open(path, { repositoryId: "repo-global", workspaceRoot: "/repo/global" });
-    global.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "broken-inherited" }, { applicability: "global", now: 1_000 });
+    global.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "broken-inherited" }, { applicability: "global", now: 1_000 });
     const raw = new Database(path);
     raw.prepare("UPDATE catalog_rules SET document_json = ? WHERE rule_id = ?").run(
       JSON.stringify({ kind: "conversation", rule: { id: "broken-inherited", unknown: true } }),
@@ -295,7 +295,7 @@ describe("ScopedRuleCatalog", () => {
   it("reserves the catalog before direct upsert ownership resolution", async () => {
     await expectCatalogReservation(
       () => {},
-      catalog => { catalog.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "first" }, { now: 1_000 }); },
+      catalog => { catalog.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "first" }, { now: 1_000 }); },
       catalog => { expect(catalog.get("first")).toMatchObject({ rule: { id: "first" } }); },
     );
   });
@@ -304,7 +304,7 @@ describe("ScopedRuleCatalog", () => {
     await expectCatalogReservation(
       () => {},
       catalog => {
-        catalog.restore([{ document: { kind: "conversation", rule: { ...MOCK_COSINE_RULES[0]!, id: "restored" } } }]);
+        catalog.restore([{ document: { kind: "conversation", rule: { ...MOCK_CONVERSATION_RULES[0]!, id: "restored" } } }]);
       },
       catalog => { expect(catalog.get("restored")).toMatchObject({ rule: { id: "restored" } }); },
     );
@@ -313,7 +313,7 @@ describe("ScopedRuleCatalog", () => {
   it("reserves the catalog before inherited-rule masking resolves nested upsert ownership", async () => {
     await expectCatalogReservation(
       catalog => {
-        catalog.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "inherited" }, { applicability: "global", now: 1_000 });
+        catalog.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "inherited" }, { applicability: "global", now: 1_000 });
       },
       catalog => { catalog.setEnabled({ ids: ["inherited"] }, false, 2_000); },
       catalog => {
@@ -322,18 +322,18 @@ describe("ScopedRuleCatalog", () => {
     );
   });
 
-  it("serves policy and cosine projections, filters, and external data-version changes", async () => {
+  it("serves code rule and conversation rule projections, filters, and external data-version changes", async () => {
     const path = await catalogPath();
     const reader = ScopedRuleCatalog.open(path, { repositoryId: "repo", workspaceRoot: "/repo" });
     const writer = ScopedRuleCatalog.open(path, { repositoryId: "repo", workspaceRoot: "/repo" });
     const initialVersion = reader.dataVersion();
-    writer.upsertDocument({ kind: "file", rule: MOCK_POLICY_RULES[0]! }, { now: 1_000 });
+    writer.upsertDocument({ kind: "file", rule: MOCK_CODE_RULES[0]! }, { now: 1_000 });
     writer.upsertDocument(
       {
         kind: "conversation",
         rule: {
-          ...MOCK_COSINE_RULES[0]!,
-          id: "cosine-filter",
+          ...MOCK_CONVERSATION_RULES[0]!,
+          id: "conversation-filter",
           reference: "Generated API client",
           sample: { source: "assistant-text", boundary: "sentence" },
           action: { content: "Use the generated client." },
@@ -343,9 +343,9 @@ describe("ScopedRuleCatalog", () => {
     );
 
     expect(reader.dataVersion()).not.toBe(initialVersion);
-    expect(reader.policyRules().map(rule => rule.id)).toEqual([MOCK_POLICY_RULES[0]!.id]);
-    expect(reader.cosineIds()).toEqual(new Set(["cosine-filter"]));
-    expect(reader.cosineRules()).toEqual([]);
+    expect(reader.codeRules().map(rule => rule.id)).toEqual([MOCK_CODE_RULES[0]!.id]);
+    expect(reader.conversationRuleIds()).toEqual(new Set(["conversation-filter"]));
+    expect(reader.conversationRules()).toEqual([]);
     expect(reader.list({
       kind: "conversation",
       enabled: false,
@@ -353,8 +353,8 @@ describe("ScopedRuleCatalog", () => {
       source: "assistant-text",
       boundary: "sentence",
       mode: "steer",
-    })).toEqual([expect.objectContaining({ rule: expect.objectContaining({ id: "cosine-filter" }) })]);
-    expect(reader.list({ mode: "steer" }).map(stored => stored.rule.id)).toEqual(["cosine-filter", MOCK_POLICY_RULES[0]!.id]);
+    })).toEqual([expect.objectContaining({ rule: expect.objectContaining({ id: "conversation-filter" }) })]);
+    expect(reader.list({ mode: "steer" }).map(stored => stored.rule.id)).toEqual(["conversation-filter", MOCK_CODE_RULES[0]!.id]);
     expect(reader.list({ mode: "log" })).toEqual([]);
     reader.close();
     writer.close();
@@ -363,7 +363,7 @@ describe("ScopedRuleCatalog", () => {
   it("keeps local seed edits while refreshing unchanged bundled definitions", async () => {
     const path = await catalogPath();
     const catalog = ScopedRuleCatalog.open(path, { repositoryId: "repo", workspaceRoot: "/repo" });
-    const bundled = { kind: "conversation" as const, rule: { ...MOCK_COSINE_RULES[0]!, id: "bundled" } };
+    const bundled = { kind: "conversation" as const, rule: { ...MOCK_CONVERSATION_RULES[0]!, id: "bundled" } };
     const refreshed = {
       kind: "conversation" as const,
       rule: { ...bundled.rule, reference: "Updated bundled reference" },
@@ -372,7 +372,7 @@ describe("ScopedRuleCatalog", () => {
     expect(catalog.seed([bundled], 1_000)).toEqual({ inserted: 1, refreshed: 0, kept: 0 });
     expect(catalog.seed([bundled], 2_000)).toEqual({ inserted: 0, refreshed: 0, kept: 1 });
     expect(catalog.seed([refreshed], 3_000)).toEqual({ inserted: 0, refreshed: 1, kept: 0 });
-    catalog.upsertCosine({ ...refreshed.rule, reference: "Local edit" }, { now: 4_000 });
+    catalog.upsertConversationRule({ ...refreshed.rule, reference: "Local edit" }, { now: 4_000 });
     expect(catalog.seed([bundled], 5_000)).toEqual({ inserted: 0, refreshed: 0, kept: 1 });
     expect(catalog.get("bundled")).toMatchObject({ rule: { reference: "Local edit" } });
     catalog.close();
@@ -381,13 +381,13 @@ describe("ScopedRuleCatalog", () => {
   it("seeds an opt-in document disabled without storing its seeding flag, and keeps the user's enabled state on refresh", async () => {
     const path = await catalogPath();
     const catalog = ScopedRuleCatalog.open(path, { repositoryId: "repo", workspaceRoot: "/repo" });
-    const rule = { ...MOCK_COSINE_RULES[0]!, id: "opt-in" };
+    const rule = { ...MOCK_CONVERSATION_RULES[0]!, id: "opt-in" };
     const optIn = { kind: "conversation" as const, rule, enabledByDefault: false };
 
     expect(catalog.seed([optIn], 1_000)).toEqual({ inserted: 1, refreshed: 0, kept: 0 });
     expect(catalog.get("opt-in")).toMatchObject({ enabled: false, sourceDigest: ruleDocumentDigest({ kind: "conversation", rule }) });
     expect(catalog.get("opt-in")).not.toHaveProperty("enabledByDefault");
-    expect(catalog.cosineRules()).toEqual([]);
+    expect(catalog.conversationRules()).toEqual([]);
     catalog.setEnabled({ ids: ["opt-in"] }, true, 1_500);
     expect(catalog.seed([{ ...optIn, rule: { ...rule, reference: "Updated" } }], 2_000)).toEqual({ inserted: 0, refreshed: 1, kept: 0 });
     expect(catalog.get("opt-in")).toMatchObject({ enabled: true, rule: { reference: "Updated" } });
@@ -400,23 +400,23 @@ describe("ScopedRuleCatalog", () => {
     const catalog = ScopedRuleCatalog.open(path, { repositoryId: "repo", workspaceRoot: root });
     const rulesFile = join(root, "conversation-rules.json");
     const document = (rule: unknown) => JSON.stringify({ version: 1, rules: [rule] });
-    const { mode: _mode, ...legacyRule } = { ...MOCK_COSINE_RULES[0]!, id: "file-rule", action: { delivery: "steer", content: "Old shape" } };
-    writeFileSync(rulesFile, document({ ...MOCK_COSINE_RULES[0]!, id: "file-rule" }));
-    const [source] = loadLegacyCosineRuleSources({}, root, "conversation-rules.json");
-    expect(catalog.migrateCosineRules(source!.path, source!.rules, 1_000)).toBe(1);
+    const { mode: _mode, ...legacyRule } = { ...MOCK_CONVERSATION_RULES[0]!, id: "file-rule", action: { delivery: "steer", content: "Old shape" } };
+    writeFileSync(rulesFile, document({ ...MOCK_CONVERSATION_RULES[0]!, id: "file-rule" }));
+    const [source] = loadLegacyConversationRuleSources({}, root, "conversation-rules.json");
+    expect(catalog.migrateConversationRules(source!.path, source!.rules, 1_000)).toBe(1);
 
     writeFileSync(rulesFile, document(legacyRule));
-    const [imported] = loadLegacyCosineRuleSources({}, root, "conversation-rules.json");
-    expect(catalog.migrateCosineRules(imported!.path, imported!.rules, 2_000)).toBe(0);
+    const [imported] = loadLegacyConversationRuleSources({}, root, "conversation-rules.json");
+    expect(catalog.migrateConversationRules(imported!.path, imported!.rules, 2_000)).toBe(0);
     expect(catalog.get("file-rule")?.rule.mode).toBe("steer");
 
     const otherFile = join(root, "other-rules.json");
     writeFileSync(otherFile, document(legacyRule));
-    const [fresh] = loadLegacyCosineRuleSources({ ruleFiles: [otherFile] }, root, "conversation-rules.json");
+    const [fresh] = loadLegacyConversationRuleSources({ ruleFiles: [otherFile] }, root, "conversation-rules.json");
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
       // A file in the retired shape that was never imported is skipped, not fatal, and stays unrecorded.
-      expect(catalog.migrateCosineRules(fresh!.path, fresh!.rules, 3_000)).toBe(0);
+      expect(catalog.migrateConversationRules(fresh!.path, fresh!.rules, 3_000)).toBe(0);
       expect(stderr.mock.calls.map(([line]) => String(line))).toContainEqual(
         expect.stringMatching(/^rerail: skipped rule file \S+other-rules\.json: it was written before rule modes; /u),
       );
@@ -425,15 +425,15 @@ describe("ScopedRuleCatalog", () => {
     }
     // Any other invalid file still fails, as it always did.
     writeFileSync(otherFile, JSON.stringify({ version: 1, rules: "not-an-array" }));
-    const [malformed] = loadLegacyCosineRuleSources({ ruleFiles: [otherFile] }, root, "conversation-rules.json");
-    expect(() => catalog.migrateCosineRules(malformed!.path, malformed!.rules, 3_200)).toThrow("rule document.rules must be an array");
-    writeFileSync(otherFile, document({ ...MOCK_COSINE_RULES[0]!, id: "fixed-rule" }));
-    const [fixed] = loadLegacyCosineRuleSources({ ruleFiles: [otherFile] }, root, "conversation-rules.json");
-    expect(catalog.migrateCosineRules(fixed!.path, fixed!.rules, 3_500)).toBe(1);
+    const [malformed] = loadLegacyConversationRuleSources({ ruleFiles: [otherFile] }, root, "conversation-rules.json");
+    expect(() => catalog.migrateConversationRules(malformed!.path, malformed!.rules, 3_200)).toThrow("rule document.rules must be an array");
+    writeFileSync(otherFile, document({ ...MOCK_CONVERSATION_RULES[0]!, id: "fixed-rule" }));
+    const [fixed] = loadLegacyConversationRuleSources({ ruleFiles: [otherFile] }, root, "conversation-rules.json");
+    expect(catalog.migrateConversationRules(fixed!.path, fixed!.rules, 3_500)).toBe(1);
 
     const legacyPath = join(root, "legacy.sqlite");
     const legacy = new SqliteRuleStore(legacyPath);
-    legacy.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "legacy-db" }, { now: 1_000 });
+    legacy.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "legacy-db" }, { now: 1_000 });
     legacy.close();
     expect(catalog.migrateLegacyRules(legacyPath, 4_000)).toBe(1);
     await rm(legacyPath);
@@ -446,11 +446,11 @@ describe("ScopedRuleCatalog", () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-scoped-open-"));
     temporaryDirectories.push(root);
     const legacyPath = join(root, ".rerail", "transcripts.sqlite");
-    const history = new SqliteTranscriptStore(legacyPath);
+    const history = new SqliteSessionStore(legacyPath);
     history.openSession({ host: "omp", sessionId: "old-session", cwd: root }, 500);
     history.close();
     const legacy = new SqliteRuleStore(legacyPath);
-    legacy.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "legacy-open" }, { now: 1_000 });
+    legacy.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "legacy-open" }, { now: 1_000 });
     legacy.close();
 
     const home = join(root, "home");
@@ -462,16 +462,16 @@ describe("ScopedRuleCatalog", () => {
       expect(catalog.path).toBe(join(home, "rerail.sqlite"));
       expect(catalog.get("legacy-open")).toMatchObject({ applicability: "project", catalogOrigin: "user" });
       expect(catalog.migrateCheckoutRules()).toBe(0);
-      expect(catalog.migrateCosineRules(join(root, "host-rules.json"), [
-        { ...MOCK_COSINE_RULES[0]!, id: "host-rule" },
+      expect(catalog.migrateConversationRules(join(root, "host-rules.json"), [
+        { ...MOCK_CONVERSATION_RULES[0]!, id: "host-rule" },
       ], 2_000)).toBe(1);
-      expect(catalog.migrateCosineRules(join(root, "host-rules.json"), [
-        { ...MOCK_COSINE_RULES[0]!, id: "host-rule" },
+      expect(catalog.migrateConversationRules(join(root, "host-rules.json"), [
+        { ...MOCK_CONVERSATION_RULES[0]!, id: "host-rule" },
       ], 3_000)).toBe(0);
       catalog.close();
       // The checkout's history is not copied; the old file keeps it.
-      expect(new SqliteTranscriptReader(join(home, "rerail.sqlite")).sessions()).toEqual([]);
-      expect(new SqliteTranscriptReader(legacyPath).sessions()).toEqual([expect.objectContaining({ sessionId: "old-session" })]);
+      expect(new SqliteSessionReader(join(home, "rerail.sqlite")).sessions()).toEqual([]);
+      expect(new SqliteSessionReader(legacyPath).sessions()).toEqual([expect.objectContaining({ sessionId: "old-session" })]);
     } finally {
       if (previousHome === undefined) delete process.env.RERAIL_HOME;
       else process.env.RERAIL_HOME = previousHome;
@@ -482,7 +482,7 @@ describe("ScopedRuleCatalog", () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-scoped-open-"));
     temporaryDirectories.push(root);
     const legacy = new SqliteRuleStore(join(root, ".rerail", "transcripts.sqlite"));
-    legacy.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "legacy-explicit" }, { now: 1_000 });
+    legacy.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "legacy-explicit" }, { now: 1_000 });
     legacy.close();
 
     const catalog = ScopedRuleCatalog.open(join(root, "home", "rerail.sqlite"), { repositoryId: "repo", workspaceRoot: root });
@@ -493,8 +493,8 @@ describe("ScopedRuleCatalog", () => {
   it("quarantines an unreadable row without blocking its removal", async () => {
     const path = await catalogPath();
     const catalog = ScopedRuleCatalog.open(path, { repositoryId: "repo", workspaceRoot: "/repo" });
-    catalog.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "healthy" }, { now: 1_000 });
-    catalog.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "broken" }, { now: 1_000 });
+    catalog.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "healthy" }, { now: 1_000 });
+    catalog.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "broken" }, { now: 1_000 });
     const database = new Database(path);
     database.prepare("UPDATE catalog_rules SET document_json = ? WHERE rule_id = ?")
       .run(JSON.stringify({ kind: "conversation", rule: { id: "broken", unknown: true } }), "broken");
@@ -514,13 +514,13 @@ describe("rules.sqlite adoption", () => {
     const path = join(home, "rules.sqlite");
     const repositories = ["repo-a", "repo-b", "repo-c"].map(repositoryId => ({ repositoryId, workspaceRoot: `/${repositoryId}` }));
     const catalogs = repositories.map(repository => ScopedRuleCatalog.open(path, repository));
-    const rule = MOCK_COSINE_RULES[0]!;
+    const rule = MOCK_CONVERSATION_RULES[0]!;
     catalogs[0]!.restore(Array.from({ length: ruleCount }, (_value, index) => ({
       document: { kind: "conversation" as const, rule: { ...rule, id: `rule-${index}` } },
       options: { applicability: index % 2 === 0 ? "global" as const : "project" as const, now: 1_000 + index },
     })));
-    catalogs[1]!.upsertCosine({ ...rule, id: "project-b-only" }, { now: 5_000 });
-    catalogs[2]!.upsertCosine({ ...rule, id: "rule-1", reference: "c override" }, { now: 6_000 });
+    catalogs[1]!.upsertConversationRule({ ...rule, id: "project-b-only" }, { now: 5_000 });
+    catalogs[2]!.upsertConversationRule({ ...rule, id: "rule-1", reference: "c override" }, { now: 6_000 });
     for (const catalog of catalogs) catalog.close();
     const database = new Database(path);
     database.exec([
@@ -558,17 +558,17 @@ describe("rules.sqlite adoption", () => {
     expect(counts(path)).toEqual(before);
     expect(catalog.get("rule-1")).toMatchObject({ applicability: "project", rule: { reference: "c override" } });
     expect(catalog.get("rule-0")).toMatchObject({ applicability: "global" });
-    const store = new SqliteTranscriptStore(path, { repositoryId: "repo-c" });
+    const store = new SqliteSessionStore(path, { repositoryId: "repo-c" });
     store.openSession({ host: "omp", sessionId: "after-adoption", cwd: "/repo-c" });
     store.close();
-    catalog.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "written-after" });
+    catalog.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "written-after" });
     catalog.close();
     expect(readFileSync(legacyPath).equals(legacyBytes)).toBe(true);
     expect(statSync(legacyPath).mtimeMs).toBe(legacyModified);
 
     // A later change to the old file is never re-adopted: rerail.sqlite is authoritative once it exists.
     const stale = ScopedRuleCatalog.open(legacyPath, { repositoryId: "repo-a", workspaceRoot: "/repo-a" });
-    stale.upsertCosine({ ...MOCK_COSINE_RULES[0]!, id: "stale-write" });
+    stale.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "stale-write" });
     stale.close();
     const reopened = ScopedRuleCatalog.open(path, { repositoryId: "repo-a", workspaceRoot: "/repo-a" });
     expect(reopened.get("stale-write")).toBeUndefined();
@@ -576,7 +576,7 @@ describe("rules.sqlite adoption", () => {
     expect(reopened.get("project-b-only")).toBeUndefined();
     expect(counts(path).catalog_rules).toBe(before.catalog_rules! + 1);
     reopened.close();
-    const reader = new SqliteTranscriptReader(path, { repositoryId: "repo-c" });
+    const reader = new SqliteSessionReader(path, { repositoryId: "repo-c" });
     expect(reader.sessions().map(session => session.sessionId)).toEqual(["after-adoption"]);
     reader.close();
   });

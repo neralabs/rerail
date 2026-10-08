@@ -7,8 +7,8 @@ repo=$(dirname "$rerail")
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-for path in rerail/package.json rerail/scripts/policy-dsl-reference.mjs rerail/src/policy-schema.ts \
-  rerail/native/src/policy_dsl/compile/ast_rule.rs docs/design/rerail-policy-dsl-reference.html; do
+for path in rerail/package.json rerail/scripts/code-rule-dsl-reference.mjs rerail/src/code-rule-schema.ts \
+  rerail/native/src/code_rule_dsl/compile/ast_rule.rs docs/design/rerail-policy-dsl-reference.html; do
   mkdir -p "$work/$(dirname "$path")"
   cp "$repo/$path" "$work/$path"
 done

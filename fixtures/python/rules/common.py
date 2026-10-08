@@ -16,10 +16,10 @@ import warnings
 HERE = pathlib.Path(__file__).resolve().parent
 PACK = HERE.parents[2] / "rerail" / "conformance" / "languages" / "python" / "pack.json"
 
-# The directories a repository scan never enters (`IGNORED_DIRECTORIES`, rerail/src/executable-policy-enforcer.ts).
+# The directories a repository audit never enters (`IGNORED_DIRECTORIES`, rerail/src/code-rule-enforcer.ts).
 IGNORED_DIRECTORIES = {".git", ".hg", ".svn", ".rerail", ".nera", ".venv", "__pycache__", "node_modules", "dist", "build",
                        ".next", ".turbo", "coverage", "target", "vendor"}
-# The extensions the host routes to the python dialect (`POLICY_DIALECTS.python`, rerail/src/policy-languages.ts).
+# The extensions the host routes to the python dialect (`CODE_RULE_DIALECTS.python`, rerail/src/code-rule-languages.ts).
 EXTENSIONS = (".py", ".pyi")
 # Ruff's CLI default target version, and the engine's default `pythonVersion`: the ports keep it.
 TARGET_VERSION = "py310"

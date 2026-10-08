@@ -1,15 +1,15 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import type { CosineRuleRegistry } from "./registry.js";
+import type { ConversationRuleRegistry } from "./registry.js";
 import { describeMatch } from "./rule-schema.js";
 
-export interface CosineRulesCommandRuntime {
-  registry?: () => CosineRuleRegistry;
+export interface ConversationRulesCommandRuntime {
+  registry?: () => ConversationRuleRegistry;
   turn?: () => number;
   reload?: () => Promise<void> | void;
   remoteCommand?: () => ((args: string) => Promise<unknown>) | undefined;
 }
 
-export function registerCosineRulesCommand(pi: ExtensionAPI, runtime: CosineRulesCommandRuntime): void {
+export function registerConversationRulesCommand(pi: ExtensionAPI, runtime: ConversationRulesCommandRuntime): void {
   pi.registerCommand("cosine-rules", {
     description: "Inspect, test, or reload cosine-similarity trigger rules",
     async handler(args, ctx) {

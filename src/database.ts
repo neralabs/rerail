@@ -307,7 +307,7 @@ function startUnrecorded(database: RerailDatabase, checkouts: ReadonlyMap<string
  * A release before v16 records in every repository and ignores this table, so a rollback followed by
  * another update leaves the repositories used in between with history and no state. This release, by
  * contrast, records wherever a checkout counts as started, which includes a flagged development
- * workspace (`NERA_RERAIL_ENABLED=true`) that has no row; the event stream and the daemon kernel record
+ * workspace (`NERA_RERAIL_ENABLED=true`) that has no row; the event stream and the engine service record
  * such a session in the host database. Every session this release records is marked `start_gated`,
  * and only unmarked ones are carried over, so neither the flag nor a seeded mock session switches a
  * repository on. A repository with only a worktree's own row was set up there and is skipped.
@@ -514,7 +514,7 @@ const V15_RULE_KINDS: Readonly<Record<string, string>> = { policy: "file", cosin
 const V15_RULE_ORIGINS: Readonly<Record<string, string>> = { local: "user", migrated: "user", nera: "user", bundled: "rerail" };
 const V15_EVENT_KINDS: Readonly<Record<string, string>> = { "tool-call": "call", "tool-result": "result" };
 const V14_POLICY_FORMAT = "rerail.policy/v1";
-const V15_POLICY_FORMAT = "rerail.policy/v1";
+const V15_CODE_RULE_FORMAT = "rerail.policy/v1";
 const V15_VIOLATION_KEYS: Readonly<Record<string, string>> = { checkId: "clauseId", policyId: "ruleId" };
 const V15_COVERAGE_KEYS: Readonly<Record<string, string>> = {
   cosineRuleSignature: "conversationRuleSignature",
@@ -539,12 +539,12 @@ function v15Kind(kind: string): string {
 }
 
 /** A v14 policy body as v15 writes it: the v15 format, `checks` as `clauses`, each clause's `finding` as `violation`. */
-function v15PolicyBody(rule: unknown): unknown {
+function v15CodeRuleBody(rule: unknown): unknown {
   if (!isJsonObject(rule)) return rule;
   const renamed = renamedKeys(rule, { checks: "clauses" });
   return {
     ...renamed,
-    ...(renamed.format === V14_POLICY_FORMAT ? { format: V15_POLICY_FORMAT } : {}),
+    ...(renamed.format === V14_POLICY_FORMAT ? { format: V15_CODE_RULE_FORMAT } : {}),
     ...(Array.isArray(renamed.clauses) ? { clauses: renamed.clauses.map(v15Clause) } : {}),
   };
 }
@@ -639,7 +639,7 @@ function rebuildRerailRules(database: RerailDatabase): void {
   for (const row of database.all<V14RuleRow>(sql.raw("SELECT * FROM `rules_legacy`"))) {
     const kind = v15Kind(row.kind);
     const before = v14StoredRule(row);
-    const after = row.kind === "policy" ? v15PolicyBody(before) as JsonObject : before;
+    const after = row.kind === "policy" ? v15CodeRuleBody(before) as JsonObject : before;
     const { checks_json: checksJson, ...columns } = row;
     const values: Record<string, unknown> = {
       ...columns,
@@ -671,7 +671,7 @@ function rewriteRerailCatalog(database: RerailDatabase, tables: ReadonlySet<stri
     const document: unknown = JSON.parse(row.document_json);
     const before = isJsonObject(document) ? document : { kind: row.kind, rule: document };
     const beforeKind = typeof before.kind === "string" ? before.kind : row.kind;
-    const after = { ...before, kind: v15Kind(beforeKind), rule: beforeKind === "policy" ? v15PolicyBody(before.rule) : before.rule };
+    const after = { ...before, kind: v15Kind(beforeKind), rule: beforeKind === "policy" ? v15CodeRuleBody(before.rule) : before.rule };
     const digest = documentDigest(after.kind, after.rule);
     database.run(sql`
       UPDATE catalog_rules

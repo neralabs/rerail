@@ -2,7 +2,7 @@
 
 > A practical guide to catching the commands an agent should never run — `git push --force`,
 > `rm -rf`, `--no-verify` — with structural tool-call rules. Every example below was run through the
-> kernel; **FLAG** means the rule fired, **PASS** means it stayed quiet.
+> engine; **FLAG** means the rule fired, **PASS** means it stayed quiet.
 
 - [Why a regex and not similarity](#why-a-regex-and-not-similarity)
 - [Anatomy of a rule](#anatomy-of-a-rule)
@@ -18,11 +18,11 @@
 
 ## Why a regex and not similarity
 
-"Never run `git push --force`" is an exact rule. A cosine rule expresses it as a similarity threshold,
+"Never run `git push --force`" is an exact rule. A similarity rule expresses it as a similarity threshold,
 which is too loose (it fires on neighbouring phrasings) and too tight (it misses the one spelling that
 matters) at the same time. A structural rule states the command itself.
 
-|                      | Cosine rule                 | Structural rule                         |
+|                      | Similarity rule             | Structural rule                         |
 | -------------------- | --------------------------- | --------------------------------------- |
 | Matches              | meaning, by embedding       | text, by `regex` / `eq` / `contains`    |
 | Needs a `reference`  | yes                         | no, and rejects one                     |
@@ -68,7 +68,7 @@ A missing argument, or one that is not a string, never matches. A rule that read
 ## The regex dialect
 
 Patterns use the **Rust `regex` crate** — the same dialect, and the same 16,384-byte
-`maxRegexPatternBytes` limit, as the [policy DSL](../policies/executable-policy-dsl/capabilities.json).
+`maxRegexPatternBytes` limit, as the [code-rule DSL](../code-rule-dsl/capabilities.json).
 It runs in linear time, so no command an agent writes can make a rule hang.
 
 | You may use | You may not use |
@@ -297,15 +297,15 @@ quotes and line anchors. For anything command-shaped, read `input.command`.
 For each rule, list at least one command it must flag, one near-miss it must pass, and — if it reads
 the command line — a tool *result* that echoes the command and must pass.
 
-**2. Run them through the kernel.** Add the rule to `test/fixtures/tool-call-rules.json` and its
+**2. Run them through the engine.** Add the rule to `test/fixtures/tool-call-rules.json` and its
 cases to `test/tool-call-rules.test.ts`, or try it ad hoc:
 
 ```ts
 import { resolve } from "node:path";
-import { CosineRuleRegistry } from "./src/registry.js";
+import { ConversationRuleRegistry } from "./src/registry.js";
 import { stableJsonText } from "./src/stable-json.js";
 
-const registry = new CosineRuleRegistry({ modelPath: resolve("model") });
+const registry = new ConversationRuleRegistry({ modelPath: resolve("model") });
 registry.replace([rule]);
 
 const input = stableJsonText({ command: "git push --force origin main" })!;
@@ -343,7 +343,7 @@ The body is validated before it is stored, regex included; an invalid rule is re
 | `rule.match.field must be text, tool.name, input, or input.<path>` | A typo such as `input..command` or `command`. |
 | `rule.sample.source must be tool:<name> or tool:* when the match reads tool.name or input` | The rule reads tool fields but samples a conversation source. |
 | `rule.sample.boundary must be tool-call when the match reads tool.name or input` | Set `"boundary": "tool-call"`. |
-| `rule.reference must be omitted: a structural match computes no similarity` | Delete `reference`; it only belongs on cosine rules. |
+| `rule.reference must be omitted: a structural match computes no similarity` | Delete `reference`; it only belongs on similarity rules. |
 | `rule.sample.minimumTokens must be omitted: a structural match does not tokenize` | Delete `minimumTokens`. |
 
 ## Checklist
@@ -357,6 +357,6 @@ The body is validated before it is stored, regex included; an invalid rule is re
 - [ ] Exceptions are a `not` condition, not look-around.
 - [ ] `(?i)` only where the tool ignores case (SQL, not git flags).
 - [ ] Shells from every host named in `tool.name`, or the rule bound to the one tool it targets.
-- [ ] At least one FLAG case, one near-miss PASS case, and one tool-result PASS case, run through the kernel.
+- [ ] At least one FLAG case, one near-miss PASS case, and one tool-result PASS case, run through the engine.
 - [ ] Noise checked against the repository's own sanctioned commands before `mode` is set to `block`.
 - [ ] `repeat` set to `always`, and an `action.content` that says what to do instead.

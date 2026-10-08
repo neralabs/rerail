@@ -17,7 +17,7 @@ describe("query parity comparison", () => {
     expect(differences).toEqual([expect.objectContaining({ side: "candidate", workload: "edits", section: "applies" })]);
   });
 
-  it("ignores raw edit hashes and finding order when applies are semantically equal", () => {
+  it("ignores raw edit hashes and violation order when applies are semantically equal", () => {
     const differences = compareSides([
       {
         side: { name: "reference", addon: "/reference.node", environment: {} },
@@ -54,17 +54,17 @@ describe("query parity comparison", () => {
 });
 
 describe("query parity coverage", () => {
-  it("counts failures for their policy and check", () => {
+  it("counts failures for their code rule and clause", () => {
     const records = coverage([
-      { path: "policy.json", source: JSON.stringify({ id: "policy-a" }), clauses: [{ id: "check-a" }, { id: "check-b" }] },
+      { path: "policy.json", source: JSON.stringify({ id: "code-rule-a" }), clauses: [{ id: "clause-a" }, { id: "clause-b" }] },
     ], [
-      { ruleId: "policy-a", clauseId: "check-a", code: "source-partial", message: "incomplete source" },
-      { ruleId: "policy-a", clauseId: "check-a", code: "budget-exceeded", message: "budget exhausted" },
+      { ruleId: "code-rule-a", clauseId: "clause-a", code: "source-partial", message: "incomplete source" },
+      { ruleId: "code-rule-a", clauseId: "clause-a", code: "budget-exceeded", message: "budget exhausted" },
     ]);
 
     expect(records).toEqual([
-      { policyId: "policy-a", checkId: "check-a", status: "partial", failureCount: 2 },
-      { policyId: "policy-a", checkId: "check-b", status: "complete", failureCount: 0 },
+      { policyId: "code-rule-a", checkId: "clause-a", status: "partial", failureCount: 2 },
+      { policyId: "code-rule-a", checkId: "clause-b", status: "complete", failureCount: 0 },
     ]);
   });
 });

@@ -9,7 +9,7 @@ import { operations, type RerailApiStores } from "../src/api/operations.js";
 import { findDuplicateJsonKeys, parseJsonWithoutDuplicateKeys } from "../src/json-duplicate-keys.js";
 import { exportScopedRules, importScopedRules, loadBundledRules } from "../src/rule-bootstrap.js";
 import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
-import { MOCK_POLICY_RULES } from "../src/seed.js";
+import { MOCK_CODE_RULES } from "../src/seed.js";
 
 describe("findDuplicateJsonKeys", () => {
   it("finds repeated keys at any depth with their JSON Pointer", () => {
@@ -40,9 +40,9 @@ describe("rule documents with repeated keys are rejected on write", () => {
   let root: string;
   let catalog: ScopedRuleCatalog;
   let stores: RerailApiStores;
-  const policy = MOCK_POLICY_RULES[0]!;
-  /** The mock policy's upsert body with its check's `id` given twice; JSON.parse would keep the second. */
-  const repeatedBody = JSON.stringify({ kind: "file", rule: policy })
+  const codeRule = MOCK_CODE_RULES[0]!;
+  /** The mock code rule's upsert body with its clause's `id` given twice; JSON.parse would keep the second. */
+  const repeatedBody = JSON.stringify({ kind: "file", rule: codeRule })
     .replace('"id":"console-call"', '"id":"first","id":"console-call"');
 
   beforeEach(async () => {
@@ -58,7 +58,7 @@ describe("rule documents with repeated keys are rejected on write", () => {
 
   it("answers an HTTP rule write with a repeated key with 400 and its path, and stores nothing", async () => {
     const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
-    const rejected = await app.request(`/api/rules/${policy.id}`, {
+    const rejected = await app.request(`/api/rules/${codeRule.id}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: repeatedBody,
@@ -68,12 +68,12 @@ describe("rule documents with repeated keys are rejected on write", () => {
       error: "duplicate-key",
       message: "request body: duplicate key `id` at /rule/clauses/0",
     });
-    expect(catalog.get(policy.id)).toBeUndefined();
+    expect(catalog.get(codeRule.id)).toBeUndefined();
 
-    const accepted = await app.request(`/api/rules/${policy.id}`, {
+    const accepted = await app.request(`/api/rules/${codeRule.id}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "file", rule: policy }),
+      body: JSON.stringify({ kind: "file", rule: codeRule }),
     });
     expect(accepted.status).toBe(200);
   });
@@ -81,9 +81,9 @@ describe("rule documents with repeated keys are rejected on write", () => {
   it("rejects a deeply nested discarded duplicate key instead of applying last-key-wins", async () => {
     const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
     const nested = `${"[".repeat(10_000)}0${"]".repeat(10_000)}`;
-    const body = JSON.stringify({ kind: "file", rule: policy }).replace('"kind":"file"', `"kind":${nested},"kind":"file"`);
+    const body = JSON.stringify({ kind: "file", rule: codeRule }).replace('"kind":"file"', `"kind":${nested},"kind":"file"`);
 
-    const rejected = await app.request(`/api/rules/${policy.id}`, {
+    const rejected = await app.request(`/api/rules/${codeRule.id}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body,
@@ -94,12 +94,12 @@ describe("rule documents with repeated keys are rejected on write", () => {
       error: "duplicate-key",
       message: "request body: JSON nesting exceeds duplicate-key validation limit",
     });
-    expect(catalog.get(policy.id)).toBeUndefined();
+    expect(catalog.get(codeRule.id)).toBeUndefined();
   });
 
   it("answers an MCP tool call whose arguments repeat a key with a JSON-RPC error naming the path", async () => {
     const handler = createRerailMcpHandler(stores, operations, { version: "0.0.0-test" });
-    const argumentsText = repeatedBody.replace(/^\{/u, `{"id":${JSON.stringify(policy.id)},`);
+    const argumentsText = repeatedBody.replace(/^\{/u, `{"id":${JSON.stringify(codeRule.id)},`);
     const response = await handler(new Request("http://localhost:4737/mcp", {
       method: "POST",
       headers: { host: "localhost:4737", "content-type": "application/json", accept: "application/json, text/event-stream" },
@@ -111,24 +111,24 @@ describe("rule documents with repeated keys are rejected on write", () => {
       id: 7,
       error: { code: -32602, message: "request body: duplicate key `id` at /params/arguments/rule/clauses/0" },
     });
-    expect(catalog.get(policy.id)).toBeUndefined();
+    expect(catalog.get(codeRule.id)).toBeUndefined();
   });
 
   it("refuses to import a dump with a repeated key, naming its path", () => {
     const dumpPath = join(root, "rules.json");
-    catalog.upsertPolicy(policy);
+    catalog.upsertCodeRule(codeRule);
     exportScopedRules(catalog, dumpPath);
-    catalog.remove([policy.id]);
+    catalog.remove([codeRule.id]);
     const text = readFileSync(dumpPath, "utf8").replace('"id": "console-call"', '"id": "first", "id": "console-call"');
     writeFileSync(dumpPath, text);
     expect(() => importScopedRules(catalog, dumpPath)).toThrow(`${dumpPath}: duplicate key \`id\` at /rules/0/rule/clauses/0`);
-    expect(catalog.get(policy.id)).toBeUndefined();
+    expect(catalog.get(codeRule.id)).toBeUndefined();
   });
 
   it("refuses a bundled rule file with a repeated key", () => {
     const directory = join(root, "rules");
     mkdirSync(directory);
-    writeFileSync(join(directory, "a.json"), JSON.stringify(policy).replace('"format":', '"format":"rerail.policy/v1","format":'));
+    writeFileSync(join(directory, "a.json"), JSON.stringify(codeRule).replace('"format":', '"format":"rerail.policy/v1","format":'));
     expect(() => loadBundledRules(directory)).toThrow(`${join(directory, "a.json")}: duplicate key \`format\` at /`);
   });
 });

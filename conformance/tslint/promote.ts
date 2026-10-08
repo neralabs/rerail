@@ -1,6 +1,6 @@
 /**
  * Promote a proven TSLint port into the golden set: Rerail's opt-in pack
- * (`policies/executable-policy-dsl/rules/opt-in/tslint/<rule>.json`, rule id `tslint:<rule>`, seeded disabled). A port
+ * (`code-rule-dsl/rules/opt-in/tslint/<rule>.json`, rule id `tslint:<rule>`, seeded disabled). A port
  * qualifies when its PASS audit class is `genuine` (audit.ts), TSLint gives it meaningful option-less behaviour (not in
  * `REQUIRES_CONFIGURATION`), and, scored with the doc as it would ship, its effective verdict is PASS (raw or on a
  * repaired fixture) and it scores identically on renamed fixtures.
@@ -18,7 +18,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
-import { policyRuleSchema, type PolicyScope } from "../../src/policy-schema.js";
+import { codeRuleSchema, type CodeRuleScope } from "../../src/code-rule-schema.js";
 import { PASS_AUDIT } from "./audit.js";
 import { ensureFixtures, loadScoredRules, REPOSITORY_ROOT } from "./fixtures.js";
 import {
@@ -37,7 +37,7 @@ import { observedEntry } from "./golden-gate.js";
 import { renameCheck } from "./poison.js";
 import { COMMITTED_PORTS_DIRECTORY, evaluateRule, loadSidecar } from "./runner.js";
 
-/** TypeScript sources only: the kernel parses `.js` as `javascript`, which no port's typescript AST query matches. */
+/** TypeScript sources only: the engine parses `.js` as `javascript`, which no port's typescript AST query matches. */
 export const INCLUDE = ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"];
 export const EXCLUDE = [
   "**/node_modules/**",
@@ -71,7 +71,7 @@ export const REQUIRES_CONFIGURATION: ReadonlyMap<string, string> = new Map([
 export const descriptionPrefix = (rule: string): string =>
   `Port of TSLint's \`${rule}\` rule with its default options (https://palantir.github.io/tslint/rules/${rule}/).`;
 
-function shippedScope(port: PolicyScope | undefined): PolicyScope {
+function shippedScope(port: CodeRuleScope | undefined): CodeRuleScope {
   const portExcludes = (port?.exclude ?? []).filter(glob => !EXCLUDE.includes(glob));
   return { include: INCLUDE, exclude: [...EXCLUDE, ...portExcludes] };
 }
@@ -79,12 +79,12 @@ function shippedScope(port: PolicyScope | undefined): PolicyScope {
 /** The shipped doc for a port default: its JSON as written (key order kept), description and scope replaced. */
 export function shippedDocument(rule: string, portPath = join(COMMITTED_PORTS_DIRECTORY, `${rule}.json`)): Record<string, unknown> {
   const raw: unknown = JSON.parse(readFileSync(portPath, "utf8"));
-  const port = policyRuleSchema.parse(raw);
+  const port = codeRuleSchema.parse(raw);
   const expectedId = `tslint:${rule}`;
   if (port.id !== expectedId) throw new Error(`port ${rule} has id ${port.id}, expected ${expectedId}`);
   const summary = port.description === undefined ? "" : ` ${port.description}`;
   const document = { ...(raw as Record<string, unknown>), description: `${descriptionPrefix(rule)}${summary}`, scope: shippedScope(port.scope) };
-  policyRuleSchema.parse(document);
+  codeRuleSchema.parse(document);
   return document;
 }
 
@@ -120,7 +120,7 @@ export function checkGolden(manifest: GoldenManifest = loadGoldenManifest(), dir
     if (entry?.verdict === "PASS (repaired fixture)" && (entry.evidence ?? []).length === 0) {
       problems.push(`${rule}: a repaired-fixture PASS must cite the invalid fixture lines in golden.json evidence`);
     }
-    const parsed = policyRuleSchema.safeParse(JSON.parse(readFileSync(goldenDocumentPath(rule, directory), "utf8")));
+    const parsed = codeRuleSchema.safeParse(JSON.parse(readFileSync(goldenDocumentPath(rule, directory), "utf8")));
     if (!parsed.success) {
       problems.push(`${rule}: pack doc is not a valid policy: ${parsed.error.issues[0]?.message ?? "invalid"}`);
       continue;

@@ -6,9 +6,9 @@ use super::relationships::{
 };
 use super::rows::{hash_params, validate_relative_path};
 use super::{
-    CODEC_ZSTD, CandidateCheck, ContentStore, HashKey, MAX_PUBLICATION_BATCH,
-    OverlayFilePublication, PublicationResult, STRING_CHECK_KEY, STRING_PATH, SourceId, StoreError,
-    StoreResult, StoredFile, TapeId, WorkspaceId, compress,
+    CODEC_ZSTD, CandidateClause, ContentStore, HashKey, MAX_PUBLICATION_BATCH,
+    OverlayFilePublication, PublicationResult, STRING_CLAUSE_KEY, STRING_PATH, SourceId,
+    StoreError, StoreResult, StoredFile, TapeId, WorkspaceId, compress,
 };
 use crate::WORK_POOL;
 #[cfg(test)]
@@ -167,7 +167,7 @@ impl ContentStore {
             .map(|(catalog, _)| *catalog)
             .collect::<BTreeSet<_>>()
             .len();
-        let expected_checks = candidate_identities
+        let expected_clauses = candidate_identities
             .iter()
             .filter(|(_, candidate)| candidate.is_some())
             .count();
@@ -195,7 +195,7 @@ impl ContentStore {
             })
             && initial_path_ids.len() == expected_paths
             && initial_interned.catalogs.len() == expected_catalogs
-            && initial_interned.checks.len() == expected_checks
+            && initial_interned.clauses.len() == expected_clauses
             && publications
                 .iter()
                 .all(|publication| publication.aliases.is_empty());
@@ -306,7 +306,7 @@ impl ContentStore {
                     })
                     && path_ids.len() == expected_paths
                     && known_interned.catalogs.len() == expected_catalogs
-                    && known_interned.checks.len() == expected_checks;
+                    && known_interned.clauses.len() == expected_clauses;
                 if complete {
                     break (stored_objects, path_ids, known_interned);
                 }
@@ -542,7 +542,7 @@ fn prepare_object_pass(
     let mut strings = BTreeMap::<(i64, String), HashKey>::new();
     let mut paths = BTreeMap::<String, HashKey>::new();
     let mut catalogs = BTreeSet::new();
-    let mut checks = BTreeMap::<(HashKey, HashKey, String), HashKey>::new();
+    let mut clauses = BTreeMap::<(HashKey, HashKey, String), HashKey>::new();
     let mut aliases = BTreeSet::<(HashKey, HashKey)>::new();
     let mut source_rows = Vec::new();
     let mut tape_rows = Vec::new();
@@ -582,20 +582,20 @@ fn prepare_object_pass(
         );
         for candidate in candidates {
             let known = known_catalog.is_some_and(|catalog_id| {
-                known_interned.checks.contains_key(&(
+                known_interned.clauses.contains_key(&(
                     catalog_id,
-                    candidate.policy,
-                    candidate.check.clone(),
+                    candidate.rule,
+                    candidate.clause.clone(),
                 ))
             });
             if !known {
-                hashes.insert(candidate.policy);
-                let check_hash = HashKey::sha256(candidate.check.as_bytes());
-                hashes.insert(check_hash);
-                strings.insert((STRING_CHECK_KEY, candidate.check.clone()), check_hash);
-                checks.insert(
-                    (catalog, candidate.policy, candidate.check.clone()),
-                    check_hash,
+                hashes.insert(candidate.rule);
+                let clause_hash = HashKey::sha256(candidate.clause.as_bytes());
+                hashes.insert(clause_hash);
+                strings.insert((STRING_CLAUSE_KEY, candidate.clause.clone()), clause_hash);
+                clauses.insert(
+                    (catalog, candidate.rule, candidate.clause.clone()),
+                    clause_hash,
                 );
             }
         }
@@ -635,14 +635,14 @@ fn prepare_object_pass(
         "catalog identities",
     )?;
     let checks_json = encode_json(
-        &checks
+        &clauses
             .into_iter()
-            .map(|((catalog, policy, check), check_hash)| {
+            .map(|((catalog, rule, clause), clause_hash)| {
                 serde_json::json!([
                     hash_json(catalog),
-                    hash_json(policy),
-                    check,
-                    hash_json(check_hash)
+                    hash_json(rule),
+                    clause,
+                    hash_json(clause_hash)
                 ])
             })
             .collect::<Vec<_>>(),
@@ -807,7 +807,7 @@ fn execute_object_pass(
          CAST(json_extract(value,'$[0][2]') AS INTEGER) c1,CAST(json_extract(value,'$[0][3]') AS INTEGER) c2,CAST(json_extract(value,'$[0][4]') AS INTEGER) c3,\
          CAST(json_extract(value,'$[1][0]') AS INTEGER) pa,CAST(json_extract(value,'$[1][1]') AS INTEGER) p0,\
          CAST(json_extract(value,'$[1][2]') AS INTEGER) p1,CAST(json_extract(value,'$[1][3]') AS INTEGER) p2,CAST(json_extract(value,'$[1][4]') AS INTEGER) p3,\
-         json_extract(value,'$[2]') check_value,CAST(json_extract(value,'$[3][0]') AS INTEGER) sa,\
+         json_extract(value,'$[2]') clause_value,CAST(json_extract(value,'$[3][0]') AS INTEGER) sa,\
          CAST(json_extract(value,'$[3][1]') AS INTEGER) s0,CAST(json_extract(value,'$[3][2]') AS INTEGER) s1,\
          CAST(json_extract(value,'$[3][3]') AS INTEGER) s2,CAST(json_extract(value,'$[3][4]') AS INTEGER) s3 FROM json_each(?1)) \
          INSERT OR IGNORE INTO candidate_checks(catalog_id,policy_hash_id,check_string_id) \
@@ -816,8 +816,8 @@ fn execute_object_pass(
          JOIN candidate_catalogs c ON c.identity_hash_id=ch.hash_id \
          JOIN hashes ph INDEXED BY hashes_by_prefix ON ph.algorithm_id=i.pa AND ph.lane0=i.p0 AND ph.lane1=i.p1 AND ph.lane2=i.p2 AND ph.lane3=i.p3 \
          JOIN hashes sh INDEXED BY hashes_by_prefix ON sh.algorithm_id=i.sa AND sh.lane0=i.s0 AND sh.lane1=i.s1 AND sh.lane2=i.s2 AND sh.lane3=i.s3 \
-         JOIN strings s ON s.domain_id=?2 AND s.content_hash_id=sh.hash_id AND s.value=i.check_value",
-    )?.execute(params![pass.checks_json, STRING_CHECK_KEY])?;
+         JOIN strings s ON s.domain_id=?2 AND s.content_hash_id=sh.hash_id AND s.value=i.clause_value",
+    )?.execute(params![pass.checks_json, STRING_CLAUSE_KEY])?;
     statements += 1;
     transaction
         .prepare_cached(&pass.source_sql)?
@@ -855,7 +855,7 @@ fn execute_object_pass(
     Ok(statements)
 }
 
-pub(super) type PublicationCandidateIdentity = (HashKey, Option<CandidateCheck>);
+pub(super) type PublicationCandidateIdentity = (HashKey, Option<CandidateClause>);
 
 fn publication_candidate_identities(
     publications: &[OverlayFilePublication<'_>],
@@ -871,7 +871,7 @@ fn publication_candidate_identities(
                 .iter()
                 .map(|result| &result.candidate),
         ) {
-            let key = (candidate.policy, candidate.check.clone());
+            let key = (candidate.rule, candidate.clause.clone());
             identities
                 .entry((catalog, Some(key)))
                 .or_insert_with(|| (catalog, Some(candidate.clone())));
@@ -887,19 +887,21 @@ pub(super) fn resolve_publication_identities(
     let input = identities
         .iter()
         .map(|(catalog, candidate)| {
-            let policy = candidate.as_ref().map(|candidate| candidate.policy);
+            let rule = candidate.as_ref().map(|candidate| candidate.rule);
             serde_json::json!([
                 catalog.algorithm,
                 catalog.lanes[0],
                 catalog.lanes[1],
                 catalog.lanes[2],
                 catalog.lanes[3],
-                policy.map(|key| key.algorithm),
-                policy.map(|key| key.lanes[0]),
-                policy.map(|key| key.lanes[1]),
-                policy.map(|key| key.lanes[2]),
-                policy.map(|key| key.lanes[3]),
-                candidate.as_ref().map(|candidate| candidate.check.as_str()),
+                rule.map(|key| key.algorithm),
+                rule.map(|key| key.lanes[0]),
+                rule.map(|key| key.lanes[1]),
+                rule.map(|key| key.lanes[2]),
+                rule.map(|key| key.lanes[3]),
+                candidate
+                    .as_ref()
+                    .map(|candidate| candidate.clause.as_str()),
             ])
         })
         .collect::<Vec<_>>();
@@ -914,20 +916,20 @@ pub(super) fn resolve_publication_identities(
                CAST(json_extract(value,'$[2]') AS INTEGER) catalog_lane1,
                CAST(json_extract(value,'$[3]') AS INTEGER) catalog_lane2,
                CAST(json_extract(value,'$[4]') AS INTEGER) catalog_lane3,
-               CAST(json_extract(value,'$[5]') AS INTEGER) policy_algorithm,
-               CAST(json_extract(value,'$[6]') AS INTEGER) policy_lane0,
-               CAST(json_extract(value,'$[7]') AS INTEGER) policy_lane1,
-               CAST(json_extract(value,'$[8]') AS INTEGER) policy_lane2,
-               CAST(json_extract(value,'$[9]') AS INTEGER) policy_lane3,
-               json_extract(value,'$[10]') check_value
+               CAST(json_extract(value,'$[5]') AS INTEGER) rule_algorithm,
+               CAST(json_extract(value,'$[6]') AS INTEGER) rule_lane0,
+               CAST(json_extract(value,'$[7]') AS INTEGER) rule_lane1,
+               CAST(json_extract(value,'$[8]') AS INTEGER) rule_lane2,
+               CAST(json_extract(value,'$[9]') AS INTEGER) rule_lane3,
+               json_extract(value,'$[10]') clause_value
              FROM json_each(?1)
            )
            SELECT i.ordinal,c.catalog_id,
-             CASE WHEN i.policy_algorithm IS NULL THEN NULL ELSE (
+             CASE WHEN i.rule_algorithm IS NULL THEN NULL ELSE (
                SELECT cc.check_id FROM candidate_checks cc
                JOIN strings s ON s.string_id=cc.check_string_id
                WHERE cc.catalog_id=c.catalog_id AND cc.policy_hash_id=ph.hash_id
-                 AND s.domain_id=?2 AND s.value=i.check_value LIMIT 1
+                 AND s.domain_id=?2 AND s.value=i.clause_value LIMIT 1
              ) END
            FROM input i
            CROSS JOIN hashes ch INDEXED BY hashes_by_prefix
@@ -935,11 +937,11 @@ pub(super) fn resolve_publication_identities(
              AND ch.lane1=i.catalog_lane1 AND ch.lane2=i.catalog_lane2 AND ch.lane3=i.catalog_lane3
            CROSS JOIN candidate_catalogs c ON c.identity_hash_id=ch.hash_id
            LEFT JOIN hashes ph INDEXED BY hashes_by_prefix
-             ON ph.algorithm_id=i.policy_algorithm AND ph.lane0=i.policy_lane0
-             AND ph.lane1=i.policy_lane1 AND ph.lane2=i.policy_lane2 AND ph.lane3=i.policy_lane3
+             ON ph.algorithm_id=i.rule_algorithm AND ph.lane0=i.rule_lane0
+             AND ph.lane1=i.rule_lane1 AND ph.lane2=i.rule_lane2 AND ph.lane3=i.rule_lane3
            ORDER BY i.ordinal"#,
     )?;
-    let mut rows = statement.query(params![encoded, STRING_CHECK_KEY])?;
+    let mut rows = statement.query(params![encoded, STRING_CLAUSE_KEY])?;
     let mut resolved = PublicationInternCache::default();
     while let Some(row) = rows.next()? {
         let ordinal: i64 = row.get(0)?;
@@ -954,8 +956,8 @@ pub(super) fn resolve_publication_identities(
         };
         resolved.catalogs.insert(*catalog, catalog_id);
         if let (Some(candidate), Some(check_id)) = (candidate, row.get::<_, Option<i64>>(2)?) {
-            resolved.checks.insert(
-                (catalog_id, candidate.policy, candidate.check.clone()),
+            resolved.clauses.insert(
+                (catalog_id, candidate.rule, candidate.clause.clone()),
                 check_id,
             );
         }
@@ -966,7 +968,7 @@ pub(super) fn resolve_publication_identities(
 #[derive(Clone, Default, Eq, PartialEq)]
 pub(super) struct PublicationInternCache {
     pub(super) catalogs: BTreeMap<HashKey, i64>,
-    pub(super) checks: BTreeMap<(i64, HashKey, String), i64>,
+    pub(super) clauses: BTreeMap<(i64, HashKey, String), i64>,
 }
 
 pub(super) fn stored_path_ids(

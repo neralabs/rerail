@@ -3,21 +3,21 @@ import { applyToWorkspace, capabilitiesJson } from "./runner.js";
 import { compareDeterministicStrings } from "../../src/stable-json.js";
 
 /**
- * Minimal repros for kernel behaviours found while porting TSLint rules. Each probe runs one ast (or regex) check
- * over a tiny source and records what the kernel matched. `expected` is what upstream ast-grep would match (its relational
+ * Minimal repros for engine behaviours found while porting TSLint rules. Each probe runs one ast (or regex) clause
+ * over a tiny source and records what the engine matched. `expected` is what upstream ast-grep would match (its relational
  * rules look at siblings of the node only; `stopBy: end` means "all siblings in that direction", `neighbor` means "the
  * adjacent sibling"; a contextual pattern's `context` only disambiguates parsing and the `selector` node alone is
- * matched), or what the check plainly asks for when no upstream reference applies. `ast-grep` expectations were checked
- * against the ast-grep 0.45.3 CLI; test/policy-dsl-upstream-differential.test.ts keeps that comparison running.
+ * matched), or what the clause plainly asks for when no upstream reference applies. `ast-grep` expectations were checked
+ * against the ast-grep 0.45.3 CLI; test/code-rule-dsl-upstream-differential.test.ts keeps that comparison running.
  */
 export interface EngineProbe {
   id: string;
   claim: string;
   source: string;
   path?: string;
-  /** The `forbid` object of the check (`{ ast: {...} }` or `{ regex: {...} }`). */
+  /** The `forbid` object of the clause (`{ ast: {...} }` or `{ regex: {...} }`). */
   forbid: Record<string, unknown>;
-  /** Matched source texts expected under upstream semantics; `null` = the check should fail to compile. */
+  /** Matched source texts expected under upstream semantics; `null` = the clause should fail to compile. */
   expected: string[] | null;
   /** How sure the expectation is. */
   basis: "ast-grep" | "ast-grep (unverified)" | "plain reading";
@@ -27,7 +27,7 @@ export interface EngineProbeResult extends EngineProbe {
   observed: string[];
   compileError: string | undefined;
   failures: string[];
-  /** The kernel's behaviour differs from `expected`. */
+  /** The engine's behaviour differs from `expected`. */
   deviates: boolean;
 }
 
@@ -191,30 +191,30 @@ export async function runEngineProbes(): Promise<EngineProbeResult[]> {
   for (const probe of ENGINE_PROBES) {
     let compiled;
     try {
-      compiled = binding.PolicyDslRuntime.compile(document(probe), "json", capabilitiesJson());
+      compiled = binding.CodeRuleDslRuntime.compile(document(probe), "json", capabilitiesJson());
     } catch (error) {
       const compileError = error instanceof Error ? error.message : String(error);
       results.push({ ...probe, observed: [], compileError, failures: [], deviates: probe.expected !== null });
       continue;
     }
-    const workspace = new binding.PolicyDslWorkspace();
+    const workspace = new binding.CodeRuleDslWorkspace();
     try {
-      workspace.addPolicy(compiled);
+      workspace.addCodeRule(compiled);
       const path = probe.path ?? "probe.ts";
       const payload = JSON.stringify({ revision: 1, files: [{ path, language: "typescript", source: probe.source }], removed: [] });
       const { evaluation } = JSON.parse(await applyToWorkspace(workspace, payload)) as {
         evaluation: { violations: Array<{ span?: { startByte: number; endByte: number } }>; failures: Array<{ code: string; message: string }> };
       };
       const bytes = Buffer.from(probe.source, "utf8");
-      const observed = evaluation.violations.map(finding =>
-        finding.span === undefined ? "<no span>" : `${bytes.subarray(finding.span.startByte, finding.span.endByte).toString("utf8")}@${finding.span.startByte}`,
+      const observed = evaluation.violations.map(violation =>
+        violation.span === undefined ? "<no span>" : `${bytes.subarray(violation.span.startByte, violation.span.endByte).toString("utf8")}@${violation.span.startByte}`,
       );
       const texts = observed.map(entry => entry.replace(/@\d+$/, ""));
       const expected = probe.expected ?? [];
       const deviates =
         probe.expected === null ||
         (probe.id === "path-regex-span-as-content"
-          ? evaluation.violations.some(finding => finding.span !== undefined && finding.span.startByte !== 0)
+          ? evaluation.violations.some(violation => violation.span !== undefined && violation.span.startByte !== 0)
           : [...texts].sort(compareDeterministicStrings).join("\u0000") !== [...expected].sort(compareDeterministicStrings).join("\u0000"));
       results.push({ ...probe, observed, compileError: undefined, failures: evaluation.failures.map(failure => `${failure.code}: ${failure.message}`), deviates });
     } finally {

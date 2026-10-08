@@ -1,5 +1,5 @@
 {
- "about": "Bindings of the laravel and symfony corpora (benchmark_php_usage_corpus, rerail/native/src/policy_dsl/scope/php/tests.rs) where Rerail's usedness and Psalm 6.19.1's unused-variable reports differ for a documented reason. Each item names a class; each class says which side is wrong (upstream-wrong: Psalm; not-comparable: the two answer different questions there) with the evidence. Runtime outputs are PHP 8.5.11; Psalm outputs are Psalm 6.19.1 at errorLevel 1 with --find-unused-variables on the snippet alone.",
+ "about": "Bindings of the laravel and symfony corpora (benchmark_php_usage_corpus, rerail/native/src/code_rule_dsl/scope/php/tests.rs) where Rerail's usedness and Psalm 6.19.1's unused-variable reports differ for a documented reason. Each item names a class; each class says which side is wrong (upstream-wrong: Psalm; not-comparable: the two answer different questions there) with the evidence. Runtime outputs are PHP 8.5.11; Psalm outputs are Psalm 6.19.1 at errorLevel 1 with --find-unused-variables on the snippet alone.",
  "classes": {
   "psalm-type-unreachable": {
    "kind": "not-comparable",

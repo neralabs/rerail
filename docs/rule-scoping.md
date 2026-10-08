@@ -17,9 +17,9 @@ Rule applicability is independent from evaluation semantics:
 - `global`: applies to every repository on the machine.
 - `project`: applies to every repository explicitly assigned to the current project.
 
-Policy execution `scope` and `mode`, and cosine sample `source` and `boundary`, continue to determine what and when a rule evaluates. They do not determine where the rule is installed.
+Audit `scope` and `mode`, and conversation-rule sample `source` and `boundary`, continue to determine what and when a rule evaluates. They do not determine where the rule is installed.
 
-**Rule Path Criteria** are repository-relative `scope.include` and `scope.exclude` patterns on a policy. They filter candidate paths after the rule's applicability has selected it; excludes win. They are distinct from applicability, and from policy execution `scope` and `mode`.
+**Where it applies** is the set of repository-relative `scope.include` and `scope.exclude` patterns on a code rule. They filter candidate paths after the rule's applicability has selected it; excludes win. They are distinct from applicability, and from audit `scope` and `mode`.
 
 The effective rule set contains one definition per logical rule ID:
 
@@ -32,7 +32,7 @@ A logical ID cannot change rule kind while any global or project definition with
 
 ## Propagation and concurrency
 
-Every daemon, extension, and hook opens the shared catalog and resolves its effective rules from its repository identity. SQLite transactions serialize edits. Live policy and cosine catalogs use change tokens combining SQLite `data_version` with connection-local revisions, so commits through the same process or another connection become effective on the next refresh or event without restarting. Restarting reconstructs the same effective set from the catalog.
+Every daemon, extension, and hook opens the shared catalog and resolves its effective rules from its repository identity. SQLite transactions serialize edits. Live code-rule and conversation-rule catalogs use change tokens combining SQLite `data_version` with connection-local revisions, so commits through the same process or another connection become effective on the next refresh or event without restarting. Restarting reconstructs the same effective set from the catalog.
 
 A write records applicability, owner, revision, creation/update timestamps, a deterministic payload hash, and catalog origin (`user` or `rerail`). These fields make local provenance explicit; this change does not add a cloud transport or change Nera's future source-of-truth role.
 
@@ -40,7 +40,7 @@ Each audit snapshots the effective rule ID, revision, payload hash, applicabilit
 
 ## Migration
 
-On first use for a repository and legacy source, Rerail copies checkout-database rules and configured host/JSON cosine rules into the current project, then records the source in `rule_migrations`. A source claim and its writes commit atomically, so concurrent first use is idempotent. Legacy rows marked `global` become project rules deliberately: old checkout-local storage could not establish machine-wide intent. Original revisions, timestamps, enabled state, source digest, and rule bodies are retained. Existing catalog definitions win import conflicts.
+On first use for a repository and legacy source, Rerail copies checkout-database rules and configured host/JSON conversation rules into the current project, then records the source in `rule_migrations`. A source claim and its writes commit atomically, so concurrent first use is idempotent. Legacy rows marked `global` become project rules deliberately: old checkout-local storage could not establish machine-wide intent. Original revisions, timestamps, enabled state, source digest, and rule bodies are retained. Existing catalog definitions win import conflicts.
 
 Deleting a migrated project rule records a catalog tombstone. A previously unseen linked worktree can therefore import unique legacy rules without resurrecting a rule the project already deleted.
 
@@ -67,4 +67,4 @@ The same operation definitions drive HTTP and MCP, so filters and writes have on
 - Removing a repository from a multi-repository project immediately removes that project's rules and assigns the repository to its private default project.
 - Moving a checkout path updates only `last_known_path`; rule identity and history location semantics remain unchanged.
 - Clone and fork identities are isolated until explicitly assigned.
-- A catalog edit survives daemon and harness restarts because applicability is catalog state, not process state.
+- A catalog edit survives daemon and host restarts because applicability is catalog state, not process state.

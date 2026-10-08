@@ -16,7 +16,7 @@ async function instance(root: string, port: number): Promise<void> {
 }
 
 describe("Rerail development bridge routing", () => {
-  it("selects the nearest checkout instance from a nested harness cwd", async () => {
+  it("selects the nearest checkout instance from a nested host cwd", async () => {
     const parent = await mkdtemp(join(tmpdir(), "rerail-dev-parent-"));
     const checkout = join(parent, "checkout");
     temporaryDirectories.push(parent);
@@ -31,7 +31,7 @@ describe("Rerail development bridge routing", () => {
     expect(route.instance.url.href).toBe("http://127.0.0.1:4812/");
   });
 
-  it("rejects an instance that could send harness events off-machine", async () => {
+  it("rejects an instance that could send host events off-machine", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-dev-public-"));
     temporaryDirectories.push(root);
     await mkdir(join(root, ".nera"));

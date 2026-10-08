@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { formatTerminalStatus, readPresentation, readRepositoryState, readRulesPage } from "../src/session-presentation.js";
+import { formatTerminalStatus, readPresentation, readRepositoryState, readRulesDashboard } from "../src/session-presentation.js";
 import type { presentationResponseSchema, sessionResponseSchema } from "../src/api/session-contracts.js";
 import type { z } from "zod";
 import { openRerailDatabase } from "../src/database.js";
@@ -27,7 +27,7 @@ beforeEach(async () => {
   await writeFile(database, "");
   await writeFile(join(cwd, ".rerail", "repository-id"), "repository-under-test\n");
   state = { pid: process.pid, host: "127.0.0.1", port: 4737, url: "http://127.0.0.1:4737/", version: "test",
-    databasePath: database, kernelSocketPath: join(home, "kernel.sock"), ui: "bundled", startedAt: 1 };
+    databasePath: database, kernelSocketPath: join(home, "engine.sock"), ui: "bundled", startedAt: 1 };
   await writeFile(join(home, "daemon.json"), JSON.stringify(state));
   requested = [];
   sessionContext = { session: { sessionId, host: "claude-code", cwd, repositoryId: "repository-under-test", startedAt: 1, endedAt: null, eventCount: 0 },
@@ -226,11 +226,11 @@ describe("rules page", () => {
   it("links the rules view of the daemon that answers as itself", async () => {
     const port = await listen();
     await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
-    expect(await readRulesPage({ cwd })).toEqual({ url: `http://127.0.0.1:${port}/#rules`, reason: null });
+    expect(await readRulesDashboard({ cwd })).toEqual({ url: `http://127.0.0.1:${port}/#rules`, reason: null });
     health.repositoryId = "another-repository";
-    expect(await readRulesPage({ cwd })).toEqual({ url: null, reason: "daemon serves another repository" });
+    expect(await readRulesDashboard({ cwd })).toEqual({ url: null, reason: "daemon serves another repository" });
     await rm(join(home, "daemon.json"));
-    expect(await readRulesPage({ cwd })).toEqual({ url: null, reason: "daemon unavailable" });
+    expect(await readRulesDashboard({ cwd })).toEqual({ url: null, reason: "daemon unavailable" });
   });
 
   it("reads the repository's start state from a live daemon, and nothing from a dead one", async () => {
@@ -257,26 +257,26 @@ describe("rules page", () => {
     const port = await listen();
     await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
     delete health.repositoryId;
-    expect(await readRulesPage({ cwd })).toEqual({ url: null, reason: "daemon serves another repository" });
+    expect(await readRulesDashboard({ cwd })).toEqual({ url: null, reason: "daemon serves another repository" });
     await rm(join(cwd, ".rerail", "repository-id"));
-    expect(await readRulesPage({ cwd })).toEqual({ url: null, reason: "daemon serves another repository" });
+    expect(await readRulesDashboard({ cwd })).toEqual({ url: null, reason: "daemon serves another repository" });
     health.repositoryId = "repository-under-test";
-    expect(await readRulesPage({ cwd })).toEqual({ url: null, reason: "daemon serves another repository" });
+    expect(await readRulesDashboard({ cwd })).toEqual({ url: null, reason: "daemon serves another repository" });
   });
 
   it("refuses a recorded daemon whose pid is gone or whose port is vacant", async () => {
     const port = await listen();
     await stop();
     await record(join(home, "daemon.json"), { pid: 999_999, port, url: `http://127.0.0.1:${port}/` });
-    expect(await readRulesPage({ cwd })).toEqual({ url: null, reason: "daemon unavailable" });
+    expect(await readRulesDashboard({ cwd })).toEqual({ url: null, reason: "daemon unavailable" });
     await record(join(home, "daemon.json"), { pid: process.pid });
-    expect(await readRulesPage({ cwd })).toEqual({ url: null, reason: "daemon unavailable" });
+    expect(await readRulesDashboard({ cwd })).toEqual({ url: null, reason: "daemon unavailable" });
   });
 
   it("refuses a listener that answers as a different daemon", async () => {
     const port = await listen(999_999);
     await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
-    expect(await readRulesPage({ cwd })).toEqual({ url: null, reason: "daemon unavailable" });
+    expect(await readRulesDashboard({ cwd })).toEqual({ url: null, reason: "daemon unavailable" });
   });
 
   it("prefers the checkout instance's public address over its internal listener, and drops it once dead", async () => {
@@ -288,9 +288,9 @@ describe("rules page", () => {
     await record(locator, { pid: 1, host: "0.0.0.0", port, url: `http://0.0.0.0:${port}/`, workspaceRoot: cwd });
     vi.stubEnv("RERAIL_WORKSPACE", await realpath(cwd));
     vi.stubEnv("RERAIL_INTERNAL_PORT", String(port));
-    expect(await readRulesPage({ cwd })).toEqual({ url: "http://127.0.0.1:35007/#rules", reason: null });
+    expect(await readRulesDashboard({ cwd })).toEqual({ url: "http://127.0.0.1:35007/#rules", reason: null });
     await stop();
     await record(locator, { pid: 999_999 });
-    expect(await readRulesPage({ cwd })).toEqual({ url: null, reason: "daemon unavailable" });
+    expect(await readRulesDashboard({ cwd })).toEqual({ url: null, reason: "daemon unavailable" });
   });
 });

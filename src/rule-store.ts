@@ -1,11 +1,11 @@
 import { and, asc, count, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 import { openRerailDatabase, type RerailDatabase } from "./database.js";
-import { readStoredPolicyRule, reportQuarantinedRule, storedDocumentDigest, type QuarantinedRule } from "./legacy-policy-rule.js";
-import { assertPolicyCompiles } from "./policy-kernel-check.js";
-import { policyRuleSchema, type PolicyRule } from "./policy-schema.js";
+import { readStoredCodeRule, reportQuarantinedRule, storedDocumentDigest, type QuarantinedRule } from "./legacy-code-rule.js";
+import { assertCodeRuleCompiles } from "./code-rule-compile.js";
+import { codeRuleSchema, type CodeRule } from "./code-rule-schema.js";
 import { RULE_MODES, type RuleMode } from "./rule-mode.js";
-import { assertKernelRegexes } from "./rule-regexes.js";
-import { parseCosineRule, type CosineRule, type SampleBoundary } from "./rule-schema.js";
+import { assertEngineRegexes } from "./rule-regexes.js";
+import { parseConversationRule, type ConversationRule, type SampleBoundary } from "./rule-schema.js";
 import { RULE_KINDS, RULE_SCOPES, rules, type NewRuleRow, type RuleKind, type RuleRow, type RuleScope } from "./schema.js";
 import { ruleDocumentDigest } from "./stable-json.js";
 
@@ -19,20 +19,20 @@ interface StoredRuleBase {
   sourceDigest: string | null;
 }
 
-export interface StoredPolicyRule extends StoredRuleBase {
+export interface StoredCodeRule extends StoredRuleBase {
   kind: "file";
-  rule: PolicyRule;
+  rule: CodeRule;
 }
 
-export interface StoredCosineRule extends StoredRuleBase {
+export interface StoredConversationRule extends StoredRuleBase {
   kind: "conversation";
-  rule: CosineRule;
+  rule: ConversationRule;
 }
 
-export type StoredRule = StoredPolicyRule | StoredCosineRule;
+export type StoredRule = StoredCodeRule | StoredConversationRule;
 
 /** A rule body with its kind, as bundled with the package or dumped by `rerail rules export`. */
-export type RuleDocument = { kind: "file"; rule: PolicyRule } | { kind: "conversation"; rule: CosineRule };
+export type RuleDocument = { kind: "file"; rule: CodeRule } | { kind: "conversation"; rule: ConversationRule };
 
 /** A bundled document; `enabledByDefault: false` (opt-in packs) makes the first seed insert it disabled. */
 export type BundledRuleDocument = RuleDocument & { readonly enabledByDefault?: boolean };
@@ -112,14 +112,14 @@ function ruleConditions(query: RuleQuery): SQL[] {
   return conditions;
 }
 
-const NULL_POLICY_COLUMNS = {
+const NULL_CODE_RULE_COLUMNS = {
   format: null,
   description: null,
-  policyScope: null,
+  codeRuleScope: null,
   clauses: null,
 } as const satisfies Partial<NewRuleRow>;
 
-const NULL_COSINE_COLUMNS = {
+const NULL_CONVERSATION_COLUMNS = {
   reference: null,
   match: null,
   sample: null,
@@ -136,7 +136,7 @@ function storedBody(row: RuleRow): unknown {
       revision: row.revision,
       mode: row.mode,
       ...(row.description === null ? {} : { description: row.description }),
-      ...(row.policyScope === null ? {} : { scope: row.policyScope }),
+      ...(row.codeRuleScope === null ? {} : { scope: row.codeRuleScope }),
       clauses: row.clauses,
     };
   }
@@ -155,7 +155,7 @@ type RowRead = { ok: true; stored: StoredRule } | { ok: false; quarantined: Quar
 
 /**
  * Rows are re-validated on read: other processes write this table too, and rows can predate the current
- * schema. Legacy policy fields are normalized first; a row that still fails is quarantined, never thrown.
+ * schema. Legacy code-rule fields are normalized first; a row that still fails is quarantined, never thrown.
  */
 function readRuleRow(row: RuleRow): RowRead {
   const base: StoredRuleBase = {
@@ -168,12 +168,12 @@ function readRuleRow(row: RuleRow): RowRead {
   };
   const quarantine = (reason: string): RowRead => ({ ok: false, quarantined: { ruleId: row.id, kind: row.kind, owner: row.scope, reason } });
   if (row.kind === "file") {
-    const read = readStoredPolicyRule(storedBody(row), row.sourceDigest);
+    const read = readStoredCodeRule(storedBody(row), row.sourceDigest);
     if (!read.ok) return quarantine(read.reason);
     return { ok: true, stored: { ...base, sourceDigest: read.sourceDigest, kind: "file", rule: read.rule } };
   }
   try {
-    return { ok: true, stored: { ...base, kind: "conversation", rule: parseCosineRule(storedBody(row), `rules[${row.id}]`) } };
+    return { ok: true, stored: { ...base, kind: "conversation", rule: parseConversationRule(storedBody(row), `rules[${row.id}]`) } };
   } catch (error) {
     return quarantine(error instanceof Error ? error.message : String(error));
   }
@@ -195,15 +195,15 @@ export class SqliteRuleStore {
 
   /**
    * Validate and insert or replace a `rerail.policy/v1` document. `rule.revision` is stored as-is. The rule is
-   * compiled in the kernel first, so one the kernel rejects is never written.
+   * compiled in the engine first, so one the engine rejects is never written.
    */
-  upsertPolicy(input: unknown, options: RuleWriteOptions = {}): StoredPolicyRule {
-    const rule = policyRuleSchema.parse(input);
-    assertPolicyCompiles(rule);
-    return this.#writePolicy(rule, options);
+  upsertCodeRule(input: unknown, options: RuleWriteOptions = {}): StoredCodeRule {
+    const rule = codeRuleSchema.parse(input);
+    assertCodeRuleCompiles(rule);
+    return this.#writeCodeRule(rule, options);
   }
 
-  #writePolicy(rule: PolicyRule, options: RuleWriteOptions): StoredPolicyRule {
+  #writeCodeRule(rule: CodeRule, options: RuleWriteOptions): StoredCodeRule {
     const existing = this.#row(rule.id);
     if (existing !== undefined && existing.kind !== "file") {
       throw new Error(`rule ${rule.id} exists with kind ${existing.kind}; remove it before storing a file rule`);
@@ -221,17 +221,17 @@ export class SqliteRuleStore {
       sourceDigest: options.sourceDigest === undefined ? existing?.sourceDigest ?? null : options.sourceDigest,
       format: rule.format,
       description: rule.description ?? null,
-      policyScope: rule.scope ?? null,
+      codeRuleScope: rule.scope ?? null,
       clauses: rule.clauses,
-      ...NULL_COSINE_COLUMNS,
+      ...NULL_CONVERSATION_COLUMNS,
     });
-    return this.get(rule.id) as StoredPolicyRule;
+    return this.get(rule.id) as StoredCodeRule;
   }
 
   /** Validate and insert or replace a conversation rule. The stored revision bumps unless `options.revision` is given. */
-  upsertCosine(input: unknown, options: RuleWriteOptions = {}): StoredCosineRule {
-    const rule = parseCosineRule(input);
-    assertKernelRegexes(rule);
+  upsertConversationRule(input: unknown, options: RuleWriteOptions = {}): StoredConversationRule {
+    const rule = parseConversationRule(input);
+    assertEngineRegexes(rule);
     const existing = this.#row(rule.id);
     if (existing !== undefined && existing.kind !== "conversation") {
       throw new Error(`rule ${rule.id} exists with kind ${existing.kind}; remove it before storing a conversation rule`);
@@ -247,26 +247,26 @@ export class SqliteRuleStore {
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
       sourceDigest: options.sourceDigest === undefined ? existing?.sourceDigest ?? null : options.sourceDigest,
-      ...NULL_POLICY_COLUMNS,
+      ...NULL_CODE_RULE_COLUMNS,
       reference: rule.reference ?? null,
       match: rule.match,
       sample: rule.sample,
       action: rule.action,
       repeat: rule.repeat ?? null,
     });
-    return this.get(rule.id) as StoredCosineRule;
+    return this.get(rule.id) as StoredConversationRule;
   }
 
   /** Write one document under either kind; the write options apply to whichever branch runs. */
   upsertDocument(document: RuleDocument, options: RuleWriteOptions = {}): StoredRule {
     return document.kind === "file"
-      ? this.upsertPolicy(document.rule, options)
-      : this.upsertCosine(document.rule, options);
+      ? this.upsertCodeRule(document.rule, options)
+      : this.upsertConversationRule(document.rule, options);
   }
 
-  /** Bundled and restored documents were validated when they were read; a restore must not fail on a kernel change. */
+  /** Bundled and restored documents were validated when they were read; a restore must not fail on an engine change. */
   #writeDocument(document: RuleDocument, options: RuleWriteOptions): StoredRule {
-    return document.kind === "file" ? this.#writePolicy(document.rule, options) : this.upsertCosine(document.rule, options);
+    return document.kind === "file" ? this.#writeCodeRule(document.rule, options) : this.upsertConversationRule(document.rule, options);
   }
 
   /**
@@ -358,22 +358,22 @@ export class SqliteRuleStore {
     });
   }
 
-  /** Enabled conversation rules in the shape `CosineRuleRegistry.replace` accepts. */
-  cosineRules(): CosineRule[] {
+  /** Enabled conversation rules in the shape `ConversationRuleRegistry.replace` accepts. */
+  conversationRules(): ConversationRule[] {
     return this.list({ kind: "conversation", enabled: true }).flatMap(stored =>
       stored.kind === "conversation" ? [stored.rule] : [],
     );
   }
 
   /** Ids of every `conversation` row, enabled or not: the ids the database owns. */
-  cosineIds(): Set<string> {
+  conversationRuleIds(): Set<string> {
     return new Set(
       this.#database.select({ id: rules.id }).from(rules).where(eq(rules.kind, "conversation")).all().map(row => row.id),
     );
   }
 
   /** Enabled file rules, validated. */
-  policyRules(): PolicyRule[] {
+  codeRules(): CodeRule[] {
     return this.list({ kind: "file", enabled: true }).flatMap(stored =>
       stored.kind === "file" ? [stored.rule] : [],
     );
