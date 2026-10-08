@@ -4,7 +4,8 @@ Rule packs for Rerail. Each pack is published to npm as its own package, version
 the core package at the repository root.
 
 > Status: pre-release. No pack is published yet, and core does not load installed packs yet: the TSLint pack still
-> ships inside the core package (`policies/rule-packs/tslint.json`). `python/` is the first pack in this layout.
+> ships inside the core package (`policies/rule-packs/tslint.json`). The packs here: `python`, `php`, `blade`,
+> `typescript`, `react`, `node` and `next`.
 
 - [docs/pack-format.md](../docs/pack-format.md): the layout and the validation contract every pack here passes.
 - [docs/language-packs.md](../docs/language-packs.md#start-a-pack): how to start a pack, for a supported language, a

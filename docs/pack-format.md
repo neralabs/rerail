@@ -1,7 +1,7 @@
 # Rule pack structure and validation contract
 
 Status: the layout and the validation contract (checks 1 to 6) are implemented. `test/packs.test.ts` validates every
-`packs/*` directory, and `packs/python/` is the first pack in this layout. Core does not load installed packs yet: the
+`packs/*` directory: `python`, `php`, `blade`, `typescript`, `react`, `node` and `next`. Core does not load installed packs yet: the
 TSLint pack still ships inside core (`policies/rule-packs/tslint.json` and `code-rule-dsl/rules/opt-in/tslint/`, see
 [rule packs](rule-packs.md)), and no pack is published. A pack introduces no new file format: it combines the two
 schemas the repository already has. To start one, see [language packs](language-packs.md#start-a-pack).
@@ -197,6 +197,9 @@ allowlist are accepted.
 | `conformance/languages/` runner and scorer | Test support in core that the pack tests call: `conformance/pack-validation.ts` |
 | Everything else under `fixtures/` (parsing, scope, values, calls oracles) | Stays: engine tests, not pack validation |
 
-Moved: `python` (`packs/python/`, from `conformance/languages/python/`, `fixtures/python/rules/` and the rule rows of
-`fixtures/python/licenses/{ruff,bandit}/`). The conformance CLI finds a moved pack by name (`--pack python`), and
-`--check` covers both locations; the other language packs stay under `conformance/languages/` until they move.
+Moved: `python`, `php`, `blade`, `typescript`, `react`, `node` and `next`, each from `conformance/languages/<id>/`,
+`fixtures/<id>/rules/`, its candidates and probes, and the rule rows of its licence records. The ESLint recorder they
+share is `conformance/recorders/eslint-record.mjs`, and the TypeScript grammar census is `conformance/t1/typescript-syntax.ts`.
+Not moved yet: TSLint (in core until core loads installed packs); `rust`, `sql` and `vue`, whose upstream recordings stay
+in `fixtures/<id>/rules/` until their packs gain rules; and `conformance/languages/rust/pack.draft.json`, the Rust
+port plan.

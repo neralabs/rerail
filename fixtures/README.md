@@ -20,16 +20,18 @@ Rerail's `native/src/code_rule_dsl/` and `conformance/languages/`.
 | `python/` | Ruff 0.16.9, Pyflakes 3.4.0, Bandit 1.8.6, CPython 3.13, Jedi 0.19.2 | `calls`, `identifier`, `literal`, `scope`, `suppress`, `value` |
 | `ecma/` | ESLint 10.11.0, typescript-eslint 8.70.1, eslint-utils 4.10.1, natural-compare 1.4.0 | `lines`, `scope`, `suppress`, `value` |
 | `php/` | PHP 8.5.11, PHPStan 2.2.16, Psalm 6.19.1, PHP_CodeSniffer 4.0.4 and 3.13.6, nikic/php-parser 5.9.0, phpstan/phpdoc-parser 2.3.5 | `arguments`, `calls`, `compare`, `format_args`, `literal`, `scope`, `suppress`, `value` |
-| `blade/` | illuminate/view 13.34.0, PHP 8.5.11, PHPStan 2.2.16, stillat/blade-parser 2.1.0, Bladestan 0.11.7, tlint 9.7.0 | `rules`, `view` |
+| `blade/` | illuminate/view 13.34.0, PHP 8.5.11, PHPStan 2.2.16 | `view` |
 | `vue/` | @vue/compiler-sfc 3.5.43, vue-eslint-parser 10.4.1, eslint-plugin-vue 10.11.1, ESLint 10.11.0 | `grammar`, `rules`, `view` |
 | `rust/` | rustc, clippy and rust-analyzer 1.99.0, tree-sitter-rust 0.24.2, syn 2 | `feasibility`, `grammar`, `literal`, `rules`, `suppress` |
 | `sql/` | SQLFluff 4.4.0, PostgreSQL 18 parser (pglast 8.5), SQLite 3.50.4, MySQL 8.4.11 | `names`, `rules`, `suppress`, `t1`, `t3`, `value` |
 
-`../conformance/recorders/eslint-record.mjs` is the recorder the ESLint-based packs' generators share. `rules/` holds a
-pack's T4 recordings: each ported rule's upstream test cases (`fixtures/`) and pinned public corpora
-(`corpus-<name>.expected.json`). `candidates/` and `probes/` are runnable packs scored against those recordings, and
-`grammar/`, `t1/`, `t3/` and `feasibility/` hold the measurement tools of a pack's earlier tiers. A pack that has
-moved to `packs/<id>/` ([pack format](../docs/pack-format.md#moving-to-this-layout)) takes its `rules/`,
+The rule packs (python, php, blade, typescript, react, node, next) live in `packs/<id>/`
+([pack format](../docs/pack-format.md#moving-to-this-layout)): their upstream tools' copied tests and recordings, their
+candidates and their licence records moved there. What stays here is engine oracles. `vue/`, `rust/` and `sql/` also
+keep the material recorded ahead of their packs: `rules/` holds the upstream linters' recordings on their own tests
+(`fixtures/`) and on pinned public corpora (`corpus-<name>.expected.json`), and `grammar/`, `t1/`, `t3/` and
+`feasibility/` hold the measurement tools. They move to `packs/<id>/upstream/` when those packs gain their first
+rules. `../conformance/recorders/eslint-record.mjs` is the recorder the ESLint-based generators share.
 
 Each oracle stays whole inside its feature directory (generator, inputs and recorded output together), so every
 generator reads and writes relative to its own directory. A generator that needs pinned tools or corpus checkouts

@@ -127,41 +127,6 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
-# eslint-plugin-n 18.4.1 (node/licenses/eslint-plugin-n/UPSTREAM.md): verbatim
-[[annotations]]
-path = [
-  "fixtures/node/rules/eslint-plugin-n/fixtures/callback-return/**",
-  "fixtures/node/rules/eslint-plugin-n/fixtures/exports-style/**",
-  "fixtures/node/rules/eslint-plugin-n/fixtures/global-require/**",
-  "fixtures/node/rules/eslint-plugin-n/fixtures/handle-callback-err/**",
-  "fixtures/node/rules/eslint-plugin-n/fixtures/hashbang/**",
-  "fixtures/node/rules/eslint-plugin-n/fixtures/no-callback-literal/**",
-  "fixtures/node/rules/eslint-plugin-n/fixtures/no-deprecated-api/**",
-  "fixtures/node/rules/eslint-plugin-n/fixtures/no-exports-assign/**",
-  "fixtures/node/rules/eslint-plugin-n/fixtures/no-mixed-requires/**",
-  "fixtures/node/rules/eslint-plugin-n/fixtures/no-new-require/**",
-  "fixtures/node/rules/eslint-plugin-n/fixtures/no-path-concat/**",
-  "fixtures/node/rules/eslint-plugin-n/fixtures/no-process-env/**",
-  "fixtures/node/rules/eslint-plugin-n/fixtures/no-process-exit/**",
-  "fixtures/node/rules/eslint-plugin-n/fixtures/no-sync/**",
-  "fixtures/node/rules/eslint-plugin-n/fixtures/prefer-global/**",
-  "fixtures/node/rules/eslint-plugin-n/fixtures/prefer-node-protocol/**",
-  "fixtures/node/rules/eslint-plugin-n/fixtures/prefer-promises/**",
-  "fixtures/node/rules/eslint-plugin-n/tests/lib/**",
-]
-precedence = "override"
-SPDX-FileCopyrightText = "2015 Toru Nagashima"
-
-# Next.js 16.3.8 (next/licenses/next.js/UPSTREAM.md): verbatim
-[[annotations]]
-path = [
-  "fixtures/next/rules/eslint-plugin-next/fixtures/**",
-  "fixtures/next/rules/eslint-plugin-next/tests/**",
-]
-precedence = "override"
-SPDX-FileCopyrightText = "2025 Vercel, Inc."
-SPDX-License-Identifier = "MIT"
-
 # laravel/framework e5f3d6265f (php/licenses/laravel/UPSTREAM.md): derived or excerpted
 [[annotations]]
 path = "fixtures/php/literal/laravel/phpdoc.expected.json"
@@ -644,8 +609,8 @@ SPDX-FileCopyrightText = ["2023 shadcn", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
 # Rule packs under packs/ (see packs/README.md): the tools' copied tests, one entry per
-# packs/<id>/licenses/<project>/UPSTREAM.md and copy kind. Keep these entries in step with the UPSTREAM.md tables.
 
+# packs/python
 # Bandit 1.8.6 (packs/python/licenses/bandit/UPSTREAM.md): verbatim
 [[annotations]]
 path = "packs/python/upstream/bandit/fixtures/**"
@@ -672,6 +637,51 @@ precedence = "override"
 SPDX-FileCopyrightText = "2022 Charles Marsh"
 SPDX-License-Identifier = "MIT"
 
+# packs/php
+
+# PHP_CodeSniffer 4.0.4 (packs/php/licenses/php_codesniffer/UPSTREAM.md): verbatim
+[[annotations]]
+path = "packs/php/upstream/phpcs/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2012 Squiz Pty Ltd (ABN 77 084 670 600)", "2023 PHPCSStandards and contributors"]
+SPDX-License-Identifier = "BSD-3-Clause"
+
+# PHPStan 2.2.16 (packs/php/licenses/phpstan/UPSTREAM.md): verbatim
+[[annotations]]
+path = "packs/php/upstream/phpstan/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2016 Ondřej Mirtes", "2025 PHPStan s.r.o."]
+SPDX-License-Identifier = "MIT"
+
+# vimeo/psalm 6.19.1 (packs/php/licenses/psalm/UPSTREAM.md): verbatim
+[[annotations]]
+path = "packs/php/upstream/psalm/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2016 Vimeo"
+SPDX-License-Identifier = "MIT"
+
+# packs/blade
+# stillat/blade-parser 2.1.0 (packs/blade/licenses/blade-parser/UPSTREAM.md): verbatim
+[[annotations]]
+path = "packs/blade/upstream/blade-parser/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = "Johnathon Koster"
+SPDX-License-Identifier = "MIT"
+
+# Bladestan 0.11.7 (packs/blade/licenses/bladestan/UPSTREAM.md): verbatim
+[[annotations]]
+path = "packs/blade/upstream/bladestan/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2023-present Tomas Votruba"
+SPDX-License-Identifier = "MIT"
+
+# tlint 9.7.0 (packs/blade/licenses/tlint/UPSTREAM.md): verbatim
+[[annotations]]
+path = "packs/blade/upstream/tlint/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = "Tighten Co. <hello@tighten.co>"
+SPDX-License-Identifier = "MIT"
+
 # packs/typescript
 
 # ESLint 10.11.0 (packs/typescript/licenses/eslint/UPSTREAM.md): derived or excerpted
@@ -688,15 +698,27 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
-# packs/next
-# Next.js 16.3.8 (packs/next/licenses/next.js/UPSTREAM.md): verbatim
+# packs/react
+
+# eslint-plugin-react 7.37.5 (packs/react/licenses/eslint-plugin-react/UPSTREAM.md): verbatim
 [[annotations]]
 path = [
-  "packs/next/upstream/eslint-plugin-next/fixtures/**",
-  "packs/next/upstream/eslint-plugin-next/tests/**",
+  "packs/react/upstream/eslint-plugin-react/fixtures/**",
+  "packs/react/upstream/eslint-plugin-react/tests/**",
 ]
 precedence = "override"
-SPDX-FileCopyrightText = "2025 Vercel, Inc."
+SPDX-FileCopyrightText = "2014 Yannick Croissant"
+SPDX-License-Identifier = "MIT"
+
+# eslint-plugin-react-hooks 7.1.1 (facebook/react) (packs/react/licenses/react/UPSTREAM.md): verbatim
+[[annotations]]
+path = [
+  "packs/react/upstream/eslint-plugin-react-hooks/fixtures/**",
+  "packs/react/upstream/eslint-plugin-react-hooks/tests/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "Meta Platforms, Inc. and affiliates."
+SPDX-License-Identifier = "MIT"
 
 # packs/node
 
@@ -724,68 +746,15 @@ path = [
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2015 Toru Nagashima"
-
-# packs/blade
-# stillat/blade-parser 2.1.0 (packs/blade/licenses/blade-parser/UPSTREAM.md): verbatim
-[[annotations]]
-path = "packs/blade/upstream/blade-parser/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = "Johnathon Koster"
 SPDX-License-Identifier = "MIT"
 
-# Bladestan 0.11.7 (packs/blade/licenses/bladestan/UPSTREAM.md): verbatim
-[[annotations]]
-path = "packs/blade/upstream/bladestan/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = "2023-present Tomas Votruba"
-SPDX-License-Identifier = "MIT"
-
-# tlint 9.7.0 (packs/blade/licenses/tlint/UPSTREAM.md): verbatim
-[[annotations]]
-path = "packs/blade/upstream/tlint/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = "Tighten Co. <hello@tighten.co>"
-
-# packs/react
-
-# eslint-plugin-react 7.37.5 (packs/react/licenses/eslint-plugin-react/UPSTREAM.md): verbatim
+# packs/next
+# Next.js 16.3.8 (packs/next/licenses/next.js/UPSTREAM.md): verbatim
 [[annotations]]
 path = [
-  "packs/react/upstream/eslint-plugin-react/fixtures/**",
-  "packs/react/upstream/eslint-plugin-react/tests/**",
+  "packs/next/upstream/eslint-plugin-next/fixtures/**",
+  "packs/next/upstream/eslint-plugin-next/tests/**",
 ]
 precedence = "override"
-SPDX-FileCopyrightText = "2014 Yannick Croissant"
-SPDX-License-Identifier = "MIT"
-
-# eslint-plugin-react-hooks 7.1.1 (facebook/react) (packs/react/licenses/react/UPSTREAM.md): verbatim
-[[annotations]]
-path = [
-  "packs/react/upstream/eslint-plugin-react-hooks/fixtures/**",
-  "packs/react/upstream/eslint-plugin-react-hooks/tests/**",
-]
-precedence = "override"
-SPDX-FileCopyrightText = "Meta Platforms, Inc. and affiliates."
-
-# packs/php
-
-# PHP_CodeSniffer 4.0.4 (packs/php/licenses/php_codesniffer/UPSTREAM.md): verbatim
-[[annotations]]
-path = "packs/php/upstream/phpcs/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = ["2012 Squiz Pty Ltd (ABN 77 084 670 600)", "2023 PHPCSStandards and contributors"]
-SPDX-License-Identifier = "BSD-3-Clause"
-
-# PHPStan 2.2.16 (packs/php/licenses/phpstan/UPSTREAM.md): verbatim
-[[annotations]]
-path = "packs/php/upstream/phpstan/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = ["2016 Ondřej Mirtes", "2025 PHPStan s.r.o."]
-SPDX-License-Identifier = "MIT"
-
-# vimeo/psalm 6.19.1 (packs/php/licenses/psalm/UPSTREAM.md): verbatim
-[[annotations]]
-path = "packs/php/upstream/psalm/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = "2016 Vimeo"
+SPDX-FileCopyrightText = "2025 Vercel, Inc."
 SPDX-License-Identifier = "MIT"
