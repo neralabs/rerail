@@ -10,10 +10,9 @@ import type { ProjectionSpec, RelationSpec, SelectionSpec, WatermarkChange } fro
 import { SessionLanes } from "./session-lanes.js";
 import { NativeSemanticRuntime } from "./native-semantic-runtime.js";
 import { ConversationRuleRegistry, type RuleMatch } from "./registry.js";
-import { loadBundledRules } from "./rule-bootstrap.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "./rule-schema.js";
 import { conversationRuleLoader, type ConversationRuleSourceOptions } from "./rule-sources.js";
-import { openScopedRuleCatalog } from "./scoped-rule-catalog.js";
+import { openCheckoutConversationRules } from "./code-rule-dsl-catalog.js";
 import { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE, type RuleMutation } from "./session-state.js";
 import { RerailRuntime } from "./runtime.js";
 
@@ -228,17 +227,15 @@ export class NativeSessionServer {
       ...(options.maxRules === undefined ? {} : { maxRules: options.maxRules }),
     });
     const loadRules = conversationRuleLoader(options, cwd, input.host === "omp" ? ".omp/conversation-rules.json" : ".pi/conversation-rules.json");
-    const store = openScopedRuleCatalog(cwd, databasePath);
-    const ruleSync = new LiveConversationRules(store, registry, loadRules);
+    const ruleSync = new LiveConversationRules(openCheckoutConversationRules(databasePath, cwd, loadRules), registry);
     let runtime: RerailRuntime | undefined;
     let semantic: NativeSemanticRuntime | undefined;
     try {
-      store.seed(loadBundledRules());
       ruleSync.prime();
       const turn = replaySessionState(registry, branch);
       semantic = new NativeSemanticRuntime({ modelPath, sourceId: input.host === "omp" ? "omp:message" : "pi:message" });
       runtime = new RerailRuntime({
-        storageRoot, modelPath, databasePath, workspaceRoot: cwd, repositoryContext: store.context(),
+        storageRoot, modelPath, databasePath, workspaceRoot: cwd,
         autostart: false, startGate: true,
         beforeSessionPublish: async () => {
           await this.#close(input.sessionId);

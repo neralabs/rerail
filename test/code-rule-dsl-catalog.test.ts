@@ -1,10 +1,13 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import Database from "better-sqlite3";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { loadBundledCatalog } from "../src/bundled-rules.js";
+import { openRerailDatabase } from "../src/database.js";
 import { loadNativeBinding } from "../src/native.js";
-import { bootstrapCodeRuleDslCatalog, bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
+import { bundledCodeRuleDslDirectory, CheckoutCatalogs, loadCodeRuleCapabilities } from "../src/code-rule-dsl-catalog.js";
+import { decisionFor, type RepositoryAuditRuleProvenance } from "../src/audit.js";
 import {
   CODE_RULE_LATEST_ECMA_VERSION,
   CODE_RULE_PARSE_GRAMMARS,
@@ -16,9 +19,11 @@ import {
   type CodeRule,
 } from "../src/code-rule-schema.js";
 import { applyCodeRuleConfig } from "../src/code-rule-options.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
-import { MOCK_CONVERSATION_RULES } from "../src/seed.js";
-import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
+import { setRepositoryStarted } from "../src/repository-start.js";
+import { addAttachment, setRuleSetting } from "../src/rule-configuration.js";
+import { upsertLibraryRule } from "../src/rule-library.js";
+import { setUpTestRepository } from "./support/repository-rules.js";
+import { startTestRepository } from "./support/started-repository.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -27,9 +32,16 @@ afterEach(() => {
 });
 
 function temporaryRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), "rerail-policy-dsl-catalog-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-policy-dsl-catalog-")));
   temporaryDirectories.push(root);
   return root;
+}
+
+/** A Git checkout with its own database. */
+function checkout(): { root: string; databasePath: string } {
+  const root = temporaryRoot();
+  execFileSync("git", ["init", "--quiet"], { cwd: root });
+  return { root, databasePath: join(root, ".rerail", "rerail.sqlite") };
 }
 
 function writeCapabilities(root: string): string {
@@ -75,181 +87,114 @@ function rule(id: string, revision = 1): CodeRule {
   });
 }
 
-/** A project database holding exactly `codeRules`, all enabled. */
-function projectDatabase(root: string, codeRules: readonly CodeRule[]): string {
-  const databasePath = join(root, ".rerail", "rerail.sqlite");
-  const store = new SqliteRuleStore(databasePath);
-  try {
-    for (const codeRule of codeRules) store.upsertCodeRule(codeRule, { now: 1_000 });
-  } finally {
-    store.close();
-  }
-  return databasePath;
-}
-
-describe("code-rule DSL catalog", () => {
-  it("orders code rules by id and compiles an empty catalog when every code rule is disabled", () => {
-    const root = temporaryRoot();
-    const capabilitiesPath = writeCapabilities(root);
-    const databasePath = projectDatabase(root, [rule("test:zeta"), rule("test:alpha")]);
-    const catalog = bootstrapCodeRuleDslCatalog({ capabilitiesPath, databasePath });
+describe("checkout code-rule catalog", () => {
+  it("compiles only the rules a set-up, started repository adds, ordered by id", () => {
+    const { root, databasePath } = checkout();
+    const capabilities = loadCodeRuleCapabilities(writeCapabilities(temporaryRoot()));
+    const key = startTestRepository(root, databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { capabilities });
     try {
-      expect(catalog.status.ruleCount).toBe(2);
-      expect(catalog.codeRules().map(({ id }) => id)).toEqual(["test:alpha", "test:zeta"]);
-      expect(JSON.parse(catalog.codeRule("test:alpha").canonicalJson())).toMatchObject({ id: "test:alpha" });
-    } finally {
-      catalog.close();
-    }
+      const catalog = catalogs.catalog(root);
+      expect(catalogs.eligibility(root)).toBe("not-set-up");
+      expect(catalog.status.ruleCount).toBe(0);
 
-    const empty = bootstrapCodeRuleDslCatalog({ capabilitiesPath, databasePath: projectDatabase(join(root, "empty"), []) });
-    try {
-      expect(empty.status.ruleCount).toBe(0);
-      expect(empty.codeRules()).toEqual([]);
+      setUpTestRepository(root, { library: [{ kind: "file", rule: rule("test:zeta") }, { kind: "file", rule: rule("test:alpha") }] }, databasePath);
+      expect(catalog.refresh()).toBe(true);
+      expect(catalog.snapshot().codeRules.map(({ id }) => id)).toEqual(["test:alpha", "test:zeta"]);
+      expect(JSON.parse(catalog.snapshot().codeRules[0]!.executable.canonicalJson())).toMatchObject({ id: "test:alpha" });
+      expect(catalog.refresh()).toBe(false);
+
+      const database = openRerailDatabase(databasePath);
+      try {
+        setRepositoryStarted(database, key, false);
+      } finally {
+        database.$client.close();
+      }
+      expect(catalog.refresh()).toBe(true);
+      expect(catalogs.eligibility(root)).toBe("stopped");
+      expect(catalog.status.ruleCount).toBe(0);
     } finally {
-      empty.close();
+      catalogs.close();
     }
   });
 
-  it("quarantines code rules requiring unavailable capabilities without blocking catalog access", () => {
-    const root = temporaryRoot();
-    const capabilitiesPath = writeCapabilities(root);
+  it("places a rule per folder from its attachments and settings, the deepest folder deciding", () => {
+    const { root, databasePath } = checkout();
+    const capabilities = loadCodeRuleCapabilities(writeCapabilities(temporaryRoot()));
+    const key = setUpTestRepository(root, { library: [{ kind: "file", rule: rule("test:everywhere") }] }, databasePath);
+    const database = openRerailDatabase(databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { capabilities });
+    try {
+      upsertLibraryRule(database, loadBundledCatalog(), rule("test:api-only"), "file");
+      addAttachment(database, { repositoryKey: key, folder: "api", sourceKind: "library_rule", sourceId: "test:api-only" });
+      setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "legacy", targetKind: "rule", targetId: "test:everywhere", on: false, mode: null });
+      setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: root }, folder: "web", targetKind: "rule", targetId: "test:everywhere", on: null, mode: "log" });
+      const snapshot = catalogs.catalog(root).snapshot();
+      const placement = Object.fromEntries(snapshot.codeRules.map(codeRule => [codeRule.id, codeRule.placement]));
+      expect(placement).toEqual({
+        "test:api-only": [{ folder: "api", mode: "block" }],
+        "test:everywhere": [{ folder: "", mode: "block" }, { folder: "legacy", mode: null }, { folder: "web", mode: "log" }],
+      });
+      const audit = { ruleProvenance: [...snapshot.provenance] };
+      expect(decisionFor(audit, { ruleId: "test:everywhere", path: "web/view.py" })).toMatchObject({
+        folder: "web", on: true, mode: "log", modeFrom: { by: "checkout", checkoutPath: root, folder: "web" },
+      });
+      expect(decisionFor(audit, { ruleId: "test:everywhere", path: "web2/view.py" })).toMatchObject({ folder: "", mode: "block" });
+      expect(decisionFor(audit, { ruleId: "test:everywhere", path: "legacy/old.py" })).toMatchObject({ on: false, onFrom: { by: "repository", folder: "legacy" } });
+      expect(snapshot.provenance.find(entry => entry.ruleId === "test:api-only")).toMatchObject({
+        repositoryKey: key, checkoutPath: root, source: { kind: "library_rule", id: "test:api-only", packId: null },
+      } satisfies Partial<RepositoryAuditRuleProvenance>);
+    } finally {
+      catalogs.close();
+      database.$client.close();
+    }
+  });
+
+  it("changes its version with a placement but reuses the compiled body", () => {
+    const { root, databasePath } = checkout();
+    const capabilities = loadCodeRuleCapabilities(writeCapabilities(temporaryRoot()));
+    const key = setUpTestRepository(root, { library: [{ kind: "file", rule: rule("test:placed") }] }, databasePath);
+    const database = openRerailDatabase(databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { capabilities });
+    try {
+      const catalog = catalogs.catalog(root);
+      const before = catalog.snapshot();
+      setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "docs", targetKind: "rule", targetId: "test:placed", on: false, mode: null });
+      expect(catalog.refresh()).toBe(true);
+      const after = catalog.snapshot();
+      expect(after.version).not.toBe(before.version);
+      expect(after.codeRules[0]!.executable).toBe(before.codeRules[0]!.executable);
+      // Switched off everywhere, the rule leaves the compiled set.
+      setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "", targetKind: "rule", targetId: "test:placed", on: false, mode: null });
+      expect(catalog.refresh()).toBe(true);
+      expect(catalog.snapshot().codeRules).toEqual([]);
+    } finally {
+      catalogs.close();
+      database.$client.close();
+    }
+  });
+
+  it("quarantines a library rule the engine rejects while other rules stay executable", () => {
+    const { root, databasePath } = checkout();
+    const capabilitiesPath = writeCapabilities(temporaryRoot());
     writeFileSync(
       capabilitiesPath,
       JSON.stringify({ ...JSON.parse(readFileSync(capabilitiesPath, "utf8")), ast: { engine: "ast-grep-core", engineVersion: "0.45", languages: {} } }),
     );
-    const databasePath = projectDatabase(root, [rule("test:requires-python")]);
-    const catalog = bootstrapCodeRuleDslCatalog({ capabilitiesPath, databasePath });
+    const regexRule = codeRuleSchema.parse({
+      clauses: [{ id: "regex", violation: { anchor: "witness.span", code: "R", message: "r" }, forbid: { regex: { source: "file.content", pattern: "print" } } }],
+      format: "rerail.policy/v1", id: "test:regex", mode: "steer", revision: 1, scope: { exclude: [], include: ["**/*.py"] },
+    });
+    setUpTestRepository(root, { library: [{ kind: "file", rule: rule("test:requires-python") }, { kind: "file", rule: regexRule }] }, databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { capabilities: loadCodeRuleCapabilities(capabilitiesPath) });
     try {
-      expect(catalog.codeRules()).toEqual([]);
+      const catalog = catalogs.catalog(root);
+      expect(catalog.snapshot().codeRules.map(({ id }) => id)).toEqual(["test:regex"]);
       expect(catalog.quarantined()).toEqual([
-        expect.objectContaining({ kind: "file", ruleId: "test:requires-python", reason: expect.stringMatching(/missing.*python.*capability/iu) }),
+        expect.objectContaining({ kind: "file", ruleId: "test:requires-python", owner: "library", reason: expect.stringMatching(/missing.*python.*capability/iu) }),
       ]);
     } finally {
-      catalog.close();
-    }
-    new Database(databasePath).prepare("SELECT COUNT(*) FROM rules").get();
-  });
-
-  it("follows enable, disable, edit, and delete written by other connections", () => {
-    const root = temporaryRoot();
-    const capabilitiesPath = writeCapabilities(root);
-    const databasePath = projectDatabase(root, [rule("test:alpha"), rule("test:beta")]);
-    const catalog = bootstrapCodeRuleDslCatalog({ capabilitiesPath, databasePath });
-    const writer = new SqliteRuleStore(databasePath);
-    try {
-      const initial = catalog.status.version;
-      const alpha = catalog.codeRule("test:alpha");
-      expect(catalog.status).toMatchObject({ databasePath, capabilitiesPath, ruleCount: 2, version: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u) });
-      expect(catalog.refresh()).toBe(false);
-
-      // Disable through the store: the daemon's PATCH /api/rules path.
-      expect(writer.setEnabled({ ids: ["test:beta"] }, false, 2_000)).toBe(1);
-      expect(catalog.refresh()).toBe(true);
-      expect(catalog.codeRules().map(({ id }) => id)).toEqual(["test:alpha"]);
-      expect(catalog.status).toMatchObject({ ruleCount: 1 });
-      expect(catalog.status.version).not.toBe(initial);
-      // Unchanged code rules keep their compiled executable.
-      expect(catalog.codeRule("test:alpha")).toBe(alpha);
-
-      // Nothing new: the probe is cheap and answers no.
-      expect(catalog.refresh()).toBe(false);
-
-      // Raw SQL from a shell counts too.
-      const shell = new Database(databasePath);
-      shell.prepare("UPDATE rules SET enabled = 1, updated_at = 3000 WHERE id = ?").run("test:beta");
-      shell.close();
-      expect(catalog.refresh()).toBe(true);
-      expect(catalog.codeRules().map(({ id }) => id)).toEqual(["test:alpha", "test:beta"]);
-      expect(catalog.status.version).toBe(initial);
-
-      // An edit recompiles only the edited code rule.
-      writer.upsertCodeRule(rule("test:alpha", 2), { now: 4_000 });
-      const beta = catalog.codeRule("test:beta");
-      expect(catalog.refresh()).toBe(true);
-      expect(JSON.parse(catalog.codeRule("test:alpha").canonicalJson())).toMatchObject({ revision: 2 });
-      expect(catalog.codeRule("test:beta")).toBe(beta);
-
-      // Deleting drops it from the compiled set.
-      expect(writer.remove(["test:alpha"])).toBe(1);
-      expect(catalog.refresh()).toBe(true);
-      expect(catalog.codeRules().map(({ id }) => id)).toEqual(["test:beta"]);
-      expect(() => catalog.codeRule("test:alpha")).toThrow(/Unknown policy DSL ID/u);
-
-      // A commit that does not touch the compiled set is not a change.
-      writer.upsertConversationRule(MOCK_CONVERSATION_RULES[0], { now: 5_000 });
-      expect(catalog.refresh()).toBe(false);
-    } finally {
-      writer.close();
-      catalog.close();
-    }
-    expect(() => catalog.codeRules()).toThrow(/closed/u);
-  });
-
-  it("publishes metadata-only provenance changes without recompiling identical code rule bodies", () => {
-    const root = temporaryRoot();
-    const capabilitiesPath = writeCapabilities(root);
-    const databasePath = join(root, "rules.sqlite");
-    const repository = { repositoryId: "repo", workspaceRoot: root };
-    const source = ScopedRuleCatalog.open(databasePath, repository);
-    source.upsertCodeRule(rule("test:metadata"), { applicability: "global", now: 1_000 });
-    const catalog = bootstrapCodeRuleDslCatalog({ capabilitiesPath, databasePath, store: source });
-    const writer = ScopedRuleCatalog.open(databasePath, repository);
-    try {
-      const executable = catalog.codeRule("test:metadata");
-      expect(catalog.provenance()).toEqual([expect.objectContaining({ applicability: "global" })]);
-      // Machine-catalog bookkeeping must not reload code-rule bodies for unrelated commits.
-      const loads = vi.spyOn(source, "list");
-      const noise = new Database(databasePath);
-      try {
-        noise.exec("CREATE TABLE accounting_noise (value INTEGER)");
-        for (let value = 0; value < 5; value += 1) {
-          noise.prepare("INSERT INTO accounting_noise VALUES (?)").run(value);
-          expect(catalog.refresh()).toBe(false);
-        }
-        expect(loads).not.toHaveBeenCalled();
-      } finally {
-        noise.close();
-        loads.mockRestore();
-      }
-      writer.upsertCodeRule(rule("test:metadata"), { applicability: "project", now: 2_000 });
-      expect(catalog.refresh()).toBe(true);
-      expect(catalog.codeRule("test:metadata")).toBe(executable);
-      expect(catalog.provenance()).toEqual([
-        expect.objectContaining({ applicability: "project", projectId: "repository:repo" }),
-      ]);
-    } finally {
-      writer.close();
-      catalog.close();
-    }
-  });
-
-  it("quarantines an engine-invalid code rule while valid code rules remain executable", () => {
-    const root = temporaryRoot();
-    const capabilitiesPath = writeCapabilities(root);
-    const databasePath = projectDatabase(root, [rule("test:atomic"), rule("test:other")]);
-    const catalog = bootstrapCodeRuleDslCatalog({ capabilitiesPath, databasePath });
-    try {
-      const other = catalog.codeRule("test:other");
-      const shell = new Database(databasePath);
-      shell
-        .prepare("UPDATE rules SET clauses_json = ?, updated_at = 2000 WHERE id = ?")
-        .run(JSON.stringify([{ id: "x", violation: { anchor: "witness.span", code: "X", message: "x" }, forbid: { regex: { source: "file.content", pattern: "(" } } }]), "test:atomic");
-      shell.close();
-
-      expect(catalog.refresh()).toBe(true);
-      expect(catalog.codeRules().map(({ id }) => id)).toEqual(["test:other"]);
-      expect(catalog.codeRule("test:other")).toBe(other);
-      expect(catalog.quarantined()).toEqual([expect.objectContaining({ kind: "file", ruleId: "test:atomic" })]);
-
-      const store = new SqliteRuleStore(databasePath);
-      store.upsertCodeRule(rule("test:atomic", 3), { now: 3_000 });
-      store.close();
-      expect(catalog.refresh()).toBe(true);
-      expect(catalog.codeRules().map(({ id }) => id)).toEqual(["test:atomic", "test:other"]);
-      expect(catalog.quarantined()).toEqual([]);
-      expect(JSON.parse(catalog.codeRule("test:atomic").canonicalJson())).toMatchObject({ revision: 3 });
-    } finally {
-      catalog.close();
+      catalogs.close();
     }
   });
 });

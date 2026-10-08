@@ -1,9 +1,8 @@
-import { spawnSync } from "node:child_process";
 import { lstatSync, readdirSync, readFileSync, realpathSync, type Dirent } from "node:fs";
 import { dirname, join, posix, relative, sep } from "node:path";
 import { withinCheckout } from "./checkout-control.js";
 import { IGNORED_DIRECTORIES } from "./code-rule-enforcer.js";
-import { GIT_EXECUTABLE } from "./repository-identity.js";
+import { GitUnavailableError, runGit } from "./git.js";
 import { compareDeterministicStrings } from "./stable-json.js";
 
 /**
@@ -27,8 +26,8 @@ export interface RulePackMatch {
 export interface RepositoryScan {
   /** Repository-relative paths with `/` separators, outside dependency and build-output directories. */
   readonly files: readonly string[];
-  /** npm package name to the first manifest (shallowest, then by path) that depends on it. */
-  readonly npmDependencies: ReadonlyMap<string, string>;
+  /** npm package name to every manifest that depends on it, shallowest first, then by path. */
+  readonly npmDependencies: ReadonlyMap<string, readonly string[]>;
 }
 
 const GIT_LIST_BUFFER_BYTES = 256 * 1024 * 1024;
@@ -67,7 +66,13 @@ function walk(root: string): string[] {
 }
 
 function gitListing(root: string, flags: readonly string[]): string[] | undefined {
-  const listed = spawnSync(GIT_EXECUTABLE, ["-C", root, "ls-files", "-z", ...flags], { encoding: "utf8", maxBuffer: GIT_LIST_BUFFER_BYTES });
+  let listed;
+  try {
+    listed = runGit(root, ["ls-files", "-z", ...flags], { maxBuffer: GIT_LIST_BUFFER_BYTES });
+  } catch (error) {
+    if (error instanceof GitUnavailableError) return undefined;
+    throw error;
+  }
   return listed.status === 0 ? listed.stdout.split("\0").filter(path => path.length > 0) : undefined;
 }
 
@@ -123,13 +128,13 @@ function readManifestDependencies(root: string, path: string): string[] {
 
 export function scanRepository(root: string): RepositoryScan {
   const files = listRepositoryFiles(root);
-  const npmDependencies = new Map<string, string>();
+  const npmDependencies = new Map<string, readonly string[]>();
   const manifests = files
     .filter(path => posix.basename(path) === "package.json")
     .sort((left, right) => left.split("/").length - right.split("/").length || compareDeterministicStrings(left, right));
   for (const manifest of manifests) {
-    for (const dependency of readManifestDependencies(root, join(root, manifest))) {
-      if (!npmDependencies.has(dependency)) npmDependencies.set(dependency, manifest);
+    for (const dependency of new Set(readManifestDependencies(root, join(root, manifest)))) {
+      npmDependencies.set(dependency, [...(npmDependencies.get(dependency) ?? []), manifest]);
     }
   }
   return { files, npmDependencies };
@@ -190,17 +195,28 @@ function commonDirectory(paths: readonly string[]): string {
   return common === "." ? "" : common;
 }
 
+/**
+ * The repository-relative files that make `signal` present: every manifest that depends on one of its packages, or
+ * every file its globs match. Empty when the signal is absent.
+ */
+export function signalEvidence(signal: RulePackSignal, scan: RepositoryScan): readonly string[] {
+  if ("npmDependencies" in signal) {
+    return [...new Set(signal.npmDependencies.flatMap(dependency => scan.npmDependencies.get(dependency) ?? []))];
+  }
+  const include = globPattern(signal.files);
+  const exclude = signal.exclude === undefined || signal.exclude.length === 0 ? undefined : globPattern(signal.exclude);
+  return scan.files.filter(path => include.test(path) && exclude?.test(path) !== true);
+}
+
 function signalReason(signal: RulePackSignal, scan: RepositoryScan): string | undefined {
   if ("npmDependencies" in signal) {
     for (const dependency of signal.npmDependencies) {
-      const manifest = scan.npmDependencies.get(dependency);
+      const manifest = scan.npmDependencies.get(dependency)?.[0];
       if (manifest !== undefined) return `the ${dependency} dependency in ${manifest}`;
     }
     return undefined;
   }
-  const include = globPattern(signal.files);
-  const exclude = signal.exclude === undefined || signal.exclude.length === 0 ? undefined : globPattern(signal.exclude);
-  const matched = scan.files.filter(path => include.test(path) && exclude?.test(path) !== true);
+  const matched = signalEvidence(signal, scan);
   if (matched.length === 0) return undefined;
   const directory = commonDirectory(matched);
   return directory === "" ? signal.label : `${signal.label} in ${directory}`;
@@ -213,4 +229,12 @@ function signalReason(signal: RulePackSignal, scan: RepositoryScan): string | un
 export function matchReason(match: RulePackMatch, scan: RepositoryScan): string | undefined {
   const parts = match.any.flatMap(signal => signalReason(signal, scan) ?? []);
   return parts.length === 0 ? undefined : `matches ${parts.slice(0, MAX_REASON_PARTS).join(" and ")}`;
+}
+
+/**
+ * The folder a matched pack belongs in: the deepest folder holding all of its evidence, across every signal
+ * (`''` is the whole repository). Two manifests in `web/a` and `web/b` give `web`.
+ */
+export function matchFolder(match: RulePackMatch, scan: RepositoryScan): string {
+  return commonDirectory(match.any.flatMap(signal => signalEvidence(signal, scan)));
 }

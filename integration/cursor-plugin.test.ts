@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { startEngineService, type EngineService } from "../src/engine-service.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 import { sessionStartNote } from "../src/rerail-steer.js";
-import { dashboardOrigin } from "../src/session-presentation.js";
+import { dashboardOrigin, presentedSessionNoteRules } from "../src/session-presentation.js";
 
 const temporaryDirectories: string[] = [];
 const engineServices: EngineService[] = [];
@@ -59,7 +59,7 @@ describe("Cursor packaged event adapter", () => {
     engineServices.push(await startEngineService({ socketPath: kernelSocketPath, storageRoot: join(root, ".rerail/sessions"), modelPath: join(process.cwd(), "model") }));
 
     expect(await invokeCursorHook(executable, { ...common, hook_event_name: "sessionStart" }, kernelSocketPath)).toEqual({
-      additional_context: sessionStartNote(await dashboardOrigin(root), "cursor", common.conversation_id),
+      additional_context: sessionStartNote(await dashboardOrigin(root), "cursor", common.conversation_id, await presentedSessionNoteRules({ host: "cursor", sessionId: common.conversation_id, cwd: root })),
     });
     expect(await invokeCursorHook(executable, {
       ...common,

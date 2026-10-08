@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { RerailRuntime } from "../src/runtime.js";
-import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedContractCodeRuleForRoot } from "./contract-code-rule.js";
+import {
+  CONTRACT_CURSOR_EXECUTE_CODE_RULE, CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedContractCodeRuleForRoot,
+} from "./contract-code-rule.js";
+import { codeRuleSchema } from "../src/code-rule-schema.js";
+import { setUpTestRepository } from "../test/support/repository-rules.js";
 import { steerText } from "./steer-text.js";
 import { decodeRerailEventFrame } from "../src/event-protocol.js";
 import type { AdapterDelivery } from "../src/adapter-contract.js";
@@ -35,28 +39,27 @@ describe("shared host engine", () => {
   it("runs conversation rule matching and committed-edit code rule enforcement in an OMP session", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-kernel-harness-"));
     process.env.RERAIL_HOME = join(root, "home");
-    seedContractCodeRuleForRoot(root);
+    // The repository runs the contract code rule and one conversation rule, both from the library.
+    setUpTestRepository(root, {
+      library: [
+        { kind: "file", rule: codeRuleSchema.parse(CONTRACT_CURSOR_EXECUTE_CODE_RULE) },
+        {
+          kind: "conversation",
+          rule: {
+            id: "require-transaction-guidance",
+            mode: "steer",
+            reference: "Preserve database transaction atomicity",
+            match: { operator: "gte", threshold: 0.95 },
+            sample: { source: "user-input", boundary: "message" },
+            action: { content: "CONVERSATION: preserve transaction atomicity" },
+            repeat: { mode: "once" },
+          },
+        },
+      ],
+    }, join(root, "home", "rerail.sqlite"));
     let runtime: RerailRuntime | undefined;
     try {
-      await mkdir(join(root, ".omp"));
       await mkdir(join(root, "api"));
-      await writeFile(
-        join(root, ".omp", "conversation-rules.json"),
-        JSON.stringify({
-          version: 1,
-          rules: [
-            {
-              id: "require-transaction-guidance",
-              mode: "steer",
-              reference: "Preserve database transaction atomicity",
-              match: { operator: "gte", threshold: 0.95 },
-              sample: { source: "user-input", boundary: "message" },
-              action: { content: "CONVERSATION: preserve transaction atomicity" },
-              repeat: { mode: "once" },
-            },
-          ],
-        }),
-      );
       await writeFile(join(root, "api", "route.py"), "def route():\n    return 1\n");
       runtime = new RerailRuntime({ storageRoot: join(root, ".rerail", "sessions"), workspaceRoot: root, modelPath: resolve("model") });
       const session = { host: "omp" as const, sessionId: "shared-runtime", cwd: root };

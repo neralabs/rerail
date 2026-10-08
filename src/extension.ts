@@ -27,8 +27,8 @@ import type { SessionDatabaseOptions } from "./session-database-options.js";
 import type { ConversationRuleSourceOptions } from "./rule-sources.js";
 import { registerRerailCommands } from "./rerail-command.js";
 import { createOmpPresentation } from "./omp-presentation.js";
-import { dashboardOrigin, linkDeliveries, readRepositoryState } from "./session-presentation.js";
-import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote } from "./rerail-steer.js";
+import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules, readRepositoryState } from "./session-presentation.js";
+import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, type SessionNoteRules } from "./rerail-steer.js";
 import { registerConversationRulesTool } from "./tool.js";
 
 export { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, TURN_ENTRY_TYPE } from "./session-state.js";
@@ -55,27 +55,43 @@ const execFileAsync = promisify(execFile);
 const STATE_CHECK_TIMEOUT_MS = 15_000;
 
 /**
- * Whether Rerail is started in `cwd`. Under Node the built package reads the database itself; it is
- * loaded at run time so this bundle never links the SQLite binding. OMP runs extensions on Bun,
- * which cannot load that binding: a running daemon answers, and otherwise the CLI does under Node,
- * reading the configured database when one is given. Without a built CLI, Rerail is off.
+ * The built package's start module under Node, loaded at run time so this bundle never links the SQLite binding;
+ * undefined on Bun (OMP), which cannot load that binding, and without a built `dist/`.
+ */
+async function databaseReader(): Promise<typeof RepositoryStart | undefined> {
+  const readerPath = join(PACKAGE_ROOT, "dist", "repository-start.js");
+  if (process.versions.bun !== undefined || !existsSync(readerPath)) return undefined;
+  // Runtime-selected on purpose: a static import would link better-sqlite3 into the Bun-loaded bundle.
+  return await import(pathToFileURL(readerPath).href) as typeof RepositoryStart;
+}
+
+/**
+ * Whether Rerail is started in `cwd`. Under Node the built package reads the database itself. On Bun a
+ * running daemon answers, and otherwise the CLI does under Node, reading the configured database when one
+ * is given. Without a built CLI, Rerail is off.
  */
 async function rerailStarted(cwd: string, databasePath: string | undefined): Promise<boolean> {
-  const readerPath = join(PACKAGE_ROOT, "dist", "repository-start.js");
-  if (process.versions.bun === undefined && existsSync(readerPath)) {
-    // Runtime-selected on purpose: a static import would link better-sqlite3 into the Bun-loaded bundle.
-    const reader = await import(pathToFileURL(readerPath).href) as typeof RepositoryStart;
-    return reader.isRerailStarted(cwd, databasePath);
-  }
+  const reader = await databaseReader();
+  if (reader !== undefined) return reader.isRerailStarted(cwd, databasePath);
   if (databasePath === undefined) {
     const answered = await readRepositoryState(cwd, "omp");
-    if (answered !== null) return answered === "started";
+    if (answered !== null) return answered !== "stopped";
   }
   const cli = join(PACKAGE_ROOT, "dist", "cli.js");
   if (!existsSync(cli)) return false;
   const databaseArgs = databasePath === undefined ? [] : ["--database", databasePath];
   const { stdout } = await execFileAsync(nodeExecutable(), [cli, "state", "--repo", cwd, ...databaseArgs], { cwd, timeout: STATE_CHECK_TIMEOUT_MS });
-  return stdout.trim() === "started";
+  return ["started", "not-set-up"].includes(stdout.trim());
+}
+
+/**
+ * What the session-start note says about the session's rules: the database's answer under Node, else the
+ * daemon's, which counts the rules on for the session as the footer does.
+ */
+async function sessionNoteRulesFor(session: AdapterSession, databasePath: string | undefined): Promise<SessionNoteRules> {
+  const reader = await databaseReader();
+  if (reader !== undefined) return reader.sessionNoteRules(session.cwd, databasePath);
+  return presentedSessionNoteRules(session);
 }
 
 function streamId(message: AgentMessage): string {
@@ -335,7 +351,8 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
       await ingest(userPromptEvent(session.sessionId, `input:${randomUUID()}`, event.prompt));
       if (notedSessions.has(session.sessionId)) return;
       notedSessions.add(session.sessionId);
-      const content = sessionStartNote(await dashboardOrigin(session.cwd), "omp", session.sessionId);
+      const databasePath = options.databasePath === undefined ? undefined : resolve(session.cwd, options.databasePath);
+      const content = sessionStartNote(await dashboardOrigin(session.cwd), "omp", session.sessionId, await sessionNoteRulesFor(session, databasePath));
       return { message: { customType: SESSION_NOTE_MESSAGE_TYPE, content, display: false } };
     });
 

@@ -194,7 +194,7 @@ fn spike_sql_file_filter_indexes() {
             capabilities.clone(),
         )
         .unwrap();
-        workspace.add_code_rule(&compiled).unwrap();
+        workspace.add_code_rule(&compiled, None).unwrap();
     }
     let state = workspace.state.lock().unwrap();
     let code_rules = &state.code_rules;

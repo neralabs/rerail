@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DefaultResourceLoader, SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isRerailStarted } from "../src/repository-start.js";
+import { setUpTestRepository } from "../test/support/repository-rules.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 
 const temporaryDirectories: string[] = [];
@@ -87,10 +88,11 @@ describe("installed Pi extension", () => {
     await extension.handlers.get("session_shutdown")![0]!({ type: "session_shutdown", reason: "quit" }, context);
   }, 30_000); // `/rerail-stop` runs the real CLI, a Node process of its own.
 
-  test("loads default rule files at session start through the packaged extension's registered tool", async () => {
+  test("loads default rule files at session start through the packaged extension's registered tool once the repository is set up", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "rerail-pi-rules-"));
     temporaryDirectories.push(cwd);
     startTestRepository(cwd);
+    setUpTestRepository(cwd);
     await mkdir(join(cwd, ".pi"), { recursive: true });
     await writeFile(
       join(cwd, ".pi", "conversation-rules.json"),
