@@ -15,6 +15,7 @@ import { listRepositoryRules, setUpRepository } from "./rule-configuration.js";
 import { loadBundledCatalog } from "./bundled-rules.js";
 import { recommendRulePacks, type RulePackRecommendation } from "./rule-packs.js";
 import { checkouts, repositories } from "./schema.js";
+import { clearSetupReview, setupReviewOffered } from "./setup-review.js";
 import type { RerailHost } from "./adapter-contract.js";
 import type { SessionNoteRules } from "./rerail-steer.js";
 import { readRepositoryState } from "./session-presentation.js";
@@ -198,13 +199,14 @@ export function onRuleCount(database: RerailDatabase, checkout: CheckoutContext)
 }
 
 /**
- * Whether `checkout`'s repository is set up and has never been started or stopped anywhere: what the dashboard's
- * review leaves while set-up waits for the person to start Rerail with the packs they kept on.
+ * Whether `repositoryKey` is what the dashboard's review leaves while set-up waits for the person to start Rerail with
+ * the packs they kept on: set-up offered the review, the person set the repository up in the dashboard, and nobody has
+ * started or stopped it anywhere since. A repository set up any other way is just set up.
  */
-export function setUpAndNeverStarted(db: Reader, repositoryKey: RepositoryKey): boolean {
+export function awaitingStartAfterReview(db: Reader, repositoryKey: RepositoryKey): boolean {
   const repository = db.select({ started: repositories.started, configuredAt: repositories.configuredAt })
     .from(repositories).where(eq(repositories.repositoryKey, repositoryKey)).get();
-  if (repository?.configuredAt == null || repository.started !== null) return false;
+  if (repository?.configuredAt == null || repository.started !== null || !setupReviewOffered(db, repositoryKey)) return false;
   return db.select({ path: checkouts.checkoutPath }).from(checkouts)
     .where(and(eq(checkouts.repositoryKey, repositoryKey), isNotNull(checkouts.started))).get() === undefined;
 }
@@ -233,6 +235,7 @@ export function setRepositoryStarted(database: RerailDatabase, repositoryKey: Re
   database.transaction(tx => {
     tx.update(repositories).set({ started, updatedAt: now }).where(eq(repositories.repositoryKey, repositoryKey)).run();
     tx.update(checkouts).set({ started: null }).where(eq(checkouts.repositoryKey, repositoryKey)).run();
+    clearSetupReview(tx, repositoryKey);
   }, { behavior: "immediate" });
 }
 
@@ -242,6 +245,7 @@ export function setCheckoutStarted(database: RerailDatabase, checkout: CheckoutC
     tx.update(checkouts).set({ started }).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).run();
     const nested = nestedCheckouts(tx, checkout).map(row => row.checkoutPath);
     if (nested.length > 0) tx.update(checkouts).set({ started: null }).where(inArray(checkouts.checkoutPath, nested)).run();
+    clearSetupReview(tx, checkout.repositoryKey);
   }, { behavior: "immediate" });
 }
 
@@ -265,6 +269,7 @@ export function startSetUpRepository(database: RerailDatabase, checkout: Checkou
     tx.update(repositories).set({ started: true, updatedAt: Date.now() }).where(eq(repositories.repositoryKey, checkout.repositoryKey)).run();
     const parentStopped = parentCheckouts(tx, checkout).find(row => row.started !== null)?.started === false;
     tx.update(checkouts).set({ started: parentStopped ? true : null }).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).run();
+    clearSetupReview(tx, checkout.repositoryKey);
   }, { behavior: "immediate" });
 }
 

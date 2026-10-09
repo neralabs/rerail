@@ -5,7 +5,7 @@
  * polls its context, its rules (and the packs attached to it), the rule packs, its activity,
  * violations and sessions; with or without one, the repository list and the daemon's health.
  */
-import { get } from "./api.js";
+import { get, send } from "./api.js";
 import { data, ui, sinceFor, setScope } from "./state.js";
 
 const INTERVAL = 5_000;
@@ -44,6 +44,31 @@ export function scopeTarget() {
   if (repository !== undefined) target.repository = repository;
   if (ui.scope?.checkout !== undefined) target.checkout = ui.scope.checkout;
   return target;
+}
+
+/**
+ * The scope a write belongs to, fixed at the click: its `target` and a `token` that goes stale once the page
+ * shows another repository. A write sends to `target` and touches the page's state only while `inScope`.
+ */
+export const captureScope = () => ({ target: scopeTarget(), token: generation });
+
+/** Whether the page still shows the scope `captureScope` fixed. */
+export const inScope = scope => scope.token === generation;
+
+/**
+ * One write to the captured scope's target. Nothing is sent once the page shows another repository. Resolves
+ * `true` when sent and the page still shows the scope, `false` when it does not (so nothing of the answer is the
+ * page's); rejects with the write's error only while the page still shows the scope, so a rollback lands there.
+ */
+export async function sendInScope(scope, method, path, body) {
+  if (!inScope(scope)) return false;
+  try {
+    await send(method, path, { ...scope.target, ...body });
+  } catch (error) {
+    if (inScope(scope)) throw error;
+    return false;
+  }
+  return inScope(scope);
 }
 
 const scopeQuery = () => new URLSearchParams(scopeTarget()).toString();
@@ -160,9 +185,14 @@ export async function loadPresence() {
  * Add pack uses. Reads the repository, so only when the page needs them.
  */
 export async function loadRecommendations() {
-  const started = generation;
-  const { body } = await get(`/api/rule-packs/recommendations?${scopeQuery()}`);
-  if (started === generation) data.recommendations = body.recommendations;
+  await recommendationsFor(captureScope());
+}
+
+/** The packs recommended for a captured scope's target; kept for the page only while it still shows that scope. */
+export async function recommendationsFor(scope) {
+  const { body } = await get(`/api/rule-packs/recommendations?${new URLSearchParams(scope.target)}`);
+  if (inScope(scope)) data.recommendations = body.recommendations;
+  return body.recommendations;
 }
 
 async function loadActivity(since, target) {

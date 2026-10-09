@@ -54,6 +54,12 @@ declare module "*/ui/poll.js" {
     entries: ReadonlyArray<{ folder: string; source: { kind: string; id: string } }>,
     unavailable: ReadonlyArray<{ sourceKind: string; sourceId: string; folder: string; reason?: string }>,
   ): Map<string, string[]>;
+  export interface Scope { target: { repository?: string; checkout?: string }; token: number }
+  export function captureScope(): Scope;
+  export function inScope(scope: Scope): boolean;
+  export function sendInScope(scope: Scope, method: string, path: string, body: object): Promise<boolean>;
+  export function recommendationsFor(scope: Scope): Promise<Array<{ packId: string; folder: string }>>;
+  export function changeScope(scope: { repository?: string; checkout?: string } | null): void;
 }
 
 declare module "*/ui/state.js" {
@@ -65,6 +71,7 @@ declare module "*/ui/state.js" {
     repository: { setUp: boolean } | null;
     recommendations: Array<{ packId: string }> | null;
   };
+  export function setScope(scope: { repository?: string; checkout?: string } | null): void;
   export const ui: { filter: string; query: string };
   export interface RuleGroup { name: string; all: Array<{ rule: { id: string } }>; shown: Array<{ rule: { id: string } }> }
   export function ruleSections(): Array<{ key: string; kind: "mine" | "pack" | "legacy"; groups: RuleGroup[] }>;

@@ -237,4 +237,37 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(await runSetupCommand(["--json"], context, io, "v22.11.0")).toBe(1);
     expect(JSON.parse(said[0]!)).toMatchObject({ step: "error", screen: expect.stringContaining("Rerail needs Node 24 or newer") });
   });
+
+  it("carries `--agents` into every answer, in both lanes", async () => {
+    const { context, said, io, setup } = await commandFixture();
+    await context.updater.activateRoot(context.packageRoot);
+    expect(await runSetupCommand(["--agents", "Cursor", "--answer", "yes", "--repo", setup.repo], context, io)).toBe(0);
+    const { commands } = agentQuestion(said.join("\n"));
+    expect(commands).toHaveLength(4);
+    for (const command of commands) expect(command).toContain("setup --agents cursor --answer ");
+
+    said.length = 0;
+    expect(await runSetupCommand(["--json", "--agents", "cursor", "--answer", "yes", "--repo", setup.repo], context, io)).toBe(0);
+    const step = JSON.parse(said[0]!) as SetupStep;
+    expect(step.question!.options.map(option => option.next.args.slice(0, 4))).toEqual(Array(4).fill(["setup", "--agents", "cursor", "--json"]));
+    expect(step.question!.options.find(option => option.answer === "other")!.input!.hint).toBe("comma-separated ids from: cursor (Cursor)");
+    expect(step.screen).toMatch(/^ {2}Connected to +Cursor\b/mu);
+  });
+
+  it("installs over another active version on a fresh run only, never on an answer", async () => {
+    const { context, io, setup } = await commandFixture();
+    // The active install is another version: the one `/rerail-update` installed after this package was loaded.
+    const updated = join(setup.root, "updated");
+    mkdirSync(join(updated, "dist"), { recursive: true });
+    writeFileSync(join(updated, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "2.0.0" }));
+    await context.updater.activateRoot(updated);
+    const install = vi.spyOn(context.updater, "install").mockResolvedValue(undefined as never);
+
+    expect(await runSetupCommand(["--answer", "yes", "--repo", setup.repo], context, io)).toBe(0);
+    expect(await runSetupCommand(["--json", "--answer", "yes", "--repo", setup.repo], context, io)).toBe(0);
+    expect(install).not.toHaveBeenCalled();
+
+    expect(await runSetupCommand([], context, io)).toBe(0);
+    expect(install).toHaveBeenCalledOnce();
+  });
 });

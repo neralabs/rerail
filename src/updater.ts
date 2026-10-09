@@ -255,7 +255,8 @@ const REPOSITORY_START_STATES: ReadonlySet<string> = new Set(["started", "stoppe
 /**
  * Starts Rerail in the health-check repository; any failure is the staged package's and is thrown. The repository
  * is not set up, so start runs set-up, which asks first: "I'll pick rule packs myself" turns it on reading no code,
- * and the scratch `HOME` gives it no coding agent to connect.
+ * and the scratch `HOME` gives it no coding agent to connect. A release from before the set-up (rollback validates
+ * the previous release) takes no `--answer` and starts at once.
  */
 async function startHealthRepository(cli: string, workspace: string, env: NodeJS.ProcessEnv): Promise<void> {
   const run = (args: readonly string[]) => promisify(execFile)(
@@ -263,7 +264,13 @@ async function startHealthRepository(cli: string, workspace: string, env: NodeJS
   );
   const state = (await run(["state", "--repo", workspace])).stdout.trim();
   if (!REPOSITORY_START_STATES.has(state)) throw new Error(`rerail state answered ${JSON.stringify(state)}`);
-  await run(["start", "--repo", workspace, "--answer", "pick-myself"]);
+  try {
+    await run(["start", "--repo", workspace, "--answer", "pick-myself"]);
+  } catch (error) {
+    const stderr = error instanceof Error && "stderr" in error && typeof error.stderr === "string" ? error.stderr : "";
+    if (!stderr.includes("Unknown start option: --answer")) throw error;
+    await run(["start", "--repo", workspace]);
+  }
 }
 
 export async function validateManagedInstallation(installation: Installation): Promise<void> {

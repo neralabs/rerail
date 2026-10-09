@@ -42,6 +42,10 @@ person says yes.
    atomically and `bin/rerail` is (re)written. The npx copy is never referenced
    again. Installing turns nothing on, connects no coding agent and starts no
    daemon. A run from the version `current` already points at skips this step.
+   So does an answer (`--answer`, `--repo`) or a `/rerail-start` step once any
+   version is installed: OMP and Pi run those from the session's own package,
+   which may be older than `current`, and installing it would undo
+   `/rerail-update`.
 2. **Ask before reading** — set-up names the Git repository it ran in and asks
    whether it may read it. Outside a repository (or in your home folder) it
    asks which folder to start with instead; `--repo <folder>` names one, which

@@ -14,6 +14,11 @@ export interface CommandFileContext {
   cli: string;
   /** The installed package root the launcher belongs to. */
   packageRoot: string;
+  /**
+   * The stable launcher (`~/.rerail/bin/rerail`), quoted as set-up quotes it: set-up's answer commands start with
+   * it, or with `rerail setup` until it exists.
+   */
+  setupLauncher: string;
 }
 
 /** Marks a Codex skill as installed by Rerail, so registration only ever replaces or removes its own. */
@@ -36,6 +41,28 @@ const CODEX_APPROVAL = [
 
 function runOne(command: string, lead: string): string {
   return [lead, "", "Run exactly this and report its output verbatim:", "", "```sh", command, "```", "", REPORT_VERBATIM].join("\n");
+}
+
+/** `/rerail-start`: where the repo is not set up, `start` prints set-up's next question; the agent relays it and runs the answer's command. */
+function startBody(cli: string, setupLauncher: string): CommandBody {
+  return {
+    text: [
+      "Start Rerail in this checkout and the worktrees inside it, setting the repo up the first time.",
+      "",
+      "Run exactly this:",
+      "",
+      "```sh",
+      `${cli} start`,
+      "```",
+      "",
+      "If the output asks a set-up question, relay it to the person as written and wait for their reply. Do not choose for them.",
+      "When they answer, run only the one command the output gives for that answer, exactly as printed, then do the same with",
+      "its output. Repeat until set-up stops asking, then report the last output verbatim.",
+      "",
+      "Do not run anything else. If a command fails, show the error and stop.",
+    ].join("\n"),
+    allowed: [`${cli} start`, `${setupLauncher} setup *`, "rerail setup *"],
+  };
 }
 
 /** `/rerail`: the L1 summary for this session (or this repo, where the agent cannot name its session). */
@@ -102,10 +129,7 @@ function commandBody(agent: CommandFileAgent, name: RerailCommandName, context: 
       };
     }
     case "rerail-start":
-      return {
-        text: runOne(`${cli} start`, "Start Rerail in this checkout and the worktrees inside it, setting the repo up the first time with its recommended rule packs."),
-        allowed: [`${cli} start`],
-      };
+      return startBody(cli, context.setupLauncher);
     case "rerail-stop":
       return {
         text: runOne(`${cli} stop`, "Stop Rerail in this checkout and the worktrees inside it. Rules and history are kept."),

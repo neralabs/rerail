@@ -29,6 +29,7 @@ import {
 } from "./claude-status-store.js";
 import { commandFileText, MANAGED_SKILL_MARKER, type CommandFileContext } from "./rerail-command-files.js";
 import { RERAIL_COMMANDS, type RerailCommandName } from "./rerail-commands.js";
+import { shellQuote } from "./setup-screens.js";
 import { stableJsonText } from "./stable-json.js";
 
 export type Harness = "omp" | "pi" | "claude-code" | "codex" | "cursor";
@@ -254,7 +255,13 @@ const RETIRED_PROMPT_COMMANDS: readonly string[] = ["rerail-session", "rerail-di
 const RETIRED_CODEX_SKILLS: readonly string[] = [];
 
 function commandContext(context: Context): CommandFileContext {
-  return { cli: directCommand(context, "cli.js"), packageRoot: context.root };
+  return { cli: directCommand(context, "cli.js"), packageRoot: context.root, setupLauncher: setupLauncher(context) };
+}
+
+/** The launcher set-up's answer commands start with (`Updater.launcherPath`), quoted as set-up prints it. */
+function setupLauncher(context: Context): string {
+  const home = process.env.RERAIL_HOME === undefined ? join(context.home, ".rerail") : resolve(process.env.RERAIL_HOME);
+  return shellQuote(join(home, "bin", context.platform === "win32" ? "rerail.cmd" : "rerail"));
 }
 
 function describe(context: Context, detail: string): string {

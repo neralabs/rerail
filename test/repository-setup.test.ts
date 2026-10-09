@@ -6,13 +6,13 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase } from "../src/database.js";
 import { repositoryIdentityLocation } from "../src/repository-identity.js";
-import { lookupCheckout } from "../src/repository-registry.js";
+import { lookupCheckout, recordCheckout } from "../src/repository-registry.js";
 import { parseCodingAgents, runSetup, startRerail, type SetupRequest } from "../src/repository-setup.js";
 import { onRuleCount, stopRerail, workspaceStartState, type RepositorySetupIo } from "../src/repository-start.js";
 import { setUpRepository } from "../src/rule-configuration.js";
 import { noBrowserReason, runSetupCommand, type SetupIo } from "../src/setup-cli.js";
 import { ManagedUpdater } from "../src/updater.js";
-import { fakeSetupEnvironment, type FakeSetupEnvironment } from "./fake-setup-environment.js";
+import { attachPacks, fakeSetupEnvironment, type FakeSetupEnvironment } from "./fake-setup-environment.js";
 import { attachedPacks } from "./support/attached-packs.js";
 
 const temporaryDirectories: string[] = [];
@@ -148,14 +148,9 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
 
   it("reviews in the dashboard without waiting on it, then starts with the packs kept on there", async () => {
     const setup = await fixture();
+    // The review page's first switch adds the packs kept on, which sets the repository up: TSLint off, complexity on.
     const environment = fakeSetupEnvironment({
-      onPage(scope, page) {
-        if (page !== "review") return;
-        // The review page's first switch adds the packs kept on, which sets the repository up: TSLint off, complexity on.
-        const database = openRerailDatabase(setup.databasePath);
-        setUpRepository(database, scope.repositoryKey, { packs: [{ packId: "complexity", folder: "" }] });
-        database.$client.close();
-      },
+      onPage: (scope, page) => (page === "review" ? attachPacks(setup.databasePath, scope, ["complexity"]) : undefined),
     });
 
     const review = agentIo();
@@ -183,12 +178,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
   it("drops the packs the review added when the person then picks packs themselves", async () => {
     const setup = await fixture();
     const environment = fakeSetupEnvironment({
-      onPage(scope, page) {
-        if (page !== "review") return;
-        const database = openRerailDatabase(setup.databasePath);
-        setUpRepository(database, scope.repositoryKey, { packs: [{ packId: "tslint", folder: "" }] });
-        database.$client.close();
-      },
+      onPage: (scope, page) => (page === "review" ? attachPacks(setup.databasePath, scope, ["tslint"]) : undefined),
     });
     await runSetup(agentIo(), request(setup, environment, { answer: "review", repo: setup.repo }));
     expect(selected(setup)).toEqual(["tslint"]);
@@ -198,6 +188,74 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
       .toMatchObject({ status: "started", ruleCount: 0 });
     expect(selected(setup)).toEqual([]);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
+  });
+
+  it("just starts a repository that `rerail rules add` set up, keeping its rule and asking nothing", async () => {
+    const setup = await fixture();
+    // What `rerail rules add` (and `/rerail-create`) does in a repository that is not set up: the rule sets it up.
+    const writer = openRerailDatabase(setup.databasePath);
+    try {
+      const { repositoryKey } = recordCheckout(writer, setup.repo);
+      setUpRepository(writer, repositoryKey, { packs: [], rules: [{ sourceKind: "library_rule", sourceId: "no-console-log", folder: "" }] });
+    } finally {
+      writer.$client.close();
+    }
+
+    const io = agentIo();
+    const report = await startRerail(setup.repo, io, { databasePath: setup.databasePath, environment: fakeSetupEnvironment() });
+    expect(report).toMatchObject({ previous: "stopped", setUpRan: false, status: "started", cancelled: false });
+    expect(io.text()).toMatch(/^● Rerail is on in acme-api\. .*, as you left them\.$/u);
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
+    const reader = openRerailDatabase(setup.databasePath, { readonly: true });
+    try {
+      expect(reader.$client.prepare("SELECT source_kind, source_id FROM rule_attachments").all())
+        .toEqual([{ source_kind: "library_rule", source_id: "no-console-log" }]);
+    } finally {
+      reader.$client.close();
+    }
+  });
+
+  it("takes a repository a coding agent set up after the review was offered as set up, not as the review's", async () => {
+    const setup = await fixture();
+    const environment = fakeSetupEnvironment();
+    // Set-up offers the review; the person never changes anything there.
+    await runSetup(agentIo(), request(setup, environment, { answer: "review", repo: setup.repo }));
+    const { repositoryKey } = environment.pages[0]!;
+    // Meanwhile the coding agent adds a pack over MCP, which sets the repository up.
+    await attachPacks(setup.databasePath, { repositoryKey, checkoutPath: setup.repo }, ["complexity"], {
+      kind: "agent", checkout: setup.repo, folder: "",
+    });
+
+    // "I'll pick rule packs myself" removes nothing the review did not add.
+    expect(await runSetup(agentIo(), request(setup, environment, { answer: "pick-myself", repo: setup.repo }))).toMatchObject({ status: "stopped" });
+    expect(selected(setup)).toEqual(["complexity"]);
+
+    const io = agentIo();
+    const report = await startRerail(setup.repo, io, { databasePath: setup.databasePath, environment });
+    expect(report).toMatchObject({ setUpRan: false, status: "started" });
+    expect(io.text()).not.toContain("kept on");
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
+    expect(selected(setup)).toEqual(["complexity"]);
+  });
+
+  it("asks the review's confirm question on `rerail start` once the review set the repository up", async () => {
+    const setup = await fixture();
+    const environment = fakeSetupEnvironment({
+      onPage: (scope, page) => (page === "review" ? attachPacks(setup.databasePath, scope, ["complexity"]) : undefined),
+    });
+    await runSetup(agentIo(), request(setup, environment, { answer: "review", repo: setup.repo }));
+
+    const io = agentIo();
+    const report = await startRerail(setup.repo, io, { databasePath: setup.databasePath, environment });
+    expect(report).toMatchObject({ setUpRan: true, status: "waiting" });
+    expect(io.text()).toContain("Start Rerail in acme-api with the rule packs you kept on?");
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
+
+    // Once started and stopped, it is plainly set up: starting again asks nothing.
+    await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo }));
+    stopRerail(setup.repo, agentIo(), { databasePath: setup.databasePath });
+    expect(await startRerail(setup.repo, agentIo(), { databasePath: setup.databasePath, environment })).toMatchObject({ setUpRan: false, status: "started" });
+    expect(selected(setup)).toEqual(["complexity"]);
   });
 
   it("offers no rule pack where none matches, and starts with none", async () => {

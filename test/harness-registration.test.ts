@@ -25,6 +25,7 @@ import { MANAGED_SKILL_MARKER } from "../src/rerail-command-files.js";
 import { RERAIL_COMMANDS } from "../src/rerail-commands.js";
 import { runInstallCommand } from "../src/setup-cli.js";
 import { ManagedUpdater } from "../src/updater.js";
+import { readRepoQuestion, renderQuestion, shellQuote } from "../src/setup-screens.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -592,11 +593,14 @@ describe("Claude Code commands", () => {
     const overview = await read("rerail");
     expect(overview).toContain(`allowed-tools: Bash(${command} session claude-code *)\n`);
     expect(overview).toContain(`\n${command} session claude-code '\${CLAUDE_SESSION_ID}'\n`);
-    for (const action of ["start", "stop", "update"]) {
+    for (const action of ["stop", "update"]) {
       const body = await read(`rerail-${action}`);
       expect(body).toContain(`allowed-tools: Bash(${command} ${action})\n`);
       expect(body).toContain(`\n${command} ${action}\n`);
     }
+    const start = await read("rerail-start");
+    expect(start).toContain(`\n${command} start\n`);
+    expect(start).not.toContain("recommended rule packs");
     const ui = await read("rerail-ui");
     expect(ui).toContain(`allowed-tools: Bash(${command} ui --print), Bash(${command} ui)\n`);
     expect(ui).toContain(`Under Orca (\`ORCA_TAB_ID\` set): run \`${command} ui\`.`);
@@ -617,6 +621,35 @@ describe("Claude Code commands", () => {
 
     const again = await unregisterHarnesses({ root, home, nodePath, harnesses: options });
     expect(change(again.changes, "claude-code", "rerail.md").action).toBe("unchanged");
+  });
+
+  it("lets /rerail-start relay each set-up question and run the printed answer command without a prompt", async () => {
+    const { home, root, nodePath } = await fixture();
+    const rerailHome = join(home, "rerail home");
+    vi.stubEnv("RERAIL_HOME", rerailHome);
+    await registerHarnesses({ root, home, nodePath, harnesses: options });
+    const start = await readFile(join(home, ".claude", "commands", "rerail-start.md"), "utf8");
+    const allowed = [...(start.match(/^allowed-tools: (.*)$/mu)?.[1] ?? "").matchAll(/Bash\((.*?)\)(?:, |$)/gu)].map(match => match[1]!);
+    // Claude Code's `Bash(<prefix> *)` grants every command that starts with the prefix and a space.
+    const granted = (line: string): boolean => allowed.some(pattern =>
+      pattern.endsWith(" *") ? line.startsWith(pattern.slice(0, -1)) : line === pattern);
+    // What `rerail start` prints with no TTY: the question, then one numbered command per answer.
+    const answers = (setupCommand: string | undefined): string[] => renderQuestion(readRepoQuestion({
+      repoName: "acme-web",
+      repoPath: "/code/acme-web",
+      ...(setupCommand === undefined ? {} : { setupCommand }),
+    }), "agent").split("\n").filter(line => /^\d+\. .* setup /u.test(line)).map(line => line.replace(/^\d+\. /u, ""));
+
+    const launcherAnswers = answers(`${shellQuote(join(rerailHome, "bin", "rerail"))} setup`);
+    const bareAnswers = answers(undefined);
+    expect(launcherAnswers).toHaveLength(3);
+    expect(bareAnswers).toHaveLength(3);
+    for (const line of [...launcherAnswers, ...bareAnswers]) expect(granted(line), line).toBe(true);
+    expect(granted(`${nodePath} ${join(root, "dist", "cli.js")} start`)).toBe(true);
+    expect(granted(`${shellQuote(join(rerailHome, "bin", "rerail"))} daemon stop`)).toBe(false);
+
+    expect(start).toContain("relay it to the person as written and wait for their reply");
+    expect(start).toContain("run only the one command the output gives for that answer");
   });
 
   it("removes this package's retired commands and leaves anyone else's", async () => {

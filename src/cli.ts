@@ -26,6 +26,7 @@ import {
 import type { RepositoryStartState } from "./repository-model.js";
 import { repositoryName } from "./repository-identity.js";
 import { checkSetupAnswer, parseCodingAgents, startRerail } from "./repository-setup.js";
+import { isPreSetupHealthCheck, startForPreSetupHealthCheck } from "./pre-setup-health-check.js";
 import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "./daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "./database.js";
 import {
@@ -391,12 +392,22 @@ async function runRepositoryCommand(command: "start" | "stop", args: readonly st
       stopRerail(workspace, io, { ...(databasePath === undefined ? {} : { databasePath }), repository });
       return 0;
     }
-    const agents = options.get("--agents");
+    // A release from before set-up checks an update with a bare `start`, which set-up would only ask a question of.
+    if (isPreSetupHealthCheck(args, io.lane, workspace)) {
+      startForPreSetupHealthCheck(workspace, io);
+      return 0;
+    }
+    const agentList = options.get("--agents");
+    const agents = agentList === undefined ? undefined : parseCodingAgents(agentList);
     const answer = checkSetupAnswer(options.get("--answer"));
-    const setupCommand = setupAnswerCommand(context, { ...(databasePath === undefined ? {} : { databasePath }), repository });
+    const setupCommand = setupAnswerCommand(context, {
+      ...(databasePath === undefined ? {} : { databasePath }),
+      repository,
+      ...(agents === undefined ? {} : { agents }),
+    });
     const report = await startRerail(workspace, io, {
       ...(databasePath === undefined ? {} : { databasePath }),
-      ...(agents === undefined ? {} : { agents: parseCodingAgents(agents) }),
+      ...(agents === undefined ? {} : { agents }),
       ...(answer === undefined ? {} : { answer }),
       ...(setupCommand === undefined ? {} : { setupCommand }),
       repository,

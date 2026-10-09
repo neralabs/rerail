@@ -3,11 +3,11 @@
  * `ui` (or optimistically `data`) and call it; the poll loop calls it when a fetch changed
  * something. Nothing here rebuilds the list wholesale.
  */
-import { get, send } from "./api.js";
+import { send } from "./api.js";
 import { h, setAttr, setText, setContent } from "./dom.js";
 import { ago, plural, shortSessionId } from "./format.js";
 import { data, ui, summary, panelRuleId, titleOf, packById, packOfRule, packFolder, rulesArray, readScope, setScope, repoName, stateHere, isSetUp } from "./state.js";
-import { startPolling, refreshNow, loadSession, loadMoreFindings, loadAgents, loadPresence, loadRecommendations, changeScope, scopeTarget } from "./poll.js";
+import { startPolling, refreshNow, loadSession, loadMoreFindings, loadAgents, loadPresence, loadRecommendations, recommendationsFor, changeScope, captureScope, inScope, sendInScope } from "./poll.js";
 import { renderOverview } from "./render/overview.js";
 import { renderRules, allGroupsFolded, sectionKeys, groupRules } from "./render/rules.js";
 import { renderActivity } from "./render/activity.js";
@@ -200,7 +200,7 @@ const ownerWords = () => (changeOwner() === "checkout" ? "in this worktree" : "f
 async function setEnabled(ids, enabled, label) {
   if (ids.length === 0) return;
   // The repository, owner and rows are fixed when the action starts: switching repository mid-save writes nothing there.
-  const target = scopeTarget();
+  const scope = captureScope();
   const owner = changeOwner();
   const before = new Map();
   const byFolder = new Map();
@@ -212,16 +212,23 @@ async function setEnabled(ids, enabled, label) {
     for (const folder of r.folders) byFolder.set(folder, [...(byFolder.get(folder) ?? []), id]);
   }
   invalidate();
+  let failure = null;
   try {
     for (const [folder, folderIds] of byFolder) {
       await send("PUT", "/api/repository/settings", {
-        ...target, folder, owner, targets: folderIds.map(id => ({ kind: "rule", id })), on: enabled,
+        ...scope.target, folder, owner, targets: folderIds.map(id => ({ kind: "rule", id })), on: enabled,
       });
     }
-    toast(label);
   } catch (error) {
+    failure = error;
+  }
+  // Another repository's page now: these rows and the outcome are not its.
+  if (!inScope(scope)) return;
+  if (failure === null) {
+    toast(label);
+  } else {
     for (const [r, was] of before) r.enabled = was;
-    toast(`Could not save: ${error.message}`);
+    toast(`Could not save: ${failure.message}`);
   }
   invalidate();
   refreshNow();
@@ -239,30 +246,43 @@ function toggleRule(id) {
 const packName = id => packById(id)?.name ?? id;
 const packAttachment = (id, folder) => ({ sourceKind: "pack", sourceId: id, folder });
 
-/** The recommendations hold the folder each pack is added in; read them once before the first pack write. */
-async function readRecommendations() {
-  if (data.recommendations !== null) return true;
+/**
+ * The recommendations a pack write takes its folders from, fetched for the scope the write was started in: a
+ * switch while they load never lends it another repository's folders. `null` when they could not be read.
+ */
+async function recommendationsOf(scope) {
+  if (inScope(scope) && data.recommendations !== null) return data.recommendations;
   try {
-    await loadRecommendations();
-    return true;
+    return await recommendationsFor(scope);
   } catch (error) {
-    toast(`Could not read the repo: ${error.message}`);
-    return false;
+    if (inScope(scope)) toast(`Could not read the repo: ${error.message}`);
+    return null;
   }
 }
 
+/** True while the page shows the repository the write was started in; else the write is dropped, and said so. */
+function stillShown(scope) {
+  if (inScope(scope)) return true;
+  toast("Nothing saved: the repository changed before the change was sent.");
+  return false;
+}
+
 /**
- * One `PUT /api/repository/attachments`: the packs added here change optimistically to `next` (and a
- * `configure` write marks the repository set up), reverted on error; the poll that follows reads them back.
+ * One `PUT /api/repository/attachments` to the repository the action started in: the packs added here change
+ * optimistically to `next` (and a `configure` write marks the repository set up), reverted on error; the poll
+ * that follows reads them back. Dropped when the page shows another repository before it is sent; once it does,
+ * neither the answer nor a rollback touches the page.
  */
-async function setAttachments(body, next, message) {
+async function setAttachments(scope, body, next, message) {
+  if (!stillShown(scope)) return;
   const before = { attached: data.attachedPacks, repository: data.repository };
   data.attachedPacks = next;
   if (body.configure && data.repository !== null) data.repository = { ...data.repository, setUp: true };
   ui.removeAsk = null;
   invalidate();
+  let shown;
   try {
-    await send("PUT", "/api/repository/attachments", { ...scopeTarget(), ...body });
+    shown = await sendInScope(scope, "PUT", "/api/repository/attachments", body);
   } catch (error) {
     data.attachedPacks = before.attached;
     data.repository = before.repository;
@@ -270,31 +290,36 @@ async function setAttachments(body, next, message) {
     await refreshNow();
     return;
   }
+  if (!shown) return;
   await refreshNow();
   toast(typeof message === "function" ? message() : message);
 }
 
 /** Add packs, each at its recommended folder, else the whole repository. The first addition sets the repository up. */
 async function addPacks(ids, message) {
-  if (!await readRecommendations()) return;
+  const scope = captureScope();
+  const recommendations = await recommendationsOf(scope);
+  if (recommendations === null || !stillShown(scope)) return;
   const fresh = ids.filter(id => !data.attachedPacks.has(id));
   if (fresh.length === 0) return;
-  const next = new Map([...data.attachedPacks, ...fresh.map(id => [id, [packFolder(id)]])]);
-  await setAttachments({ add: fresh.map(id => packAttachment(id, packFolder(id))) }, next, message);
+  const next = new Map([...data.attachedPacks, ...fresh.map(id => [id, [packFolder(recommendations, id)]])]);
+  await setAttachments(scope, { add: fresh.map(id => packAttachment(id, packFolder(recommendations, id))) }, next, message);
 }
 
 /** Remove a pack: every attachment it has, at each folder it is added at, in one write. */
 function removePack(id, message) {
   const folders = data.attachedPacks.get(id) ?? [];
   const next = new Map([...data.attachedPacks].filter(([packId]) => packId !== id));
-  return setAttachments({ remove: folders.map(folder => packAttachment(id, folder)) }, next, message);
+  return setAttachments(captureScope(), { remove: folders.map(folder => packAttachment(id, folder)) }, next, message);
 }
 
 /** Review in a repository that is not set up: the kept packs at their folders, and set up, in one write. */
 async function setUpWithPacks(ids, message) {
-  if (!await readRecommendations()) return;
-  const next = new Map(ids.map(id => [id, [packFolder(id)]]));
-  await setAttachments({ add: ids.map(id => packAttachment(id, packFolder(id))), configure: true }, next, message);
+  const scope = captureScope();
+  const recommendations = await recommendationsOf(scope);
+  if (recommendations === null || !stillShown(scope)) return;
+  const next = new Map(ids.map(id => [id, [packFolder(recommendations, id)]]));
+  await setAttachments(scope, { add: ids.map(id => packAttachment(id, packFolder(recommendations, id))), configure: true }, next, message);
 }
 
 /** "Set up with recommended packs": the packs recommended for this checkout, each added at its folder. */
@@ -302,17 +327,20 @@ async function setUpRecommended() {
   if (ui.settingUp) return;
   ui.settingUp = true;
   invalidate();
-  // Recommended for this repository, so added to this repository even if the person switches while the GET runs.
-  const target = scopeTarget();
+  // Recommended for this repository, so added to this repository even if the person switches while the GET runs;
+  // the outcome is told only on its page.
+  const scope = captureScope();
   try {
-    const { body } = await get(`/api/rule-packs/recommendations?${new URLSearchParams(target)}`);
-    const add = body.recommendations.map(({ packId, folder }) => packAttachment(packId, folder));
-    await send("PUT", "/api/repository/attachments", { ...target, add, configure: true });
-    toast(add.length === 0
-      ? "Set up with no rule packs: none fits this repository yet."
-      : `Set up with ${add.map(({ sourceId, folder }) => (folder === "" ? packName(sourceId) : `${packName(sourceId)} in ${folder}`)).join(", ")}.`);
+    const recommendations = await recommendationsFor(scope);
+    const add = recommendations.map(({ packId, folder }) => packAttachment(packId, folder));
+    await send("PUT", "/api/repository/attachments", { ...scope.target, add, configure: true });
+    if (inScope(scope)) {
+      toast(add.length === 0
+        ? "Set up with no rule packs: none fits this repository yet."
+        : `Set up with ${add.map(({ sourceId, folder }) => (folder === "" ? packName(sourceId) : `${packName(sourceId)} in ${folder}`)).join(", ")}.`);
+    }
   } catch (error) {
-    toast(`Could not set up: ${error.message}`);
+    if (inScope(scope)) toast(`Could not set up: ${error.message}`);
   }
   ui.settingUp = false;
   invalidate();

@@ -348,6 +348,58 @@ describe("ManagedUpdater", () => {
   });
 });
 
+/**
+ * An installed release from before set-up, as 0.1.0-next.0 behaves under the health check: `state` answers "never",
+ * `start` rejects `--answer` as an unknown option, and only a started folder opens a session.
+ */
+async function preSetupRelease(): Promise<Installation> {
+  const root = await mkdtemp(join(tmpdir(), "rerail-pre-setup-release-"));
+  temporaryDirectories.push(root);
+  const dist = join(root, "dist");
+  await mkdir(dist);
+  await writeFile(join(root, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.1.0-next.0", type: "module" }));
+  await writeFile(join(dist, "index.js"), "export function nativeHealth() { return { ok: true }; }\n");
+  await writeFile(join(dist, "cli.js"), [
+    'import { mkdirSync } from "node:fs";',
+    'import { join } from "node:path";',
+    "const [command, ...args] = process.argv.slice(2);",
+    'if (command === "state") process.stdout.write("never\\n");',
+    'else if (command === "start" && args.includes("--answer")) {',
+    '  process.stderr.write("rerail: Unknown start option: --answer\\n");',
+    "  process.exitCode = 1;",
+    '} else if (command === "start") mkdirSync(join(process.env.RERAIL_HOME, "started"), { recursive: true });',
+    "else process.exitCode = 1;",
+    "",
+  ].join("\n"));
+  await writeFile(join(dist, "event-stream.js"), [
+    'import { existsSync, mkdirSync, readFileSync } from "node:fs";',
+    'import { join } from "node:path";',
+    'const request = JSON.parse(readFileSync(0, "utf8").trimEnd().split("\\n").at(-1));',
+    'if (existsSync(join(process.env.RERAIL_HOME, "started"))) mkdirSync(join(process.env.RERAIL_STORAGE_ROOT, "session"), { recursive: true });',
+    'process.stdout.write(JSON.stringify({ eventId: request.event.eventId, deliveries: [] }) + "\\n");',
+    "",
+  ].join("\n"));
+  return { version: "0.1.0-next.0", packageRoot: root };
+}
+
+describe("rollback to a release from before set-up", () => {
+  it("passes the health check by starting the release without --answer", async () => {
+    const { home, packageRoot } = await fixture();
+    const previous = await preSetupRelease();
+    await mkdir(home, { recursive: true });
+    await writeFile(join(home, "update-state.json"), JSON.stringify({
+      schemaVersion: 1,
+      channel: "latest",
+      current: { version: "1.0.0", packageRoot },
+      previous,
+    }));
+    // No validateInstallation: the real health check runs against the release.
+    const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry: new FakeRegistry("1.0.0") });
+
+    expect(await updater.rollback()).toMatchObject({ changed: true, current: previous, previous: { version: "1.0.0" } });
+  }, 30_000);
+});
+
 describe("ManagedUpdater.install (setup bootstrap)", () => {
   it("materializes the running version under versions/, links current, and writes the launcher", async () => {
     const { home, packageRoot } = await fixture();

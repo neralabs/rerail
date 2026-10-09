@@ -1,5 +1,9 @@
+import { invokeOperation } from "../src/api/operation.js";
+import { operations } from "../src/api/operations.js";
 import type { RulesDashboardScope } from "../src/api/session-contracts.js";
+import { DatabaseApiStores } from "../src/api/stores.js";
 import type { Harness } from "../src/harness-registration.js";
+import type { ApiCaller } from "../src/repository-model.js";
 import type { DashboardPage, SetupEnvironment } from "../src/repository-setup.js";
 import type { DashboardLink } from "../src/setup-screens.js";
 
@@ -15,7 +19,7 @@ export function fakeSetupEnvironment(options: {
   found?: readonly Harness[];
   browser?: boolean;
   /** Runs when a page is asked for, as the person's clicks in the dashboard would. */
-  onPage?: (scope: RulesDashboardScope, page: DashboardPage) => void;
+  onPage?: (scope: RulesDashboardScope, page: DashboardPage) => void | Promise<void>;
 } = {}): FakeSetupEnvironment {
   const connections: FakeSetupEnvironment["connections"] = [];
   const pages: FakeSetupEnvironment["pages"] = [];
@@ -31,7 +35,7 @@ export function fakeSetupEnvironment(options: {
     },
     async dashboard(scope, page, open): Promise<DashboardLink> {
       pages.push({ repoRoot: scope.checkoutPath, repositoryKey: scope.repositoryKey, page, open });
-      options.onPage?.(scope, page);
+      await options.onPage?.(scope, page);
       const url = `http://127.0.0.1:4737/#${page === "rules" ? "rules" : "rule-packs?review=1"}`;
       if (!open) return { url, browserOpened: false, linkOnly: true };
       return options.browser === false
@@ -39,4 +43,27 @@ export function fakeSetupEnvironment(options: {
         : { url, browserOpened: true };
     },
   };
+}
+
+/**
+ * Add `packIds` to the repository with `repository_attachments_set` and `configure: true`: by default as the
+ * dashboard's review sends the packs kept on (a person through `/api`), or as `caller` (a coding agent over MCP).
+ */
+export async function attachPacks(
+  databasePath: string,
+  scope: RulesDashboardScope,
+  packIds: readonly string[],
+  caller: ApiCaller = { kind: "person" },
+): Promise<void> {
+  const stores = new DatabaseApiStores(databasePath, {
+    health: () => ({ pid: process.pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
+    origin: () => "http://127.0.0.1:4737",
+  });
+  try {
+    const operation = operations.find(candidate => candidate.id === "repository_attachments_set")!;
+    const add = packIds.map(sourceId => ({ sourceKind: "pack", sourceId, folder: "" }));
+    await invokeOperation(operation, stores, { repository: scope.repositoryKey, add, configure: true }, caller);
+  } finally {
+    stores.close();
+  }
 }

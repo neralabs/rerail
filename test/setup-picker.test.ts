@@ -4,14 +4,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { openRerailDatabase } from "../src/database.js";
 import { repositoryIdentityLocation } from "../src/repository-identity.js";
 import { workspaceStartState } from "../src/repository-start.js";
-import { setUpRepository } from "../src/rule-configuration.js";
 import { runSetupCommand, runSetupStepArgs, type SetupContext } from "../src/setup-cli.js";
 import { pickSetup, SETUP_CANCELLED, type SetupPickerUi } from "../src/setup-picker.js";
 import { ManagedUpdater } from "../src/updater.js";
-import { fakeSetupEnvironment, type FakeSetupEnvironment } from "./fake-setup-environment.js";
+import { attachPacks, fakeSetupEnvironment, type FakeSetupEnvironment } from "./fake-setup-environment.js";
 import { attachedPacks } from "./support/attached-packs.js";
 
 const SETUP_TIMEOUT_MS = 30_000;
@@ -128,17 +126,9 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
 
   it("opens the review, asks again, and starts with the packs kept on there", async () => {
     const setup = await machine();
+    // The person switches complexity on in the review, which adds the packs kept on and sets the repository up.
     const environment = fakeSetupEnvironment({
-      onPage(scope, page) {
-        if (page !== "review") return;
-        // The person switches complexity on in the review, which adds the packs kept on and sets the repository up.
-        const database = openRerailDatabase(setup.databasePath);
-        try {
-          setUpRepository(database, scope.repositoryKey, { packs: [{ packId: "tslint", folder: "" }, { packId: "complexity", folder: "" }] });
-        } finally {
-          database.$client.close();
-        }
-      },
+      onPage: (scope, page) => (page === "review" ? attachPacks(setup.databasePath, scope, ["tslint", "complexity"]) : undefined),
     });
     const ui = fakeUi(["Yes, read acme-api", "Review them first", "Yes, start Rerail"]);
 
@@ -234,5 +224,49 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     const io = { lane: "agent" as const, say: (text: string) => { said.push(text); }, close: () => {} };
     expect(await runSetupCommand(["--repository", "--database", other, "--repo", worktree], setup.context, io)).toBe(0);
     expect(said.join("\n")).toContain(`setup --database ${other} --repository --answer start --repo ${worktree}`);
+  });
+
+  it("carries `start --agents` through every answer, so set-up connects only the coding agents named", async () => {
+    const setup = await machine();
+    const environment = fakeSetupEnvironment();
+    const asked: Array<readonly string[]> = [];
+    const run = steps(setup, environment);
+    const ui = fakeUi(["Yes, read acme-api", "Yes, start Rerail"]);
+
+    const last = await pickSetup(ui, args => { asked.push(args); return run(args); }, ["start", "--json", "--agents", "cursor"]);
+
+    expect(last?.step).toBe("done");
+    expect(asked.slice(1)).toEqual([
+      ["setup", "--agents", "cursor", "--json", "--answer", "yes", "--repo", setup.repo],
+      ["setup", "--agents", "cursor", "--json", "--answer", "start", "--repo", setup.repo],
+    ]);
+    expect(environment.connections).toEqual([{ agents: ["cursor"], repoRoot: setup.repo }]);
+    // The confirm screen names only what the answer connects, not every coding agent found.
+    const connectedLine = ui.notices[1]!.message.split("\n").find(line => line.trimStart().startsWith("Connected to"));
+    expect(connectedLine).toMatch(/^ {2}Connected to +Cursor\b/u);
+    expect(connectedLine).not.toContain("Claude Code");
+  });
+
+  it("never installs the session's own package over the active one, so answering after /rerail-update keeps the update", async () => {
+    const setup = await machine();
+    // The session loaded 0.9.0; `/rerail-update` has since made 1.0.0 the active install.
+    const sessionPackage = join(setup.root, "session-package");
+    mkdirSync(join(sessionPackage, "dist"), { recursive: true });
+    writeFileSync(join(sessionPackage, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.9.0" }));
+    const updater = new ManagedUpdater({ home: setup.context.home, packageRoot: sessionPackage, packageVersion: "0.9.0" });
+    const install = vi.spyOn(updater, "install").mockResolvedValue(undefined as never);
+    const session: Machine = { ...setup, context: { home: setup.context.home, packageRoot: sessionPackage, updater } };
+
+    const inRepo = await pickSetup(fakeUi(["Yes, read acme-api", "Yes, start Rerail"]), steps(session, fakeSetupEnvironment()));
+    // In the home folder, `start --json` hands over to set-up itself before any answer.
+    const home = join(setup.root, "user");
+    mkdirSync(home);
+    vi.stubEnv("HOME", home);
+    const other = gitRepository(join(setup.root, "acme-web"));
+    const fromHome = await pickSetup(fakeUi(["Type the folder…", "Yes, start Rerail"], [other]), steps(session, fakeSetupEnvironment(), home));
+
+    expect([inRepo?.step, fromHome?.step]).toEqual(["done", "done"]);
+    expect(install).not.toHaveBeenCalled();
+    expect(realpathSync(updater.currentLink)).toBe(setup.context.packageRoot);
   });
 });

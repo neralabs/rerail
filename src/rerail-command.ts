@@ -100,7 +100,10 @@ function openingNotice(url: string, opening: PageOpening): string {
   return opening === "orca-tab" ? `Opening ${url} in the Orca window` : `Opening ${url}`;
 }
 
-/** Each set-up step runs through the launcher's `--json`, in this session's folder. */
+/**
+ * Each set-up step runs through the launcher's `--json`, in this session's folder. That is this session's package,
+ * which a `/rerail-update` since may have replaced; set-up's steps never install it over the active one.
+ */
 function setupSteps(options: RerailCommandOptions): SetupStepRunner {
   const cwd = options.cwd();
   const launcher = { ...options, cwd: () => cwd };

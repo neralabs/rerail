@@ -288,12 +288,14 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
   };
 }
 
-/** What a set-up run carries into every answer it prints, so the next run acts on the same database, port and scope. */
+/** What a set-up run carries into every answer it prints, so the next run acts on the same database, port, scope and coding agents. */
 export interface SetupCarry {
   readonly port?: number;
   readonly databasePath?: string;
   /** `rerail start --repository`: set-up starts every checkout of the repository. */
   readonly repository?: boolean;
+  /** `--agents`: connect only these coding agents, not every one found. */
+  readonly agents?: readonly Harness[];
 }
 
 function carriedArgs(carry: SetupCarry): string[] {
@@ -301,6 +303,8 @@ function carriedArgs(carry: SetupCarry): string[] {
     ...(carry.port === undefined ? [] : ["--port", String(carry.port)]),
     ...(carry.databasePath === undefined ? [] : ["--database", carry.databasePath]),
     ...(carry.repository === true ? ["--repository"] : []),
+    // Ids, as `parseCodingAgents` reads them; an answer's own `--agents` comes later and wins.
+    ...(carry.agents === undefined ? [] : ["--agents", carry.agents.join(",")]),
   ];
 }
 
@@ -312,15 +316,6 @@ export function setupAnswerCommand(context: SetupContext, carry: SetupCarry = {}
   const carried = carriedArgs(carry).map(shellQuote);
   if (!existsSync(context.updater.launcherPath)) return carried.length === 0 ? undefined : ["rerail", "setup", ...carried].join(" ");
   return [shellQuote(context.updater.launcherPath), "setup", ...carried].join(" ");
-}
-
-/** True when `<home>/current` already is the package running now, so installing again would change nothing. */
-async function isActiveInstall(context: SetupContext): Promise<boolean> {
-  const [current, running] = await Promise.all([
-    realpath(context.updater.currentLink).catch(() => undefined),
-    realpath(context.packageRoot).catch(() => context.packageRoot),
-  ]);
-  return current === running;
 }
 
 /** `--json` on `rerail setup` and `rerail start`: one `SetupStep` on stdout instead of text. */
@@ -374,7 +369,6 @@ export async function runSetupCommand(
 interface SetupArguments extends SetupCarry {
   answer?: string;
   repo?: string;
-  agents?: Harness[];
 }
 
 /** Checked before the install, so a typo changes nothing. */
@@ -399,11 +393,28 @@ function setupArguments(args: readonly string[]): SetupArguments {
   };
 }
 
-/** Install when this package is not the active one. T2's line belongs to a first run that installed something, in a repo not on already. */
-async function install(context: SetupContext, parsed: SetupArguments, cwd: string, lane: SetupLane): Promise<string | undefined> {
-  if (await isActiveInstall(context)) return undefined;
+/** The command a set-up run came from: `rerail setup` itself, or `rerail start --json` handing over to it. */
+type SetupOrigin = "setup" | "start";
+
+/**
+ * Make this package the active install (T2) when it is not. Only a fresh `rerail setup` installs over another
+ * version. An answer (`--answer`, `--repo`), or a step `rerail start --json` began, installs only while nothing is
+ * installed yet: OMP's and Pi's `/rerail-start` runs those steps from the session's own package, fixed when the
+ * session loaded it, and adopting that one after a `/rerail-update` would undo the update. The coding agent's answer
+ * commands run the launcher, which is the active version already. T2's line belongs to a first run that installed
+ * something, in a repo not on already.
+ */
+async function install(context: SetupContext, parsed: SetupArguments, cwd: string, lane: SetupLane, origin: SetupOrigin): Promise<string | undefined> {
+  // `active` is undefined before the first install.
+  const [active, running] = await Promise.all([
+    realpath(context.updater.currentLink).catch(() => undefined),
+    realpath(context.packageRoot).catch(() => context.packageRoot),
+  ]);
+  if (active === running) return undefined;
+  const answering = parsed.answer !== undefined || parsed.repo !== undefined;
+  if (active !== undefined && (answering || origin === "start")) return undefined;
   await context.updater.install();
-  if (parsed.answer !== undefined || parsed.repo !== undefined || workspaceStartState(cwd, parsed.databasePath) === "started") return undefined;
+  if (answering || workspaceStartState(cwd, parsed.databasePath) === "started") return undefined;
   return renderInstalled({ version: context.updater.packageVersionLabel }, lane).replace(/\n$/u, "");
 }
 
@@ -414,6 +425,7 @@ function carryOf(parsed: SetupArguments, place: SetupPlace): SetupCarry {
     ...(parsed.port === undefined ? {} : { port: parsed.port }),
     ...(databasePath === undefined ? {} : { databasePath }),
     ...(parsed.repository === true ? { repository: true } : {}),
+    ...(parsed.agents === undefined ? {} : { agents: parsed.agents }),
   };
 }
 
@@ -441,19 +453,23 @@ async function setupText(args: readonly string[], context: SetupContext, io: Set
   }
   const parsed = setupArguments(args);
   const place = machinePlace(context);
-  const installedLine = await install(context, parsed, place.cwd, io.lane);
+  const installedLine = await install(context, parsed, place.cwd, io.lane, "setup");
   if (installedLine !== undefined) io.say(installedLine);
   const outcome = await runSetup(io, setupRequest(context, parsed, place));
   return outcome.status === "cancelled" ? 1 : 0;
 }
 
 /** `rerail setup --json` as one step: what the CLI prints, and what an extension running Node calls in-process. */
-export async function setupStep(args: readonly string[], context: SetupContext, place: SetupPlace, nodeVersion: string = process.versions.node): Promise<SetupStep> {
+export function setupStep(args: readonly string[], context: SetupContext, place: SetupPlace, nodeVersion: string = process.versions.node): Promise<SetupStep> {
+  return jsonSetupStep(args, context, place, nodeVersion, "setup");
+}
+
+async function jsonSetupStep(args: readonly string[], context: SetupContext, place: SetupPlace, nodeVersion: string, origin: SetupOrigin): Promise<SetupStep> {
   try {
     const node = checkNodeVersion(nodeVersion, "json");
     if (!node.ok) return errorStep(node.message.replace(/\n$/u, ""));
     const parsed = setupArguments(args);
-    const installedLine = await install(context, parsed, place.cwd, "json");
+    const installedLine = await install(context, parsed, place.cwd, "json", origin);
     const step = await runSetupStep({ ...setupRequest(context, parsed, place), nextArgs: jsonNextArgs(carryOf(parsed, place)) });
     return installedLine === undefined ? step : { ...step, screen: `${installedLine}\n${step.screen}` };
   } catch (error) {
@@ -483,13 +499,16 @@ export async function startStep(args: readonly string[], context: SetupContext, 
         ...(databasePath === undefined ? [] : ["--database", databasePath]),
         ...(repository ? ["--repository"] : []),
       ];
-      return await setupStep([JSON_FLAG, ...passed], context, { ...place, cwd: workspace });
+      return await jsonSetupStep([JSON_FLAG, ...passed], context, { ...place, cwd: workspace }, process.versions.node, "start");
     }
-    const carry: SetupCarry = { ...(databasePath === undefined ? {} : { databasePath }), ...(repository ? { repository } : {}) };
+    const carry: SetupCarry = {
+      ...(databasePath === undefined ? {} : { databasePath }),
+      ...(repository ? { repository } : {}),
+      ...(agents === undefined ? {} : { agents: parseCodingAgents(agents) }),
+    };
     const setupCommand = setupAnswerCommand(context, carry);
     return await startRerailStep(workspace, {
       ...carry,
-      ...(agents === undefined ? {} : { agents: parseCodingAgents(agents) }),
       ...(answer === undefined ? {} : { answer }),
       ...(setupCommand === undefined ? {} : { setupCommand }),
       nextArgs: jsonNextArgs(carry),

@@ -186,6 +186,18 @@ export const checkouts = sqliteTable(
   table => [index("checkouts_clone").on(table.cloneId), index("checkouts_repository").on(table.repositoryKey)],
 );
 
+/**
+ * Set-up offered the dashboard's review in a repository that was not set up yet. While the row stands, the set-up
+ * the person makes in the dashboard is the review's, and set-up carries on at its confirm question until Rerail is
+ * started or stopped there. Any other set-up, a start, a stop and `rules import` delete it (`setup-review.ts`).
+ */
+export const setupReviews = sqliteTable("setup_reviews", {
+  repositoryKey: text("repository_key")
+    .primaryKey()
+    .references(() => repositories.repositoryKey, { onDelete: "cascade", onUpdate: "cascade" }),
+  offeredAt: integer("offered_at").notNull(),
+});
+
 /** A rule pack, By Rerail rule or library rule added to a repository; `folder` `''` is the whole repository. */
 export const ruleAttachments = sqliteTable(
   "rule_attachments",

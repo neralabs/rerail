@@ -176,8 +176,8 @@ export const attachedPackOf = stored => (stored.source?.kind === "pack" ? packBy
 /** A pack is added here when the repository has an attachment for it, at any folder. */
 export const isAttached = pack => data.attachedPacks.has(pack.id);
 export const packGroups = pack => [...new Set(pack.rules.map(r => r.group))];
-/** The folder set-up adds a pack in: its recommended folder, else the whole repository. */
-export const packFolder = id => data.recommendations?.find(r => r.packId === id)?.folder ?? "";
+/** The folder set-up adds a pack in: its folder in `recommendations` (fetched for the write's scope), else the whole repository. */
+export const packFolder = (recommendations, id) => recommendations.find(r => r.packId === id)?.folder ?? "";
 
 /** The row title: the pack's plain title when the rule comes from one, else the rule's own. */
 export const titleOf = stored => packRuleOf(stored.rule.id)?.rule.title ?? ruleTitle(stored);

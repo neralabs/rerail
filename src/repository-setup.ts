@@ -10,11 +10,11 @@ import type { CheckoutContext, RepositoryKey, RepositoryStartState } from "./rep
 import { repositoryIdentityLocation } from "./repository-identity.js";
 import { listRepositories, lookupCheckout, recordCheckout } from "./repository-registry.js";
 import {
+  awaitingStartAfterReview,
   checkoutName,
   checkoutStatus,
   onRuleCount,
   setStarted,
-  setUpAndNeverStarted,
   startSetUpRepository,
   stateOf,
   workspaceStartState,
@@ -23,6 +23,7 @@ import {
 import { removeAttachment, setUpRepository as configureRepository } from "./rule-configuration.js";
 import { loadRulePacks, recommendRulePacks, type RulePackRecommendation } from "./rule-packs.js";
 import { ruleAttachments } from "./schema.js";
+import { offerSetupReview } from "./setup-review.js";
 import {
   CONFIRM_PACKS_ANSWERS,
   NO_REPO_ANSWERS,
@@ -274,9 +275,10 @@ function otherStartedRepositories(database: RerailDatabase, repositoryKey: Repos
 }
 
 /**
- * Where set-up finds the repository at `root`, read-only, like `workspaceStartState`. `awaiting-start`: the
- * dashboard's review set it up (the first change there adds the kept packs) and nobody has started or stopped it
- * yet, so set-up goes on to its confirm question.
+ * Where set-up finds the repository at `root`, read-only, like `workspaceStartState`. `awaiting-start`: set-up offered
+ * the dashboard's review, the person set the repository up there (the first change adds the kept packs), and nobody
+ * has started or stopped it yet, so set-up goes on to its confirm question. A repository set up any other way and
+ * never started (`rerail rules add`, a coding agent, `rules import`) is `set-up`: `rerail start` just starts it.
  */
 function setUpState(root: string, databasePath: string): "not-set-up" | "awaiting-start" | "set-up" {
   if (!existsSync(databasePath)) return "not-set-up";
@@ -284,7 +286,7 @@ function setUpState(root: string, databasePath: string): "not-set-up" | "awaitin
   try {
     const checkout = lookupCheckout(database, root);
     if (checkout === undefined || !checkoutStatus(database, checkout).setUp) return "not-set-up";
-    return setUpAndNeverStarted(database, checkout.repositoryKey) ? "awaiting-start" : "set-up";
+    return awaitingStartAfterReview(database, checkout.repositoryKey) ? "awaiting-start" : "set-up";
   } finally {
     database.$client.close();
   }
@@ -330,8 +332,9 @@ async function connect(run: Run, repository: Repository | undefined, chosen?: re
 /**
  * Set the repository up and start Rerail in this checkout. A repository that is not set up adds `packs`, each at
  * its folder (none for "I'll pick rule packs myself"). One the dashboard's review set up keeps the packs kept on
- * there, or drops every pack for "I'll pick rule packs myself". Returns how many rule packs are added, or undefined
- * when the repository was set up and started (or stopped) already.
+ * there, or drops every pack for "I'll pick rule packs myself": until Rerail starts, only the person in the
+ * dashboard adds packs to it. Returns how many rule packs are added, or undefined when the repository was set up
+ * otherwise, or started (or stopped) already.
  */
 function turnOn(run: Run, repository: Repository, packs: readonly RulePackRecommendation[] | "none"): number | undefined {
   return withCheckout(run, repository, (database, checkout) => {
@@ -340,7 +343,7 @@ function turnOn(run: Run, repository: Repository, packs: readonly RulePackRecomm
       configureRepository(database, repositoryKey, {
         packs: packs === "none" ? [] : packs.map(({ pack, folder }) => ({ packId: pack.id, folder })),
       });
-    } else if (!setUpAndNeverStarted(database, repositoryKey)) {
+    } else if (!awaitingStartAfterReview(database, repositoryKey)) {
       return undefined;
     } else if (packs === "none") {
       for (const { packId, folder } of attachedPacks(database, repositoryKey)) {
@@ -393,6 +396,8 @@ async function alreadySetUp(run: Run, repository: Repository, connected?: readon
 
 function packsInput(run: Run, repository: Repository, recommendations: readonly RulePackRecommendation[]): RecommendedPacksInput {
   const found = run.request.environment.agentsFound();
+  // What the answer will connect: the agents `--agents` named, or every one found.
+  const connecting = run.request.agents ?? found;
   return {
     repoName: repository.name,
     repoPath: repository.root,
@@ -402,18 +407,22 @@ function packsInput(run: Run, repository: Repository, recommendations: readonly 
       reason,
       logRuleCount: pack.rules.filter(rule => rule.mode === "log").length,
     })),
-    agentsFound: codingAgents(found),
-    agentsNotFound: codingAgents(HARNESSES.filter(id => !found.includes(id))),
+    agentsFound: codingAgents(connecting),
+    agentsNotFound: codingAgents(HARNESSES.filter(id => !found.includes(id) && !connecting.includes(id))),
     ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
   };
 }
 
 /**
- * The review link, then the confirm question. The checkout is recorded first, so the dashboard can add packs there.
- * `open`: try a browser; false once the review has set the repository up, so a re-run shows the link alone.
+ * The review link, then the confirm question. The checkout and the offer of the review are recorded first, so the
+ * dashboard can add packs there and set-up later knows the review set the repository up. `open`: try a browser;
+ * false once the review has set the repository up, so a re-run shows the link alone.
  */
 async function reviewQuestion(run: Run, repository: Repository, input: RecommendedPacksInput, open: boolean): Promise<QuestionForm> {
-  const scope = withCheckout(run, repository, (_database, checkout) => ({ repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath }));
+  const scope = withCheckout(run, repository, (database, checkout) => {
+    offerSetupReview(database, checkout.repositoryKey);
+    return { repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath };
+  });
   return packReviewQuestion({ ...input, review: await run.request.environment.dashboard(scope, "review", open) }, run.io.lane);
 }
 
