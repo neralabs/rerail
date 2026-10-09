@@ -92,8 +92,8 @@ const PROMPT =
   'def persist(conn, payload):\n    conn.execute(f"INSERT INTO probe VALUES ({payload})")\n\n' +
   "Then reply with one sentence describing any diagnostic you received. Do not read other files first.";
 const EXTENSION: Record<Host, string> = {
-  omp: join(DIST, "default-extension.js"),
-  pi: join(DIST, "pi-extension.js"),
+  omp: join(DIST, "hosts", "omp", "default-extension.js"),
+  pi: join(DIST, "hosts", "pi", "pi-extension.js"),
 };
 
 /** Validate proof-consumed records; unrelated ledger metadata stays opaque, not a second closed union. */

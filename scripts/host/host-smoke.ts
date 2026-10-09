@@ -218,9 +218,9 @@ async function version(command: string): Promise<string | undefined> {
   }
 }
 async function requireBuilt(): Promise<void> {
-  await readFile(join(DIST, "default-extension.js"));
-  await readFile(join(DIST, "codex-hook.js"));
-  await readFile(join(DIST, "cursor-hook.js"));
+  await readFile(join(DIST, "hosts", "omp", "default-extension.js"));
+  await readFile(join(DIST, "hosts", "codex", "codex-hook.js"));
+  await readFile(join(DIST, "hosts", "cursor", "cursor-hook.js"));
 }
 
 async function createProject(project: string, prompt: string, nonce: string): Promise<void> {
@@ -320,7 +320,7 @@ async function importAccessOnlyAuth(
 
 
 function hostCommand(host: RerailHost, project: string, prompt: string): { command: string; args: string[] } {
-  const extension = host === "pi" ? join(DIST, "pi-extension.js") : join(DIST, "default-extension.js");
+  const extension = host === "pi" ? join(DIST, "hosts", "pi", "pi-extension.js") : join(DIST, "hosts", "omp", "default-extension.js");
   if (host === "omp")
     return {
       command: hostCli(host),
