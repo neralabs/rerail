@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OpenAPIHono } from "@hono/zod-openapi";
@@ -8,6 +8,8 @@ import { createRerailApi } from "../src/api/http.js";
 import { operations } from "../src/api/operations.js";
 import { DatabaseApiStores } from "../src/api/stores.js";
 import { loadBundledCatalog } from "../src/bundled-rules.js";
+import { RUNNING_PACKAGE_ROOT } from "../src/coding-agents.js";
+import { registerHarnesses } from "../src/harness-registration.js";
 import { openRerailDatabase, type RerailDatabase } from "../src/database.js";
 import type { CodeRuleViolation } from "../src/code-rule.js";
 import { SqliteAuditStore } from "../src/audit-store.js";
@@ -374,5 +376,29 @@ describe("Rerail API over HTTP", () => {
     const added = await putJson("/api/repository/attachments", { repository: WEB, add: [{ sourceKind: "pack", sourceId: pack, folder: "web/" }] });
     expect(await added.json()).toMatchObject({ attachments: [{ folder: "web", sourceKind: "pack", sourceId: pack }] });
     expect((await putJson("/api/repository/attachments", { repository: WEB, add: [{ sourceKind: "pack", sourceId: pack, folder: "../x" }] })).status).toBe(400);
+  });
+
+  it("tells a coding agent only found on this computer from one Rerail is connected to, and changes nothing", async () => {
+    const home = join(root, "user");
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await mkdir(join(home, ".cursor"), { recursive: true });
+    await mkdir(join(home, ".codex"), { recursive: true });
+    const previousHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      await registerHarnesses({ root: RUNNING_PACKAGE_ROOT, home, harnesses: ["cursor"] });
+      // One coding agent whose config cannot be read must not hide the others.
+      await writeFile(join(home, ".codex", "hooks.json"), "{ not json");
+      const before = await readdir(join(home, ".claude"));
+      const { agents } = await getJson<{ agents: Array<{ id: string; found: boolean; connected: boolean; problem: string | null }> }>("/api/coding-agents");
+      expect(agents.find(agent => agent.id === "cursor")).toMatchObject({ found: true, connected: true, problem: null });
+      expect(agents.find(agent => agent.id === "claude-code")).toMatchObject({ found: true, connected: false, problem: null });
+      expect(agents.find(agent => agent.id === "codex")).toMatchObject({ found: true, connected: false, problem: expect.stringContaining("hooks.json") });
+      expect(agents.find(agent => agent.id === "omp")).toMatchObject({ found: false, connected: false });
+      expect(await readdir(join(home, ".claude"))).toEqual(before);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    }
   });
 });

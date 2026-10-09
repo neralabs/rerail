@@ -6,6 +6,9 @@ import type { CodeRuleViolation, CodeRuleViolationFix, CodeRuleSourceSpan } from
 import type { AuditFailure } from "../audit.js";
 import type { AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../audit-store.js";
 import { withinCheckout } from "../checkout-control.js";
+import { codingAgentHome, codingAgentStates, registrationRoot, RUNNING_PACKAGE_ROOT } from "../coding-agents.js";
+import { HARNESSES } from "../harness-registration.js";
+import { defaultRerailHome } from "../rerail-home.js";
 import { audits, presentationPreferences, PRESENTATION_HOSTS, events, workLinks } from "../schema.js";
 import {
   auditControlsSchema,
@@ -230,6 +233,14 @@ export const presentationPreferenceSchema = createSelectSchema(presentationPrefe
 }).strict();
 const presentationPreferenceKeySchema = presentationPreferenceSchema.pick({ repository: true, host: true });
 
+const codingAgentSchema = z.object({
+  id: z.enum(HARNESSES),
+  name: z.string(),
+  found: z.boolean().describe("The coding agent's config folder exists on this computer."),
+  connected: z.boolean().describe("Rerail's hooks and commands are in place for it."),
+  problem: z.string().nullable().describe("Why the connection could not be checked, such as a config file that is not valid JSON."),
+}).strict();
+
 export const operations: readonly Operation[] = [
   defineOperation({
     id: "presentation_preferences_list",
@@ -324,6 +335,16 @@ export const operations: readonly Operation[] = [
     summary: "List every rule pack that comes with Rerail: what it covers and its rules, each with a title, a group and the mode it starts in. Add a pack to a repository with repository_attachments_set.",
     output: rulePackListSchema,
     handler: () => ({ packs: loadRulePacks().map(({ match: _match, rules, ...pack }) => ({ ...pack, rules: [...rules] })) }),
+  }),
+  defineOperation({
+    id: "coding_agents_list",
+    method: "GET",
+    path: "/api/coding-agents",
+    summary: "List the coding agents Rerail works with: whether each is on this computer and whether Rerail is connected to it. Changes nothing.",
+    output: z.object({ agents: z.array(codingAgentSchema) }),
+    handler: async () => ({
+      agents: await codingAgentStates(registrationRoot(defaultRerailHome(), RUNNING_PACKAGE_ROOT), codingAgentHome()),
+    }),
   }),
   defineOperation({
     id: "audit_settings_get",

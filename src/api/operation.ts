@@ -63,7 +63,7 @@ export interface OperationDefinition<
     stores: RerailApiStores,
     input: z.infer<z.ZodObject<Params>> & z.infer<z.ZodObject<Query>> & z.infer<z.ZodObject<Body>>,
     caller: ApiCaller,
-  ) => z.infer<Output>;
+  ) => z.infer<Output> | Promise<z.infer<Output>>;
 }
 
 export type Operation = OperationDefinition<z.ZodRawShape, z.ZodRawShape, z.ZodRawShape, z.ZodType>;
@@ -91,9 +91,9 @@ export class ApiError extends Error {
 }
 
 /** Run one operation for one caller; a write that returns counts toward the stores' change token. */
-export function invokeOperation(operation: Operation, stores: RerailApiStores, input: Record<string, unknown>, caller: ApiCaller): unknown {
+export async function invokeOperation(operation: Operation, stores: RerailApiStores, input: Record<string, unknown>, caller: ApiCaller): Promise<unknown> {
   try {
-    return operation.handler(stores, input as never, caller);
+    return await operation.handler(stores, input as never, caller);
   } finally {
     // A write that failed half way may still have committed; counting it costs one extra miss.
     if (operation.method !== "GET") stores.markChanged();
