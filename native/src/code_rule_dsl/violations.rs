@@ -473,6 +473,11 @@ pub(super) fn bind(
                 "noqa: noqa comments are Ruff's",
             ),
             (
+                suppress.nosec.is_some(),
+                Suppression::Nosec,
+                "nosec: nosec comments are Bandit's",
+            ),
+            (
                 suppress.phpstan.is_some(),
                 Suppression::Phpstan,
                 "phpstan: @phpstan-ignore comments are PHPStan's",

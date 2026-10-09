@@ -139,6 +139,15 @@ describe("code rule schema language families", () => {
     expect(codeRuleSchema.safeParse(onJavascript).error?.message).toContain("phpcs: annotations are PHP_CodeSniffer's; a javascript query has none.");
   });
 
+  it("reads Bandit's nosec on Python queries only", () => {
+    const withBoth = astRule("python", { kind: "assert_statement" }, { suppress: { noqa: { codes: ["S101"] }, nosec: { codes: ["B101"] } } });
+    expect(codeRuleSchema.safeParse(withBoth).success).toBe(true);
+    const lowercase = astRule("python", { kind: "assert_statement" }, { suppress: { nosec: { codes: ["b101"] } } });
+    expect(codeRuleSchema.safeParse(lowercase).error?.message).toContain("Must be a Bandit test id");
+    const onPhp = astRule("php", { kind: "function_call_expression" }, { suppress: { nosec: { codes: ["B101"] } } });
+    expect(codeRuleSchema.safeParse(onPhp).error?.message).toContain("nosec comments are Bandit's; a php query has none.");
+  });
+
   it("keeps PHP's printf formats PHP's", () => {
     const issues = (rule: object, language: "python" | "typescript") =>
       (codeRuleSchema.safeParse(astRule(language, rule)).error?.issues ?? []).map(issue => ({ path: issue.path.slice(4).join("."), message: issue.message }));

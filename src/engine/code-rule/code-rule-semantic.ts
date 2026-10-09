@@ -27,6 +27,8 @@ import type {
 export interface CodeRuleDslSuppress {
   eslint?: { rules: string[] };
   noqa?: { codes: string[]; parent?: "statement" };
+  /** Bandit's `# nosec` comments: a bare one, or one naming one of `codes` (or its test name). */
+  nosec?: { codes: string[] };
   phpstan?: { identifiers: string[] };
   /** Psalm's `@psalm-suppress` tags; `suppressAll` honours `@psalm-suppress all` (`disableSuppressAll="false"`). */
   psalm?: { issues: string[]; suppressAll?: boolean };
