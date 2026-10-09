@@ -161,7 +161,7 @@
       },
       "finding": {
         "anchor": "capture.A",
-        "code": "NO_EXPLICIT_ANY",
+        "code": "@typescript-eslint/no-explicit-any",
         "severity": "error",
         "message": "Unexpected any. Specify a different type.",
         "fix": "PropertyKey",
@@ -214,7 +214,7 @@
       },
       "finding": {
         "anchor": "witness.span",
-        "code": "NO_EXPLICIT_ANY",
+        "code": "@typescript-eslint/no-explicit-any",
         "severity": "error",
         "message": "Unexpected any. Specify a different type.",
         "fix": "unknown[]",
@@ -293,7 +293,7 @@
         "cases": {
           "true": {
             "anchor": "witness.span",
-            "code": "NO_EXPLICIT_ANY",
+            "code": "@typescript-eslint/no-explicit-any",
             "severity": "error",
             "message": "Unexpected any. Specify a different type.",
             "fix": "unknown",
@@ -308,7 +308,7 @@
         },
         "default": {
           "anchor": "witness.span",
-          "code": "NO_EXPLICIT_ANY",
+          "code": "@typescript-eslint/no-explicit-any",
           "severity": "error",
           "message": "Unexpected any. Specify a different type.",
           "suppress": {

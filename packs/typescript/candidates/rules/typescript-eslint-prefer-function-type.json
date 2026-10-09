@@ -205,7 +205,7 @@
       },
       "violation": {
         "anchor": "capture.MEMBER",
-        "code": "PREFER_FUNCTION_TYPE",
+        "code": "@typescript-eslint/prefer-function-type",
         "message": "Type literal only has a call signature, you should use a function type instead.",
         "fix": "$TP$PARAMS => $RET"
       }
@@ -402,7 +402,7 @@
       },
       "violation": {
         "anchor": "capture.MEMBER",
-        "code": "PREFER_FUNCTION_TYPE",
+        "code": "@typescript-eslint/prefer-function-type",
         "message": "Type literal only has a call signature, you should use a function type instead.",
         "fix": "($TP$PARAMS => $RET)"
       }
@@ -599,7 +599,7 @@
       },
       "violation": {
         "anchor": "capture.MEMBER",
-        "code": "PREFER_FUNCTION_TYPE",
+        "code": "@typescript-eslint/prefer-function-type",
         "message": "Type literal only has a call signature, you should use a function type instead."
       }
     },
@@ -897,7 +897,7 @@
       },
       "violation": {
         "anchor": "capture.MEMBER",
-        "code": "PREFER_FUNCTION_TYPE",
+        "code": "@typescript-eslint/prefer-function-type",
         "message": "Interface only has a call signature, you should use a function type instead.",
         "fix": "type $NAME$ITP = $TP$PARAMS => $RET;"
       }
@@ -1198,7 +1198,7 @@
       },
       "violation": {
         "anchor": "capture.MEMBER",
-        "code": "PREFER_FUNCTION_TYPE",
+        "code": "@typescript-eslint/prefer-function-type",
         "message": "Interface only has a call signature, you should use a function type instead.",
         "fix": "type $NAME$ITP = $TP$PARAMS => $RET"
       }
@@ -1473,7 +1473,7 @@
       },
       "violation": {
         "anchor": "capture.MEMBER",
-        "code": "PREFER_FUNCTION_TYPE",
+        "code": "@typescript-eslint/prefer-function-type",
         "message": "Interface only has a call signature, you should use a function type instead."
       }
     },
@@ -1686,7 +1686,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "PREFER_FUNCTION_TYPE",
+        "code": "@typescript-eslint/prefer-function-type",
         "message": "`this` refers to the function type '$IFACE', did you intend to use a generic `this` parameter like `<Self>(this: Self, ...) => Self` instead?"
       }
     }

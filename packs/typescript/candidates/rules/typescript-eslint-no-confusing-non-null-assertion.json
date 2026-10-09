@@ -65,7 +65,7 @@
    },
    "violation": {
     "anchor": "witness.span",
-    "code": "NO_CONFUSING_NON_NULL_ASSERTION",
+    "code": "@typescript-eslint/no-confusing-non-null-assertion",
     "message": "Confusing combination of non-null assertion and assignment like `a! = b`, which looks very similar to `a != b`."
    }
   },
@@ -123,7 +123,7 @@
    },
    "violation": {
     "anchor": "witness.span",
-    "code": "NO_CONFUSING_NON_NULL_ASSERTION",
+    "code": "@typescript-eslint/no-confusing-non-null-assertion",
     "message": "Confusing combination of non-null assertion and equality test like `a! == b`, which looks very similar to `a !== b`."
    }
   },
@@ -182,7 +182,7 @@
    },
    "violation": {
     "anchor": "witness.span",
-    "code": "NO_CONFUSING_NON_NULL_ASSERTION",
+    "code": "@typescript-eslint/no-confusing-non-null-assertion",
     "message": "Confusing combination of non-null assertion and `$OP` operator like `a! $OP b`, which might be misinterpreted as `!(a $OP b)`."
    }
   }

@@ -47,7 +47,7 @@
       },
       "violation": {
         "anchor": "capture.D",
-        "code": "PREFER_NAMESPACE_KEYWORD",
+        "code": "@typescript-eslint/prefer-namespace-keyword",
         "message": "Use 'namespace' instead of 'module' to declare custom TypeScript modules.",
         "fix": "namespace"
       }
@@ -89,7 +89,7 @@
       },
       "violation": {
         "anchor": "capture.M",
-        "code": "PREFER_NAMESPACE_KEYWORD",
+        "code": "@typescript-eslint/prefer-namespace-keyword",
         "message": "Use 'namespace' instead of 'module' to declare custom TypeScript modules.",
         "fix": "namespace"
       }

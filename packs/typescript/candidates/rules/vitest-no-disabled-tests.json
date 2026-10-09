@@ -58,7 +58,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_DISABLED_TESTS",
+        "code": "vitest/no-disabled-tests",
         "message": "This test is disabled. Fix it or delete it.",
         "suppress": {
           "eslint": {
@@ -101,7 +101,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_DISABLED_TESTS",
+        "code": "vitest/no-disabled-tests",
         "message": "This test has no function, so it never runs.",
         "suppress": {
           "eslint": {

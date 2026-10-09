@@ -24,7 +24,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "BAN_TSLINT_COMMENT",
+        "code": "@typescript-eslint/ban-tslint-comment",
         "message": "tslint comment detected: \"$TEXT\"",
         "fix": ""
       }

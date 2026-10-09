@@ -49,7 +49,7 @@
           }
         }
       },
-      "violation": { "anchor": "witness.span", "code": "DEFAULT_PARAM_LAST", "message": "Default parameters should be last." }
+      "violation": { "anchor": "witness.span", "code": "@typescript-eslint/default-param-last", "message": "Default parameters should be last." }
     }
   ]
 }
