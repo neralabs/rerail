@@ -1,0 +1,117 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-reference-import",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of TSLint's `no-reference-import` rule with its default options (https://palantir.github.io/tslint/rules/no-reference-import/). Flags `/// <reference types=\"x\" />` when the file also statically imports x.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.ts",
+      "**/*.generated.tsx",
+      "**/*.gen.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "reference-types-imported",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "comment"
+              },
+              {
+                "pattern": "$C"
+              },
+              {
+                "any": [
+                  {
+                    "regex": "^///[ \\t]*<(?i:reference)[ \\t](?:[^>\\n]*[ \\t])?(?i:types)[ \\t]*=[ \\t]*\"(?<NAME>[^\"\\n]*)\"[^\\n]*?/>"
+                  },
+                  {
+                    "regex": "^///[ \\t]*<(?i:reference)[ \\t](?:[^>\\n]*[ \\t])?(?i:types)[ \\t]*=[ \\t]*'(?<NAME>[^'\\n]*)'[^\\n]*?/>"
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "hash_bang_line"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "program",
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "string_fragment",
+                    "pattern": "$S",
+                    "inside": {
+                      "kind": "string",
+                      "inside": {
+                        "any": [
+                          {
+                            "kind": "import_statement"
+                          },
+                          {
+                            "kind": "import_require_clause"
+                          }
+                        ]
+                      }
+                    },
+                    "compare": {
+                      "left": "T",
+                      "op": "eq",
+                      "right": "S"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "transform": {
+            "T": {
+              "replace": {
+                "source": "$C",
+                "replace": "^///[ \\t]*<(?i:reference)[ \\t](?:[^>\\n]*[ \\t])?(?i:types)[ \\t]*=[ \\t]*(?:\"([^\"\\n]*)\"|'([^'\\n]*)')[\\s\\S]*$",
+                "by": "${1}${2}"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.NAME",
+        "code": "no-reference-import",
+        "message": "No need to reference \"$T\", since it is imported."
+      }
+    }
+  ]
+}

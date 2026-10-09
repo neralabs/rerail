@@ -2673,7 +2673,7 @@
         "tool": "tslint",
         "rule": "no-reference-import"
       },
-      "policy": "candidates/no-reference-import/no-reference-import.json",
+      "policy": "rules/no-reference-import.json",
       "capabilities": [
         "syntax"
       ],

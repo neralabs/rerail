@@ -59,11 +59,11 @@ Of TSLint's 163 core rules, 14 pure formatter rules are out of scope (align, eof
 max-line-length, no-consecutive-blank-lines, no-trailing-whitespace, one-line, semicolon,
 space-before-function-paren, space-within-parens, trailing-comma, typedef-whitespace, whitespace): layout belongs to
 a formatter. Each of the other 149 has a port, scored against TSLint 6.1.3's tests on kernel 1: 1,815 true
-positives, 63 false positives and 794 false negatives in all. 112 rules match every test, 18 of them once the invalid
-test lines are discounted; the other 37 need what a syntactic engine lacks (23 need TypeScript's type checker, file
-bytes or other files; 14 a missing primitive), as each `verdict.json` records.
+positives, 62 false positives and 794 false negatives in all. 113 rules match every test, 18 of them once the invalid
+test lines are discounted; the other 36 need what a syntactic engine lacks (23 need TypeScript's type checker, file
+bytes or other files; 13 a missing primitive), as each `verdict.json` records.
 
-74 rules ship. Each matches every TSLint test of its rule (933 true positives, 188 more on the lines declared not
+75 rules ship. Each matches every TSLint test of its rule (935 true positives, 188 more on the lines declared not
 comparable), scores identically on renamed tests, implements TSLint's semantics rather than the tests' (not fitted to
 what the tests happen to miss, and not baking an option list where TSLint's default differs), and has meaningful
 option-less behaviour in TSLint. The 38 other rules that pass are candidates for one of those reasons, which their

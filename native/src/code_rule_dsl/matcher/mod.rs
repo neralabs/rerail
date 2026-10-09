@@ -20,7 +20,7 @@ mod resolve;
 mod run;
 mod semantic;
 #[cfg(test)]
-mod three_valued_tests;
+mod tests;
 mod transform;
 mod util;
 mod value;
