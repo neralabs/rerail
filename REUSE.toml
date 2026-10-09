@@ -707,7 +707,7 @@ SPDX-License-Identifier = "MIT"
 # annotated with the licence the pack publishes them under (its package.json); whether adapted rule documents need the
 # upstream licence is an open legal question (docs/pack-format.md#licensing).
 [[annotations]]
-path = ["packs/typescript/rules/**", "packs/typescript/candidates/rules/typescript-eslint-*.json"]
+path = ["packs/typescript/rules/**", "packs/typescript/candidates/rules/typescript-eslint-*.json", "packs/typescript/candidates/typescript-eslint-no-explicit-any.json"]
 precedence = "override"
 SPDX-FileCopyrightText = ["OpenJS Foundation and other contributors, <www.openjsf.org>", "2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"

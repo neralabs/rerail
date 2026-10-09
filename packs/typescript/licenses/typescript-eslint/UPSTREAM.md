@@ -3,7 +3,7 @@
 Upstream: [typescript-eslint 8.70.1](https://github.com/typescript-eslint/typescript-eslint/tree/v8.70.1) (commit `23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7`). License: MIT (Copyright (c) 2019 typescript-eslint and other contributors); [`LICENSE`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
 The files listed below contain material copied from typescript-eslint and remain under its license. Every other file in this
-pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of ESLint's
+pack is Rerail's. The rule documents in `rules/` and `candidates/` are Rerail's re-implementations of ESLint's
 and typescript-eslint's rules (and, in `candidates/rules/vitest-*.json`, of three @vitest/eslint-plugin 1.6.27 rules,
 which are MIT too), under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest
 is under the Apache License 2.0 (the pack's `LICENSE`): the recorder `upstream/generate.mjs`, and the `*.expected.json`
