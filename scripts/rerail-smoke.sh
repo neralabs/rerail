@@ -210,7 +210,7 @@ info "rerail status"
 status_output="$(sandbox "$LAUNCHER" status)"
 printf '%s\n' "$status_output"
 case "$status_output" in *"running at http://127.0.0.1:$DAEMON_PORT"*) ;; *) fail "rerail status does not show the daemon running" ;; esac
-case "$status_output" in *"Native kernel: ok"*) ;; *) fail "the daemon has no working native kernel" ;; esac
+case "$status_output" in *"Engine: ok"*) ;; *) fail "the daemon has no working native kernel" ;; esac
 case "$status_output" in *"Database: "*"${SMOKE##*/}/home/.rerail/rerail.sqlite"*) ;; *) fail "the daemon reads a database outside the sandbox Rerail home" ;; esac
 
 info "Rerail is off until started: the hook does nothing and the HUD says not on here"
@@ -231,9 +231,11 @@ sandbox "$NODE" -e 'process.stdout.write(JSON.stringify({hook_event_name:"Sessio
   | sandbox "$NODE" "$RERAIL_DIR/current/dist/claude-hook.js" >/dev/null
 status_output="$(sandbox "$NODE" -e 'process.stdout.write(JSON.stringify({session_id:"installer-smoke",cwd:process.cwd()}))' \
   | sandbox "$NODE" "$RERAIL_DIR/current/dist/claude-status.js")"
+# A fresh session shows the rule count only: `steered N×` appears once Rerail has steered in it.
 case "$status_output" in
-  *user-status*" rules"*"steered 0×"*) ;;
-  *) fail "installed HUD did not preserve the user status and render actual session counters" ;;
+  *steered*) fail "installed HUD shows a steer count for a session Rerail has not steered" ;;
+  *user-status*Rerail*" rules"*) ;;
+  *) fail "installed HUD did not preserve the user status and render the session's rule count" ;;
 esac
 session_output="$(sandbox "$LAUNCHER" session claude-code installer-smoke)"
 case "$session_output" in
