@@ -3,7 +3,7 @@
   "id": "typescript",
   "name": "TypeScript",
   "category": "language",
-  "covers": "19 ESLint and typescript-eslint rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "36 ESLint and typescript-eslint rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
   "reason": "matches TypeScript",
   "match": {
     "any": [
@@ -127,9 +127,43 @@
       "group": "ESLint"
     },
     {
-      "id": "typescript-eslint-no-namespace",
-      "document": "rules/typescript-eslint-no-namespace.json",
-      "title": "typescript-eslint no-namespace: Disallow TypeScript namespaces",
+      "id": "typescript-eslint:ban-tslint-comment",
+      "document": "rules/typescript-eslint-ban-tslint-comment.json",
+      "title": "typescript-eslint ban-tslint-comment: Disallow `// tslint:<rule-flag>` comments",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint:consistent-type-definitions",
+      "document": "rules/typescript-eslint-consistent-type-definitions.json",
+      "title": "typescript-eslint consistent-type-definitions: Enforce type definitions to consistently use either `interface` or `type`",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint:default-param-last",
+      "document": "rules/typescript-eslint-default-param-last.json",
+      "title": "typescript-eslint default-param-last: Enforce default parameters to be last",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint:no-array-constructor",
+      "document": "rules/typescript-eslint-no-array-constructor.json",
+      "title": "typescript-eslint no-array-constructor: Disallow generic `Array` constructors",
+      "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint:no-confusing-non-null-assertion",
+      "document": "rules/typescript-eslint-no-confusing-non-null-assertion.json",
+      "title": "typescript-eslint no-confusing-non-null-assertion: Disallow non-null assertion in locations that may be confusing",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint:no-dupe-class-members",
+      "document": "rules/typescript-eslint-no-dupe-class-members.json",
+      "title": "typescript-eslint no-dupe-class-members: Disallow duplicate class members",
       "group": "typescript-eslint",
       "on": false
     },
@@ -137,20 +171,79 @@
       "id": "typescript-eslint-no-duplicate-enum-values",
       "document": "rules/typescript-eslint-no-duplicate-enum-values.json",
       "title": "typescript-eslint no-duplicate-enum-values: Disallow duplicate enum member values",
+      "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint:no-empty-function",
+      "document": "rules/typescript-eslint-no-empty-function.json",
+      "title": "typescript-eslint no-empty-function: Disallow empty functions",
       "group": "typescript-eslint",
       "on": false
     },
     {
-      "id": "typescript-eslint-prefer-as-const",
-      "document": "rules/typescript-eslint-prefer-as-const.json",
-      "title": "typescript-eslint prefer-as-const: Enforce the use of as const over literal type",
+      "id": "typescript-eslint:no-extra-non-null-assertion",
+      "document": "rules/typescript-eslint-no-extra-non-null-assertion.json",
+      "title": "typescript-eslint no-extra-non-null-assertion: Disallow extra non-null assertions",
+      "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint:no-import-type-side-effects",
+      "document": "rules/typescript-eslint-no-import-type-side-effects.json",
+      "title": "typescript-eslint no-import-type-side-effects: Enforce the use of top-level import type qualifier when an import only has specifiers with inline type qualifiers",
       "group": "typescript-eslint",
       "on": false
+    },
+    {
+      "id": "typescript-eslint-no-namespace",
+      "document": "rules/typescript-eslint-no-namespace.json",
+      "title": "typescript-eslint no-namespace: Disallow TypeScript namespaces",
+      "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint:no-non-null-asserted-optional-chain",
+      "document": "rules/typescript-eslint-no-non-null-asserted-optional-chain.json",
+      "title": "typescript-eslint no-non-null-asserted-optional-chain: Disallow non-null assertions after an optional chain expression",
+      "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint-no-non-null-assertion",
+      "document": "rules/typescript-eslint-no-non-null-assertion.json",
+      "title": "typescript-eslint no-non-null-assertion: Disallow non-null assertions using the ! postfix operator",
+      "group": "typescript-eslint",
+      "examples": {
+        "caught": {
+          "path": "src/config.ts",
+          "text": "export function port(env: Map<string, string>): string {\n  return env.get(\"PORT\")!;\n}\n"
+        },
+        "passes": {
+          "path": "src/config.ts",
+          "text": "export function port(env: Map<string, string>): string {\n  return env.get(\"PORT\") ?? \"8080\";\n}\n"
+        }
+      },
+      "on": false
+    },
+    {
+      "id": "typescript-eslint:no-unnecessary-type-constraint",
+      "document": "rules/typescript-eslint-no-unnecessary-type-constraint.json",
+      "title": "typescript-eslint no-unnecessary-type-constraint: Disallow unnecessary constraints on generic types",
+      "group": "typescript-eslint"
     },
     {
       "id": "typescript-eslint-no-unsafe-function-type",
       "document": "rules/typescript-eslint-no-unsafe-function-type.json",
       "title": "typescript-eslint no-unsafe-function-type: Disallow using the unsafe built-in Function type",
+      "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint:no-unused-expressions",
+      "document": "rules/typescript-eslint-no-unused-expressions.json",
+      "title": "typescript-eslint no-unused-expressions: Disallow unused expressions",
+      "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint:no-useless-empty-export",
+      "document": "rules/typescript-eslint-no-useless-empty-export.json",
+      "title": "typescript-eslint no-useless-empty-export: Disallow empty exports that don't change anything in a module file",
       "group": "typescript-eslint",
       "on": false
     },
@@ -158,8 +251,33 @@
       "id": "typescript-eslint-no-wrapper-object-types",
       "document": "rules/typescript-eslint-no-wrapper-object-types.json",
       "title": "typescript-eslint no-wrapper-object-types: Disallow using confusing built-in primitive class wrappers",
+      "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint-prefer-as-const",
+      "document": "rules/typescript-eslint-prefer-as-const.json",
+      "title": "typescript-eslint prefer-as-const: Enforce the use of as const over literal type",
+      "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint:prefer-enum-initializers",
+      "document": "rules/typescript-eslint-prefer-enum-initializers.json",
+      "title": "typescript-eslint prefer-enum-initializers: Require each enum member value to be explicitly initialized",
       "group": "typescript-eslint",
       "on": false
+    },
+    {
+      "id": "typescript-eslint:prefer-literal-enum-member",
+      "document": "rules/typescript-eslint-prefer-literal-enum-member.json",
+      "title": "typescript-eslint prefer-literal-enum-member: Require all enum members to be literal values",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint:prefer-namespace-keyword",
+      "document": "rules/typescript-eslint-prefer-namespace-keyword.json",
+      "title": "typescript-eslint prefer-namespace-keyword: Require using `namespace` keyword over `module` keyword to declare custom TypeScript modules",
+      "group": "typescript-eslint"
     }
   ]
 }

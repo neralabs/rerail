@@ -5,13 +5,208 @@
     "kind": "fixtures",
     "origin": "https://github.com/typescript-eslint/typescript-eslint@23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7",
     "rules": [
+      "@typescript-eslint/ban-tslint-comment",
+      "@typescript-eslint/consistent-type-definitions",
+      "@typescript-eslint/default-param-last",
+      "@typescript-eslint/no-array-constructor",
+      "@typescript-eslint/no-confusing-non-null-assertion",
+      "@typescript-eslint/no-dupe-class-members",
       "@typescript-eslint/no-duplicate-enum-values",
+      "@typescript-eslint/no-empty-function",
+      "@typescript-eslint/no-extra-non-null-assertion",
+      "@typescript-eslint/no-import-type-side-effects",
       "@typescript-eslint/no-namespace",
+      "@typescript-eslint/no-non-null-asserted-optional-chain",
+      "@typescript-eslint/no-non-null-assertion",
+      "@typescript-eslint/no-unnecessary-type-constraint",
       "@typescript-eslint/no-unsafe-function-type",
+      "@typescript-eslint/no-unused-expressions",
+      "@typescript-eslint/no-useless-empty-export",
       "@typescript-eslint/no-wrapper-object-types",
-      "@typescript-eslint/prefer-as-const"
+      "@typescript-eslint/prefer-as-const",
+      "@typescript-eslint/prefer-enum-initializers",
+      "@typescript-eslint/prefer-literal-enum-member",
+      "@typescript-eslint/prefer-namespace-keyword"
     ],
     "files": [
+      "ban-tslint-comment/001.ts",
+      "ban-tslint-comment/002.ts",
+      "ban-tslint-comment/003.ts",
+      "ban-tslint-comment/004.ts",
+      "ban-tslint-comment/005.ts",
+      "ban-tslint-comment/006.ts",
+      "ban-tslint-comment/007.ts",
+      "ban-tslint-comment/008.ts",
+      "ban-tslint-comment/009.ts",
+      "ban-tslint-comment/010.ts",
+      "ban-tslint-comment/011.ts",
+      "ban-tslint-comment/012.ts",
+      "ban-tslint-comment/013.ts",
+      "consistent-type-definitions/001.ts",
+      "consistent-type-definitions/002.ts",
+      "consistent-type-definitions/003.ts",
+      "consistent-type-definitions/004.ts",
+      "consistent-type-definitions/005.ts",
+      "default-param-last/001.ts",
+      "default-param-last/002.ts",
+      "default-param-last/003.ts",
+      "default-param-last/004.ts",
+      "default-param-last/005.ts",
+      "default-param-last/006.ts",
+      "default-param-last/007.ts",
+      "default-param-last/008.ts",
+      "default-param-last/009.ts",
+      "default-param-last/010.ts",
+      "default-param-last/011.ts",
+      "default-param-last/012.ts",
+      "default-param-last/013.ts",
+      "default-param-last/014.ts",
+      "default-param-last/015.ts",
+      "default-param-last/016.ts",
+      "default-param-last/017.ts",
+      "default-param-last/018.ts",
+      "default-param-last/019.ts",
+      "default-param-last/020.ts",
+      "default-param-last/021.ts",
+      "default-param-last/022.ts",
+      "default-param-last/023.ts",
+      "default-param-last/024.ts",
+      "default-param-last/025.ts",
+      "default-param-last/026.ts",
+      "default-param-last/027.ts",
+      "default-param-last/028.ts",
+      "default-param-last/029.ts",
+      "default-param-last/030.ts",
+      "default-param-last/031.ts",
+      "default-param-last/032.ts",
+      "default-param-last/033.ts",
+      "default-param-last/034.ts",
+      "default-param-last/035.ts",
+      "default-param-last/036.ts",
+      "default-param-last/037.ts",
+      "default-param-last/038.ts",
+      "default-param-last/039.ts",
+      "default-param-last/040.ts",
+      "default-param-last/041.ts",
+      "default-param-last/042.ts",
+      "default-param-last/043.ts",
+      "default-param-last/044.ts",
+      "default-param-last/045.ts",
+      "default-param-last/046.ts",
+      "default-param-last/047.ts",
+      "default-param-last/048.ts",
+      "default-param-last/049.ts",
+      "default-param-last/050.ts",
+      "default-param-last/051.ts",
+      "default-param-last/052.ts",
+      "default-param-last/053.ts",
+      "default-param-last/054.ts",
+      "default-param-last/055.ts",
+      "default-param-last/056.ts",
+      "default-param-last/057.ts",
+      "default-param-last/058.ts",
+      "default-param-last/059.ts",
+      "default-param-last/060.ts",
+      "default-param-last/061.ts",
+      "default-param-last/062.ts",
+      "default-param-last/063.ts",
+      "default-param-last/064.ts",
+      "default-param-last/065.ts",
+      "default-param-last/066.ts",
+      "default-param-last/067.ts",
+      "default-param-last/068.ts",
+      "default-param-last/069.ts",
+      "default-param-last/070.ts",
+      "default-param-last/071.ts",
+      "default-param-last/072.ts",
+      "default-param-last/073.ts",
+      "default-param-last/074.ts",
+      "default-param-last/075.ts",
+      "default-param-last/076.ts",
+      "default-param-last/077.ts",
+      "default-param-last/078.ts",
+      "default-param-last/079.ts",
+      "default-param-last/080.ts",
+      "default-param-last/081.ts",
+      "default-param-last/082.ts",
+      "default-param-last/083.ts",
+      "default-param-last/084.ts",
+      "default-param-last/085.ts",
+      "default-param-last/086.ts",
+      "default-param-last/087.ts",
+      "no-array-constructor/001.ts",
+      "no-array-constructor/002.ts",
+      "no-array-constructor/003.ts",
+      "no-array-constructor/004.ts",
+      "no-array-constructor/005.ts",
+      "no-array-constructor/006.ts",
+      "no-array-constructor/007.ts",
+      "no-array-constructor/008.ts",
+      "no-array-constructor/009.ts",
+      "no-array-constructor/010.ts",
+      "no-array-constructor/011.ts",
+      "no-array-constructor/012.ts",
+      "no-array-constructor/013.ts",
+      "no-array-constructor/014.ts",
+      "no-array-constructor/015.ts",
+      "no-array-constructor/016.ts",
+      "no-array-constructor/017.ts",
+      "no-array-constructor/018.ts",
+      "no-array-constructor/019.ts",
+      "no-array-constructor/020.ts",
+      "no-array-constructor/021.ts",
+      "no-array-constructor/022.ts",
+      "no-array-constructor/023.ts",
+      "no-array-constructor/024.ts",
+      "no-array-constructor/025.ts",
+      "no-array-constructor/026.ts",
+      "no-array-constructor/027.ts",
+      "no-array-constructor/028.ts",
+      "no-array-constructor/029.ts",
+      "no-array-constructor/030.ts",
+      "no-array-constructor/031.ts",
+      "no-array-constructor/032.ts",
+      "no-array-constructor/033.ts",
+      "no-confusing-non-null-assertion/001.ts",
+      "no-confusing-non-null-assertion/002.ts",
+      "no-confusing-non-null-assertion/003.ts",
+      "no-confusing-non-null-assertion/004.ts",
+      "no-confusing-non-null-assertion/005.ts",
+      "no-confusing-non-null-assertion/006.ts",
+      "no-confusing-non-null-assertion/007.ts",
+      "no-confusing-non-null-assertion/008.ts",
+      "no-confusing-non-null-assertion/009.ts",
+      "no-confusing-non-null-assertion/010.ts",
+      "no-confusing-non-null-assertion/011.ts",
+      "no-confusing-non-null-assertion/012.ts",
+      "no-confusing-non-null-assertion/013.ts",
+      "no-confusing-non-null-assertion/014.ts",
+      "no-confusing-non-null-assertion/015.ts",
+      "no-confusing-non-null-assertion/016.ts",
+      "no-confusing-non-null-assertion/017.ts",
+      "no-confusing-non-null-assertion/018.ts",
+      "no-confusing-non-null-assertion/019.ts",
+      "no-dupe-class-members/001.ts",
+      "no-dupe-class-members/002.ts",
+      "no-dupe-class-members/003.ts",
+      "no-dupe-class-members/004.ts",
+      "no-dupe-class-members/005.ts",
+      "no-dupe-class-members/006.ts",
+      "no-dupe-class-members/007.ts",
+      "no-dupe-class-members/008.ts",
+      "no-dupe-class-members/009.ts",
+      "no-dupe-class-members/010.ts",
+      "no-dupe-class-members/011.ts",
+      "no-dupe-class-members/012.ts",
+      "no-dupe-class-members/013.ts",
+      "no-dupe-class-members/014.ts",
+      "no-dupe-class-members/015.ts",
+      "no-dupe-class-members/016.ts",
+      "no-dupe-class-members/017.ts",
+      "no-dupe-class-members/018.ts",
+      "no-dupe-class-members/019.ts",
+      "no-dupe-class-members/020.ts",
+      "no-dupe-class-members/021.ts",
       "no-duplicate-enum-values/001.ts",
       "no-duplicate-enum-values/002.ts",
       "no-duplicate-enum-values/003.ts",
@@ -52,6 +247,44 @@
       "no-duplicate-enum-values/038.ts",
       "no-duplicate-enum-values/039.ts",
       "no-duplicate-enum-values/040.ts",
+      "no-empty-function/001.ts",
+      "no-empty-function/002.ts",
+      "no-empty-function/003.ts",
+      "no-empty-function/004.ts",
+      "no-empty-function/005.ts",
+      "no-empty-function/006.ts",
+      "no-empty-function/007.ts",
+      "no-empty-function/008.ts",
+      "no-empty-function/009.ts",
+      "no-empty-function/010.ts",
+      "no-extra-non-null-assertion/001.ts",
+      "no-extra-non-null-assertion/002.ts",
+      "no-extra-non-null-assertion/003.ts",
+      "no-extra-non-null-assertion/004.ts",
+      "no-extra-non-null-assertion/005.ts",
+      "no-extra-non-null-assertion/006.ts",
+      "no-extra-non-null-assertion/007.ts",
+      "no-extra-non-null-assertion/008.ts",
+      "no-extra-non-null-assertion/009.ts",
+      "no-extra-non-null-assertion/010.ts",
+      "no-extra-non-null-assertion/011.ts",
+      "no-extra-non-null-assertion/012.ts",
+      "no-extra-non-null-assertion/013.ts",
+      "no-import-type-side-effects/001.ts",
+      "no-import-type-side-effects/002.ts",
+      "no-import-type-side-effects/003.ts",
+      "no-import-type-side-effects/004.ts",
+      "no-import-type-side-effects/005.ts",
+      "no-import-type-side-effects/006.ts",
+      "no-import-type-side-effects/007.ts",
+      "no-import-type-side-effects/008.ts",
+      "no-import-type-side-effects/009.ts",
+      "no-import-type-side-effects/010.ts",
+      "no-import-type-side-effects/011.ts",
+      "no-import-type-side-effects/012.ts",
+      "no-import-type-side-effects/013.ts",
+      "no-import-type-side-effects/014.ts",
+      "no-import-type-side-effects/015.ts",
       "no-namespace/001.ts",
       "no-namespace/002.ts",
       "no-namespace/003.ts",
@@ -59,6 +292,91 @@
       "no-namespace/005.ts",
       "no-namespace/006.ts",
       "no-namespace/007.ts",
+      "no-non-null-asserted-optional-chain/001.ts",
+      "no-non-null-asserted-optional-chain/002.ts",
+      "no-non-null-asserted-optional-chain/003.ts",
+      "no-non-null-asserted-optional-chain/004.ts",
+      "no-non-null-asserted-optional-chain/005.ts",
+      "no-non-null-asserted-optional-chain/006.ts",
+      "no-non-null-asserted-optional-chain/007.ts",
+      "no-non-null-asserted-optional-chain/008.ts",
+      "no-non-null-asserted-optional-chain/009.ts",
+      "no-non-null-asserted-optional-chain/010.ts",
+      "no-non-null-asserted-optional-chain/011.ts",
+      "no-non-null-asserted-optional-chain/012.ts",
+      "no-non-null-asserted-optional-chain/013.ts",
+      "no-non-null-asserted-optional-chain/014.ts",
+      "no-non-null-asserted-optional-chain/015.ts",
+      "no-non-null-asserted-optional-chain/016.ts",
+      "no-non-null-asserted-optional-chain/017.ts",
+      "no-non-null-asserted-optional-chain/018.ts",
+      "no-non-null-asserted-optional-chain/019.ts",
+      "no-non-null-asserted-optional-chain/020.ts",
+      "no-non-null-asserted-optional-chain/021.ts",
+      "no-non-null-asserted-optional-chain/022.ts",
+      "no-non-null-asserted-optional-chain/023.ts",
+      "no-non-null-assertion/001.ts",
+      "no-non-null-assertion/002.ts",
+      "no-non-null-assertion/003.ts",
+      "no-non-null-assertion/004.ts",
+      "no-non-null-assertion/005.ts",
+      "no-non-null-assertion/006.ts",
+      "no-non-null-assertion/007.ts",
+      "no-non-null-assertion/008.ts",
+      "no-non-null-assertion/009.ts",
+      "no-non-null-assertion/010.ts",
+      "no-non-null-assertion/011.ts",
+      "no-non-null-assertion/012.ts",
+      "no-non-null-assertion/013.ts",
+      "no-non-null-assertion/014.ts",
+      "no-non-null-assertion/015.ts",
+      "no-non-null-assertion/016.ts",
+      "no-non-null-assertion/017.ts",
+      "no-non-null-assertion/018.ts",
+      "no-non-null-assertion/019.ts",
+      "no-non-null-assertion/020.ts",
+      "no-non-null-assertion/021.ts",
+      "no-non-null-assertion/022.ts",
+      "no-non-null-assertion/023.ts",
+      "no-non-null-assertion/024.ts",
+      "no-non-null-assertion/025.ts",
+      "no-non-null-assertion/026.ts",
+      "no-non-null-assertion/027.ts",
+      "no-non-null-assertion/028.ts",
+      "no-unnecessary-type-constraint/001.ts",
+      "no-unnecessary-type-constraint/002.ts",
+      "no-unnecessary-type-constraint/003.ts",
+      "no-unnecessary-type-constraint/004.ts",
+      "no-unnecessary-type-constraint/005.ts",
+      "no-unnecessary-type-constraint/006.ts",
+      "no-unnecessary-type-constraint/007.ts",
+      "no-unnecessary-type-constraint/008.ts",
+      "no-unnecessary-type-constraint/009.ts",
+      "no-unnecessary-type-constraint/010.ts",
+      "no-unnecessary-type-constraint/011.ts",
+      "no-unnecessary-type-constraint/012.ts",
+      "no-unnecessary-type-constraint/013.ts",
+      "no-unnecessary-type-constraint/014.ts",
+      "no-unnecessary-type-constraint/015.ts",
+      "no-unnecessary-type-constraint/016.ts",
+      "no-unnecessary-type-constraint/017.tsx",
+      "no-unnecessary-type-constraint/018.mts",
+      "no-unnecessary-type-constraint/019.cts",
+      "no-unnecessary-type-constraint/020.tsx",
+      "no-unnecessary-type-constraint/021.tsx",
+      "no-unnecessary-type-constraint/022.tsx",
+      "no-unnecessary-type-constraint/023.tsx",
+      "no-unnecessary-type-constraint/024.tsx",
+      "no-unnecessary-type-constraint/025.tsx",
+      "no-unnecessary-type-constraint/026.ts",
+      "no-unnecessary-type-constraint/027.ts",
+      "no-unnecessary-type-constraint/028.ts",
+      "no-unnecessary-type-constraint/029.ts",
+      "no-unnecessary-type-constraint/030.ts",
+      "no-unnecessary-type-constraint/031.ts",
+      "no-unnecessary-type-constraint/032.ts",
+      "no-unnecessary-type-constraint/033.ts",
+      "no-unnecessary-type-constraint/034.ts",
       "no-unsafe-function-type/001.ts",
       "no-unsafe-function-type/002.ts",
       "no-unsafe-function-type/003.ts",
@@ -67,6 +385,60 @@
       "no-unsafe-function-type/006.ts",
       "no-unsafe-function-type/007.ts",
       "no-unsafe-function-type/008.ts",
+      "no-unused-expressions/001.ts",
+      "no-unused-expressions/002.ts",
+      "no-unused-expressions/003.ts",
+      "no-unused-expressions/004.ts",
+      "no-unused-expressions/005.ts",
+      "no-unused-expressions/006.ts",
+      "no-unused-expressions/007.ts",
+      "no-unused-expressions/008.ts",
+      "no-unused-expressions/009.ts",
+      "no-unused-expressions/010.ts",
+      "no-unused-expressions/011.ts",
+      "no-unused-expressions/012.ts",
+      "no-unused-expressions/013.ts",
+      "no-unused-expressions/014.ts",
+      "no-unused-expressions/015.ts",
+      "no-unused-expressions/016.ts",
+      "no-unused-expressions/017.ts",
+      "no-unused-expressions/018.ts",
+      "no-unused-expressions/019.ts",
+      "no-unused-expressions/020.ts",
+      "no-unused-expressions/021.ts",
+      "no-unused-expressions/022.ts",
+      "no-unused-expressions/023.ts",
+      "no-unused-expressions/024.ts",
+      "no-unused-expressions/025.ts",
+      "no-unused-expressions/026.ts",
+      "no-unused-expressions/027.ts",
+      "no-unused-expressions/028.ts",
+      "no-unused-expressions/029.ts",
+      "no-unused-expressions/030.ts",
+      "no-unused-expressions/031.ts",
+      "no-unused-expressions/032.ts",
+      "no-unused-expressions/033.ts",
+      "no-useless-empty-export/001.ts",
+      "no-useless-empty-export/002.ts",
+      "no-useless-empty-export/003.ts",
+      "no-useless-empty-export/004.ts",
+      "no-useless-empty-export/005.ts",
+      "no-useless-empty-export/006.ts",
+      "no-useless-empty-export/007.ts",
+      "no-useless-empty-export/008.ts",
+      "no-useless-empty-export/009.ts",
+      "no-useless-empty-export/010.d.ts",
+      "no-useless-empty-export/011.d.ts",
+      "no-useless-empty-export/012.d.ts",
+      "no-useless-empty-export/013.d.ts",
+      "no-useless-empty-export/014.ts",
+      "no-useless-empty-export/015.ts",
+      "no-useless-empty-export/016.ts",
+      "no-useless-empty-export/017.ts",
+      "no-useless-empty-export/018.ts",
+      "no-useless-empty-export/019.ts",
+      "no-useless-empty-export/020.ts",
+      "no-useless-empty-export/021.ts",
       "no-wrapper-object-types/001.ts",
       "no-wrapper-object-types/002.ts",
       "no-wrapper-object-types/003.ts",
@@ -170,10 +542,1674 @@
       "prefer-as-const/043.ts",
       "prefer-as-const/044.ts",
       "prefer-as-const/045.ts",
-      "prefer-as-const/046.ts"
+      "prefer-as-const/046.ts",
+      "prefer-enum-initializers/001.ts",
+      "prefer-enum-initializers/002.ts",
+      "prefer-enum-initializers/003.ts",
+      "prefer-enum-initializers/004.ts",
+      "prefer-enum-initializers/005.ts",
+      "prefer-enum-initializers/006.ts",
+      "prefer-enum-initializers/007.ts",
+      "prefer-enum-initializers/008.ts",
+      "prefer-literal-enum-member/001.ts",
+      "prefer-literal-enum-member/002.ts",
+      "prefer-literal-enum-member/003.ts",
+      "prefer-literal-enum-member/004.ts",
+      "prefer-literal-enum-member/005.ts",
+      "prefer-literal-enum-member/006.ts",
+      "prefer-literal-enum-member/007.ts",
+      "prefer-literal-enum-member/008.ts",
+      "prefer-literal-enum-member/009.ts",
+      "prefer-literal-enum-member/010.ts",
+      "prefer-literal-enum-member/011.ts",
+      "prefer-literal-enum-member/012.ts",
+      "prefer-literal-enum-member/013.ts",
+      "prefer-literal-enum-member/014.ts",
+      "prefer-literal-enum-member/015.ts",
+      "prefer-literal-enum-member/016.ts",
+      "prefer-literal-enum-member/017.ts",
+      "prefer-literal-enum-member/018.ts",
+      "prefer-literal-enum-member/019.ts",
+      "prefer-literal-enum-member/020.ts",
+      "prefer-literal-enum-member/021.ts",
+      "prefer-literal-enum-member/022.ts",
+      "prefer-namespace-keyword/001.ts",
+      "prefer-namespace-keyword/002.ts",
+      "prefer-namespace-keyword/003.ts",
+      "prefer-namespace-keyword/004.ts",
+      "prefer-namespace-keyword/005.ts",
+      "prefer-namespace-keyword/006.ts",
+      "prefer-namespace-keyword/007.ts",
+      "prefer-namespace-keyword/008.ts"
     ]
   },
   "findings": [
+    {
+      "rule": "@typescript-eslint/no-array-constructor",
+      "path": "ban-tslint-comment/002.ts",
+      "line": 1,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/ban-tslint-comment",
+      "path": "ban-tslint-comment/006.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/ban-tslint-comment",
+      "path": "ban-tslint-comment/007.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/ban-tslint-comment",
+      "path": "ban-tslint-comment/008.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/ban-tslint-comment",
+      "path": "ban-tslint-comment/009.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/ban-tslint-comment",
+      "path": "ban-tslint-comment/010.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/ban-tslint-comment",
+      "path": "ban-tslint-comment/011.ts",
+      "line": 1,
+      "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/ban-tslint-comment",
+      "path": "ban-tslint-comment/012.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/ban-tslint-comment",
+      "path": "ban-tslint-comment/013.ts",
+      "line": 3,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/consistent-type-definitions",
+      "path": "consistent-type-definitions/001.ts",
+      "line": 2,
+      "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/consistent-type-definitions",
+      "path": "consistent-type-definitions/002.ts",
+      "line": 2,
+      "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/consistent-type-definitions",
+      "path": "consistent-type-definitions/003.ts",
+      "line": 2,
+      "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/consistent-type-definitions",
+      "path": "consistent-type-definitions/004.ts",
+      "line": 2,
+      "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/consistent-type-definitions",
+      "path": "consistent-type-definitions/005.ts",
+      "line": 2,
+      "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/001.ts",
+      "line": 1,
+      "column": 16
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/002.ts",
+      "line": 1,
+      "column": 25
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/003.ts",
+      "line": 1,
+      "column": 21
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/004.ts",
+      "line": 1,
+      "column": 26
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/005.ts",
+      "line": 1,
+      "column": 36
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/006.ts",
+      "line": 1,
+      "column": 48
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/007.ts",
+      "line": 1,
+      "column": 32
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/008.ts",
+      "line": 1,
+      "column": 39
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/009.ts",
+      "line": 1,
+      "column": 44
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/010.ts",
+      "line": 1,
+      "column": 44
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/011.ts",
+      "line": 1,
+      "column": 38
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/012.ts",
+      "line": 1,
+      "column": 25
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/013.ts",
+      "line": 1,
+      "column": 34
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/014.ts",
+      "line": 1,
+      "column": 30
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/015.ts",
+      "line": 1,
+      "column": 35
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/016.ts",
+      "line": 1,
+      "column": 45
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/017.ts",
+      "line": 1,
+      "column": 57
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/018.ts",
+      "line": 1,
+      "column": 41
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/019.ts",
+      "line": 1,
+      "column": 48
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/020.ts",
+      "line": 1,
+      "column": 53
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/021.ts",
+      "line": 1,
+      "column": 53
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/022.ts",
+      "line": 1,
+      "column": 47
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/023.ts",
+      "line": 1,
+      "column": 19
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/024.ts",
+      "line": 1,
+      "column": 28
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/025.ts",
+      "line": 1,
+      "column": 24
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/026.ts",
+      "line": 1,
+      "column": 29
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/027.ts",
+      "line": 1,
+      "column": 39
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/028.ts",
+      "line": 1,
+      "column": 51
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/029.ts",
+      "line": 1,
+      "column": 35
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/030.ts",
+      "line": 1,
+      "column": 42
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/031.ts",
+      "line": 1,
+      "column": 47
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/032.ts",
+      "line": 1,
+      "column": 47
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/033.ts",
+      "line": 1,
+      "column": 41
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/034.ts",
+      "line": 3,
+      "column": 48
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/035.ts",
+      "line": 3,
+      "column": 45
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/036.ts",
+      "line": 3,
+      "column": 45
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/043.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/043.ts",
+      "line": 1,
+      "column": 32
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/044.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/044.ts",
+      "line": 1,
+      "column": 21
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/044.ts",
+      "line": 1,
+      "column": 39
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/045.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/045.ts",
+      "line": 1,
+      "column": 32
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/045.ts",
+      "line": 1,
+      "column": 50
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/046.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/046.ts",
+      "line": 1,
+      "column": 39
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/047.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/047.ts",
+      "line": 1,
+      "column": 38
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/048.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/048.ts",
+      "line": 1,
+      "column": 37
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/049.ts",
+      "line": 1,
+      "column": 25
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/049.ts",
+      "line": 1,
+      "column": 48
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/050.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/050.ts",
+      "line": 1,
+      "column": 21
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/050.ts",
+      "line": 1,
+      "column": 44
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/051.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/051.ts",
+      "line": 1,
+      "column": 28
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/052.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/052.ts",
+      "line": 1,
+      "column": 29
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/053.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/053.ts",
+      "line": 1,
+      "column": 44
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/054.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/054.ts",
+      "line": 1,
+      "column": 27
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/055.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/055.ts",
+      "line": 1,
+      "column": 34
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/056.ts",
+      "line": 1,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/056.ts",
+      "line": 1,
+      "column": 41
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/057.ts",
+      "line": 1,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/057.ts",
+      "line": 1,
+      "column": 30
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/057.ts",
+      "line": 1,
+      "column": 48
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/058.ts",
+      "line": 1,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/058.ts",
+      "line": 1,
+      "column": 41
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/058.ts",
+      "line": 1,
+      "column": 59
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/059.ts",
+      "line": 1,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/059.ts",
+      "line": 1,
+      "column": 48
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/060.ts",
+      "line": 1,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/060.ts",
+      "line": 1,
+      "column": 47
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/061.ts",
+      "line": 1,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/061.ts",
+      "line": 1,
+      "column": 46
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/062.ts",
+      "line": 1,
+      "column": 34
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/062.ts",
+      "line": 1,
+      "column": 57
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/063.ts",
+      "line": 1,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/063.ts",
+      "line": 1,
+      "column": 30
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/063.ts",
+      "line": 1,
+      "column": 53
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/064.ts",
+      "line": 1,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/064.ts",
+      "line": 1,
+      "column": 37
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/065.ts",
+      "line": 1,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/065.ts",
+      "line": 1,
+      "column": 38
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/066.ts",
+      "line": 1,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/066.ts",
+      "line": 1,
+      "column": 53
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/067.ts",
+      "line": 1,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/067.ts",
+      "line": 1,
+      "column": 36
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/068.ts",
+      "line": 1,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/068.ts",
+      "line": 1,
+      "column": 43
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/069.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/069.ts",
+      "line": 1,
+      "column": 35
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/070.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/070.ts",
+      "line": 1,
+      "column": 21
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/070.ts",
+      "line": 1,
+      "column": 42
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/071.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/071.ts",
+      "line": 1,
+      "column": 32
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/071.ts",
+      "line": 1,
+      "column": 53
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/072.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/072.ts",
+      "line": 1,
+      "column": 42
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/073.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/073.ts",
+      "line": 1,
+      "column": 41
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/074.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/074.ts",
+      "line": 1,
+      "column": 40
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/075.ts",
+      "line": 1,
+      "column": 25
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/075.ts",
+      "line": 1,
+      "column": 51
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/076.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/076.ts",
+      "line": 1,
+      "column": 21
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/076.ts",
+      "line": 1,
+      "column": 47
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/077.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/077.ts",
+      "line": 1,
+      "column": 31
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/078.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/078.ts",
+      "line": 1,
+      "column": 32
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/079.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/079.ts",
+      "line": 1,
+      "column": 47
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/080.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/080.ts",
+      "line": 1,
+      "column": 30
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/081.ts",
+      "line": 1,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/081.ts",
+      "line": 1,
+      "column": 37
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/082.ts",
+      "line": 5,
+      "column": 5
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/083.ts",
+      "line": 5,
+      "column": 5
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/084.ts",
+      "line": 4,
+      "column": 5
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/085.ts",
+      "line": 4,
+      "column": 5
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/086.ts",
+      "line": 3,
+      "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/086.ts",
+      "line": 3,
+      "column": 33
+    },
+    {
+      "rule": "@typescript-eslint/default-param-last",
+      "path": "default-param-last/087.ts",
+      "line": 3,
+      "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "default-param-last/087.ts",
+      "line": 3,
+      "column": 38
+    },
+    {
+      "rule": "@typescript-eslint/no-array-constructor",
+      "path": "no-array-constructor/021.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-array-constructor",
+      "path": "no-array-constructor/022.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-array-constructor",
+      "path": "no-array-constructor/023.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-array-constructor",
+      "path": "no-array-constructor/024.ts",
+      "line": 1,
+      "column": 17
+    },
+    {
+      "rule": "@typescript-eslint/no-array-constructor",
+      "path": "no-array-constructor/025.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-array-constructor",
+      "path": "no-array-constructor/026.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-array-constructor",
+      "path": "no-array-constructor/027.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-array-constructor",
+      "path": "no-array-constructor/028.ts",
+      "line": 1,
+      "column": 17
+    },
+    {
+      "rule": "@typescript-eslint/no-array-constructor",
+      "path": "no-array-constructor/029.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-array-constructor",
+      "path": "no-array-constructor/030.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-array-constructor",
+      "path": "no-array-constructor/031.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-array-constructor",
+      "path": "no-array-constructor/032.ts",
+      "line": 2,
+      "column": 17
+    },
+    {
+      "rule": "@typescript-eslint/no-array-constructor",
+      "path": "no-array-constructor/033.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-confusing-non-null-assertion/001.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/001.ts",
+      "line": 1,
+      "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/002.ts",
+      "line": 1,
+      "column": 5
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-confusing-non-null-assertion/003.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-confusing-non-null-assertion/004.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-confusing-non-null-assertion/005.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/005.ts",
+      "line": 1,
+      "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/006.ts",
+      "line": 1,
+      "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-confusing-non-null-assertion/007.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/007.ts",
+      "line": 1,
+      "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-confusing-non-null-assertion/008.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/008.ts",
+      "line": 1,
+      "column": 7
+    },
+    {
+      "rule": "@typescript-eslint/no-confusing-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/009.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/009.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-confusing-non-null-assertion/009.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-confusing-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/010.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/010.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-confusing-non-null-assertion/010.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-confusing-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/011.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-confusing-non-null-assertion/011.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/011.ts",
+      "line": 1,
+      "column": 5
+    },
+    {
+      "rule": "@typescript-eslint/no-confusing-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/012.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/012.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-confusing-non-null-assertion/012.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-confusing-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/013.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/013.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-confusing-non-null-assertion/013.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-confusing-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/014.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/014.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-confusing-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/015.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/015.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-confusing-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/016.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/016.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-confusing-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/017.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/017.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-confusing-non-null-assertion/017.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-confusing-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/018.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/018.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-confusing-non-null-assertion/018.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-confusing-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/019.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-confusing-non-null-assertion/019.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-confusing-non-null-assertion/019.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/001.ts",
+      "line": 3,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/001.ts",
+      "line": 4,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/002.ts",
+      "line": 3,
+      "column": 16
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/002.ts",
+      "line": 4,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/003.ts",
+      "line": 3,
+      "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/003.ts",
+      "line": 4,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/004.ts",
+      "line": 3,
+      "column": 16
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/004.ts",
+      "line": 4,
+      "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/004.ts",
+      "line": 5,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/005.ts",
+      "line": 3,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/005.ts",
+      "line": 6,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/006.ts",
+      "line": 3,
+      "column": 11
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/006.ts",
+      "line": 4,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/007.ts",
+      "line": 3,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/007.ts",
+      "line": 4,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/007.ts",
+      "line": 5,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/008.ts",
+      "line": 3,
+      "column": 10
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/008.ts",
+      "line": 4,
+      "column": 10
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/008.ts",
+      "line": 5,
+      "column": 10
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/009.ts",
+      "line": 3,
+      "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/009.ts",
+      "line": 4,
+      "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/009.ts",
+      "line": 5,
+      "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/010.ts",
+      "line": 3,
+      "column": 7
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/010.ts",
+      "line": 4,
+      "column": 7
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/011.ts",
+      "line": 5,
+      "column": 20
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/012.ts",
+      "line": 3,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-dupe-class-members",
+      "path": "no-dupe-class-members/012.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/012.ts",
+      "line": 4,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-dupe-class-members/013.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/013.ts",
+      "line": 3,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-dupe-class-members",
+      "path": "no-dupe-class-members/013.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/013.ts",
+      "line": 4,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/014.ts",
+      "line": 3,
+      "column": 11
+    },
+    {
+      "rule": "@typescript-eslint/no-dupe-class-members",
+      "path": "no-dupe-class-members/014.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/014.ts",
+      "line": 4,
+      "column": 11
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/015.ts",
+      "line": 3,
+      "column": 8
+    },
+    {
+      "rule": "@typescript-eslint/no-dupe-class-members",
+      "path": "no-dupe-class-members/015.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/015.ts",
+      "line": 4,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/016.ts",
+      "line": 3,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-dupe-class-members",
+      "path": "no-dupe-class-members/016.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/016.ts",
+      "line": 4,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-dupe-class-members",
+      "path": "no-dupe-class-members/016.ts",
+      "line": 5,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/016.ts",
+      "line": 5,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/017.ts",
+      "line": 3,
+      "column": 16
+    },
+    {
+      "rule": "@typescript-eslint/no-dupe-class-members",
+      "path": "no-dupe-class-members/017.ts",
+      "line": 4,
+      "column": 10
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/017.ts",
+      "line": 4,
+      "column": 16
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/018.ts",
+      "line": 3,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-dupe-class-members",
+      "path": "no-dupe-class-members/018.ts",
+      "line": 4,
+      "column": 7
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/018.ts",
+      "line": 4,
+      "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/019.ts",
+      "line": 3,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-dupe-class-members",
+      "path": "no-dupe-class-members/019.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/019.ts",
+      "line": 4,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-dupe-class-members",
+      "path": "no-dupe-class-members/020.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/no-dupe-class-members",
+      "path": "no-dupe-class-members/021.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-dupe-class-members/021.ts",
+      "line": 4,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/prefer-enum-initializers",
+      "path": "no-duplicate-enum-values/001.ts",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-enum-initializers",
+      "path": "no-duplicate-enum-values/001.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-enum-initializers",
+      "path": "no-duplicate-enum-values/002.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-enum-initializers",
+      "path": "no-duplicate-enum-values/013.ts",
+      "line": 5,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "no-duplicate-enum-values/014.ts",
+      "line": 6,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-enum-initializers",
+      "path": "no-duplicate-enum-values/015.ts",
+      "line": 5,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "no-duplicate-enum-values/016.ts",
+      "line": 6,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "no-duplicate-enum-values/018.ts",
+      "line": 5,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "no-duplicate-enum-values/019.ts",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "no-duplicate-enum-values/019.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "no-duplicate-enum-values/020.ts",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "no-duplicate-enum-values/020.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "no-duplicate-enum-values/021.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "no-duplicate-enum-values/024.ts",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "no-duplicate-enum-values/024.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "no-duplicate-enum-values/025.ts",
+      "line": 5,
+      "column": 3
+    },
     {
       "rule": "@typescript-eslint/no-duplicate-enum-values",
       "path": "no-duplicate-enum-values/026.ts",
@@ -271,7 +2307,217 @@
       "column": 3
     },
     {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-empty-function/004.ts",
+      "line": 3,
+      "column": 29
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-empty-function/005.ts",
+      "line": 3,
+      "column": 29
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-empty-function/006.ts",
+      "line": 3,
+      "column": 25
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-empty-function/007.ts",
+      "line": 3,
+      "column": 27
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-empty-function/008.ts",
+      "line": 2,
+      "column": 16
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-empty-function/009.ts",
+      "line": 4,
+      "column": 9
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-empty-function/010.ts",
+      "line": 3,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-extra-non-null-assertion/001.ts",
+      "line": 3,
+      "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-extra-non-null-assertion/002.ts",
+      "line": 3,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-extra-non-null-assertion/004.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-extra-non-null-assertion/005.ts",
+      "line": 4,
+      "column": 16
+    },
+    {
+      "rule": "@typescript-eslint/no-extra-non-null-assertion",
+      "path": "no-extra-non-null-assertion/006.ts",
+      "line": 3,
+      "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-extra-non-null-assertion/006.ts",
+      "line": 3,
+      "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-extra-non-null-assertion/006.ts",
+      "line": 3,
+      "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/no-extra-non-null-assertion",
+      "path": "no-extra-non-null-assertion/007.ts",
+      "line": 3,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-extra-non-null-assertion/007.ts",
+      "line": 3,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-extra-non-null-assertion/007.ts",
+      "line": 3,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-extra-non-null-assertion",
+      "path": "no-extra-non-null-assertion/008.ts",
+      "line": 3,
+      "column": 10
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-extra-non-null-assertion/008.ts",
+      "line": 3,
+      "column": 10
+    },
+    {
+      "rule": "@typescript-eslint/no-extra-non-null-assertion",
+      "path": "no-extra-non-null-assertion/009.ts",
+      "line": 3,
+      "column": 10
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-extra-non-null-assertion/009.ts",
+      "line": 3,
+      "column": 10
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-extra-non-null-assertion/010.ts",
+      "line": 3,
+      "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/no-extra-non-null-assertion",
+      "path": "no-extra-non-null-assertion/010.ts",
+      "line": 3,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-extra-non-null-assertion/010.ts",
+      "line": 3,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-extra-non-null-assertion",
+      "path": "no-extra-non-null-assertion/011.ts",
+      "line": 3,
+      "column": 11
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-extra-non-null-assertion/011.ts",
+      "line": 3,
+      "column": 11
+    },
+    {
+      "rule": "@typescript-eslint/no-extra-non-null-assertion",
+      "path": "no-extra-non-null-assertion/012.ts",
+      "line": 3,
+      "column": 10
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-extra-non-null-assertion/012.ts",
+      "line": 3,
+      "column": 10
+    },
+    {
+      "rule": "@typescript-eslint/no-extra-non-null-assertion",
+      "path": "no-extra-non-null-assertion/013.ts",
+      "line": 3,
+      "column": 11
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-extra-non-null-assertion/013.ts",
+      "line": 3,
+      "column": 11
+    },
+    {
+      "rule": "@typescript-eslint/no-import-type-side-effects",
+      "path": "no-import-type-side-effects/012.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-import-type-side-effects",
+      "path": "no-import-type-side-effects/013.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-import-type-side-effects",
+      "path": "no-import-type-side-effects/014.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-import-type-side-effects",
+      "path": "no-import-type-side-effects/015.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
       "rule": "@typescript-eslint/no-namespace",
+      "path": "no-namespace/003.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/prefer-namespace-keyword",
       "path": "no-namespace/003.ts",
       "line": 1,
       "column": 1
@@ -284,6 +2530,12 @@
     },
     {
       "rule": "@typescript-eslint/no-namespace",
+      "path": "no-namespace/005.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/prefer-namespace-keyword",
       "path": "no-namespace/005.ts",
       "line": 1,
       "column": 1
@@ -305,6 +2557,942 @@
       "path": "no-namespace/007.ts",
       "line": 3,
       "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/001.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-asserted-optional-chain/001.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/002.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-asserted-optional-chain/002.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/003.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/004.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/005.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/006.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-asserted-optional-chain/006.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-asserted-optional-chain/007.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/009.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-asserted-optional-chain/009.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/010.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-asserted-optional-chain/010.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/011.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-asserted-optional-chain/011.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/012.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/013.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-asserted-optional-chain/013.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-asserted-optional-chain",
+      "path": "no-non-null-asserted-optional-chain/014.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/014.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-asserted-optional-chain/014.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-asserted-optional-chain",
+      "path": "no-non-null-asserted-optional-chain/015.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/015.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-asserted-optional-chain/015.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-asserted-optional-chain",
+      "path": "no-non-null-asserted-optional-chain/016.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/016.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-asserted-optional-chain",
+      "path": "no-non-null-asserted-optional-chain/017.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/017.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/018.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-asserted-optional-chain/018.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-asserted-optional-chain",
+      "path": "no-non-null-asserted-optional-chain/018.ts",
+      "line": 1,
+      "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/019.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-asserted-optional-chain/019.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-asserted-optional-chain",
+      "path": "no-non-null-asserted-optional-chain/019.ts",
+      "line": 1,
+      "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/020.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-asserted-optional-chain/020.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-asserted-optional-chain",
+      "path": "no-non-null-asserted-optional-chain/020.ts",
+      "line": 1,
+      "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/021.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-asserted-optional-chain",
+      "path": "no-non-null-asserted-optional-chain/021.ts",
+      "line": 1,
+      "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-asserted-optional-chain/022.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-asserted-optional-chain",
+      "path": "no-non-null-asserted-optional-chain/022.ts",
+      "line": 1,
+      "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/022.ts",
+      "line": 1,
+      "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-asserted-optional-chain",
+      "path": "no-non-null-asserted-optional-chain/023.ts",
+      "line": 1,
+      "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-asserted-optional-chain/023.ts",
+      "line": 1,
+      "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/001.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/002.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/003.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/004.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/005.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/006.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/007.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/007.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/008.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/008.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/009.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/009.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/010.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/010.ts",
+      "line": 1,
+      "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/011.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/011.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/012.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/012.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/013.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/013.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/014.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/015.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-extra-non-null-assertion",
+      "path": "no-non-null-assertion/016.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-extra-non-null-assertion",
+      "path": "no-non-null-assertion/016.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/016.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/016.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/016.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/016.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-extra-non-null-assertion",
+      "path": "no-non-null-assertion/017.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/017.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/017.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/017.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-extra-non-null-assertion",
+      "path": "no-non-null-assertion/018.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/018.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/018.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/018.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-extra-non-null-assertion",
+      "path": "no-non-null-assertion/019.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/019.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/019.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-extra-non-null-assertion",
+      "path": "no-non-null-assertion/020.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/020.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/020.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-extra-non-null-assertion",
+      "path": "no-non-null-assertion/021.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/021.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/021.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-extra-non-null-assertion",
+      "path": "no-non-null-assertion/022.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/022.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/023.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/023.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/024.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/024.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/025.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/025.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/026.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-non-null-assertion/026.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/027.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-non-null-assertion/028.ts",
+      "line": 2,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/001.ts",
+      "line": 1,
+      "column": 17
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/002.ts",
+      "line": 1,
+      "column": 20
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/003.ts",
+      "line": 1,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/004.ts",
+      "line": 1,
+      "column": 35
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/005.ts",
+      "line": 1,
+      "column": 44
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/006.ts",
+      "line": 1,
+      "column": 41
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/007.ts",
+      "line": 3,
+      "column": 33
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/008.ts",
+      "line": 1,
+      "column": 20
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/009.ts",
+      "line": 1,
+      "column": 24
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/010.ts",
+      "line": 1,
+      "column": 26
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/011.ts",
+      "line": 1,
+      "column": 38
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/012.ts",
+      "line": 1,
+      "column": 47
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/013.ts",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/013.ts",
+      "line": 1,
+      "column": 32
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/014.ts",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/014.ts",
+      "line": 1,
+      "column": 35
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/015.ts",
+      "line": 1,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/015.ts",
+      "line": 1,
+      "column": 35
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/016.ts",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/016.ts",
+      "line": 1,
+      "column": 45
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/017.tsx",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/017.tsx",
+      "line": 1,
+      "column": 35
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/018.mts",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/018.mts",
+      "line": 1,
+      "column": 35
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/019.cts",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/019.cts",
+      "line": 1,
+      "column": 35
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/020.tsx",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/020.tsx",
+      "line": 1,
+      "column": 36
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/021.tsx",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/021.tsx",
+      "line": 1,
+      "column": 37
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/022.tsx",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/022.tsx",
+      "line": 1,
+      "column": 37
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/023.tsx",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/023.tsx",
+      "line": 1,
+      "column": 38
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/024.tsx",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/024.tsx",
+      "line": 1,
+      "column": 45
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/025.tsx",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/025.tsx",
+      "line": 1,
+      "column": 30
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/025.tsx",
+      "line": 1,
+      "column": 50
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/026.ts",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/026.ts",
+      "line": 1,
+      "column": 36
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/027.ts",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/027.ts",
+      "line": 1,
+      "column": 35
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/028.ts",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/028.ts",
+      "line": 1,
+      "column": 39
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/029.ts",
+      "line": 1,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/030.ts",
+      "line": 1,
+      "column": 20
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/031.ts",
+      "line": 3,
+      "column": 10
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/031.ts",
+      "line": 3,
+      "column": 31
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/032.ts",
+      "line": 3,
+      "column": 10
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unnecessary-type-constraint/032.ts",
+      "line": 3,
+      "column": 31
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/033.ts",
+      "line": 1,
+      "column": 16
+    },
+    {
+      "rule": "@typescript-eslint/consistent-type-definitions",
+      "path": "no-unnecessary-type-constraint/034.ts",
+      "line": 1,
+      "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/no-unnecessary-type-constraint",
+      "path": "no-unnecessary-type-constraint/034.ts",
+      "line": 1,
+      "column": 11
     },
     {
       "rule": "@typescript-eslint/no-unsafe-function-type",
@@ -335,6 +3523,288 @@
       "path": "no-unsafe-function-type/008.ts",
       "line": 2,
       "column": 25
+    },
+    {
+      "rule": "@typescript-eslint/no-namespace",
+      "path": "no-unused-expressions/007.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/prefer-namespace-keyword",
+      "path": "no-unused-expressions/007.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-namespace",
+      "path": "no-unused-expressions/008.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "no-unused-expressions/011.ts",
+      "line": 2,
+      "column": 28
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/013.ts",
+      "line": 1,
+      "column": 8
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/014.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/015.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/016.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/017.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/018.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/019.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/020.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/021.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/022.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/023.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/024.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-namespace",
+      "path": "no-unused-expressions/025.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/prefer-namespace-keyword",
+      "path": "no-unused-expressions/025.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/025.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/no-namespace",
+      "path": "no-unused-expressions/026.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/026.ts",
+      "line": 6,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/027.ts",
+      "line": 5,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/028.ts",
+      "line": 3,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/029.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/030.ts",
+      "line": 3,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/031.ts",
+      "line": 3,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/032.ts",
+      "line": 3,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-non-null-assertion",
+      "path": "no-unused-expressions/033.ts",
+      "line": 3,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-unused-expressions/033.ts",
+      "line": 3,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-useless-empty-export",
+      "path": "no-useless-empty-export/014.ts",
+      "line": 3,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-useless-empty-export",
+      "path": "no-useless-empty-export/015.ts",
+      "line": 3,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-useless-empty-export",
+      "path": "no-useless-empty-export/016.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-useless-empty-export",
+      "path": "no-useless-empty-export/017.ts",
+      "line": 4,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-useless-empty-export",
+      "path": "no-useless-empty-export/018.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-useless-empty-export",
+      "path": "no-useless-empty-export/019.ts",
+      "line": 4,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-useless-empty-export",
+      "path": "no-useless-empty-export/020.ts",
+      "line": 3,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-useless-empty-export",
+      "path": "no-useless-empty-export/021.ts",
+      "line": 3,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-useless-empty-export",
+      "path": "no-useless-empty-export/021.ts",
+      "line": 4,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/consistent-type-definitions",
+      "path": "no-wrapper-object-types/032.ts",
+      "line": 1,
+      "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/consistent-type-definitions",
+      "path": "no-wrapper-object-types/033.ts",
+      "line": 1,
+      "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/consistent-type-definitions",
+      "path": "no-wrapper-object-types/034.ts",
+      "line": 1,
+      "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/consistent-type-definitions",
+      "path": "no-wrapper-object-types/035.ts",
+      "line": 1,
+      "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/consistent-type-definitions",
+      "path": "no-wrapper-object-types/036.ts",
+      "line": 1,
+      "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/consistent-type-definitions",
+      "path": "no-wrapper-object-types/037.ts",
+      "line": 1,
+      "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/consistent-type-definitions",
+      "path": "no-wrapper-object-types/038.ts",
+      "line": 1,
+      "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/consistent-type-definitions",
+      "path": "no-wrapper-object-types/039.ts",
+      "line": 1,
+      "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/consistent-type-definitions",
+      "path": "no-wrapper-object-types/040.ts",
+      "line": 1,
+      "column": 6
     },
     {
       "rule": "@typescript-eslint/no-wrapper-object-types",
@@ -391,6 +3861,12 @@
       "column": 24
     },
     {
+      "rule": "@typescript-eslint/no-unused-expressions",
+      "path": "no-wrapper-object-types/053.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
       "rule": "@typescript-eslint/no-wrapper-object-types",
       "path": "no-wrapper-object-types/053.ts",
       "line": 1,
@@ -431,6 +3907,24 @@
       "path": "no-wrapper-object-types/058.ts",
       "line": 1,
       "column": 24
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "prefer-as-const/028.ts",
+      "line": 3,
+      "column": 20
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "prefer-as-const/028.ts",
+      "line": 4,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-function",
+      "path": "prefer-as-const/031.ts",
+      "line": 3,
+      "column": 15
     },
     {
       "rule": "@typescript-eslint/prefer-as-const",
@@ -521,6 +4015,222 @@
       "path": "prefer-as-const/046.ts",
       "line": 3,
       "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/prefer-enum-initializers",
+      "path": "prefer-enum-initializers/005.ts",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-enum-initializers",
+      "path": "prefer-enum-initializers/006.ts",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-enum-initializers",
+      "path": "prefer-enum-initializers/006.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-enum-initializers",
+      "path": "prefer-enum-initializers/007.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-enum-initializers",
+      "path": "prefer-enum-initializers/008.ts",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-enum-initializers",
+      "path": "prefer-literal-enum-member/008.ts",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-enum-initializers",
+      "path": "prefer-literal-enum-member/009.ts",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "prefer-literal-enum-member/011.ts",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "prefer-literal-enum-member/012.ts",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "prefer-literal-enum-member/013.ts",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "prefer-literal-enum-member/014.ts",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "prefer-literal-enum-member/015.ts",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "prefer-literal-enum-member/016.ts",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "prefer-literal-enum-member/016.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "prefer-literal-enum-member/016.ts",
+      "line": 5,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "prefer-literal-enum-member/016.ts",
+      "line": 6,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "prefer-literal-enum-member/016.ts",
+      "line": 7,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-enum-initializers",
+      "path": "prefer-literal-enum-member/017.ts",
+      "line": 6,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "prefer-literal-enum-member/017.ts",
+      "line": 7,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "prefer-literal-enum-member/018.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "prefer-literal-enum-member/019.ts",
+      "line": 5,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-enum-initializers",
+      "path": "prefer-literal-enum-member/020.ts",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "prefer-literal-enum-member/020.ts",
+      "line": 7,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "prefer-literal-enum-member/021.ts",
+      "line": 5,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-enum-initializers",
+      "path": "prefer-literal-enum-member/022.ts",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-literal-enum-member",
+      "path": "prefer-literal-enum-member/022.ts",
+      "line": 4,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/no-namespace",
+      "path": "prefer-namespace-keyword/003.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-namespace",
+      "path": "prefer-namespace-keyword/004.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-namespace",
+      "path": "prefer-namespace-keyword/006.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/prefer-namespace-keyword",
+      "path": "prefer-namespace-keyword/006.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-namespace",
+      "path": "prefer-namespace-keyword/007.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/prefer-namespace-keyword",
+      "path": "prefer-namespace-keyword/007.ts",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-namespace",
+      "path": "prefer-namespace-keyword/008.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/prefer-namespace-keyword",
+      "path": "prefer-namespace-keyword/008.ts",
+      "line": 2,
+      "column": 1
+    },
+    {
+      "rule": "@typescript-eslint/no-namespace",
+      "path": "prefer-namespace-keyword/008.ts",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/prefer-namespace-keyword",
+      "path": "prefer-namespace-keyword/008.ts",
+      "line": 3,
+      "column": 3
     }
   ]
 }

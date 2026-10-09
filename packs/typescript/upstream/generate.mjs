@@ -12,14 +12,18 @@
 // Fixtures: each rule's test file is loaded with a stub RuleTester that records its cases instead of linting.
 // A case with rule options is left out (the pack's port is the rule with its default options). Every other case's
 // code is written to <tool>/fixtures/<rule>/<n>.<ext> and linted, with every pack rule of the tool on, under the
-// pack's one configuration (CONFIG below: ESLint's defaults, typescript-eslint's parser for TypeScript files), so
-// the recording is the linter's answer under the configuration the ports read, not the case's own expectation.
+// tool's configuration (optionsModule below: ESLint's defaults, with typescript-eslint's parser for TypeScript files
+// when ESLint's rules record, and for every file when typescript-eslint's rules record, as typescript-eslint's
+// approved `base` configuration sets it), so the recording is the linter's answer under the configuration the ports
+// read, not the case's own expectation. A case that asks for type information is left out when its rule requires
+// type checking; for any other rule its code is kept, since the rule reads no types (typescript-eslint runs some
+// rules' whole test files with types on, as no-dynamic-delete's).
 // A case's extension is its parser's: .ts (.tsx with JSX) for typescript-eslint's parser, .js (.jsx) for espree,
 // or the TypeScript-family extension of its filename (.d.ts, .tsx, .mts, .cts). Code the configuration cannot
 // parse is left out. Each kept file is one analysis unit.
 //
 // Corpora: every file the runner scores (TypeScript and JavaScript files under the corpus's paths, outside
-// directories the host ignores and the pack's excludes) is linted with every pack rule of the tool on. Files ESLint
+// directories the host ignores and the pack's excludes) is linted once per tool, with every pack rule of the tool on. Files ESLint
 // cannot parse are `skipped`. Columns are ESLint's, converted from UTF-16 code units to code points, 1-based.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -67,6 +71,7 @@ for (const [source, { commit }] of Object.entries(CHECKOUTS)) {
 
 const { ESLint } = toolsRequire("eslint");
 const tsParser = toolsRequire("@typescript-eslint/parser");
+const tsPlugin = toolsRequire("@typescript-eslint/eslint-plugin");
 const PLUGIN_PREFIX = "@typescript-eslint/";
 
 /** Pack rules by tool: `upstream.rule` is the rule id ESLint reports (`no-debugger`, `@typescript-eslint/no-namespace`). */
@@ -80,11 +85,12 @@ const versionOf = tool => PACK.tools.find(entry => entry.name === tool).version;
 
 let optionsRuns = 0;
 /**
- * The pack's configuration: ESLint's defaults (ecmaVersion latest, sourceType module, espree), typescript-eslint's
- * parser for TypeScript files. Concurrent linting needs cloneable options, so it is an options module that ESLint's
+ * `tool`'s configuration: ESLint's defaults (ecmaVersion latest, sourceType module, espree), typescript-eslint's
+ * parser for TypeScript files, and for every file when `tool` is typescript-eslint (its `base` configuration sets the
+ * parser with no `files`). Concurrent linting needs cloneable options, so it is an options module that ESLint's
  * worker threads import; `rules` reach it through the environment.
  */
-function optionsModule(cwd, rules, concurrency) {
+function optionsModule(cwd, rules, concurrency, tool) {
   const path = join(options.tools, ".generate-shims", "eslint-options.mjs");
   mkdirSync(dirname(path), { recursive: true });
   const from = name => JSON.stringify(pathToFileURL(toolsRequire.resolve(name)).href);
@@ -106,7 +112,7 @@ export default {
       rules: Object.fromEntries(rules.map(rule => [rule, "error"])),
     },
     { files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } },
-    { files: ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"], languageOptions: { parser: tsParser } },
+    { files: ${JSON.stringify(tool === "typescript-eslint" ? ECMA_EXTENSIONS.map(extension => `**/*${extension}`) : ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"])}, languageOptions: { parser: tsParser } },
     { files: ["**/*.tsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } },
   ],
 };
@@ -129,8 +135,8 @@ function codePointColumn(lines, line, column) {
 const splitLines = text => text.split(/\r\n|[\r\n\u2028\u2029]/u);
 
 /** Lints `files` (relative to `cwd`) with `rules` on; returns findings and the files ESLint could not parse. */
-async function lint(cwd, files, rules) {
-  const eslint = await ESLint.fromOptionsModule(optionsModule(cwd, rules, files.length > 1000 ? "auto" : "off"));
+async function lint(cwd, files, rules, tool) {
+  const eslint = await ESLint.fromOptionsModule(optionsModule(cwd, rules, files.length > 1000 ? "auto" : "off", tool));
   const findings = [];
   const unparsed = [];
   const wanted = new Set(rules);
@@ -245,11 +251,12 @@ const merge = (...layers) =>
   }, {});
 
 /** The extension a case is written with, or why it is left out. */
-function extensionOf(source, test, languageOptions) {
+function extensionOf(source, test, languageOptions, typeChecked) {
   const parser = languageOptions.parser ?? (source === "typescript-eslint" ? tsParser : undefined);
   if (parser !== undefined && parser !== tsParser) return { skip: "custom parser" };
   const parserOptions = languageOptions.parserOptions ?? {};
-  if (parserOptions.project !== undefined || parserOptions.projectService !== undefined || parserOptions.programs !== undefined) return { skip: "type information" };
+  const typed = parserOptions.project !== undefined || parserOptions.projectService !== undefined || parserOptions.programs !== undefined;
+  if (typed && typeChecked) return { skip: "type information" };
   const jsx = parserOptions.ecmaFeatures?.jsx === true;
   if (parser === tsParser) {
     const filename = typeof test.filename === "string" ? test.filename : "";
@@ -276,6 +283,7 @@ function extractFixtures(tool) {
     if (runs.length === 0) throw new Error(`${rule}: ${path} ran no RuleTester for ${name}`);
     const seen = new Set();
     const count = (counts[rule] = { cases: 0, withOptions: 0, skipped: {}, written: 0, duplicate: 0 });
+    const typeChecked = tool === "typescript-eslint" && tsPlugin.rules[name].meta.docs?.requiresTypeChecking === true;
     for (const run of runs) {
       for (const kind of ["valid", "invalid"]) {
         for (const entry of run.tests[kind] ?? []) {
@@ -290,7 +298,7 @@ function extractFixtures(tool) {
             continue;
           }
           const languageOptions = merge(run.config.languageOptions, test.languageOptions);
-          const chosen = extensionOf(tool, test, languageOptions);
+          const chosen = extensionOf(tool, test, languageOptions, typeChecked);
           if (chosen.skip !== undefined) {
             count.skipped[chosen.skip] = (count.skipped[chosen.skip] ?? 0) + 1;
             continue;
@@ -315,7 +323,7 @@ function extractFixtures(tool) {
 
 async function recordFixtures(tool) {
   const { fixtures, files, counts } = extractFixtures(tool);
-  const { findings, unparsed } = await lint(fixtures, files, RULES.get(tool));
+  const { findings, unparsed } = await lint(fixtures, files, RULES.get(tool), tool);
   for (const path of unparsed) rmSync(join(fixtures, path));
   const unparsedSet = new Set(unparsed);
   const kept = files.filter(file => !unparsedSet.has(file));
@@ -367,20 +375,17 @@ async function recordCorpus(name, directory) {
   const head = execFileSync("git", ["-C", directory, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   if (head !== corpus.commit) throw new Error(`${directory} is at ${head}; the pack pins ${corpus.commit}`);
   const files = corpusFiles(corpus, directory);
-  const allRules = [...RULES.values()].flat();
-  const started = performance.now();
-  const { findings, unparsed } = await lint(directory, files, allRules);
-  console.log(`corpus ${name}: ${files.length} files, ${unparsed.length} unparsed, ${Math.round(performance.now() - started)} ms`);
+  console.log(`corpus ${name}: ${files.length} files`);
   for (const [tool, rules] of RULES) {
-    const own = new Set(rules);
-    const recorded = findings.filter(finding => own.has(finding.rule));
+    const started = performance.now();
+    const { findings, unparsed } = await lint(directory, files, rules, tool);
     writeJson(join(HERE, tool, `corpus-${name}.expected.json`), {
       tool,
       version: versionOf(tool),
       source: { kind: "corpus", name, repository: corpus.repository, commit: corpus.commit, rules, skipped: unparsed },
-      findings: recorded,
+      findings,
     });
-    console.log(`  ${tool}: ${recorded.length} findings`);
+    console.log(`  ${tool}: ${findings.length} findings, ${unparsed.length} unparsed, ${Math.round(performance.now() - started)} ms`);
   }
 }
 

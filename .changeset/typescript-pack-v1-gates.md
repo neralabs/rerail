@@ -2,4 +2,4 @@
 "@neralabs/rerail-pack-typescript": minor
 ---
 
-TypeScript pack: typescript-eslint `no-non-null-assertion` and `no-this-alias` move to `candidates/` after failing a V1 validation gate (19 rules), and 45 typescript-eslint and @vitest/eslint-plugin ports join `candidates/`. The pack is not released yet.
+TypeScript pack: 16 typescript-eslint rules join the pack (36 rules); 11 typescript-eslint rules start off because no approved typescript-eslint configuration turns them on; `no-this-alias` moves to `candidates/` after failing upstream's tests, and 30 typescript-eslint and @vitest/eslint-plugin ports are candidates. The pack is not released yet.

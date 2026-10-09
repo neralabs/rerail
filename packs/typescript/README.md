@@ -1,7 +1,8 @@
 # Rerail rule pack: TypeScript
 
-19 code rules for TypeScript and JavaScript, ported from ESLint 10.11.0 (14 rules) and typescript-eslint 8.70.1
-(5 rules), each with its default options. Each is scored against the tool's own findings on the tool's test fixtures
+36 code rules for TypeScript and JavaScript, ported from ESLint 10.11.0 (14 rules) and typescript-eslint 8.70.1
+(22 rules), each with its default options. 11 typescript-eslint rules start off (`"on": false`): no approved
+typescript-eslint configuration turns them on, so they are experimental. Each is scored against the tool's own findings on the tool's test fixtures
 and on a pinned corpus (vscode), through the engine's production workspace path, with every disagreement declared in
 `divergences.json`: 14 today, all `rerail-unknown`, each a file the tree-sitter grammars read with a syntax error.
 
@@ -10,7 +11,7 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack type
 
 | Path | What |
 |---|---|
-| `pack.json` | The pack (`rerail.rule-pack/v1`): each rule's document, title and group; one rule carries examples |
+| `pack.json` | The pack (`rerail.rule-pack/v1`): each rule's document, title, group and, for a rule that starts off, `on`; two rules carry examples |
 | `rules/` | The code-rule documents (`rerail.policy/v1`) |
 | `conformance.json` | Each ported rule's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools and the pinned corpus (vscode) |
 | `divergences.json` | Declared disagreements with the tools |
