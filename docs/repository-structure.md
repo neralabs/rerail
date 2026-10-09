@@ -130,7 +130,8 @@ Exemption `non-engine-families`: the children of `fixtures/host/` and `fixtures/
 
 Every `fixtures/<family>/` has `languages/<family>.json` or `packs/<family>/`, or is a declared shared
 family: `ecma` (ECMAScript recordings shared by the javascript and typescript languages and their packs),
-`host` and `packs` (not tied to a language). Every pack ships at least one rule document in `rules/`.
+`host` and `packs` (not tied to a language). Every pack holds at least one rule document in `rules/`, or in
+`candidates/rules/` while it ships none because all its ports are candidates.
 
 ## Layering
 
