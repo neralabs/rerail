@@ -17,7 +17,7 @@ mod syntax;
 mod value;
 
 pub(crate) use super::with_adapter;
-pub(crate) use arguments::ArgumentRules;
+pub(crate) use arguments::{ArgumentFeature, ArgumentRules};
 pub(crate) use calls::CallRules;
 pub(crate) use format_args::FormatArgRules;
 pub(crate) use scope::ScopeRules;
@@ -221,7 +221,7 @@ impl Adapter for Blade {
     const TERMINATORS: Terminators = Terminators::Newlines;
     type Scope = Self;
     type Value = Php;
-    type Arguments = Php;
+    type Arguments = Self;
     type Calls = Php;
     type FormatArgs = Php;
 
