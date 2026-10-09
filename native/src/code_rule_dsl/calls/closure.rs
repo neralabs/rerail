@@ -5,8 +5,8 @@
 
 use super::names::Name;
 use super::php;
-use super::summary::{BASE, CLASS, DECORATED, METACLASS, OPEN, SHADOWED, Summary, UNKNOWN_BASE};
-use crate::code_rule_dsl::language::Family;
+use super::summary::{BASE, CLASS, DECORATED, METACLASS, OPEN, Summary, UNKNOWN_BASE};
+use crate::code_rule_dsl::language::adapter::{Adapter, CallRules, with_adapter};
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -53,7 +53,7 @@ impl DefRef {
 
 /// What a name links to.
 #[derive(Clone, Debug, Default, PartialEq)]
-struct Link {
+pub(crate) struct Link {
     defs: Vec<DefRef>,
     /// The name denotes a module's member no definition or alias gives.
     open: bool,
@@ -144,35 +144,12 @@ impl Contribution {
         };
         for (local, def) in summary.defs.iter().enumerate() {
             let name = summary.interned(def.name);
-            match name.family() {
-                // A definition a later binding replaces is no longer what its name denotes.
-                Family::Python if def.flags & SHADOWED != 0 => {}
-                Family::Python => {
-                    for name in names(name) {
-                        contribution
-                            .defs
-                            .entry(name)
-                            .or_default()
-                            .push((local as u32, def.flags));
-                    }
-                }
-                // PHP compares function, class and method names case-insensitively: a definition
-                // is linked by its lowercased name.
-                Family::Php => {
-                    let text = name.text();
-                    let key = if text.bytes().any(|byte| byte.is_ascii_uppercase()) {
-                        Name::new(&text.to_ascii_lowercase())
-                    } else {
-                        name.clone()
-                    };
-                    contribution
-                        .defs
-                        .entry(key)
-                        .or_default()
-                        .push((local as u32, def.flags));
-                }
-                Family::Ecma | Family::Blade => {}
-            }
+            with_adapter!(name.family(), A => <<A as Adapter>::Calls as CallRules>::definition_keys(
+                name,
+                def.flags,
+                names,
+                |key| contribution.defs.entry(key).or_default().push((local as u32, def.flags)),
+            ));
         }
         for (key, target, kind) in &summary.supers {
             let target = summary.interned(*target);
@@ -1245,12 +1222,7 @@ impl Graph {
             .summary_of(def.file)
             .expect("a reached definition is linked");
         let name = summary.interned(summary.defs[def.local as usize].name);
-        match name.family() {
-            Family::Php => std::borrow::Cow::Owned(php::label(name.text())),
-            Family::Python | Family::Ecma | Family::Blade => {
-                std::borrow::Cow::Borrowed(name.text())
-            }
-        }
+        with_adapter!(name.family(), A => <<A as Adapter>::Calls as CallRules>::label(name))
     }
 
     /// What a call of `name` links to, in number order, and whether it may be a module member no
@@ -1381,11 +1353,9 @@ impl Graph {
                 open: true,
             };
         }
-        match name.family() {
-            Family::Python => self.link_python(name, hops, followed),
-            Family::Php => self.link_php(name, hops, followed),
-            Family::Ecma | Family::Blade => Link::default(),
-        }
+        with_adapter!(name.family(), A => <<A as Adapter>::Calls as CallRules>::link(
+            self, name, hops, followed,
+        ))
     }
 
     /// Links a PHP callee name. A namespace fallback (`\ns\f|\f`) is the namespaced function
@@ -1397,7 +1367,7 @@ impl Graph {
     /// `c` (`sealed_in`), the method every class the workspace derives from `c` looks up. A name
     /// no definition gives (a builtin, a vendor class, an undefined method only `__call` could
     /// answer) has no edge.
-    fn link_php(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Link {
+    pub(crate) fn link_php(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Link {
         let text = name.text();
         if let Some(base) = text.strip_suffix('^') {
             return self.link_late(&Name::new(base), hops, followed);
@@ -1579,7 +1549,7 @@ impl Graph {
     /// gives the attribute, a function or value whose attribute is set at run time (unknown), or a
     /// module whose member this is. A late-bound name (`pkg.C.m^`, `pkg.C.^` for `cls()`) is the
     /// class's and every workspace subclass's.
-    fn link_python(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Link {
+    pub(crate) fn link_python(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Link {
         if name.text().ends_with('^') {
             return self.link_late_python(name, hops, followed);
         }
@@ -1996,7 +1966,9 @@ impl Graph {
     fn python_class(&self, class: &Name) -> Option<ClassMemo> {
         let entries = self.supers.get(class)?;
         // A class is keyed by its module's name and by its path's: index it once.
-        if class.family() != Family::Python || self.own_name(class).as_ref() != Some(class) {
+        if !with_adapter!(class.family(), A => <<A as Adapter>::Calls as CallRules>::SUBCLASSES)
+            || self.own_name(class).as_ref() != Some(class)
+        {
             return None;
         }
         let mut memo = ClassMemo {

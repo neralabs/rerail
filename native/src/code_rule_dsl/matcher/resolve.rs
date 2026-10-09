@@ -1397,26 +1397,20 @@ fn build<D: Doc>(
     )
 }
 
-/// What `calls` reads at `node`'s file in `language` (`calls::FileTables`): Python's table under
-/// the default reading (as `resolves` without options reads it) and the file's module path; PHP's
-/// variable flow and name resolution (Blade's: its embedded program's). `None` where one could not
-/// be built.
+/// What `calls` reads at `node`'s file in `language` (`calls::FileTables`, `CallRules::tables`):
+/// its table under the default reading (as `resolves` without options reads it), the file's
+/// module path, and the PHP names a table's flow reads (Blade's: its embedded program's). `None`
+/// where one could not be built.
 pub(crate) fn calls_tables<D: Doc>(
     node: &Node<'_, D>,
     language: GrammarDialect,
 ) -> Option<crate::code_rule_dsl::calls::FileTables> {
-    use crate::code_rule_dsl::calls::FileTables;
-    match Family::of(language) {
-        Family::Python => {
-            let table = file_table(node, language, Reading::default())?;
-            Some(FileTables::Python(table, file_module()))
-        }
-        Family::Php | Family::Blade => {
-            let table = file_table(node, language, Reading::default())?;
-            Some(FileTables::Php(table, file_php_names(node, language)?))
-        }
-        Family::Ecma => None,
-    }
+    use crate::code_rule_dsl::language::adapter::CallRules;
+    with_adapter!(Family::of(language), A => <<A as Adapter>::Calls as CallRules>::tables(
+        || file_table(node, language, Reading::default()),
+        file_module,
+        || file_php_names(node, language),
+    ))
 }
 
 /// The table of `node`'s file under `reading`, charging its build to the current clause's
