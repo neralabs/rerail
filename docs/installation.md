@@ -52,7 +52,12 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
    line there. A hook, status line
    or MCP bridge entry of the shape setup writes is also replaced when its
    install is gone, with neither its script nor a `package.json` beside it on
-   disk, since it can never run again. The retired `/rerail-session`, `/rerail-disable` and
+   disk, since it can never run again. So is an OMP extension link or Pi
+   package that names a gone root of the shape setup registers (a Rerail
+   home's `current`, such as `~/.rerail/current` or `$RERAIL_HOME/current`, or
+   `node_modules/@neralabs/rerail`) with neither a `package.json` nor `dist/`
+   left in it; a missing path of any other shape, such as a gone checkout,
+   stays. Setup's report names the target of each link it removes. The retired `/rerail-session`, `/rerail-disable` and
    `/rerail-enable` command files are removed when they run this install,
    another install of this package or one that is gone; anyone else's stay, and
    removing Rerail removes only this install's. A backup

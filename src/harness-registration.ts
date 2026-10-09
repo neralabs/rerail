@@ -145,6 +145,11 @@ function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
+/** The path cannot exist: it, or a directory on the way to it, is missing or is not a directory. */
+function isAbsent(error: unknown): boolean {
+  return isMissing(error) || (error instanceof Error && "code" in error && error.code === "ENOTDIR");
+}
+
 function assertInside(path: string, container: string, label: string): void {
   const rel = relative(container, path);
   if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
@@ -181,7 +186,7 @@ async function pathExists(path: string): Promise<boolean> {
     await lstat(path);
     return true;
   } catch (error) {
-    return !(isMissing(error) || (error instanceof Error && "code" in error && error.code === "ENOTDIR"));
+    return !isAbsent(error);
   }
 }
 
@@ -195,6 +200,18 @@ async function isReplaceableScript(context: Context, script: string): Promise<bo
   const root = dirname(dirname(script));
   if (await isRerailPackageRoot(context, root)) return true;
   return !(await pathExists(script)) && !(await pathExists(join(root, "package.json")));
+}
+
+/**
+ * Whether an extension link or Pi package names an install of this package that is gone. Nothing is left on disk to
+ * identify it, so only the path does: a root of the shape setup registers (a Rerail home's `current`, under `~/.rerail`
+ * or any `$RERAIL_HOME`, or an npm install at `node_modules/@neralabs/rerail`) with neither a package.json nor dist/ in
+ * it. A gone root of any other shape, such as a tool on an unmounted volume or a gone checkout, stays.
+ */
+async function isGoneInstallRoot(root: string): Promise<boolean> {
+  const segments = root.split(/[\\/]/u);
+  if (segments.at(-1) !== "current" && segments.slice(-3).join("/") !== "node_modules/@neralabs/rerail") return false;
+  return !(await pathExists(join(root, "package.json"))) && !(await pathExists(join(root, "dist")));
 }
 
 function unquoteShellWord(word: string, windows = false): string {
@@ -668,6 +685,16 @@ function planCursor(context: Context): Promise<Plan> {
   });
 }
 
+/**
+ * Whether a Pi package entry is this install or, on registration, another install of this package or one that is gone
+ * (`isGoneInstallRoot`). Only an absolute path, the shape setup writes, can be gone; an `npm:` or `git:` source never is.
+ */
+async function isPackagePiEntry(context: Context, agentDir: string, entry: string): Promise<boolean> {
+  const root = resolve(agentDir, entry);
+  if (context.mode === "unregister") return root === context.root;
+  return await isRerailPackageRoot(context, root) || (isAbsolute(entry) && await isGoneInstallRoot(root));
+}
+
 function planPi(context: Context): Promise<Plan> {
   const agentDir = join(context.home, ".pi", "agent");
   const path = join(agentDir, "settings.json");
@@ -679,8 +706,7 @@ function planPi(context: Context): Promise<Plan> {
       throw new Error(`Cannot register rerail package: "packages" in ${path} is not an array`);
     const kept: unknown[] = [];
     for (const entry of packages as unknown[]) {
-      const root = typeof entry === "string" ? resolve(agentDir, entry) : undefined;
-      if (root !== undefined && (context.mode === "register" ? await isRerailPackageRoot(context, root) : root === context.root)) continue;
+      if (typeof entry === "string" && await isPackagePiEntry(context, agentDir, entry)) continue;
       kept.push(entry);
     }
     if (context.mode === "register") kept.push(context.root);
@@ -695,7 +721,8 @@ const OMP_EXTENSION_NAME = "rerail";
 
 /**
  * Registration replaces another install of this package (identified as hooks are, by its package.json) under any
- * extension name, so one OMP session never loads two copies.
+ * extension name, so one OMP session never loads two copies, and a dangling link to an install that is gone
+ * (`isGoneInstallRoot`).
  */
 async function planOmpPackageDuplicates(context: Context): Promise<Plan[]> {
   if (context.mode !== "register") return [];
@@ -709,9 +736,18 @@ async function planOmpPackageDuplicates(context: Context): Promise<Plan[]> {
     if (name === OMP_EXTENSION_NAME) continue;
     const path = join(directory, name);
     if (!(await lstat(path)).isSymbolicLink()) continue;
-    const target = await realpath(path).catch(() => undefined);
-    if (target === undefined || !(await isRerailPackageRoot(context, target))) continue;
-    plans.push(planMutation(context, "omp", path, "updated", `remove symlink to another install at ${target}`, () => unlink(path)));
+    let target: string;
+    let gone = false;
+    try {
+      target = await realpath(path);
+    } catch (error) {
+      if (!isAbsent(error)) continue;
+      target = resolve(directory, await readlink(path));
+      gone = true;
+    }
+    if (!(await (gone ? isGoneInstallRoot(target) : isRerailPackageRoot(context, target)))) continue;
+    const detail = gone ? `remove symlink to an install that is gone at ${target}` : `remove symlink to another install at ${target}`;
+    plans.push(planMutation(context, "omp", path, "updated", detail, () => unlink(path)));
   }
   return plans;
 }

@@ -909,7 +909,18 @@ describe("legacy package-root cutover", () => {
     const extensions = join(options.home, ".omp", "agent", "extensions");
     await mkdir(extensions, { recursive: true });
     await symlink(bridge, join(extensions, "previous"));
-    await seed(join(options.home, ".pi", "agent", "settings.json"), { packages: [bridge] });
+    // Installs that are gone: a deleted default home, a deleted custom RERAIL_HOME (the review's /old/home/current), a
+    // custom home whose `current` outlived its versions, and a cleaned npx cache.
+    const deleted = join(dirname(options.home), "deleted-home", ".rerail", "current");
+    const custom = join(dirname(options.home), "old", "home", "current");
+    const stale = join(dirname(options.home), "stale-home", "current");
+    await mkdir(dirname(stale), { recursive: true });
+    await symlink(join(dirname(stale), "versions", "0.0.8"), stale);
+    const npxCache = join(dirname(options.home), "npx-cache", "node_modules", "@neralabs", "rerail");
+    await symlink(deleted, join(extensions, "deleted"));
+    await symlink(custom, join(extensions, "custom"));
+    await symlink(stale, join(extensions, "stale"));
+    await seed(join(options.home, ".pi", "agent", "settings.json"), { packages: [bridge, deleted, custom, stale, npxCache] });
 
     await registerHarnesses(options);
     const settings = await readJson(settingsPath);
@@ -923,6 +934,27 @@ describe("legacy package-root cutover", () => {
     });
     expect(await readdir(extensions)).toEqual(["rerail"]);
     expect((await readJson(join(options.home, ".pi", "agent", "settings.json"))).packages).toEqual([options.root]);
+  });
+
+  // A gone root shows nothing on disk, so only the path setup registers marks it as an install of this package.
+  it("keeps a dangling extension link and a Pi entry that do not name a Rerail install root", async () => {
+    const options = { ...await fixture(), harnesses: ["omp", "pi"] as const };
+    const volume = join(dirname(options.home), "unmounted-volume");
+    const tool = join(volume, "tool");
+    const scoped = join(volume, "node_modules", "@acme", "rerail");
+    const extensions = join(options.home, ".omp", "agent", "extensions");
+    await mkdir(extensions, { recursive: true });
+    await symlink(tool, join(extensions, "tool"));
+    await symlink(scoped, join(extensions, "scoped"));
+    const piPath = join(options.home, ".pi", "agent", "settings.json");
+    const packages = ["npm:@acme/current", "git:github.com/acme/dotfiles/.rerail/current", tool, scoped];
+    await seed(piPath, { packages });
+
+    await registerHarnesses(options);
+    expect((await readdir(extensions)).sort()).toEqual(["rerail", "scoped", "tool"]);
+    expect(await readlink(join(extensions, "tool"))).toBe(tool);
+    expect(await readlink(join(extensions, "scoped"))).toBe(scoped);
+    expect((await readJson(piPath)).packages).toEqual([...packages, options.root]);
   });
 });
 
