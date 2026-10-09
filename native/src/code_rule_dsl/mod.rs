@@ -93,12 +93,13 @@ impl CodeRuleDslRuntime {
     }
 }
 
-/// The module path a Python file's `module` carries, from the package markers on disk: a dotted
-/// string, a list of names when one keeps a dot, or null outside a package. Hosts and the native
-/// repository ingestion paths share this one derivation.
+/// The module a file's `module` carries, from the package markers on disk, for the file at
+/// `absolute` whose dialect's label is `label`: a dotted string, a list of names when one keeps
+/// a dot, or null outside a package and for a family without modules (`Adapter::module_path`).
+/// Hosts and the native repository ingestion paths share this one derivation.
 #[napi]
-pub fn python_module_path(absolute: String) -> Option<napi::Either<String, Vec<String>>> {
-    match model::python_module_path_on_disk(std::path::Path::new(&absolute))? {
+pub fn module_path(label: String, absolute: String) -> Option<napi::Either<String, Vec<String>>> {
+    match language::adapter::module_path(&label, std::path::Path::new(&absolute))? {
         Value::String(module) => Some(napi::Either::A(module)),
         Value::Array(names) => Some(napi::Either::B(
             names

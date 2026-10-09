@@ -196,8 +196,8 @@ export interface NativeBinding {
   health(): NativeHealth;
   nativeMemoryProfile(): string;
   processSessionId(pid: number): number | null;
-  /** The Python module path hosts send as a file's `module`, from the package markers on disk. */
-  pythonModulePath(absolute: string): string | string[] | null;
+  /** The module a file of dialect `label` carries as `module`, from the package markers on disk; null where its family names no modules or the file is outside a package. */
+  modulePath(label: string, absolute: string): string | string[] | null;
   /** Throws unless `pattern` compiles in the regex dialect and size limit structural rules use. */
   validateRegex(pattern: string): void;
   /** Windows only: start a detached process that inherits only NUL stdin and the appended log file; returns its pid. */
