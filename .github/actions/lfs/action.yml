@@ -1,0 +1,29 @@
+name: Git LFS objects
+description: >-
+  Replaces the checkout's Git LFS pointers (the embedding model, the engine's Unicode names table) with their content.
+  The objects come from a cache keyed on their ids (`git lfs ls-files -l`), so a run downloads them from LFS only
+  when one of them changes. Use it right after `actions/checkout`, which leaves the pointers when `lfs` is false.
+
+runs:
+  using: composite
+  steps:
+    - id: objects
+      name: List the LFS objects
+      shell: bash
+      run: echo "digest=$(git lfs ls-files -l | sort | git hash-object --stdin)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore the LFS objects
+      uses: actions/cache@v6
+      with:
+        path: .git/lfs
+        key: lfs-${{ steps.objects.outputs.digest }}
+
+    # The checkout keeps no credentials (`persist-credentials: false`); the token is passed for this
+    # command only, as actions/checkout passes it, and fetches nothing the cache already holds.
+    - name: Check out the LFS objects
+      shell: bash
+      env:
+        TOKEN: ${{ github.token }}
+      run: |
+        auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+        git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" lfs pull

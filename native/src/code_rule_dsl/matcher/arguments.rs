@@ -544,7 +544,7 @@ mod tests {
     use crate::code_rule_dsl::matcher::util::{UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
     use ast_grep_core::tree_sitter::LanguageExt;
 
-    /// Every case in the PHP oracle (`fixtures/php/arguments/generate_php.php`): a slot Rerail
+    /// Every case in the PHP oracle (`fixtures/php/matcher/arguments/generate_php.php`): a slot Rerail
     /// finds passed holds the argument PHP binds to it, a slot Rerail finds absent keeps PHP's
     /// default, and a call PHP refuses passes nothing known. Rerail does not know a slot only where
     /// the case's `unknown` names that slot, with why (a spread whose value it does not know).
@@ -556,8 +556,8 @@ mod tests {
         use crate::code_rule_dsl::value::{Context, php};
         use serde_json::Value as Json;
 
-        let oracle: Json =
-            serde_json::from_str(oracle!("php/arguments/php.expected.json")).expect("oracle JSON");
+        let oracle: Json = serde_json::from_str(oracle!("php/matcher/arguments/php.expected.json"))
+            .expect("oracle JSON");
         assert_eq!(oracle["php"].as_str().map(|v| &v[..3]), Some("8.5"));
         let mut failures = Vec::new();
         for case in oracle["cases"].as_array().expect("cases") {

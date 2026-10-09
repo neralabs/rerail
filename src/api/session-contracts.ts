@@ -1,6 +1,6 @@
 import { createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
-import { audits, PRESENTATION_PRESENCES, sessions } from "../schema.js";
+import { audits, PRESENTATION_PRESENCES, sessions } from "../engine/storage/schema.js";
 
 /** Shared by HTTP/OpenAPI and passive native readers, without importing server handlers. */
 export const sessionSummarySchema = createSelectSchema(sessions)

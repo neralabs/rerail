@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
-import { importAccessOnlyAuth } from "../scripts/host-auth.js";
-import { OmpHost } from "./omp-host.js";
+import { importAccessOnlyAuth } from "../scripts/host/host-auth.js";
+import { OmpHost } from "./support/omp-host.js";
 
 function token(expires: number): string {
   return `test.${Buffer.from(JSON.stringify({ exp: Math.floor(expires / 1000), "https://api.openai.com/auth": { chatgpt_account_id: "sandbox-account" } })).toString("base64url")}.synthetic`;

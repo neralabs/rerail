@@ -1,6 +1,6 @@
 // Builds the Next pack's policies: packs/next/rules/next-<rule>.json (ported rules) and the `rules` lists of
 // packs/next/conformance.json and packs/next/pack.json; packs/next/candidates/rules/next-<rule>.json (rules that cannot
-// pass their fixtures today) and packs/next/candidates/pack.json, a runnable pack scoring the
+// pass their fixtures today) and packs/next/candidates/conformance.json, a runnable pack scoring the
 // candidates against the main pack's recordings and corpora. The JSON files are the committed artifacts; this script is
 // their source: it spells the shared JSX/import/path pieces once (notably the plugin's `split('pages')` filename tests as
 // regexes) and keeps the documents consistent. Run offline by a maintainer, never in CI; the output is deterministic.
@@ -609,7 +609,7 @@ rulePack.rules = ported.map(({ rule }) => ({
 writeFileSync(rulePackPath, `${JSON.stringify(rulePack, null, 2)}\n`);
 const candidates = WRITTEN.filter(entry => entry.candidate);
 writeFileSync(
-  join(CANDIDATE_PACK, "pack.json"),
+  join(CANDIDATE_PACK, "conformance.json"),
   `${JSON.stringify(
     {
       ...manifest,

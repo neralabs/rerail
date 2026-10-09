@@ -1,0 +1,337 @@
+import { and, asc, count, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
+import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
+import { readStoredCodeRule, reportQuarantinedRule, type QuarantinedRule } from "./rule-quarantine.js";
+import { storableCodeRule } from "../code-rule/code-rule-compile.js";
+import type { CodeRule } from "../code-rule/code-rule-schema.js";
+import { RULE_MODES, type RuleMode } from "./rule-mode.js";
+import { assertEngineRegexes } from "./rule-regexes.js";
+import { parseConversationRule, type ConversationRule, type SampleBoundary } from "./rule-schema.js";
+import { RULE_KINDS, RULE_SCOPES, rules, type NewRuleRow, type RuleKind, type RuleRow, type RuleScope } from "../storage/schema.js";
+
+interface StoredRuleBase {
+  enabled: boolean;
+  scope: RuleScope;
+  revision: number;
+  createdAt: number;
+  updatedAt: number;
+  /** Digest of the bundled document this row was seeded from; null for a user-created rule. */
+  sourceDigest: string | null;
+}
+
+export interface StoredCodeRule extends StoredRuleBase {
+  kind: "file";
+  rule: CodeRule;
+}
+
+export interface StoredConversationRule extends StoredRuleBase {
+  kind: "conversation";
+  rule: ConversationRule;
+}
+
+export type StoredRule = StoredCodeRule | StoredConversationRule;
+
+/** A rule body with its kind, as bundled with the package or dumped by `rerail rules export`. */
+export type RuleDocument = { kind: "file"; rule: CodeRule } | { kind: "conversation"; rule: ConversationRule };
+
+export interface RuleWriteOptions {
+  enabled?: boolean;
+  scope?: RuleScope;
+  /** Conversation rules carry no revision of their own; omit to bump the stored one. File rules take `rule.revision`. */
+  revision?: number;
+  now?: number;
+  /** Bundled provenance; omit to keep what the row already records. */
+  sourceDigest?: string | null;
+}
+
+export interface RuleQuery {
+  kind?: RuleKind;
+  enabled?: boolean;
+  scope?: RuleScope;
+  /** Case-insensitive substring over id, reference/description, and action content or clause bodies. */
+  text?: string;
+  /** Conversation `sample.source`; file rules never match. */
+  source?: string;
+  /** Conversation `sample.boundary`; file rules never match. */
+  boundary?: SampleBoundary;
+  /** Rule mode; matches either kind. */
+  mode?: RuleMode;
+}
+
+export type RuleSelection = { ids: readonly string[] } | { filter: RuleQuery };
+
+/** SQLite `LIKE` treats `%` and `_` as wildcards; escape them so user text matches literally. */
+function likePattern(text: string): string {
+  return `%${text.replace(/[\\%_]/gu, "\\$&")}%`;
+}
+
+function ruleConditions(query: RuleQuery): SQL[] {
+  const conditions: SQL[] = [];
+  if (query.kind !== undefined) {
+    if (!RULE_KINDS.includes(query.kind)) throw new TypeError(`unknown rule kind ${String(query.kind)}`);
+    conditions.push(eq(rules.kind, query.kind));
+  }
+  if (query.enabled !== undefined) conditions.push(eq(rules.enabled, query.enabled));
+  if (query.scope !== undefined) {
+    if (!RULE_SCOPES.includes(query.scope)) throw new TypeError(`unknown rule scope ${String(query.scope)}`);
+    conditions.push(eq(rules.scope, query.scope));
+  }
+  const text = query.text?.trim();
+  if (text !== undefined && text.length > 0) {
+    const pattern = likePattern(text);
+    // LIKE is case-insensitive for ASCII in SQLite; ESCAPE makes the pattern literal.
+    const matches = (column: SQL | typeof rules.id) => sql`${column} LIKE ${pattern} ESCAPE '\\'`;
+    conditions.push(or(
+      matches(rules.id),
+      matches(sql`coalesce(${rules.reference}, ${rules.description}, '')`),
+      matches(sql`coalesce(json_extract(${rules.action}, '$.content'), ${rules.clauses}, '')`),
+    )!);
+  }
+  if (query.source !== undefined) conditions.push(sql`json_extract(${rules.sample}, '$.source') = ${query.source}`);
+  if (query.boundary !== undefined) conditions.push(sql`json_extract(${rules.sample}, '$.boundary') = ${query.boundary}`);
+  if (query.mode !== undefined) {
+    if (!RULE_MODES.includes(query.mode)) throw new TypeError(`unknown rule mode ${String(query.mode)}`);
+    conditions.push(eq(rules.mode, query.mode));
+  }
+  return conditions;
+}
+
+const NULL_CODE_RULE_COLUMNS = {
+  format: null,
+  description: null,
+  codeRuleScope: null,
+  clauses: null,
+} as const satisfies Partial<NewRuleRow>;
+
+const NULL_CONVERSATION_COLUMNS = {
+  reference: null,
+  match: null,
+  sample: null,
+  action: null,
+  repeat: null,
+} as const satisfies Partial<NewRuleRow>;
+
+/** The rule body exactly as the row stores it, before validation. */
+function storedBody(row: RuleRow): unknown {
+  if (row.kind === "file") {
+    return {
+      format: row.format,
+      id: row.id,
+      revision: row.revision,
+      mode: row.mode,
+      ...(row.description === null ? {} : { description: row.description }),
+      ...(row.codeRuleScope === null ? {} : { scope: row.codeRuleScope }),
+      clauses: row.clauses,
+    };
+  }
+  return {
+    id: row.id,
+    mode: row.mode,
+    ...(row.reference === null ? {} : { reference: row.reference }),
+    match: row.match,
+    sample: row.sample,
+    action: row.action,
+    ...(row.repeat === null ? {} : { repeat: row.repeat }),
+  };
+}
+
+type RowRead = { ok: true; stored: StoredRule } | { ok: false; quarantined: QuarantinedRule };
+
+/**
+ * Rows are re-validated on read: other processes, and plain SQL, write this table too. A row that
+ * fails the current schema is quarantined, never thrown.
+ */
+function readRuleRow(row: RuleRow): RowRead {
+  const base: StoredRuleBase = {
+    enabled: row.enabled,
+    scope: row.scope,
+    revision: row.revision,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    sourceDigest: row.sourceDigest,
+  };
+  const quarantine = (reason: string): RowRead => ({ ok: false, quarantined: { ruleId: row.id, kind: row.kind, owner: row.scope, reason } });
+  if (row.kind === "file") {
+    const read = readStoredCodeRule(storedBody(row));
+    if (!read.ok) return quarantine(read.reason);
+    return { ok: true, stored: { ...base, kind: "file", rule: read.rule } };
+  }
+  try {
+    return { ok: true, stored: { ...base, kind: "conversation", rule: parseConversationRule(storedBody(row), `rules[${row.id}]`) } };
+  } catch (error) {
+    return quarantine(error instanceof Error ? error.message : String(error));
+  }
+
+}
+
+/**
+ * Read/write access to the `rules` table. Every write validates the rule body
+ * against its kind's schema before it reaches SQLite, so rows always round-trip.
+ */
+export class SqliteRuleStore {
+  readonly path: string;
+  readonly #database: RerailDatabase;
+
+  constructor(path: string, database: RerailDatabase = openRerailDatabase(path)) {
+    this.path = path;
+    this.#database = database;
+  }
+
+  /**
+   * Validate and insert or replace a `rerail.policy/v1` document. `rule.revision` is stored as-is. The rule is
+   * compiled in the engine first, so one the engine rejects is never written.
+   */
+  upsertCodeRule(input: unknown, options: RuleWriteOptions = {}): StoredCodeRule {
+    return this.#writeCodeRule(storableCodeRule(input).rule, options);
+  }
+
+  #writeCodeRule(rule: CodeRule, options: RuleWriteOptions): StoredCodeRule {
+    const existing = this.#row(rule.id);
+    if (existing !== undefined && existing.kind !== "file") {
+      throw new Error(`rule ${rule.id} exists with kind ${existing.kind}; remove it before storing a file rule`);
+    }
+    const now = options.now ?? Date.now();
+    this.#upsert({
+      id: rule.id,
+      kind: "file",
+      mode: rule.mode,
+      revision: rule.revision,
+      enabled: options.enabled ?? existing?.enabled ?? true,
+      scope: options.scope ?? existing?.scope ?? "repository",
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      sourceDigest: options.sourceDigest === undefined ? existing?.sourceDigest ?? null : options.sourceDigest,
+      format: rule.format,
+      description: rule.description ?? null,
+      codeRuleScope: rule.scope ?? null,
+      clauses: rule.clauses,
+      ...NULL_CONVERSATION_COLUMNS,
+    });
+    return this.get(rule.id) as StoredCodeRule;
+  }
+
+  /** Validate and insert or replace a conversation rule. The stored revision bumps unless `options.revision` is given. */
+  upsertConversationRule(input: unknown, options: RuleWriteOptions = {}): StoredConversationRule {
+    const rule = parseConversationRule(input);
+    assertEngineRegexes(rule);
+    const existing = this.#row(rule.id);
+    if (existing !== undefined && existing.kind !== "conversation") {
+      throw new Error(`rule ${rule.id} exists with kind ${existing.kind}; remove it before storing a conversation rule`);
+    }
+    const now = options.now ?? Date.now();
+    this.#upsert({
+      id: rule.id,
+      kind: "conversation",
+      mode: rule.mode,
+      revision: options.revision ?? (existing === undefined ? 1 : existing.revision + 1),
+      enabled: options.enabled ?? existing?.enabled ?? true,
+      scope: options.scope ?? existing?.scope ?? "repository",
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      sourceDigest: options.sourceDigest === undefined ? existing?.sourceDigest ?? null : options.sourceDigest,
+      ...NULL_CODE_RULE_COLUMNS,
+      reference: rule.reference ?? null,
+      match: rule.match,
+      sample: rule.sample,
+      action: rule.action,
+      repeat: rule.repeat ?? null,
+    });
+    return this.get(rule.id) as StoredConversationRule;
+  }
+
+  /** Write one document under either kind; the write options apply to whichever branch runs. */
+  upsertDocument(document: RuleDocument, options: RuleWriteOptions = {}): StoredRule {
+    return document.kind === "file"
+      ? this.upsertCodeRule(document.rule, options)
+      : this.upsertConversationRule(document.rule, options);
+  }
+
+  count(): number {
+    return this.#database.select({ value: count() }).from(rules).get()?.value ?? 0;
+  }
+
+  get(id: string): StoredRule | undefined {
+    const row = this.#row(id);
+    return row === undefined ? undefined : this.#read(row);
+  }
+
+  /** Rows matching `query` that validate; the rest are reported (see `quarantined`) and left out. */
+  list(query: RuleQuery = {}): StoredRule[] {
+    return this.#rows(query).flatMap(row => this.#read(row) ?? []);
+  }
+
+  /** Rows that fail validation, and are therefore skipped by every read. */
+  quarantined(): QuarantinedRule[] {
+    return this.#rows({}).flatMap(row => {
+      const read = readRuleRow(row);
+      return read.ok ? [] : [read.quarantined];
+    });
+  }
+
+  /** Enabled conversation rules in the shape `ConversationRuleRegistry.replace` accepts. */
+  conversationRules(): ConversationRule[] {
+    return this.list({ kind: "conversation", enabled: true }).flatMap(stored =>
+      stored.kind === "conversation" ? [stored.rule] : [],
+    );
+  }
+
+  /** Ids of every `conversation` row, enabled or not: the ids the database owns. */
+  conversationRuleIds(): Set<string> {
+    return new Set(
+      this.#database.select({ id: rules.id }).from(rules).where(eq(rules.kind, "conversation")).all().map(row => row.id),
+    );
+  }
+
+  /** Enabled file rules, validated. */
+  codeRules(): CodeRule[] {
+    return this.list({ kind: "file", enabled: true }).flatMap(stored =>
+      stored.kind === "file" ? [stored.rule] : [],
+    );
+  }
+
+  /** SQLite's `data_version`: changes whenever another connection commits to this file; a cheap "anything new?" probe. */
+  dataVersion(): number {
+    const row = this.#database.all<{ data_version: number }>(sql`PRAGMA data_version`)[0];
+    return row?.data_version ?? 0;
+  }
+
+  /** Flip `enabled` on the named ids or on every rule matching a filter. Returns how many rows changed state. */
+  setEnabled(selection: RuleSelection, enabled: boolean, now = Date.now()): number {
+    const scope = "ids" in selection ? [inArray(rules.id, [...selection.ids])] : ruleConditions(selection.filter);
+    if ("ids" in selection && selection.ids.length === 0) return 0;
+    return this.#database
+      .update(rules)
+      .set({ enabled, updatedAt: now })
+      .where(and(...scope, ne(rules.enabled, enabled)))
+      .returning({ id: rules.id })
+      .all().length;
+  }
+
+  remove(ids: readonly string[]): number {
+    if (ids.length === 0) return 0;
+    return this.#database.delete(rules).where(inArray(rules.id, [...ids])).returning({ id: rules.id }).all().length;
+  }
+
+  close(): void {
+    this.#database.$client.close();
+  }
+
+  #upsert(row: NewRuleRow): void {
+    const { id: _id, createdAt: _createdAt, ...update } = row;
+    this.#database.insert(rules).values(row).onConflictDoUpdate({ target: rules.id, set: update }).run();
+  }
+
+  #rows(query: RuleQuery): RuleRow[] {
+    return this.#database.select().from(rules).where(and(...ruleConditions(query))).orderBy(asc(rules.id)).all();
+  }
+
+  #read(row: RuleRow): StoredRule | undefined {
+    const read = readRuleRow(row);
+    if (read.ok) return read.stored;
+    reportQuarantinedRule(this.path, read.quarantined);
+    return undefined;
+  }
+
+  #row(id: string): RuleRow | undefined {
+    return this.#database.select().from(rules).where(eq(rules.id, id)).get();
+  }
+}

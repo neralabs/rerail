@@ -28,6 +28,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 mod blade;
+#[path = "php/by_reference.generated.rs"]
 mod by_reference;
 
 /// Whether a variable is defined where it is read.

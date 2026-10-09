@@ -2,4 +2,4 @@
 "@neralabs/rerail-pack-blade": minor
 ---
 
-Blade pack: 17 Bladestan, tlint and stillat/blade-parser rules for Blade templates, each scored against the tool's recorded findings.
+Blade pack: 15 Bladestan, tlint and stillat/blade-parser rules for Blade templates, each scored against the tool's recorded findings or, where those findings are empty or all excused, proven by a caught and a passing example.

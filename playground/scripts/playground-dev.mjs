@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 //
 // `just rerail-playground`: bring up this checkout's dev daemon through
-// `scripts/rerail-dev.mjs up`, then supervise the development rule playground on the host. Its
+// `scripts/dev/rerail-dev.mjs up`, then supervise the development rule playground on the host. Its
 // OMP workers need the macOS seatbelt, the host's OMP login, and a PTY, so the supervisor only
 // runs on an attended macOS host. Harness registration never changes here.
 
@@ -10,7 +10,7 @@ import { once } from "node:events";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readDevInstance } from "../../scripts/rerail-dev.mjs";
+import { readDevInstance } from "../../scripts/dev/rerail-dev.mjs";
 
 const playgroundRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const checkoutRoot = dirname(playgroundRoot);
@@ -49,7 +49,7 @@ function isExecutableFile(path) {
 }
 
 function installPinnedOmpHost() {
-  const installer = join(checkoutRoot, "scripts", "install-omp-host.mjs");
+  const installer = join(checkoutRoot, "scripts", "host", "install-omp-host.mjs");
   const result = spawnSync(process.execPath, [installer], {
     cwd: checkoutRoot,
     encoding: "utf8",
@@ -253,7 +253,7 @@ async function main() {
     return 0;
   }
   const status = run(process.execPath, [
-    join(checkoutRoot, "scripts", "rerail-dev.mjs"),
+    join(checkoutRoot, "scripts", "dev", "rerail-dev.mjs"),
     "up",
     ...(launch.installBridge ? ["--install-bridge"] : []),
   ]);

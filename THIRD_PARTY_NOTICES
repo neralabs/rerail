@@ -25,18 +25,152 @@ SOFTWARE.
 
 ----------------------------------------------------------------------
 
-Bundled rule documents: palantir/tslint core rules
-Files: packs/tslint/rules/*.json
-Revision: 285fc1db18d1fd24680d6a2282c6445abf1566ee
-Source: https://github.com/palantir/tslint
-License: Apache-2.0
+Bundled data: Unicode Character Database 15.1.0 (character names and name aliases)
+Files: native/src/code_rule_dsl/value/names/names.bin
+Source: https://www.unicode.org/Public/15.1.0/ucd/ (UnicodeData.txt as CPython 3.13's unicodedata reads it, and NameAliases.txt)
+License: Unicode License v3
 
-Copyright 2013 Palantir Technologies, Inc.
+UNICODE LICENSE V3
 
-Modified by the Rerail authors: each rule is re-implemented as a rerail.policy/v1
-document in Rerail's code-rule DSL, with TSLint's default options. Rule names and
-the rule descriptions are taken from TSLint's rule metadata. TSLint ships no
-NOTICE file.
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright © 1991-2023 Unicode, Inc.
+
+NOTICE TO USER: Carefully read the following legal agreement. BY
+DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING DATA FILES, AND/OR
+SOFTWARE, YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE
+TERMS AND CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT
+DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE THE DATA FILES OR SOFTWARE.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of data files and any associated documentation (the "Data Files") or
+software and any associated documentation (the "Software") to deal in the
+Data Files or Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, and/or sell
+copies of the Data Files or Software, and to permit persons to whom the
+Data Files or Software are furnished to do so, provided that either (a)
+this copyright and permission notice appear with all copies of the Data
+Files or Software, or (b) this copyright and permission notice appear in
+associated Documentation.
+
+THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
+THIRD PARTY RIGHTS.
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE
+BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES,
+OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
+WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
+ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA
+FILES OR SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder shall
+not be used in advertising or otherwise to promote the sale, use or other
+dealings in these Data Files or Software without prior written
+authorization of the copyright holder.
+
+----------------------------------------------------------------------
+
+Bundled data: ESLint's globals per ecmaVersion and for CommonJS
+Files: native/src/code_rule_dsl/scope/data/es_globals.generated.json
+Source: eslint 10.11.0, conf/globals.js and conf/ecma-version.js (https://github.com/eslint/eslint)
+License: MIT
+
+Modified by the Rerail authors: the globals languageOptions resolves for each
+ecmaVersion and for sourceType "commonjs" are written as JSON by
+scripts/generate/scope/es-globals.mjs.
+
+Copyright OpenJS Foundation and other contributors, <www.openjsf.org>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+----------------------------------------------------------------------
+
+Bundled data: Ruff's builtin and magic-global names per Python version
+Files: native/src/code_rule_dsl/scope/data/python_builtins.generated.json
+Source: ruff 0.16.9, crates/ruff_python_stdlib/src/builtins.rs (https://github.com/astral-sh/ruff)
+License: MIT
+
+Modified by the Rerail authors: the names Ruff resolves at module level without
+a binding, for each Python minor version Ruff targets, are written as JSON by
+scripts/generate/scope/python_builtins.py.
+
+MIT License
+
+Copyright (c) 2022 Charles Marsh
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+----------------------------------------------------------------------
+
+Bundled data: typescript-eslint's TypeScript lib globals
+Files: native/src/code_rule_dsl/scope/data/ts_lib_globals.generated.json
+Source: @typescript-eslint/scope-manager 8.70.1, dist/lib (https://github.com/typescript-eslint/typescript-eslint),
+  which typescript-eslint generates from TypeScript's lib.*.d.ts files (https://github.com/microsoft/TypeScript)
+License: MIT (typescript-eslint); Apache-2.0 (TypeScript)
+
+Modified by the Rerail authors: the global variables the scope manager defines
+for each TypeScript lib, the namespaces each is valid in, and the libs each lib
+includes are written as JSON by
+scripts/generate/scope/ts-lib-globals.mjs.
+
+MIT License
+
+Copyright (c) 2019 typescript-eslint and other contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING OUT OF
+OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+TypeScript: Copyright (c) Microsoft Corporation. Licensed under the Apache
+License, Version 2.0:
 
 Apache License
 
@@ -96,155 +230,6 @@ END OF TERMS AND CONDITIONS
 
 ----------------------------------------------------------------------
 
-Bundled data: Unicode Character Database 15.1.0 (character names and name aliases)
-Files: native/src/code_rule_dsl/value/names/names.bin
-Source: https://www.unicode.org/Public/15.1.0/ucd/ (UnicodeData.txt as CPython 3.13's unicodedata reads it, and NameAliases.txt)
-License: Unicode License v3
-
-UNICODE LICENSE V3
-
-COPYRIGHT AND PERMISSION NOTICE
-
-Copyright © 1991-2023 Unicode, Inc.
-
-NOTICE TO USER: Carefully read the following legal agreement. BY
-DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING DATA FILES, AND/OR
-SOFTWARE, YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE
-TERMS AND CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT
-DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE THE DATA FILES OR SOFTWARE.
-
-Permission is hereby granted, free of charge, to any person obtaining a
-copy of data files and any associated documentation (the "Data Files") or
-software and any associated documentation (the "Software") to deal in the
-Data Files or Software without restriction, including without limitation
-the rights to use, copy, modify, merge, publish, distribute, and/or sell
-copies of the Data Files or Software, and to permit persons to whom the
-Data Files or Software are furnished to do so, provided that either (a)
-this copyright and permission notice appear with all copies of the Data
-Files or Software, or (b) this copyright and permission notice appear in
-associated Documentation.
-
-THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
-KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
-THIRD PARTY RIGHTS.
-
-IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE
-BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES,
-OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
-WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
-ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA
-FILES OR SOFTWARE.
-
-Except as contained in this notice, the name of a copyright holder shall
-not be used in advertising or otherwise to promote the sale, use or other
-dealings in these Data Files or Software without prior written
-authorization of the copyright holder.
-
-----------------------------------------------------------------------
-
-Bundled data: ESLint's globals per ecmaVersion and for CommonJS
-Files: native/src/code_rule_dsl/scope/data/es_globals.json
-Source: eslint 10.11.0, conf/globals.js and conf/ecma-version.js (https://github.com/eslint/eslint)
-License: MIT
-
-Modified by the Rerail authors: the globals languageOptions resolves for each
-ecmaVersion and for sourceType "commonjs" are written as JSON by
-native/src/code_rule_dsl/scope/data/generate_es_globals.mjs.
-
-Copyright OpenJS Foundation and other contributors, <www.openjsf.org>
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-
-----------------------------------------------------------------------
-
-Bundled data: Ruff's builtin and magic-global names per Python version
-Files: native/src/code_rule_dsl/scope/data/python_builtins.json
-Source: ruff 0.16.9, crates/ruff_python_stdlib/src/builtins.rs (https://github.com/astral-sh/ruff)
-License: MIT
-
-Modified by the Rerail authors: the names Ruff resolves at module level without
-a binding, for each Python minor version Ruff targets, are written as JSON by
-native/src/code_rule_dsl/scope/data/generate_python_builtins.py.
-
-MIT License
-
-Copyright (c) 2022 Charles Marsh
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-----------------------------------------------------------------------
-
-Bundled data: typescript-eslint's TypeScript lib globals
-Files: native/src/code_rule_dsl/scope/data/ts_lib_globals.json
-Source: @typescript-eslint/scope-manager 8.70.1, dist/lib (https://github.com/typescript-eslint/typescript-eslint),
-  which typescript-eslint generates from TypeScript's lib.*.d.ts files (https://github.com/microsoft/TypeScript)
-License: MIT (typescript-eslint); Apache-2.0 (TypeScript)
-
-Modified by the Rerail authors: the global variables the scope manager defines
-for each TypeScript lib, the namespaces each is valid in, and the libs each lib
-includes are written as JSON by
-native/src/code_rule_dsl/scope/data/generate_ts_lib_globals.mjs.
-
-MIT License
-
-Copyright (c) 2019 typescript-eslint and other contributors
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING OUT OF
-OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-TypeScript: Copyright (c) Microsoft Corporation. Licensed under the Apache
-License, Version 2.0; the full text is under the palantir/tslint entry above.
-
-----------------------------------------------------------------------
-
 Ported code: ast-grep-config 0.45.3 string case conversions
 Files: native/src/code_rule_dsl/matcher/transform/string_case.rs
 Source: ast-grep-config 0.45.3, src/transform/string_case.rs (https://github.com/ast-grep/ast-grep)
@@ -278,13 +263,13 @@ SOFTWARE.
 ----------------------------------------------------------------------
 
 Bundled data: typescript-eslint's JSX character entity table
-Files: native/src/code_rule_dsl/value/ecma/entities.rs
+Files: native/src/code_rule_dsl/value/ecma/entities.generated.rs
 Source: @typescript-eslint/typescript-estree 8.70.1, dist/jsx/xhtml-entities.js (https://github.com/typescript-eslint/typescript-eslint)
 License: MIT
 
 Modified by the Rerail authors: the 253 names and their characters are
 written as a sorted Rust table of UTF-16 code units by
-native/src/code_rule_dsl/value/ecma/generate_entities.mjs.
+scripts/generate/value/ecma-entities.mjs.
 
 MIT License
 
@@ -311,14 +296,14 @@ SOFTWARE.
 ----------------------------------------------------------------------
 
 Bundled data: eslint-utils' getStaticValue allowlists
-Files: native/src/code_rule_dsl/value/ecma/builtins.rs
+Files: native/src/code_rule_dsl/value/ecma/builtins.generated.rs
 Source: @eslint-community/eslint-utils 4.10.1, index.mjs (https://github.com/eslint-community/eslint-utils)
 License: MIT
 
 Modified by the Rerail authors: builtinNames, callAllowed, callPassThrough
 and getterAllowed are evaluated from the package's source and written as
 sorted Rust lists of the paths that reach each function by
-native/src/code_rule_dsl/value/ecma/generate_builtins.mjs.
+scripts/generate/value/ecma-builtins.mjs.
 
 MIT License
 

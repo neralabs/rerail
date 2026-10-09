@@ -7,8 +7,8 @@ import { defineConfig } from "vite";
  * The client is self-contained: its few shadcn-style primitives live in `ui/src/components/ui`
  * (`@` aliases to `ui/src`), React and friends come from this package's own `node_modules`, and
  * the colour tokens are the daemon page's `ui/tokens.generated.css` at the checkout root. Rule
- * shapes are read from the core sources (`@rerail/*`), so the client parses exactly what the
- * daemon saves.
+ * shapes come from the built package's `@neralabs/rerail/schemas` entry point, so the client parses
+ * exactly what the daemon saves.
  */
 const playgroundRoot = resolve(import.meta.dirname, "..");
 const checkoutRoot = resolve(playgroundRoot, "..");
@@ -27,8 +27,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@protocol": resolve(playgroundRoot, "src/protocol.ts"),
-      "@rerail/rule-schema": resolve(checkoutRoot, "src/rule-schema.ts"),
-      "@rerail/code-rule-schema": resolve(checkoutRoot, "src/code-rule-schema.ts"),
+      "@neralabs/rerail/schemas": resolve(checkoutRoot, "dist/engine/schemas.js"),
       "@": resolve(import.meta.dirname, "src"),
     },
   },
@@ -42,7 +41,7 @@ export default defineConfig({
     port: 4742,
     host: "127.0.0.1",
     strictPort: true,
-    fs: { allow: [playgroundRoot, resolve(checkoutRoot, "ui"), resolve(checkoutRoot, "src")] },
+    fs: { allow: [playgroundRoot, resolve(checkoutRoot, "ui"), resolve(checkoutRoot, "dist")] },
     proxy: {
       "/__rerail_playground": { target: supervisor, ws: true },
     },

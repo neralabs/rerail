@@ -2,12 +2,16 @@ import { mkdir, mkdtemp, readFile, rm, truncate, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { NativeCodeRuleEnforcer } from "../src/code-rule-enforcer.js";
-import type { AuditRecorder, AuditInput, AuditResult } from "../src/audit.js";
-import { defaultRerailDatabasePath } from "../src/database.js";
-import { SqliteAuditReader } from "../src/audit-store.js";
-import { bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
-import { codeRuleSchema } from "../src/code-rule-schema.js";
+import {
+  NativeCodeRuleEnforcer,
+  type AuditRecorder,
+  type AuditInput,
+  type AuditResult,
+  defaultRerailDatabasePath,
+  SqliteAuditReader,
+  bundledCodeRuleDslDirectory,
+  codeRuleSchema,
+} from "../src/engine/index.js";
 import { testCodeRuleCatalog } from "../test/support/repository-rules.js";
 
 const directories: string[] = [];

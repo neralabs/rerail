@@ -8,8 +8,7 @@ import { dirname, join, isAbsolute } from "node:path";
 import type { Readable } from "node:stream";
 import { spawn as spawnTerminal } from "node-pty";
 import { setTimeout as sleep } from "node:timers/promises";
-import { loadNativeBinding } from "../../dist/native.js";
-import type { NativeBinding } from "../../dist/native.js";
+import { loadNativeBinding, type NativeBinding } from "../../dist/index.js";
 
 const execute = promisify(execFile);
 const ownedSessions = new Set<number>();

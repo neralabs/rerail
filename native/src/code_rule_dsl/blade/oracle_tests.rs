@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 fn oracle_root() -> PathBuf {
-    PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("blade/view")
+    PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("blade/blade")
 }
 
 fn expected() -> Json {
@@ -425,7 +425,7 @@ fn blade_constant_expressions_agree_with_php() {
 /// Region parity over a corpus: the regions `generate.php --corpus` recorded for each template
 /// (`BLADE_REGIONS`) against the view's, written to `BLADE_REGIONS_REPORT`.
 #[test]
-#[ignore = "corpus benchmark: fixtures/blade/view/generate.php --corpus output"]
+#[ignore = "corpus benchmark: fixtures/blade/blade/generate.php --corpus output"]
 fn benchmark_blade_region_parity() {
     let input = std::env::var("BLADE_REGIONS").expect("BLADE_REGIONS names the generator's output");
     let report =
@@ -485,7 +485,7 @@ fn benchmark_blade_region_parity() {
 /// directives core Blade does not compile, the application's or text, are measured apart: Rerail
 /// reads nothing in their arguments, and decides nothing there.
 #[test]
-#[ignore = "corpus benchmark: fixtures/blade/view/generate.php --definedness output"]
+#[ignore = "corpus benchmark: fixtures/blade/blade/generate.php --definedness output"]
 fn benchmark_blade_definedness_corpus() {
     let input =
         std::env::var("BLADE_DEFINEDNESS").expect("BLADE_DEFINEDNESS names the generator's output");

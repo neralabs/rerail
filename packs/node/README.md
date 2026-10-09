@@ -5,7 +5,7 @@ plugin's own findings on its rule tests and on two pinned corpora (fastify, pret
 workspace path, with every disagreement declared in `divergences.json` (none today).
 
 It follows the [pack structure and validation contract](../../docs/pack-format.md) and is checked by
-`npx vitest run test/packs.test.ts -t "pack node"`.
+`npx vitest run test/engine/catalog/packs.test.ts -t "pack node"`.
 
 | Path | What |
 |---|---|
@@ -23,7 +23,7 @@ checkouts under `.rerail/corpora/node`:
 
 ```sh
 node packs/node/upstream/eslint-plugin-n/generate.mjs [--fixtures-only]
-python3 packs/node/candidates/generate.py
+python3 scripts/generate/packs/node_policies.py
 ```
 
 Scoring one rule with every false positive and false negative printed, and the candidates and probes:

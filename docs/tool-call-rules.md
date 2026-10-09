@@ -68,7 +68,7 @@ A missing argument, or one that is not a string, never matches. A rule that read
 ## The regex dialect
 
 Patterns use the **Rust `regex` crate** — the same dialect, and the same 16,384-byte
-`maxRegexPatternBytes` limit, as the [code-rule DSL](../code-rule-dsl/capabilities.json).
+`maxRegexPatternBytes` limit, as the [code-rule DSL](../native/src/code_rule_dsl/capabilities.json).
 It runs in linear time, so no command an agent writes can make a rule hang.
 
 | You may use | You may not use |
@@ -297,13 +297,12 @@ quotes and line anchors. For anything command-shaped, read `input.command`.
 For each rule, list at least one command it must flag, one near-miss it must pass, and — if it reads
 the command line — a tool *result* that echoes the command and must pass.
 
-**2. Run them through the engine.** Add the rule to `test/fixtures/tool-call-rules.json` and its
-cases to `test/tool-call-rules.test.ts`, or try it ad hoc:
+**2. Run them through the engine.** Add the rule to `fixtures/host/tool-call-rules/rules.json` and its
+cases to `test/engine/catalog/tool-call-rules.test.ts`, or try it ad hoc:
 
 ```ts
 import { resolve } from "node:path";
-import { ConversationRuleRegistry } from "./src/registry.js";
-import { stableJsonText } from "./src/stable-json.js";
+import { ConversationRuleRegistry, stableJsonText } from "./src/engine/index.js";
 
 const registry = new ConversationRuleRegistry({ modelPath: resolve("model") });
 registry.replace([rule]);
@@ -314,7 +313,7 @@ registry.match({ source: "tool:Bash", boundary: "tool-call", text: input, input 
 ```
 
 ```sh
-npx vitest run test/tool-call-rules.test.ts
+npx vitest run test/engine/catalog/tool-call-rules.test.ts
 ```
 
 **3. Measure noise before blocking.** `candidate-rules/oss-tool-rules/` checks each pattern against
