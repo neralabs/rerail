@@ -58,7 +58,7 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
   - `{ "npmDependencies": [...] }`: any `package.json` in the repository that lists one of the packages under `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`.
 - `reason` is the pack's own summary. The reason shown for a repository is built from what matched: `matches the typescript dependency in package.json and *.ts files in src`. It names at most two signals. A file signal names the folder its files share, which lets a person see when a pack was picked only because of a stray folder.
 - `honourSuppressionComments` (optional, default `true`): whether the pack's rules honour their linters' suppression comments. Validated, but not yet read by evaluation.
-- `rules` lists the pack's rules; each rule belongs to exactly one pack.
+- `rules` lists the pack's rules; each rule belongs to exactly one pack. A pack may list no rules while all its ports are still candidates, and such a pack is never recommended.
   - `title` and `group` are what the dashboard shows.
   - `mode` (optional) is the rule mode the pack starts the rule in; without it the rule keeps its document's mode. No shipped pack sets one.
   - `on` (optional, default `true`) is whether the pack starts the rule on.

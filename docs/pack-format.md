@@ -74,7 +74,8 @@ packs/<id>/
 Today's `rerail.rule-pack/v1` ([format](rule-packs.md#format)): `id`, `name`, `category`, `covers`, `reason`,
 `match`, `honourSuppressionComments`, and per rule `id`, `title`, `group`, optional `mode`, `on` and
 `examples: { caught, passes }`. One change: a rule now names its document, `rules/<name>.json`, so a pack is
-self-contained. `document` is required (`rulePackFileSchema` in `src/engine/catalog/rule-packs.ts`); core reads each rule's document
+self-contained. A pack may ship no rules (`"rules": []`) while all its ports are candidates; such a pack is never
+recommended. `document` is required (`rulePackFileSchema` in `src/engine/catalog/rule-packs.ts`); core reads each rule's document
 from the pack:
 
 ```json

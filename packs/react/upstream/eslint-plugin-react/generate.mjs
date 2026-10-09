@@ -1,8 +1,8 @@
-// Recorder for the React pack's eslint-plugin-react rules (rerail/packs/react/conformance.json).
+// Recorder for the React pack's eslint-plugin-react rules (rerail/packs/react/candidates/conformance.json).
 //
 // Pins: eslint 9.39.5, eslint-plugin-react 7.37.5, @typescript-eslint/parser 8.70.1, typescript 5.9.3 (refuses any
 // other); upstream jsx-eslint/eslint-plugin-react v7.37.5 = 2c98b83c451a4297edf1787d9a616e50687e27e8; corpus
-// excalidraw = excalidraw/excalidraw@ed10ac7dca7e40f3f4a31269b4bfba980d0db41e (conformance.json).
+// excalidraw = excalidraw/excalidraw@ed10ac7dca7e40f3f4a31269b4bfba980d0db41e (candidates/conformance.json).
 //
 // Usage: node generate.mjs [--tools <.rerail/tools/react>] [--corpora <.rerail/corpora/react>] [--no-corpora]
 //
