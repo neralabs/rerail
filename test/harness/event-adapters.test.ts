@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AdapterEvent } from "../src/adapter-contract.js";
-import { claudeHookEvents, createClaudeEventHandler } from "../src/claude-event-adapter.js";
-import { codexHookEvents, createCodexEventHandler } from "../src/codex-event-adapter.js";
+import type { AdapterEvent } from "../../src/engine/index.js";
+import { claudeHookEvents, createClaudeEventHandler } from "../../src/hosts/claude/index.js";
+import { codexHookEvents, createCodexEventHandler } from "../../src/hosts/codex/index.js";
 
 describe("lifecycle event adapters", () => {
   it("normalizes Claude hook input before calling the event loop", async () => {

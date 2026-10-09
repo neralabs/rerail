@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ConversationRuleRegistry } from "../src/registry.js";
-import type { ConversationRule } from "../src/rule-schema.js";
+import { ConversationRuleRegistry } from "../../../src/engine/catalog/registry.js";
+import type { ConversationRule } from "../../../src/engine/catalog/rule-schema.js";
 
 function rule(overrides: Partial<ConversationRule> = {}): ConversationRule {
   return {

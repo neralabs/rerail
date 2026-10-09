@@ -1,9 +1,9 @@
-import type { CodeRule } from "./code-rule-schema.js";
-import type { ConversationRule } from "./rule-schema.js";
-import { CODE_RULE_AST_LANGUAGES } from "./code-rule-languages.js";
+import type { CodeRule } from "../engine/code-rule/code-rule-schema.js";
+import type { ConversationRule } from "../engine/catalog/rule-schema.js";
+import { CODE_RULE_AST_LANGUAGES } from "../engine/code-rule/code-rule-languages.js";
 
-import { SqliteRuleStore } from "./rule-store.js";
-import { SqliteSessionStore, type WorkLink } from "./session-store.js";
+import { SqliteRuleStore } from "../engine/catalog/rule-store.js";
+import { SqliteSessionStore, type WorkLink } from "../runtime/session-store.js";
 
 /**
  * Throwaway mock rows so MCP and UI work can start before the rule generator

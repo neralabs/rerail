@@ -3,9 +3,9 @@ import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CodeRuleBridge, generatedEditPaths, isCommandTool, type SourceObservationCache } from "../src/code-rule-bridge.js";
-import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../src/code-rule.js";
-import { codeRuleDialectForPath } from "../src/code-rule-languages.js";
+import { CodeRuleBridge, generatedEditPaths, isCommandTool, type SourceObservationCache } from "../../../src/engine/code-rule/code-rule-bridge.js";
+import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
+import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
 
 const discovery = vi.hoisted(() => ({
   reads: new Map<string, Array<() => Promise<void>>>(),

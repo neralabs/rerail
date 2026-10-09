@@ -1,6 +1,5 @@
-import { defaultRerailDatabasePath, openRerailDatabase } from "../../src/database.js";
-import { startRepository, stopRepository } from "../../src/repository-start.js";
-import { resolveRepositoryContext } from "../../src/scoped-rule-catalog.js";
+import { defaultRerailDatabasePath, openRerailDatabase, resolveRepositoryContext } from "../../src/engine/index.js";
+import { startRepository, stopRepository } from "../../src/runtime/index.js";
 
 function withRepository(workspace: string, databasePath: string, change: typeof startRepository): string {
   const { repositoryId } = resolveRepositoryContext(workspace);

@@ -1,12 +1,12 @@
 import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { afterEach, expect, it, vi } from "vitest";
-import { createOmpPresentation } from "../src/omp-presentation.js";
-import { readPresentation, type SessionPresentation } from "../src/session-presentation.js";
+import { createOmpPresentation } from "../../src/presentation/omp-presentation.js";
+import { readPresentation, type SessionPresentation } from "../../src/presentation/session-presentation.js";
 
-vi.mock("../src/session-presentation.js", async () => ({
+vi.mock("../../src/presentation/session-presentation.js", async () => ({
   readPresentation: vi.fn(),
   formatTerminalStatus: (presentation: SessionPresentation) => presentation.text,
-  notOnHerePresentation: (await vi.importActual<typeof import("../src/session-presentation.js")>("../src/session-presentation.js")).notOnHerePresentation,
+  notOnHerePresentation: (await vi.importActual<typeof import("../../src/presentation/session-presentation.js")>("../../src/presentation/session-presentation.js")).notOnHerePresentation,
 }));
 afterEach(() => vi.clearAllMocks());
 

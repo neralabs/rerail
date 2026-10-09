@@ -1,6 +1,6 @@
 import { expect } from "vitest";
-import { linkSteers, steerBlock, steerHeadlines } from "../src/rerail-steer.js";
-import { dashboardOrigin } from "../src/session-presentation.js";
+import { linkSteers, steerBlock, steerHeadlines } from "../../src/engine/index.js";
+import { dashboardOrigin } from "../../src/presentation/index.js";
 
 /**
  * The steer block a rule delivers. Runtime/kernel deliveries carry the relative `Why?` link; pass the checkout

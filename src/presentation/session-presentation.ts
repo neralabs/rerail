@@ -1,19 +1,18 @@
 import { realpath } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { ADAPTER_CAPABILITIES, type AdapterDelivery, type RerailHost } from "./adapter-contract.js";
-import { presentationDaemonSchema, presentationResponseSchema, type sessionResponseSchema } from "./api/session-contracts.js";
-import { withinCheckout } from "./checkout-control.js";
-import { DAEMON_STATE_FILE, processAlive, readDaemonState } from "./daemon-control.js";
-import type { DaemonState } from "./daemon.js";
-import { readRepositoryId } from "./repository-identity.js";
-import type { RepositoryStartState } from "./repository-start.js";
-import type { PresentationPresence } from "./schema.js";
-import { linkSteers, sessionPageUrl } from "./rerail-steer.js";
+import { ADAPTER_CAPABILITIES, type AdapterDelivery, type RerailHost } from "../engine/adapter-contract.js";
+import { presentationDaemonSchema, presentationResponseSchema, type sessionResponseSchema } from "../api/session-contracts.js";
+import { withinCheckout } from "../engine/catalog/checkout-control.js";
+import { DAEMON_STATE_FILE, processAlive, readDaemonState, type DaemonState } from "../runtime/daemon-control.js";
+import { readRepositoryId } from "../engine/catalog/repository-identity.js";
+import type { RepositoryStartState } from "../runtime/repository-start.js";
+import type { PresentationPresence } from "../engine/storage/schema.js";
+import { linkSteers, sessionPageUrl } from "../engine/code-rule/rerail-steer.js";
 import { RERAIL_BRAND_FOREGROUND } from "./terminal-brand.generated.js";
-import { defaultRerailHome } from "./rerail-home.js";
+import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 
-export type { PresentationPresence } from "./schema.js";
+export type { PresentationPresence } from "../engine/storage/schema.js";
 
 /**
  * The footer's state (design A1f): on here, not on here (never started or stopped in this repo), not

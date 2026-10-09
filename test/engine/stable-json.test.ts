@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stableJsonText } from "../src/stable-json.js";
+import { stableJsonText } from "../../src/engine/stable-json.js";
 
 describe("stableJsonText", () => {
   it("sorts object keys recursively without reordering arrays", () => {

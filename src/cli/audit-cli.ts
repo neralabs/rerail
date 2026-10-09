@@ -1,6 +1,6 @@
-import { findRunningDaemon } from "./daemon-control.js";
+import { findRunningDaemon } from "../runtime/daemon-control.js";
 
-import { auditSettingsSchema, type AuditControls, type AuditSettings, type AuditRequest } from "./audit-control-schema.js";
+import { auditSettingsSchema, type AuditControls, type AuditSettings, type AuditRequest } from "../engine/audit/audit-control-schema.js";
 
 const WAIT_TIMEOUT_MS = 10_000;
 const WAIT_INTERVAL_MS = 250;

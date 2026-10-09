@@ -1,7 +1,12 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
-import { loadNativeBinding, type NativeCompiledCodeRuleDsl, type NativeCodeRuleDslWorkspace } from "../../src/native.js";
+import {
+  loadNativeBinding,
+  type NativeCompiledCodeRuleDsl,
+  type NativeCodeRuleDslWorkspace,
+  compareDeterministicStrings,
+} from "../../src/engine/index.js";
 import { capabilitiesJson, INFORMATIONAL_FAILURE_CODES } from "../engine.js";
 import type { ExpectedFailure } from "./lint-format.js";
 import { checkFix, type EmittedFix, type FixCheck } from "./fix-check.js";
@@ -10,7 +15,6 @@ import { applyRepairs, FIXTURE_REPAIRS, type FixtureRepair } from "./repairs.js"
 import { FIXTURE_RULES, loadVariants, TSLINT_PACK, type FixtureFile, type RuleConfig, type RuleInfo, type Variant } from "./fixtures.js";
 import { evidenceSchema, goldenDocumentPath, goldenRules, isGoldenRule, loadGoldenManifest, type GoldenEntry } from "./golden.js";
 import { protectionFor, renameIdentifiers, syntaxDiagnostics } from "./rename.js";
-import { compareDeterministicStrings } from "../../src/stable-json.js";
 
 /**
  * The TSLint pack's candidates: non-golden default docs, every rule's option-variant overrides, and non-golden verdict

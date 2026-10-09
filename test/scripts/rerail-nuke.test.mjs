@@ -18,10 +18,10 @@ import {
   stripHookCommands,
   stripOmpMcp,
   stripPiSettings,
-} from "./rerail-nuke.mjs";
-import { loadSqlite, timestamp } from "./rerail-restore.mjs";
+} from "../../scripts/dev/rerail-nuke.mjs";
+import { loadSqlite, timestamp } from "../../scripts/dev/rerail-restore.mjs";
 
-const NUKE_SCRIPT = fileURLToPath(new URL("./rerail-nuke.mjs", import.meta.url));
+const NUKE_SCRIPT = fileURLToPath(new URL("../../scripts/dev/rerail-nuke.mjs", import.meta.url));
 const { DatabaseSync } = await loadSqlite();
 
 async function withHome(run) {
@@ -38,7 +38,7 @@ function envFor(home) {
   return { HOME: home, PATH: process.env.PATH ?? "", XDG_STATE_HOME: join(home, ".local", "state") };
 }
 
-/** A scripts/rerail-dev.mjs double: `checkouts` maps a checkout to its instance; stops are recorded. */
+/** A scripts/dev/rerail-dev.mjs double: `checkouts` maps a checkout to its instance; stops are recorded. */
 function fakeDev(checkouts = {}) {
   const stopped = [];
   return {
@@ -107,7 +107,7 @@ function ruleIds(path) {
 /** A machine with Rerail registered in every coding agent, plus unrelated settings that must survive. */
 function installFixture(home) {
   const rerailHome = join(home, ".rerail");
-  const cli = `${rerailHome}/current/dist/cli.js`;
+  const cli = `${rerailHome}/current/dist/cli/cli.js`;
   const hook = name => ({ type: "command", command: `node "${rerailHome}/current/dist/${name}"` });
   const userHook = { type: "command", command: "echo user" };
   mkdirSync(join(rerailHome, "current", "dist"), { recursive: true });
@@ -127,14 +127,14 @@ function installFixture(home) {
       Stop: [{ hooks: [hook("claude-hook.js")] }],
       Empty: [],
     },
-    statusLine: { type: "command", command: `node ${rerailHome}/current/dist/claude-status.js`, padding: 3 },
+    statusLine: { type: "command", command: `node ${rerailHome}/current/dist/hosts/claude/claude-status.js`, padding: 3 },
     enabledPlugins: { "rerail@rerail-dev": true, "other@market": true },
     extraKnownMarketplaces: { "rerail-dev": { source: { source: "directory", path: "/x" } } },
   });
-  writeJson(projectSettings, { statusLine: { type: "command", command: `node ${rerailHome}/current/dist/claude-status.js ${projectSettings}` } });
+  writeJson(projectSettings, { statusLine: { type: "command", command: `node ${rerailHome}/current/dist/hosts/claude/claude-status.js ${projectSettings}` } });
   writeJson(join(home, ".cursor", "hooks.json"), {
     version: 1,
-    hooks: { beforeSubmitPrompt: [{ command: `node ${rerailHome}/current/dist/cursor-hook.js` }, { command: "echo cursor-user" }], stop: [hook("cursor-hook.js")] },
+    hooks: { beforeSubmitPrompt: [{ command: `node ${rerailHome}/current/dist/hosts/cursor/cursor-hook.js` }, { command: "echo cursor-user" }], stop: [hook("cursor-hook.js")] },
   });
   writeJson(join(home, ".codex", "hooks.json"), {
     hooks: { SessionStart: [{ hooks: [hook("codex-hook.js")] }], PostToolUse: [{ matcher: "", hooks: [userHook, hook("codex-hook.js")] }] },
@@ -177,7 +177,7 @@ test("config backups are named by their path under HOME with separators as under
 
 test("the matcher recognises the Rerail home by path, realpath, and ~ or $HOME spelling only", () => {
   const matches = rerailHomeMatcher("/h/.rerail", "/h");
-  assert.ok(matches("node /h/.rerail/current/dist/claude-hook.js"));
+  assert.ok(matches("node /h/.rerail/current/dist/hosts/claude/claude-hook.js"));
   assert.ok(matches("node ~/.rerail/current/dist/x.js"));
   assert.ok(matches('node "$HOME/.rerail/current/dist/x.js"'));
   assert.ok(matches("/h/.rerail"));
@@ -203,7 +203,7 @@ test("hook stripping handles grouped and flat entries and drops only events it e
 
 test("Claude settings restore the recorded status line, or drop it when none or inherited", () => {
   const matches = rerailHomeMatcher("/h/.rerail", "/h");
-  const rerailStatus = { statusLine: { type: "command", command: "node /h/.rerail/current/dist/claude-status.js" } };
+  const rerailStatus = { statusLine: { type: "command", command: "node /h/.rerail/current/dist/hosts/claude/claude-status.js" } };
   const previous = { type: "command", command: "printf mine", padding: 2 };
   assert.deepEqual(stripClaudeSettings(rerailStatus, { matches, registration: { previous } }).value, { statusLine: previous });
   assert.deepEqual(stripClaudeSettings(rerailStatus, { matches, registration: undefined }).value, {});
@@ -229,7 +229,7 @@ test("OMP keeps a rerail MCP server that does not point into the Rerail home; Pi
   const matches = rerailHomeMatcher("/h/.rerail", "/h");
   const foreign = { mcpServers: { rerail: { command: "node", args: ["/elsewhere/cli.js"] } } };
   assert.equal(stripOmpMcp(foreign, { matches }).value, foreign);
-  assert.deepEqual(stripOmpMcp({ mcpServers: { rerail: { command: "node", args: ["/h/.rerail/current/dist/cli.js"] } } }, { matches }).value, { mcpServers: {} });
+  assert.deepEqual(stripOmpMcp({ mcpServers: { rerail: { command: "node", args: ["/h/.rerail/current/dist/cli/cli.js"] } } }, { matches }).value, { mcpServers: {} });
   const pi = stripPiSettings({ packages: ["../../.rerail/current", "npm:x"] }, { matches, agentDir: "/h/.pi/agent" });
   assert.deepEqual(pi.value, { packages: ["npm:x"] });
   assert.deepEqual(stripPiSettings({ packages: ["/h/.rerail/current"] }, { matches, agentDir: "/h/.pi/agent" }).value, {});
@@ -344,7 +344,7 @@ test("RERAIL_HOME relocates the home the nuke removes and the hooks it matches",
   await withHome(async home => {
     const rerailHome = join(home, "custom-rerail");
     mkdirSync(join(rerailHome, "current"), { recursive: true });
-    writeJson(join(home, ".codex", "hooks.json"), { hooks: { Stop: [{ hooks: [{ command: `node ${rerailHome}/current/dist/codex-hook.js` }] }] } });
+    writeJson(join(home, ".codex", "hooks.json"), { hooks: { Stop: [{ hooks: [{ command: `node ${rerailHome}/current/dist/hosts/codex/codex-hook.js` }] }] } });
     assert.equal(await nuke(["--yes"], { env: { ...envFor(home), RERAIL_HOME: rerailHome }, log: () => {}, interactive: false, dev: fakeDev() }), 0);
     assert.ok(!existsSync(rerailHome));
     assert.deepEqual(readJson(join(home, ".codex", "hooks.json")), {});

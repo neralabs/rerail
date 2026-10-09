@@ -6,16 +6,16 @@ import Database from "better-sqlite3";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
-import { defaultRerailDatabasePath, openRerailDatabase } from "../src/database.js";
+import { defaultRerailDatabasePath, openRerailDatabase } from "../../../src/engine/storage/database.js";
 import {
   openScopedRuleCatalog,
   resolveRepositoryContext,
   ScopedRuleCatalog,
-} from "../src/scoped-rule-catalog.js";
-import { exportScopedRules, importScopedRules } from "../src/rule-bootstrap.js";
-import { parseConversationRuleDocument } from "../src/rule-schema.js";
-import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../src/seed.js";
-import { ruleDocumentDigest } from "../src/stable-json.js";
+} from "../../../src/engine/catalog/scoped-rule-catalog.js";
+import { exportScopedRules, importScopedRules } from "../../../src/engine/catalog/rule-bootstrap.js";
+import { parseConversationRuleDocument } from "../../../src/engine/catalog/rule-schema.js";
+import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../../src/cli/index.js";
+import { ruleDocumentDigest } from "../../../src/engine/stable-json.js";
 
 const temporaryDirectories: string[] = [];
 

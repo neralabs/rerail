@@ -5,9 +5,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { stopDaemon } from "../src/daemon-control.js";
+import { stopDaemon } from "../../src/runtime/daemon-control.js";
 
-const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const run = promisify(execFile);
 const homes: string[] = [];
 
@@ -43,7 +43,7 @@ describe.runIf(process.platform === "win32")("Windows daemon launch", () => {
     homes.push(home);
     const launcher = join(home, "launch.mjs");
     await writeFile(launcher, [
-      `import { startDaemon } from ${JSON.stringify(pathToFileURL(join(packageRoot, "src", "daemon-control.ts")).href)};`,
+      `import { startDaemon } from ${JSON.stringify(pathToFileURL(join(packageRoot, "src", "runtime", "daemon-control.ts")).href)};`,
       `await startDaemon({ home: ${JSON.stringify(home)}, packageRoot: ${JSON.stringify(packageRoot)} },`,
       `  { dev: true, transcriptDatabasePath: ${JSON.stringify(join(home, "transcripts.sqlite"))}, port: 0 });`,
     ].join("\n"));

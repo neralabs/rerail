@@ -18,7 +18,7 @@ import {
   setupDevInstance,
   stopDevCheckout,
   validateDevInstance,
-} from "./rerail-dev.mjs";
+} from "../../scripts/dev/rerail-dev.mjs";
 
 const cleanups = [];
 afterEach(async () => {

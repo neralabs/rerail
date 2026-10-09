@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { OmpMessageContentSource, OmpWatermarkStore, type OmpSessionEntryLike } from "./omp-semantic.js";
-import { NativeSemanticEmbedder, SemanticWorkspace } from "./semantic-primitives.js";
+import { NativeSemanticEmbedder, SemanticWorkspace } from "../engine/native/semantic-primitives.js";
 import type {
   MarkReceipt,
   ProjectionSpec,
@@ -9,7 +9,7 @@ import type {
   SelectionSpec,
   SemanticProjection,
   WatermarkChange,
-} from "./semantic-types.js";
+} from "../engine/native/semantic-types.js";
 
 interface NativeSemanticSession {
   sessionId: string;

@@ -9,7 +9,7 @@ import { cp, mkdir, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const packageRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const source = join(packageRoot, "ui");
 const destination = join(packageRoot, "dist", "ui");
 

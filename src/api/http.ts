@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { zodToOpenAPIRegistry, type ZodOpenAPIMetadata } from "@asteasolutions/zod-to-openapi";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import type { Context, MiddlewareHandler } from "hono";
-import { duplicateJsonKeyError } from "../json-duplicate-keys.js";
+import { duplicateJsonKeyError } from "../engine/json-duplicate-keys.js";
 import {
   codeRuleAstRelationSchema,
   codeRuleAstRuleSchema,
@@ -14,11 +14,11 @@ import {
   codeRuleSchema,
   codeRuleUtilitySchema,
   codeRuleValueSchema,
-} from "../code-rule-schema.js";
-import { semanticSchemaComponents } from "../code-rule-schema-semantic.js";
+} from "../engine/code-rule/code-rule-schema.js";
+import { semanticSchemaComponents } from "../engine/code-rule/code-rule-schema-semantic.js";
 
-import { conversationRuleSchema, matchConditionSchema, sampleSourceSchema } from "../rule-schema.js";
-import { auditControlsSchema, auditRequestSchema } from "../audit-control-schema.js";
+import { conversationRuleSchema, matchConditionSchema, sampleSourceSchema } from "../engine/catalog/rule-schema.js";
+import { auditControlsSchema, auditRequestSchema } from "../engine/audit/audit-control-schema.js";
 import {
   ApiError,
   eventRecordSchema,

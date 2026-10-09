@@ -4,21 +4,21 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import type { RerailEventLoop, RerailHost } from "./adapter-contract.js";
-import { hookRerailStarted } from "./repository-start.js";
-import { bundledModelPath } from "./extension.js";
+import type { RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
+import { hookRerailStarted } from "./hook-host.js";
+import { bundledModelPath } from "../engine/package-root.js";
 import {
   decodeRerailEventFrame,
   encodeRerailEventResult,
   RERAIL_EVENT_PROTOCOL_PREFACE,
   type RerailEventErrorFrame,
-} from "./event-protocol.js";
-import { RerailRuntime } from "./runtime.js";
-import { defaultRerailDatabasePath } from "./database.js";
-import { daemonEngineSocket } from "./daemon-control.js";
-import { ingestEngineEvent } from "./engine-service.js";
-import { isMainRerailBuild } from "./rerail-build.js";
-import { linkDeliveries } from "./session-presentation.js";
+} from "../runtime/event-protocol.js";
+import { RerailRuntime } from "../runtime/runtime.js";
+import { defaultRerailDatabasePath } from "../engine/storage/database.js";
+import { daemonEngineSocket } from "../runtime/daemon-control.js";
+import { ingestEngineEvent } from "../runtime/engine-service.js";
+import { isMainRerailBuild } from "../engine/native/rerail-build.js";
+import { linkDeliveries } from "../presentation/session-presentation.js";
 
 export interface RerailEventStreamOptions {
   eventLoop: RerailEventLoop;

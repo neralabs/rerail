@@ -8,11 +8,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { listPacks, loadPack, packDirectory, packSchema, type CapabilityExemption, type Divergence } from "../conformance/languages/pack.js";
-import { reportFailures, runPack } from "../conformance/languages/runner.js";
-import { precisionRecall, scoreSource } from "../conformance/languages/score.js";
+import { listPacks, loadPack, packDirectory, packSchema, type CapabilityExemption, type Divergence } from "../../../conformance/languages/pack.js";
+import { reportFailures, runPack } from "../../../conformance/languages/runner.js";
+import { precisionRecall, scoreSource } from "../../../conformance/languages/score.js";
 
-const SAMPLE = fileURLToPath(new URL("./fixtures/language-conformance/sample-php/", import.meta.url));
+const SAMPLE = fileURLToPath(new URL("../../fixtures/language-conformance/sample-php/", import.meta.url));
 const DATE = "2026-01-01";
 
 describe.each(listPacks())("language pack %s", pack => {

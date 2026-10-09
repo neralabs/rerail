@@ -22,7 +22,7 @@ import type {
   CodeRuleDslScope,
   CodeRuleDslValue,
 } from "./code-rule.js";
-import { RULE_MODES } from "./rule-mode.js";
+import { RULE_MODES } from "../catalog/rule-mode.js";
 import type {
   CodeRuleDslArguments,
   CodeRuleDslAstWhen,

@@ -3,13 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createRerailApi } from "../src/api/http.js";
-import { operations, type RerailApiStores } from "../src/api/operations.js";
-import type { CodeRule } from "../src/code-rule-schema.js";
-import { exportScopedRules, importScopedRules } from "../src/rule-bootstrap.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
-import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
-import { MOCK_CODE_RULES } from "../src/seed.js";
+import { createRerailApi } from "../../src/api/http.js";
+import { operations, type RerailApiStores } from "../../src/api/operations.js";
+import type { CodeRule } from "../../src/engine/index.js";
+import { exportScopedRules, importScopedRules, SqliteRuleStore, ScopedRuleCatalog } from "../../src/engine/index.js";
+import { MOCK_CODE_RULES } from "../../src/cli/index.js";
 
 /** Zod accepts it; the engine rejects it because `$TYPO` names no capture of the query. */
 const unboundMessage: CodeRule = {

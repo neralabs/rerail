@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { loadNativeBinding, type NativeBinding } from "./native.js";
+import { resolve } from "node:path";
+import { PACKAGE_ROOT } from "../package-root.js";
+import { loadNativeBinding, type NativeBinding } from "../native/native.js";
 import { LANGUAGE_NOT_SUPPORTED, languageNotSupportedOf } from "./code-rule-language-support.js";
 import type { CodeRule } from "./code-rule-schema.js";
-import { stableJsonText } from "./stable-json.js";
+import { stableJsonText } from "../stable-json.js";
 
 /** `language-not-supported`: the rule names a language or capability the engine does not read yet; anything else is `invalid-rule`. */
 export type CodeRuleCompileErrorCode = typeof LANGUAGE_NOT_SUPPORTED | "invalid-rule";
@@ -34,8 +34,7 @@ export class EngineUnavailableError extends Error {
 
 /** `<package>/code-rule-dsl`: `capabilities.json` and the bundled `rules/` documents live here. */
 export function bundledCodeRuleDslDirectory(): string {
-  const moduleDirectory = dirname(fileURLToPath(import.meta.url));
-  return resolve(moduleDirectory, "..", "code-rule-dsl");
+  return resolve(PACKAGE_ROOT, "code-rule-dsl");
 }
 
 let bundledCapabilities: string | undefined;

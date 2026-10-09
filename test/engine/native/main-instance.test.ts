@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { startDaemon, stopDaemon } from "../src/daemon-control.js";
+import { startDaemon, stopDaemon } from "../../../src/runtime/index.js";
 import {
   acquireMainInstance,
   assertContentStoreOwner,
@@ -14,11 +14,11 @@ import {
   MainInstanceConflictError,
   type MainInstanceLease,
   type MainRerailBuild,
-} from "../src/main-instance.js";
-import { mainContentStoreDirectory } from "../src/rerail-build.js";
+} from "../../../src/engine/native/main-instance.js";
+import { mainContentStoreDirectory } from "../../../src/engine/native/rerail-build.js";
 
-const packageRoot = resolve(import.meta.dirname, "..");
-const mainInstanceModule = pathToFileURL(join(packageRoot, "src", "main-instance.ts")).href;
+const packageRoot = resolve(import.meta.dirname, "..", "..", "..");
+const mainInstanceModule = pathToFileURL(join(packageRoot, "src", "engine", "native", "main-instance.ts")).href;
 const build: MainRerailBuild = {
   kind: "main",
   home: "/managed/.rerail",

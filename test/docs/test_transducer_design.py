@@ -6,7 +6,7 @@ import re
 import struct
 import unittest
 
-DESIGN = Path(__file__).resolve().parents[1] / "docs/transducer-design.md"
+DESIGN = Path(__file__).resolve().parents[2] / "docs/transducer-design.md"
 OPCODES = {
     0x00,
     0x01,

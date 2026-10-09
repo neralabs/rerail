@@ -1,6 +1,6 @@
 import { vi } from "vitest";
-import * as native from "../src/native.js";
-import type { NativeBinding, NativeCodeRuleDslWorkspace } from "../src/native.js";
+import * as native from "../../../src/engine/native/native.js";
+import type { NativeBinding, NativeCodeRuleDslWorkspace } from "../../../src/engine/native/native.js";
 
 export interface GatedWorkspace {
   /** The real native workspace behind the proxy the code under test holds. */

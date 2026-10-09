@@ -102,7 +102,7 @@ decision, a function at exactly 6 and one at 7 for several kinds, nested functio
 only simple functions, and test files that lizard scores over the limit. `lizard-1.24.0.tsv` beside it records lizard's
 score for every function (path relative to the corpus, function name as lizard prints it, start line, CCN).
 
-`test/complexity-rules.test.ts` evaluates the three rules over the corpus through the native runtime and checks
+`test/engine/code-rule/complexity-rules.test.ts` evaluates the three rules over the corpus through the native runtime and checks
 that:
 
 - each rule reports exactly the in-scope functions lizard scores above 6, with lizard's number in the message;
@@ -117,7 +117,7 @@ lizard is never a runtime or CI dependency: the TSV is checked in.
 After changing the corpus, rerun lizard (needs [uv](https://docs.astral.sh/uv/) on `PATH`) and commit the TSV:
 
 ```sh
-node scripts/record-lizard-complexity.mjs
+node scripts/dsl/record-lizard-complexity.mjs
 ```
 
 It runs `uvx --from lizard==1.24.0 lizard --csv test/fixtures/complexity/` and rewrites

@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { NpmOptions, NpmRunner } from "../src/npm.js";
-import { ensureSqlite, sqliteInstallPrefix } from "../src/sqlite-repair.js";
+import type { NpmOptions, NpmRunner } from "../../src/runtime/npm.js";
+import { ensureSqlite, sqliteInstallPrefix } from "../../src/runtime/sqlite-repair.js";
 
 const WORKING_BINDING = "module.exports = function Database() { this.close = () => {}; };";
 const ABI_MISMATCH =
@@ -53,7 +53,7 @@ describe("SQLite binding repair", () => {
   });
 
   it("resolves the npm prefix that hoists the binding, for a checkout and for a managed install", async () => {
-    const checkout = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+    const checkout = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     expect(sqliteInstallPrefix(checkout)).toBe(checkout);
     const { prefix, packageRoot } = await managedInstall(root, WORKING_BINDING);
     expect(sqliteInstallPrefix(packageRoot)).toBe(prefix);

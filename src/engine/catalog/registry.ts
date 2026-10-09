@@ -4,7 +4,7 @@ import {
   type NativeConversationEngine,
   type NativeRuleInput,
   type NativeSample,
-} from "./native.js";
+} from "../native/native.js";
 import { isSimilarityMatch, parseConversationRule, type ConversationRule, type MatchOperator } from "./rule-schema.js";
 import type { RuleMode } from "./rule-mode.js";
 

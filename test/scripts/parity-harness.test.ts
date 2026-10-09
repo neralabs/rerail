@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { readLedger } from "../scripts/host-lifecycle.js";
-import { hasCompletedViolation } from "../scripts/host-smoke.js";
+import { readLedger } from "../../scripts/host/host-lifecycle.js";
+import { hasCompletedViolation } from "../../scripts/host/host-smoke.js";
 import {
   PARITY_HOSTS,
   REQUIRED_CAPABILITIES,
@@ -11,7 +11,7 @@ import {
   type CapabilityScenario,
   type ParityAdapter,
   type ParityRun,
-} from "../integration/parity/harness.js";
+} from "../../integration/support/parity-harness.js";
 
 function adapters(overrides: Partial<Record<ParityAdapter["host"], () => Promise<ParityRun>>> = {}): ParityAdapter[] {
   return PARITY_HOSTS.map(host => ({

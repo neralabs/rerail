@@ -2,9 +2,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { NativeSessionServer } from "../src/native-session-server.js";
-import { SqliteSessionReader } from "../src/session-store.js";
-import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
+import { NativeSessionServer } from "../../src/daemon/native-session-server.js";
+import { SqliteSessionReader } from "../../src/runtime/index.js";
+import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 
 describe("NativeSessionServer request boundary", () => {
   let root: string | undefined;

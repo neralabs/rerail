@@ -3,23 +3,23 @@ const nativeBoundary = vi.hoisted(() => ({
   startDaemonForPackage: vi.fn(),
   isMainRerailBuild: vi.fn<() => boolean>(),
 }));
-vi.mock("../src/daemon-control.js", async () => ({
-  ...await vi.importActual<Record<string, unknown>>("../src/daemon-control.js"),
+vi.mock("../../src/runtime/daemon-control.js", async () => ({
+  ...await vi.importActual<Record<string, unknown>>("../../src/runtime/daemon-control.js"),
   startDaemonForPackage: nativeBoundary.startDaemonForPackage,
 }));
-vi.mock("../src/rerail-build.js", async () => ({
-  ...await vi.importActual<Record<string, unknown>>("../src/rerail-build.js"),
+vi.mock("../../src/engine/native/rerail-build.js", async () => ({
+  ...await vi.importActual<Record<string, unknown>>("../../src/engine/native/rerail-build.js"),
   isMainRerailBuild: nativeBoundary.isMainRerailBuild,
 }));
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import superjson from "superjson";
-import type { AdapterDelivery } from "../src/adapter-contract.js";
-import type { DaemonLaunchOptions } from "../src/daemon-control.js";
-import { createNativeSession, NativeSessionClient } from "../src/native-session-client.js";
-import { MUTATION_ENTRY_TYPE } from "../src/session-state.js";
-import { closeNativeTestDaemons, startNativeTestDaemon } from "./native-daemon-fixture.js";
+import type { AdapterDelivery } from "../../src/engine/index.js";
+import type { DaemonLaunchOptions } from "../../src/runtime/index.js";
+import { createNativeSession, NativeSessionClient } from "../../src/harness/native-session-client.js";
+import { MUTATION_ENTRY_TYPE } from "../../src/runtime/index.js";
+import { closeNativeTestDaemons, startNativeTestDaemon } from "../support/native-daemon.js";
 
 const delivery = (content: string, ruleIds: readonly string[] = []): AdapterDelivery => ({
   sessionId: "session", requested: "steer", mechanism: "native-queue", content, ruleIds,

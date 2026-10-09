@@ -8,7 +8,7 @@ packs, and seeds the rules into the rule catalog **disabled**; enable the ones y
 Each rule's `scope` covers TypeScript sources (`.ts`, `.tsx`, `.mts`, `.cts`) and leaves out dependency, build-output
 and generated directories (`node_modules`, `dist`, `build`, `out`, `.next`, `coverage`, `generated`, ...).
 
-It is checked by `npx vitest run test/packs.test.ts -t "pack tslint"`, against the
+It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack tslint"`, against the
 [pack structure and validation contract](../../docs/pack-format.md), and its ports are scored by the TSLint
 conformance harness, [`conformance/tslint/`](../../conformance/tslint/README.md) (`npm run test:conformance`).
 

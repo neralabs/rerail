@@ -1,7 +1,6 @@
-import { loadNativeBinding } from "../../src/native.js";
+import { loadNativeBinding, compareDeterministicStrings } from "../../src/engine/index.js";
 import { capabilitiesJson } from "../engine.js";
 import { applyToWorkspace } from "./runner.js";
-import { compareDeterministicStrings } from "../../src/stable-json.js";
 
 /**
  * Minimal repros for engine behaviours found while porting TSLint rules. Each probe runs one ast (or regex) clause
@@ -9,7 +8,7 @@ import { compareDeterministicStrings } from "../../src/stable-json.js";
  * rules look at siblings of the node only; `stopBy: end` means "all siblings in that direction", `neighbor` means "the
  * adjacent sibling"; a contextual pattern's `context` only disambiguates parsing and the `selector` node alone is
  * matched), or what the clause plainly asks for when no upstream reference applies. `ast-grep` expectations were checked
- * against the ast-grep 0.45.3 CLI; test/code-rule-dsl-upstream-differential.test.ts keeps that comparison running.
+ * against the ast-grep 0.45.3 CLI; test/engine/code-rule/code-rule-dsl-upstream-differential.test.ts keeps that comparison running.
  */
 export interface EngineProbe {
   id: string;

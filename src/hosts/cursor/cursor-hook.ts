@@ -1,4 +1,3 @@
-import { hookRerailStarted } from "./repository-start.js";
 import {
   cursorSession,
   cursorWorkspace,
@@ -6,8 +5,8 @@ import {
   type CursorHookInput,
   type CursorHookOutput,
 } from "./cursor-hook-adapter.js";
-import { emitHookOutput, launchedDirectly, readStdin } from "./hook-adapter.js";
-import { runHostHook, type HookOptions } from "./hook-host.js";
+import { emitHookOutput, launchedDirectly, readStdin } from "../../harness/hook-adapter.js";
+import { hookRerailStarted, runHostHook, type HookOptions } from "../../harness/hook-host.js";
 
 export { cursorHookEvent, cursorHookOutput, handleCursorEvent } from "./cursor-hook-adapter.js";
 

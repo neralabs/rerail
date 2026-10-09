@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 // renamed upstream token regenerates cleanly and passes `git diff`; only this catches the
 // dangling reference. A `var(--x, fallback)` is not an excuse: it is checked the same way.
 
-const UI_DIR = fileURLToPath(new URL("../ui/", import.meta.url));
+const UI_DIR = fileURLToPath(new URL("../../ui/", import.meta.url));
 const SCANNED = new Set([".css", ".js", ".html"]);
 
 async function* walk(dir) {

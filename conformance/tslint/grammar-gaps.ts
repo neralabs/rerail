@@ -1,5 +1,5 @@
 import ts from "typescript";
-import { loadNativeBinding } from "../../src/native.js";
+import { loadNativeBinding } from "../../src/engine/index.js";
 import { capabilitiesJson } from "../engine.js";
 import { applyToWorkspace, PARSE_FAILURE_CODES } from "./runner.js";
 

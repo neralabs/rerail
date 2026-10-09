@@ -1,11 +1,11 @@
 // Probe better-sqlite3 under the running Node, rebuild it in the target prefix when it fails, and re-probe.
-// Self-contained: a fresh checkout has no dist/ yet, so this cannot import src/sqlite-repair.ts. The daemon
+// Self-contained: a fresh checkout has no dist/ yet, so this cannot import src/runtime/sqlite-repair.ts. The daemon
 // launcher runs the same repair through that module before every spawn; this script is the manual entry point.
 import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const checkoutRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const checkoutRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const probeArgs = ["-e", "new(require('better-sqlite3'))(':memory:').close()"];
 
 export function parseEnsureSqliteArguments(argv, defaultPrefix = checkoutRoot) {

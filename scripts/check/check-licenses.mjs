@@ -10,10 +10,10 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /** SPDX ids allowed for files committed to this repository; the pack tests read the same list. */
-const ALLOWED_LICENSES = new Set(JSON.parse(readFileSync(join(root, "scripts", "licence-allowlist.json"), "utf8")));
+const ALLOWED_LICENSES = new Set(JSON.parse(readFileSync(join(root, "scripts", "check", "licence-allowlist.json"), "utf8")));
 
 /** Licence families that impose terms on the work they are combined with. */
 const COPYLEFT = /\b(A?GPL|LGPL|MPL|EPL|EUPL|CDDL|CPAL|OSL|SSPL|RPL|QPL|Sleepycat|CC-BY-SA|CC-BY-NC)\b/iu;

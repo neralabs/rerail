@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { loadNativeBinding, nativePlatformSuffix } from "../../src/native.js";
+import { loadNativeBinding, nativePlatformSuffix } from "../../src/engine/index.js";
 import { timeCorpus, type CorpusTiming } from "./corpus.js";
 import { ensureFixtures, fetchFixtures, loadExcludedRules, loadRuleList, loadScoredRules, loadVariants, repositoryPath, RERAIL_ROOT, TSLINT_SHA } from "./fixtures.js";
 import { FIXTURE_TYPESCRIPT_VERSION } from "./lint-format.js";

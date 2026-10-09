@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 const daemonStop = vi.hoisted(() => ({ beforeStopped: undefined as undefined | ((home: string) => Promise<void>) }));
-vi.mock("../src/daemon-control.js", async () => {
-  const actual = await vi.importActual<typeof import("../src/daemon-control.js")>("../src/daemon-control.js");
+vi.mock("../../src/runtime/daemon-control.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
   return {
     ...actual,
     // A running daemon's exit closes its last connection; the test stands in for that close.
@@ -16,8 +16,8 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runInstallCommand, runSetupCommand, type SetupContext } from "../src/setup-cli.js";
-import { ManagedUpdater } from "../src/updater.js";
+import { runInstallCommand, runSetupCommand, type SetupContext } from "../../src/cli/setup-cli.js";
+import { ManagedUpdater } from "../../src/setup/index.js";
 
 const temporaryDirectories: string[] = [];
 const previousHome = process.env.HOME;
@@ -75,7 +75,7 @@ describe("rerail install --root", () => {
   it("registers hooks through current, and --remove finds them there", async () => {
     const { context, hostConfigHome, packageRoot } = await fixture();
     const settingsPath = join(hostConfigHome, ".claude", "settings.json");
-    const hookPath = join(context.updater.currentLink, "dist", "claude-hook.js");
+    const hookPath = join(context.updater.currentLink, "dist", "hosts", "claude", "claude-hook.js");
 
     await runInstallCommand(["--root", packageRoot, "--harness", "claude-code"], context);
 
@@ -87,7 +87,7 @@ describe("rerail install --root", () => {
       for (const group of groups) for (const hook of group.hooks) expect(hook.command).toContain(hookPath);
     }
     expect(await readFile(join(hostConfigHome, ".claude", "commands", "rerail.md"), "utf8")).toContain(
-      join(context.updater.currentLink, "dist", "cli.js"),
+      join(context.updater.currentLink, "dist", "cli", "cli.js"),
     );
 
     await runInstallCommand(["--root", packageRoot, "--harness", "claude-code", "--remove"], context);

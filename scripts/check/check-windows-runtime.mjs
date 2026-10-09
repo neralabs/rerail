@@ -33,7 +33,7 @@ function importedDlls(image) {
 
 const files = process.argv.slice(2);
 if (files.length === 0) {
-  console.error("Usage: node scripts/check-windows-runtime.mjs <kernel.node>...");
+  console.error("Usage: node scripts/check/check-windows-runtime.mjs <kernel.node>...");
   process.exit(2);
 }
 let failed = false;

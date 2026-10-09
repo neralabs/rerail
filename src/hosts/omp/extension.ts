@@ -1,12 +1,12 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext, ExtensionFactory } from "@oh-my-pi/pi-coding-agent";
-import type * as RepositoryStart from "./repository-start.js";
+import type * as RepositoryStart from "../../runtime/repository-start.js";
 import {
   assistantCompletionEvent,
   assistantDeltaEvent,
@@ -18,20 +18,21 @@ import {
   type AdapterDelivery,
   type AdapterEvent,
   type AdapterSession,
-} from "./adapter-contract.js";
+} from "../../engine/adapter-contract.js";
+import { bundledModelPath, ENTRY_POINTS, PACKAGE_ROOT } from "../../engine/package-root.js";
 import { registerConversationRulesCommand } from "./command.js";
-import { nodeExecutable } from "./daemon-control.js";
-import { registerOmpSemanticTools, type NativeSemanticToolRuntime } from "./native-semantic-tools.js";
-import { createNativeSession, NativeSessionClient, type NativeSessionHost } from "./native-session-client.js";
-import type { SessionDatabaseOptions } from "./session-database-options.js";
-import type { ConversationRuleSourceOptions } from "./rule-sources.js";
-import { registerRerailCommands } from "./rerail-command.js";
-import { createOmpPresentation } from "./omp-presentation.js";
-import { dashboardOrigin, linkDeliveries, readRepositoryState } from "./session-presentation.js";
-import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote } from "./rerail-steer.js";
+import { nodeExecutable } from "../../runtime/daemon-control.js";
+import { registerOmpSemanticTools, type NativeSemanticToolRuntime } from "../../harness/native-semantic-tools.js";
+import { createNativeSession, NativeSessionClient, type NativeSessionHost } from "../../harness/native-session-client.js";
+import type { SessionDatabaseOptions } from "../../harness/session-database-options.js";
+import type { ConversationRuleSourceOptions } from "../../engine/catalog/rule-sources.js";
+import { registerRerailCommands } from "../../harness/rerail-command.js";
+import { createOmpPresentation } from "../../presentation/omp-presentation.js";
+import { dashboardOrigin, linkDeliveries, readRepositoryState } from "../../presentation/session-presentation.js";
+import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote } from "../../engine/code-rule/rerail-steer.js";
 import { registerConversationRulesTool } from "./tool.js";
 
-export { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, TURN_ENTRY_TYPE } from "./session-state.js";
+export { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../../runtime/session-state.js";
 
 
 export interface ConversationRulesOptions extends SessionDatabaseOptions, ConversationRuleSourceOptions {
@@ -40,14 +41,6 @@ export interface ConversationRulesOptions extends SessionDatabaseOptions, Conver
   maxRules?: number;
   registerTool?: boolean;
   registerCommand?: boolean;
-}
-
-
-/** Installed package root: dist/ and model/ live beside src/. */
-export const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-
-export function bundledModelPath(): string {
-  return resolve(PACKAGE_ROOT, "model");
 }
 
 const execFileAsync = promisify(execFile);
@@ -61,7 +54,7 @@ const STATE_CHECK_TIMEOUT_MS = 15_000;
  * reading the configured database when one is given. Without a built CLI, Rerail is off.
  */
 async function rerailStarted(cwd: string, databasePath: string | undefined): Promise<boolean> {
-  const readerPath = join(PACKAGE_ROOT, "dist", "repository-start.js");
+  const readerPath = join(PACKAGE_ROOT, ENTRY_POINTS.repositoryStart);
   if (process.versions.bun === undefined && existsSync(readerPath)) {
     // Runtime-selected on purpose: a static import would link better-sqlite3 into the Bun-loaded bundle.
     const reader = await import(pathToFileURL(readerPath).href) as typeof RepositoryStart;
@@ -71,7 +64,7 @@ async function rerailStarted(cwd: string, databasePath: string | undefined): Pro
     const answered = await readRepositoryState(cwd, "omp");
     if (answered !== null) return answered === "started";
   }
-  const cli = join(PACKAGE_ROOT, "dist", "cli.js");
+  const cli = join(PACKAGE_ROOT, ENTRY_POINTS.cli);
   if (!existsSync(cli)) return false;
   const databaseArgs = databasePath === undefined ? [] : ["--database", databasePath];
   const { stdout } = await execFileAsync(nodeExecutable(), [cli, "state", "--repo", cwd, ...databaseArgs], { cwd, timeout: STATE_CHECK_TIMEOUT_MS });

@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { deserialize, serialize } from "node:v8";
 import { and, asc, count, desc, eq, gt, gte, sql } from "drizzle-orm";
-import type { AdapterSession } from "./adapter-contract.js";
-import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "./database.js";
-import { events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "./schema.js";
-import { scopedRuleSignature } from "./scoped-rule-catalog.js";
-import { stableJsonText } from "./stable-json.js";
+import type { AdapterSession } from "../engine/adapter-contract.js";
+import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
+import { scopedRuleSignature } from "../engine/catalog/scoped-rule-catalog.js";
+import { stableJsonText } from "../engine/stable-json.js";
 
 export interface SessionEvent {
   sessionId: string;

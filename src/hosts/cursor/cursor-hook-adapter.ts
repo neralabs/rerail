@@ -1,5 +1,5 @@
 import { rm } from "node:fs/promises";
-import { hookText, type AdapterDelivery, type AdapterEvent, type AdapterSession, type RerailEventLoop } from "./adapter-contract.js";
+import { hookText, type AdapterDelivery, type AdapterEvent, type AdapterSession, type RerailEventLoop } from "../../engine/adapter-contract.js";
 import { ingestCursorTranscript } from "./cursor-transcript.js";
 import {
   deliveryRuleIds,
@@ -10,10 +10,10 @@ import {
   routeDeliveries,
   type HookInput,
   type HookOutput,
-} from "./hook-adapter.js";
-import { sessionStartNote, steerHeadlines } from "./rerail-steer.js";
-import { dashboardOrigin, linkDeliveries } from "./session-presentation.js";
-import { steers } from "./rule-mode.js";
+} from "../../harness/hook-adapter.js";
+import { sessionStartNote, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
+import { dashboardOrigin, linkDeliveries } from "../../presentation/session-presentation.js";
+import { steers } from "../../engine/catalog/rule-mode.js";
 
 export type CursorHookInput = HookInput;
 export type CursorHookOutput = HookOutput;

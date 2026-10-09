@@ -2,19 +2,18 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type * as SessionPresentation from "../src/session-presentation.js";
 const mocks = vi.hoisted(() => ({ presentation: vi.fn(), rulesDashboard: vi.fn(), openDashboard: vi.fn() }));
 // `readSummaryState` stays real: with an empty Rerail home no daemon answers, which is the case under test.
-vi.mock("../src/session-presentation.js", async () => ({
-  readSummaryState: (await vi.importActual<typeof SessionPresentation>("../src/session-presentation.js")).readSummaryState,
+vi.mock("../../src/presentation/session-presentation.js", async () => ({
+  readSummaryState: (await vi.importActual<typeof import("../../src/presentation/session-presentation.js")>("../../src/presentation/session-presentation.js")).readSummaryState,
   readPresentation: mocks.presentation, readRulesDashboard: mocks.rulesDashboard,
 }));
-vi.mock("../src/daemon-control.js", async () => ({
-  ...await vi.importActual<Record<string, unknown>>("../src/daemon-control.js"),
+vi.mock("../../src/runtime/daemon-control.js", async () => ({
+  ...await vi.importActual<Record<string, unknown>>("../../src/runtime/daemon-control.js"),
   openDashboard: mocks.openDashboard,
 }));
-import { RERAIL_COMMANDS } from "../src/rerail-commands.js";
-import { registerRerailCommands, type RerailCommandHost, type RerailCommandContext, type RerailCommandOptions } from "../src/rerail-command.js";
+import { RERAIL_COMMANDS } from "../../src/harness/rerail-commands.js";
+import { registerRerailCommands, type RerailCommandHost, type RerailCommandContext, type RerailCommandOptions } from "../../src/harness/rerail-command.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -53,12 +52,12 @@ function commandHarness(options: Partial<RerailCommandOptions> = {}, choice?: st
   return { commands, run: (name: string, args = "") => commands.get(name)!.handler(args, ctx), notices, sent, selections };
 }
 
-/** A package root whose launcher, `dist/cli.js <args>`, runs `script` as `sh` with those arguments. */
+/** A package root whose launcher, `dist/cli/cli.js <args>`, runs `script` as `sh` with those arguments. */
 async function launcherPackage(script: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "rerail-command-launcher-"));
   temporaryDirectories.push(root);
-  await mkdir(join(root, "dist"));
-  await writeFile(join(root, "dist", "cli.js"), [
+  await mkdir(join(root, "dist", "cli"), { recursive: true });
+  await writeFile(join(root, "dist", "cli", "cli.js"), [
     "const { spawnSync } = require(\"node:child_process\");",
     `const result = spawnSync("/bin/sh", ["-c", ${JSON.stringify(`set -eu\n${script}\n`)}, "sh", ...process.argv.slice(2)], { stdio: "inherit" });`,
     "process.exit(result.status ?? 1);",
@@ -171,9 +170,9 @@ describe("/rerail-create", () => {
     expect(notices).toEqual([]);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain("\"use design tokens, not hex colours\"");
-    expect(sent[0]).toContain(`${join(resolve("."), "dist", "cli.js")}' rules test <draft.json> --json`);
+    expect(sent[0]).toContain(`${join(resolve("."), "dist", "cli", "cli.js")}' rules test <draft.json> --json`);
     expect(sent[0]).toContain("Add this rule?");
-    expect(sent[0]).toContain(`${join(resolve("."), "dist", "cli.js")}' rules add <draft.json>`);
+    expect(sent[0]).toContain(`${join(resolve("."), "dist", "cli", "cli.js")}' rules add <draft.json>`);
   });
 });
 

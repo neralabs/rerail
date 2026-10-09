@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { sql } from "drizzle-orm";
-import { openSqliteDatabase } from "../src/database.js";
+import { openSqliteDatabase } from "../../src/engine/index.js";
 import {
   CURSOR_HOOK_EVENTS,
   HARNESSES,
@@ -14,17 +14,16 @@ import {
   unregisterHarnesses,
   type Harness,
   type RegistrationChange,
-} from "../src/harness-registration.js";
+} from "../../src/setup/harness-registration.js";
 import {
   claudeStatusDatabasePath,
   readClaudeStatusCommand,
   readClaudeStatusRegistration,
   writeClaudeStatusRegistration,
-} from "../src/claude-status-store.js";
-import { MANAGED_SKILL_MARKER } from "../src/rerail-command-files.js";
-import { RERAIL_COMMANDS } from "../src/rerail-commands.js";
-import { runInstallCommand } from "../src/setup-cli.js";
-import { ManagedUpdater } from "../src/updater.js";
+} from "../../src/setup/claude-status-store.js";
+import { MANAGED_SKILL_MARKER, RERAIL_COMMANDS } from "../../src/harness/index.js";
+import { runInstallCommand } from "../../src/cli/index.js";
+import { ManagedUpdater } from "../../src/setup/updater.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -133,10 +132,10 @@ describe("detectHarnesses", () => {
     const hooks = (await readJson(join(home, ".codex", "hooks.json"))).hooks as Record<string, unknown[]>;
     expect(Object.keys(hooks)).toEqual(["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"]);
     expect(hooks.PreToolUse).toEqual([
-      { hooks: [{ type: "command", command: hookLine(nodePath, root, "codex-hook.js") }] },
+      { hooks: [{ type: "command", command: hookLine(nodePath, root, "hosts/codex/codex-hook.js") }] },
     ]);
     expect(hooks.PostToolUse).toEqual([
-      { matcher: "", hooks: [{ type: "command", command: hookLine(nodePath, root, "codex-hook.js") }] },
+      { matcher: "", hooks: [{ type: "command", command: hookLine(nodePath, root, "hosts/codex/codex-hook.js") }] },
     ]);
   });
 
@@ -149,7 +148,7 @@ describe("detectHarnesses", () => {
       Array<{ hooks: Array<{ command: string }> }>
     >;
     const command = hooks.SessionStart?.[0]?.hooks[0]?.command;
-    const hookPath = join(root, "dist", "codex-hook.js");
+    const hookPath = join(root, "dist", "hosts", "codex", "codex-hook.js");
     // The test guards the first exec, so a hook that exits non-zero is never run twice.
     expect(command).toBe(`sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' ${nodePath} ${hookPath}`);
     // Unregister still finds the line: it carries the <root>/dist/ marker.
@@ -165,7 +164,7 @@ describe("detectHarnesses", () => {
       Array<{ hooks: Array<{ command: string }> }>
     >;
     const command = hooks.SessionStart?.[0]?.hooks[0]?.command;
-    const hookPath = join(root, "dist", "codex-hook.js");
+    const hookPath = join(root, "dist", "hosts", "codex", "codex-hook.js");
     // cmd runs the recorded node when it is still installed, and node from PATH otherwise.
     expect(command).toBe(`cmd /d /c "if exist "${nodePath}" ("${nodePath}" "${hookPath}") else (node "${hookPath}")"`);
   });
@@ -188,7 +187,7 @@ describe("Claude Code settings.json", () => {
     const { home, root, nodePath } = await fixture();
     const path = join(home, ".claude", "settings.json");
     const original = await seed(path, foreign);
-    const command = hookLine(nodePath, root, "claude-hook.js");
+    const command = hookLine(nodePath, root, "hosts/claude/claude-hook.js");
 
     const first = await registerHarnesses({ root, home, nodePath, harnesses: ["claude-code"] });
     expect(change(first.changes, "claude-code", "settings.json").action).toBe("updated");
@@ -245,7 +244,7 @@ describe("Claude Code settings.json", () => {
     const { home, root, nodePath } = await fixture();
     const path = join(home, ".claude", "settings.json");
     // The pre-fallback command shape an older rerail wrote; the marker still identifies it as ours.
-    const stale = `${nodePath} ${join(root, "dist", "claude-hook.js")}`;
+    const stale = `${nodePath} ${join(root, "dist", "hosts", "claude", "claude-hook.js")}`;
     await seed(path, {
       hooks: {
         SessionEnd: [{ hooks: [{ type: "command", command: stale }] }],
@@ -257,15 +256,15 @@ describe("Claude Code settings.json", () => {
     const hooks = (await readJson(path)).hooks as Record<string, unknown>;
     expect(hooks.Interrupt).toBeUndefined();
     expect(hooks.SessionEnd).toEqual([
-      { hooks: [{ type: "command", command: hookLine(newNode, root, "claude-hook.js") }] },
+      { hooks: [{ type: "command", command: hookLine(newNode, root, "hosts/claude/claude-hook.js") }] },
     ]);
   });
 
   it("registers Windows hooks through the exec-form launcher and replaces the cmd wrapper Git Bash mangles", async () => {
     const { home, root } = await fixture();
     const nodePath = String.raw`C:\Program Files\nodejs\node.exe`;
-    const hookPath = join(root, "dist", "claude-hook.js");
-    const launcherPath = join(root, "dist", "hook-launcher.js");
+    const hookPath = join(root, "dist", "hosts", "claude", "claude-hook.js");
+    const launcherPath = join(root, "dist", "harness", "hook-launcher.js");
     const path = join(home, ".claude", "settings.json");
     // Claude Code passes shell-form hooks to Git Bash, which turns `/d /c` into drive paths so cmd reads the event JSON as commands.
     const cmdWrapper = `cmd /d /c "if exist "${nodePath}" ("${nodePath}" "${hookPath}") else (node "${hookPath}")"`;
@@ -313,7 +312,7 @@ describe("Claude Code status-line ownership", () => {
   it("composes a command without copying it into settings, and restores all metadata", async () => {
     const statusLine = { type: "command", command: "sh ~/my-status.sh --compact", padding: 2, refreshInterval: 1000 };
     const { options, path, original } = await claudeFixture({ permissions: { allow: ["Read"] }, statusLine });
-    const installedCommand = `${options.nodePath} ${join(options.root, "dist", "claude-status.js")}`;
+    const installedCommand = `${options.nodePath} ${join(options.root, "dist", "hosts", "claude", "claude-status.js")}`;
     await registerHarnesses(options);
     expect((await readJson(path)).statusLine).toEqual({ ...statusLine, command: installedCommand });
     expect(readClaudeStatusCommand(options.home)).toEqual(statusLine);
@@ -335,12 +334,12 @@ describe("Claude Code status-line ownership", () => {
     await registerHarnesses(managed);
     const settings = await readJson(path);
     expect(settings.statusLine).toMatchObject({
-      ...statusLine, command: `${managed.nodePath} ${join(managed.root, "dist", "claude-status.js")}`,
+      ...statusLine, command: `${managed.nodePath} ${join(managed.root, "dist", "hosts", "claude", "claude-status.js")}`,
     });
     expect(readClaudeStatusCommand(options.home)).toEqual(statusLine);
     for (const groups of Object.values(settings.hooks as Record<string, { hooks: { command: string }[] }[]>)) {
       expect(groups).toHaveLength(1);
-      expect(groups[0]?.hooks).toEqual([{ type: "command", command: hookLine(managed.nodePath, managed.root, "claude-hook.js") }]);
+      expect(groups[0]?.hooks).toEqual([{ type: "command", command: hookLine(managed.nodePath, managed.root, "hosts/claude/claude-hook.js") }]);
     }
     await unregisterHarnesses(options);
     expect(await readJson(path)).toEqual(settings);
@@ -418,7 +417,7 @@ describe("Claude Code status-line ownership", () => {
     await registerHarnesses(options);
     expect(await readJson(rootPath)).toEqual({
       ...rootSettings,
-      statusLine: { ...rootStatus, command: `${options.nodePath} ${join(options.root, "dist", "claude-status.js")} ${rootPath}` },
+      statusLine: { ...rootStatus, command: `${options.nodePath} ${join(options.root, "dist", "hosts", "claude", "claude-status.js")} ${rootPath}` },
     });
     expect(readClaudeStatusCommand(options.home, rootPath)).toEqual(rootStatus);
     expect(readClaudeStatusCommand(options.home)).toEqual(globalStatus);
@@ -428,7 +427,7 @@ describe("Claude Code status-line ownership", () => {
     await registerHarnesses(upgraded);
     const installed = await readJson(rootPath);
     expect(installed.statusLine).toEqual({
-      ...rootStatus, command: `${upgraded.nodePath} ${join(upgraded.root, "dist", "claude-status.js")} ${rootPath}`,
+      ...rootStatus, command: `${upgraded.nodePath} ${join(upgraded.root, "dist", "hosts", "claude", "claude-status.js")} ${rootPath}`,
     });
     await registerHarnesses(upgraded);
     expect(await readJson(rootPath)).toEqual(installed);
@@ -493,7 +492,7 @@ describe("Claude Code status-line ownership", () => {
 
   it("preflights project status before global writes and refuses orphaned wrappers", async () => {
     const { options, rootPath: path } = await worktreeFixture();
-    const original = await seed(path, { statusLine: { type: "command", command: `/old/node /retired/rerail/dist/claude-status.js ${path}` } });
+    const original = await seed(path, { statusLine: { type: "command", command: `/old/node /retired/rerail/dist/hosts/claude/claude-status.js ${path}` } });
     await expect(registerHarnesses(options)).rejects.toThrow();
     expect(await readFile(path, "utf8")).toBe(original);
     await expect(lstat(join(options.home, ".claude"))).rejects.toMatchObject({ code: "ENOENT" });
@@ -552,7 +551,7 @@ describe("Claude Code status-line ownership", () => {
     await registerHarnesses(options);
     expect(readClaudeStatusCommand(options.home, path)).toEqual(statusLine);
     expect((await readJson(path)).statusLine).toMatchObject({
-      ...statusLine, command: `${options.nodePath} ${join(options.root, "dist", "claude-status.js")} ${path}`,
+      ...statusLine, command: `${options.nodePath} ${join(options.root, "dist", "hosts", "claude", "claude-status.js")} ${path}`,
     });
     expect(await readFile(rootPath, "utf8")).toBe(rootOriginal);
     await unregisterHarnesses(options);
@@ -578,7 +577,7 @@ describe("Claude Code commands", () => {
   it("writes every Rerail command with exact grants, is idempotent, and unregister deletes them", async () => {
     const { home, root, nodePath } = await fixture();
     const directory = join(home, ".claude", "commands");
-    const command = `${nodePath} ${join(root, "dist", "cli.js")}`;
+    const command = `${nodePath} ${join(root, "dist", "cli", "cli.js")}`;
     const read = (name: string): Promise<string> => readFile(join(directory, `${name}.md`), "utf8");
 
     const first = await registerHarnesses({ root, home, nodePath, harnesses: options });
@@ -623,7 +622,7 @@ describe("Claude Code commands", () => {
     const { home, root, nodePath } = await fixture();
     const directory = join(home, ".claude", "commands");
     await mkdir(directory, { recursive: true });
-    const ours = `Run:\n${nodePath} ${join(root, "dist", "cli.js")} session\n`;
+    const ours = `Run:\n${nodePath} ${join(root, "dist", "cli", "cli.js")} session\n`;
     for (const name of ["rerail-session", "rerail-disable"]) await writeFile(join(directory, `${name}.md`), ours);
     await writeFile(join(directory, "rerail-enable.md"), "A user's own command.\n");
 
@@ -642,7 +641,7 @@ describe("Claude Code commands", () => {
     const newNode = "/opt/node-22/bin/node";
     const report = await registerHarnesses({ root, home, nodePath: newNode, harnesses: options });
     expect(change(report.changes, "claude-code", "rerail.md").action).toBe("updated");
-    expect(await readFile(path, "utf8")).toContain(`${newNode} ${join(root, "dist", "cli.js")} session claude-code`);
+    expect(await readFile(path, "utf8")).toContain(`${newNode} ${join(root, "dist", "cli", "cli.js")} session claude-code`);
     expect(await backups(path)).toHaveLength(1);
   });
 
@@ -669,7 +668,7 @@ describe("Codex hooks.json", () => {
           {
             hooks: [
               { type: "command", command: "python3 /opt/other/pre-tool.py" },
-              { type: "command", command: `/opt/node/bin/node ${join(root, "dist", "codex-hook.js")}` },
+              { type: "command", command: `/opt/node/bin/node ${join(root, "dist", "hosts", "codex", "codex-hook.js")}` },
             ],
           },
         ],
@@ -705,8 +704,8 @@ describe("legacy package-root cutover", () => {
     await seed(join(legacyRoot, "package.json"), { name: "@neralabs/rerail" });
     await seed(join(foreignRoot, "package.json"), { name: "another-package" });
     for (const [directory, file, executable] of [
-      [".claude", "settings.json", "claude-hook.js"],
-      [".codex", "hooks.json", "codex-hook.js"],
+      [".claude", "settings.json", "hosts/claude/claude-hook.js"],
+      [".codex", "hooks.json", "hosts/codex/codex-hook.js"],
     ] as const) {
       const old = `${options.nodePath} "${join(legacyRoot, "dist", executable)}"`;
       const foreign = `${options.nodePath} ${join(foreignRoot, "dist", executable)}`;
@@ -719,14 +718,14 @@ describe("legacy package-root cutover", () => {
       });
     }
     await seed(join(options.home, ".cursor", "hooks.json"), {
-      version: 1, hooks: { sessionStart: [{ command: `${options.nodePath} "${join(legacyRoot, "dist", "cursor-hook.js")}"` }] },
+      version: 1, hooks: { sessionStart: [{ command: `${options.nodePath} "${join(legacyRoot, "dist", "hosts", "cursor", "cursor-hook.js")}"` }] },
     });
     await seed(join(options.home, ".pi", "agent", "settings.json"), { packages: [legacyRoot, foreignRoot] });
     expect(readClaudeStatusRegistration(options.home)).toBeUndefined();
     await registerHarnesses({ ...options, harnesses: ["claude-code", "codex", "cursor", "pi"] });
     for (const [directory, file, executable] of [
-      [".claude", "settings.json", "claude-hook.js"],
-      [".codex", "hooks.json", "codex-hook.js"],
+      [".claude", "settings.json", "hosts/claude/claude-hook.js"],
+      [".codex", "hooks.json", "hosts/codex/codex-hook.js"],
     ] as const) {
       const hooks = (await readJson(join(options.home, directory, file))).hooks as Record<string, unknown>;
       expect(hooks.SessionStart).toEqual([{ hooks: [{ type: "command", command: hookLine(options.nodePath, options.root, executable) }] }]);
@@ -736,7 +735,7 @@ describe("legacy package-root cutover", () => {
       ] }]);
     }
     expect(((await readJson(join(options.home, ".cursor", "hooks.json"))).hooks as Record<string, unknown>).sessionStart)
-      .toEqual([{ command: hookLine(options.nodePath, options.root, "cursor-hook.js") }]);
+      .toEqual([{ command: hookLine(options.nodePath, options.root, "hosts/cursor/cursor-hook.js") }]);
     expect((await readJson(join(options.home, ".pi", "agent", "settings.json"))).packages).toEqual([foreignRoot, options.root]);
   });
 });
@@ -753,12 +752,12 @@ describe("Codex Rerail skills", () => {
       expect(text).toContain(`---\nname: ${name}\ndescription: ${description}.\n---\n`);
       expect(text).toContain("require_escalated");
     }
-    expect(await readFile(path, "utf8")).toContain(`\n${options.nodePath} ${join(options.root, "dist", "cli.js")} session\n`);
+    expect(await readFile(path, "utf8")).toContain(`\n${options.nodePath} ${join(options.root, "dist", "cli", "cli.js")} session\n`);
     await registerHarnesses({ ...options, harnesses: ["codex"] });
     expect(await backups(path)).toEqual([]);
     const replacement = await fixture();
     await registerHarnesses({ ...options, root: replacement.root, harnesses: ["codex"] });
-    expect(await readFile(path, "utf8")).toContain(`${options.nodePath} ${join(replacement.root, "dist", "cli.js")} session`);
+    expect(await readFile(path, "utf8")).toContain(`${options.nodePath} ${join(replacement.root, "dist", "cli", "cli.js")} session`);
     await unregisterHarnesses({ ...options, harnesses: ["codex"] });
     expect(await readFile(path, "utf8")).toContain(replacement.root);
     await unregisterHarnesses({ ...options, root: replacement.root, harnesses: ["codex"] });
@@ -779,7 +778,7 @@ describe("Codex Rerail skills", () => {
   it("replaces the earlier $rerail skill it installed and keeps anyone else's", async () => {
     const ours = await fixture();
     const path = skillPath(ours.home, "rerail");
-    const earlier = `---\nname: rerail\n---\n${ours.nodePath} ${join(ours.root, "dist", "cli.js")} session\n\n${MANAGED_SKILL_MARKER}\n`;
+    const earlier = `---\nname: rerail\n---\n${ours.nodePath} ${join(ours.root, "dist", "cli", "cli.js")} session\n\n${MANAGED_SKILL_MARKER}\n`;
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, earlier);
     const report = await registerHarnesses({ ...ours, harnesses: ["codex"] });
@@ -815,7 +814,7 @@ describe("Cursor hooks.json", () => {
     const { home, root, nodePath } = await fixture();
     const path = join(home, ".cursor", "hooks.json");
     const original = await seed(path, foreign);
-    const command = hookLine(nodePath, root, "cursor-hook.js");
+    const command = hookLine(nodePath, root, "hosts/cursor/cursor-hook.js");
 
     const first = await registerHarnesses({ root, home, nodePath, harnesses: ["cursor"] });
     expect(change(first.changes, "cursor", "hooks.json").action).toBe("updated");
@@ -838,7 +837,7 @@ describe("Cursor hooks.json", () => {
   it("installs every Rerail command as a plain prompt file", async () => {
     const { home, root, nodePath } = await fixture();
     const directory = join(home, ".cursor", "commands");
-    const command = `${nodePath} ${join(root, "dist", "cli.js")}`;
+    const command = `${nodePath} ${join(root, "dist", "cli", "cli.js")}`;
 
     const first = await registerHarnesses({ root, home, nodePath, harnesses: ["cursor"] });
     for (const { name, description } of RERAIL_COMMANDS) {
@@ -967,7 +966,7 @@ describe("OMP extensions symlink", () => {
     const first = await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] });
     expect(change(first.changes, "omp", "mcp.json").action).toBe("updated");
     expect(await readJson(path)).toEqual({
-      mcpServers: { other: { command: "other-mcp" }, rerail: { command: nodePath, args: [join(root, "dist", "cli.js"), "mcp-bridge"] } },
+      mcpServers: { other: { command: "other-mcp" }, rerail: { command: nodePath, args: [join(root, "dist", "cli", "cli.js"), "mcp-bridge"] } },
       unrelated: true,
     });
 
@@ -990,7 +989,7 @@ describe("OMP extensions symlink", () => {
     const created = await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] });
     expect(change(created.changes, "omp", "mcp.json").action).toBe("created");
     expect(await readJson(path)).toEqual({
-      mcpServers: { rerail: { command: nodePath, args: [join(root, "dist", "cli.js"), "mcp-bridge"] } },
+      mcpServers: { rerail: { command: nodePath, args: [join(root, "dist", "cli", "cli.js"), "mcp-bridge"] } },
     });
 
     const removed = await unregisterHarnesses({ root, home, nodePath, harnesses: ["omp"] });

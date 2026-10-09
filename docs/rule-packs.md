@@ -15,7 +15,7 @@ Only rules that already exist ship as packs. Rerail ships two:
 | Cyclomatic complexity (limit 6) | language | 3 | never recommended; chosen by hand | One rule each for Python, TypeScript and JavaScript that flags a function whose cyclomatic complexity, with lizard 1.24.0's decision points, is above 6. The documents are in `packs/complexity/rules/`, seeded off. Group: Complexity. See [Cyclomatic complexity](#cyclomatic-complexity). |
 | TSLint | language | 74 | the `typescript` dependency, `*.ts` or `*.tsx` files | The golden TSLint ports in `packs/tslint/rules/`: each passed TSLint's own test suite in the conformance harness, with TSLint's default options. Group: TSLint. |
 
-The rule lists are the pack files themselves: `packs/complexity/pack.json` and `packs/tslint/pack.json`. A rule's title comes from its document's description. Core ships both packs inside its own package (`CORE_RULE_PACKS` in `src/rule-bootstrap.ts`, and `package.json` `files`) and seeds their rules disabled; the other packs under `packs/` are not shipped yet.
+The rule lists are the pack files themselves: `packs/complexity/pack.json` and `packs/tslint/pack.json`. A rule's title comes from its document's description. Core ships both packs inside its own package (`CORE_RULE_PACKS` in `src/engine/catalog/rule-bootstrap.ts`, and `package.json` `files`) and seeds their rules disabled; the other packs under `packs/` are not shipped yet.
 
 A pack for a project's own conventions is added the same way: a `repository` pack directory with its rule documents in `rules/` and a `pack.json` that lists them, with a match definition naming the files or dependencies that identify the project. Linter packs for other languages and frameworks wait until core loads installed packs.
 
@@ -67,7 +67,7 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
   - `document` is the rule's document, `rules/<name>.json`, relative to the pack; it must carry the rule's id
     ([pack format](pack-format.md#packjson)).
 
-`test/rule-packs.test.ts` holds the packs to this: TSLint lists exactly the golden ports, the complexity pack exactly its three rules, every rule starts in its document's mode, and every example is caught or passes as it says.
+`test/engine/catalog/rule-packs.test.ts` holds the packs to this: TSLint lists exactly the golden ports, the complexity pack exactly its three rules, every rule starts in its document's mode, and every example is caught or passes as it says.
 
 ## Matching
 

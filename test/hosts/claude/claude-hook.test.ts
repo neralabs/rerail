@@ -2,13 +2,13 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import type { AdapterDelivery } from "../src/adapter-contract.js";
-import { claudeHookOutput, handleClaudeEvent, runClaudeHook } from "../src/claude-hook.js";
-import type { HookOptions } from "../src/hook-host.js";
-import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "./hook-fixtures.js";
-import { sessionStartNote, steerBlock } from "../src/rerail-steer.js";
-import { dashboardOrigin } from "../src/session-presentation.js";
-import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
+import type { AdapterDelivery } from "../../../src/engine/index.js";
+import { claudeHookOutput, handleClaudeEvent, runClaudeHook } from "../../../src/hosts/claude/claude-hook.js";
+import type { HookOptions } from "../../../src/harness/index.js";
+import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
+import { sessionStartNote, steerBlock } from "../../../src/engine/index.js";
+import { dashboardOrigin } from "../../../src/presentation/index.js";
+import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-claude-hook-");
 

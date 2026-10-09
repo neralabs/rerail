@@ -5,15 +5,14 @@ import type { ExtensionAPI as OmpAPI, ExtensionContext as OmpContext } from "@oh
 import type { ExtensionAPI as PiAPI, ExtensionContext as PiContext } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { createConversationRulesExtension } from "../src/extension.js";
-import { createPiConversationRulesExtension } from "../src/pi-extension.js";
-import { CodeRuleBridge } from "../src/code-rule-bridge.js";
-import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../src/session-state.js";
-import type { ConversationRule } from "../src/rule-schema.js";
-import { linkSteers, steerBlock } from "../src/rerail-steer.js";
-import { dashboardOrigin } from "../src/session-presentation.js";
-import { closeNativeTestDaemons, startNativeTestDaemon } from "./native-daemon-fixture.js";
-import { startTestRepository } from "./support/started-repository.js";
+import { createConversationRulesExtension } from "../../../src/hosts/omp/extension.js";
+import { createPiConversationRulesExtension } from "../../../src/hosts/pi/index.js";
+import { CodeRuleBridge, linkSteers, steerBlock } from "../../../src/engine/index.js";
+import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../../../src/runtime/index.js";
+import type { ConversationRule } from "../../../src/engine/index.js";
+import { dashboardOrigin } from "../../../src/presentation/index.js";
+import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
+import { startTestRepository } from "../../support/started-repository.js";
 
 async function checkoutSteer(cwd: string): Promise<string> {
   return linkSteers(steerBlock("checkout", "Check checkout requirements."), await dashboardOrigin(cwd));

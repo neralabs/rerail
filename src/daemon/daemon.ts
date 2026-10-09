@@ -7,69 +7,34 @@ import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { startEngineService, type EngineService } from "./engine-service.js";
+import { bundledModelPath, PACKAGE_ROOT } from "../engine/package-root.js";
+import type { DaemonHealth, DaemonState, NativeStatus } from "../runtime/daemon-control.js";
+import { startEngineService, type EngineService } from "../runtime/engine-service.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
-import { createRerailApi, hostAllowlist, publicHostSet } from "./api/http.js";
-import { createRerailMcpHandler } from "./api/mcp.js";
-import { operations, type RerailApiStores } from "./api/operations.js";
-import { nativeHealth as loadNativeHealth, type NativeHealth } from "./native.js";
-import { loadBundledRules } from "./rule-bootstrap.js";
-import { contextStartState, startStateReader, workspaceStartState, type RepositoryStartState } from "./repository-start.js";
-import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "./database.js";
+import { createRerailApi, hostAllowlist, publicHostSet } from "../api/http.js";
+import { createRerailMcpHandler } from "../api/mcp.js";
+import { operations, type RerailApiStores } from "../api/operations.js";
+import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/native/native.js";
+import { loadBundledRules } from "../engine/catalog/rule-bootstrap.js";
+import { contextStartState, startStateReader, workspaceStartState, type RepositoryStartState } from "../runtime/repository-start.js";
+import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import {
   openScopedRuleCatalog,
   resolveRepositoryContext,
   ScopedRuleCatalog,
   type RepositoryContext,
-} from "./scoped-rule-catalog.js";
-import { SqliteAuditReader } from "./audit-store.js";
-import { SqliteAuditControlStore } from "./audit-control.js";
-import { SqliteSessionReader, SqliteSessionStore } from "./session-store.js";
-import { acquireMainInstance } from "./main-instance.js";
-import { currentRerailBuild, isMainRerailBuild } from "./rerail-build.js";
-import { SqlitePresentationPreferenceStore } from "./presentation-preference-store.js";
+} from "../engine/catalog/scoped-rule-catalog.js";
+import { SqliteAuditReader } from "../engine/audit/audit-store.js";
+import { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
+import { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-store.js";
+import { acquireMainInstance } from "../engine/native/main-instance.js";
+import { currentRerailBuild, isMainRerailBuild } from "../engine/native/rerail-build.js";
+import { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
 
 export const DEFAULT_DAEMON_HOST = "127.0.0.1";
 export const DEFAULT_DAEMON_PORT = 4737;
-
-/** What `rerail status` and the launcher need to find a running daemon. */
-export interface DaemonState {
-  pid: number;
-  host: string;
-  port: number;
-  url: string;
-  version: string;
-  /** The Rerail database: rules and every repository's history. */
-  databasePath: string;
-  /** Local IPC endpoint used by host adapters: a Unix socket or Windows named pipe. */
-  kernelSocketPath: string;
-  /**
-   * `bundled` serves the packaged page from `dist/ui`; `dev` is a daemon started with `--dev`
-   * (or `RERAIL_DEV=1`), serving the committed `ui/` source, or one embedded without any page.
-   */
-  ui: "bundled" | "dev";
-  startedAt: number;
-  /** The package the daemon was launched from; `rerail setup` restarts a daemon whose root is no longer `current`. */
-  packageRoot: string;
-  workspaceRoot?: string;
-  /** Same-user capability for normal native sessions; never exposed by health/API responses. */
-  nativeToken?: string;
-}
-
-export type NativeStatus = { ok: true; kernelVersion: string } | { ok: false; error: string };
-
-export interface DaemonHealth extends Pick<DaemonState, "version" | "pid" | "ui"> {
-  status: "ok";
-  uptimeMs: number;
-  database: { path: string; exists: boolean };
-  native: NativeStatus;
-  /** Absolute checkout path native sessions address. */
-  workspaceRoot: string;
-  /** Stable identity of the repository the page, listings, and rule context are scoped to. */
-  repositoryId: string;
-}
 
 export interface RerailDaemonOptions {
   version: string;
@@ -195,14 +160,14 @@ class DaemonStores implements RerailApiStores {
   }
 }
 
-/** The directory `dist/ui` beside this module once built; the UI is not present when running from source. */
+/** The built page, `<package>/dist/ui`; the UI is not present until the package is built. */
 export function bundledUiRoot(): string {
-  return join(dirname(fileURLToPath(import.meta.url)), "ui");
+  return join(PACKAGE_ROOT, "dist", "ui");
 }
 
-/** The committed page itself, one level up from `dist/` (or `src/`): editing a file and reloading is the whole dev loop. */
+/** The committed page itself, `<package>/ui`: editing a file and reloading is the whole dev loop. */
 export function sourceUiRoot(): string {
-  return join(dirname(fileURLToPath(import.meta.url)), "..", "ui");
+  return join(PACKAGE_ROOT, "ui");
 }
 
 /** A short, database-derived local IPC endpoint isolates each Rerail home's engine service. */
@@ -300,7 +265,7 @@ export class RerailDaemon {
     const workspaceRoot = resolve(options.workspaceRoot ?? process.cwd());
     const storageRoot = join(workspaceRoot, ".rerail", "sessions");
     const repository = options.repositoryContext ?? resolveRepositoryContext(workspaceRoot);
-    const modelPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "model");
+    const modelPath = bundledModelPath();
     const engineService = await startEngineService({
       socketPath: kernelSocketPath,
       storageRoot,
@@ -399,7 +364,7 @@ export class RerailDaemon {
       kernelSocketPath: this.kernelSocketPath,
       ui: this.#ui,
       startedAt: this.startedAt,
-      packageRoot: resolve(dirname(fileURLToPath(import.meta.url)), ".."),
+      packageRoot: PACKAGE_ROOT,
       workspaceRoot: this.#workspaceRoot,
       nativeToken: this.#nativeToken,
     };
@@ -564,7 +529,7 @@ export function parsePort(text: string): number {
 }
 
 async function packageVersion(): Promise<string> {
-  const manifestPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+  const manifestPath = join(PACKAGE_ROOT, "package.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { version?: unknown };
   return typeof manifest.version === "string" ? manifest.version : "0.0.0";
 }

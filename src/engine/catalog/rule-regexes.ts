@@ -1,4 +1,4 @@
-import { loadNativeBinding } from "./native.js";
+import { loadNativeBinding } from "../native/native.js";
 import { isSimilarityMatch, type ConversationRule, type MatchCondition } from "./rule-schema.js";
 
 export interface RegexIssue {

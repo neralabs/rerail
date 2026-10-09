@@ -1,19 +1,17 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { PACKAGE_ROOT } from "../package-root.js";
 import { z } from "zod";
-import { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
-import { assertCodeRuleStorable, CodeRuleCompileError } from "./code-rule-compile.js";
-import { codeRuleSchema, CODE_RULE_FORMAT } from "./code-rule-schema.js";
+import { parseJsonWithoutDuplicateKeys } from "../json-duplicate-keys.js";
+import { assertCodeRuleStorable, CodeRuleCompileError } from "../code-rule/code-rule-compile.js";
+import { codeRuleSchema, CODE_RULE_FORMAT } from "../code-rule/code-rule-schema.js";
 import { conversationRuleSchema } from "./rule-schema.js";
-import { RULE_APPLICABILITIES, RULE_KINDS, RULE_ORIGINS } from "./schema.js";
+import { RULE_APPLICABILITIES, RULE_KINDS, RULE_ORIGINS } from "../storage/schema.js";
 import type { BundledRuleDocument, RuleDocument } from "./rule-store.js";
 import { ScopedRuleCatalog } from "./scoped-rule-catalog.js";
 
 export const RULES_DUMP_VERSION = 1 as const;
 export const RULES_DUMP_FILE = "rules.json";
-
-const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
  * `<package>/code-rule-dsl/rules`: core's own rule documents, seeded enabled into every project database. None ship
@@ -27,7 +25,7 @@ export function bundledRulesDirectory(): string {
  * The rule packs core ships inside its own package (`package.json` `files`) until it loads installed packs: TSLint and
  * complexity.
  * Each is a `packs/<id>/` directory in the pack layout (`docs/pack-format.md`); its `rules/` documents are seeded
- * disabled, and its `pack.json` is read by `src/rule-packs.ts`.
+ * disabled, and its `pack.json` is read by `src/engine/catalog/rule-packs.ts`.
  */
 export const CORE_RULE_PACKS = ["tslint", "complexity"] as const;
 

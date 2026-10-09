@@ -1,5 +1,5 @@
 import { rm } from "node:fs/promises";
-import { hookText, type AdapterDelivery, type RerailEventLoop } from "./adapter-contract.js";
+import { hookText, type AdapterDelivery, type RerailEventLoop } from "../../engine/adapter-contract.js";
 import { claudeHookEvents, claudeWorkspace } from "./claude-event-adapter.js";
 import {
   deliveryRuleIds,
@@ -10,9 +10,9 @@ import {
   type EventTable,
   type HookInput,
   type HookOutput,
-} from "./hook-adapter.js";
-import { sessionStartNote, steerHeadlines } from "./rerail-steer.js";
-import { dashboardOrigin, linkDeliveries } from "./session-presentation.js";
+} from "../../harness/hook-adapter.js";
+import { sessionStartNote, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
+import { dashboardOrigin, linkDeliveries } from "../../presentation/session-presentation.js";
 
 const CLAUDE_EVENTS: EventTable = {
   SessionStart: true,

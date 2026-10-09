@@ -1,8 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { RerailDaemon } from "../src/daemon.js";
-import { defaultRerailDatabasePath } from "../src/database.js";
-import { defaultRerailHome } from "../src/rerail-home.js";
+import { RerailDaemon } from "../../src/daemon/index.js";
+import { defaultRerailDatabasePath, defaultRerailHome } from "../../src/engine/index.js";
 
 const daemons: RerailDaemon[] = [];
 

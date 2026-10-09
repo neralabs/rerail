@@ -3,13 +3,13 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
-import { LiveConversationRules } from "../src/conversation-rule-sync.js";
-import { ConversationRuleRegistry } from "../src/registry.js";
-import type { ConversationRule } from "../src/rule-schema.js";
-import { conversationRuleLoader } from "../src/rule-sources.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
-import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
-import { MOCK_CODE_RULES } from "../src/seed.js";
+import { LiveConversationRules } from "../../../src/engine/catalog/conversation-rule-sync.js";
+import { ConversationRuleRegistry } from "../../../src/engine/catalog/registry.js";
+import type { ConversationRule } from "../../../src/engine/catalog/rule-schema.js";
+import { conversationRuleLoader } from "../../../src/engine/catalog/rule-sources.js";
+import { SqliteRuleStore } from "../../../src/engine/catalog/rule-store.js";
+import { ScopedRuleCatalog } from "../../../src/engine/catalog/scoped-rule-catalog.js";
+import { MOCK_CODE_RULES } from "../../../src/cli/index.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {

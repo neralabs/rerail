@@ -3,11 +3,10 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AdapterDelivery } from "../src/adapter-contract.js";
-import type { RuleSteerDelivery } from "../src/code-rule.js";
-import { RerailRuntime } from "../src/runtime.js";
-import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
-import { SqliteSessionStore } from "../src/session-store.js";
+import type { AdapterDelivery, RuleSteerDelivery } from "../../src/engine/index.js";
+import { RerailRuntime } from "../../src/runtime/runtime.js";
+import { ScopedRuleCatalog } from "../../src/engine/index.js";
+import { SqliteSessionStore } from "../../src/runtime/session-store.js";
 
 const directories: string[] = [];
 afterEach(async () => {

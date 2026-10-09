@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { linkSteers, sessionStartNote, steerBlock, steerHeadlines } from "../src/rerail-steer.js";
+import { linkSteers, sessionStartNote, steerBlock, steerHeadlines } from "../../../src/engine/code-rule/rerail-steer.js";
 
 const DASHBOARD = "http://127.0.0.1:4791/";
 

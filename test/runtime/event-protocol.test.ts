@@ -4,7 +4,7 @@ import {
   decodeRerailEventResult,
   encodeRerailEventResult,
   RERAIL_EVENT_MAX_FRAME_BYTES,
-} from "../src/event-protocol.js";
+} from "../../src/runtime/event-protocol.js";
 
 describe("Rerail event protocol", () => {
   it("decodes one strict lifecycle event frame", () => {

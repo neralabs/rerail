@@ -6,16 +6,13 @@ import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { afterEach, describe, expect, it } from "vitest";
-import { publicHostSet } from "../src/api/http.js";
-import { operations } from "../src/api/operations.js";
-import { presentationResponseSchema } from "../src/api/session-contracts.js";
-import { assertHostBindable, parsePublicHosts, RerailDaemon, type DaemonHealth, type RerailDaemonOptions } from "../src/daemon.js";
-import { ingestEngineEvent } from "../src/engine-service.js";
-import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../src/seed.js";
-import { SqliteAuditReader, SqliteAuditStore } from "../src/audit-store.js";
-import { SqliteAuditControlStore } from "../src/audit-control.js";
-import { SqliteSessionStore, SESSION_EVENT_PAGE_LIMIT } from "../src/session-store.js";
-import { startTestRepositoryById } from "./support/started-repository.js";
+import { publicHostSet, operations, presentationResponseSchema } from "../../src/api/index.js";
+import { assertHostBindable, parsePublicHosts, RerailDaemon, type RerailDaemonOptions } from "../../src/daemon/daemon.js";
+import type { DaemonHealth } from "../../src/runtime/index.js";
+import { ingestEngineEvent, SqliteSessionStore, SESSION_EVENT_PAGE_LIMIT } from "../../src/runtime/index.js";
+import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
+import { SqliteAuditReader, SqliteAuditStore, SqliteAuditControlStore } from "../../src/engine/index.js";
+import { startTestRepositoryById } from "../support/started-repository.js";
 
 const healthyNative = () => ({ ok: true, kernelVersion: "1" });
 

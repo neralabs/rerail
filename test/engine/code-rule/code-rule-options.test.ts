@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CodeRuleOptionError, codeRuleOptionValues, resolveCodeRuleOptions } from "../src/code-rule-options.js";
+import { CodeRuleOptionError, codeRuleOptionValues, resolveCodeRuleOptions } from "../../../src/engine/code-rule/code-rule-options.js";
 
 function withNumber(config: unknown, declaration: Record<string, unknown> = { type: "number", default: 0 }) {
   return {

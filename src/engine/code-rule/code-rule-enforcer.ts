@@ -11,7 +11,7 @@ import {
   RESULT_PAGE_BYTES,
   type NativeCodeRuleDslWorkspace,
   type NativeRepositoryIndexOptions,
-} from "./native.js";
+} from "../native/native.js";
 import type { CodeRuleDslCatalog } from "./code-rule-dsl-catalog.js";
 import {
   buildSteer,
@@ -33,14 +33,14 @@ import {
   type AuditResult,
   type AuditRuleProvenance,
   type AuditScope,
-} from "./audit.js";
-import { defaultRerailDatabasePath } from "./database.js";
-import { SqliteAuditStore } from "./audit-store.js";
-import { RULE_MODES, steers } from "./rule-mode.js";
-import { compareDeterministicStrings } from "./stable-json.js";
-import { assertContentStoreOwner } from "./main-instance.js";
-import { contentStorePath } from "./rerail-build.js";
-import { withinCheckout } from "./checkout-control.js";
+} from "../audit/audit.js";
+import { defaultRerailDatabasePath } from "../storage/database.js";
+import { SqliteAuditStore } from "../audit/audit-store.js";
+import { RULE_MODES, steers } from "../catalog/rule-mode.js";
+import { compareDeterministicStrings } from "../stable-json.js";
+import { assertContentStoreOwner } from "../native/main-instance.js";
+import { contentStorePath } from "../native/rerail-build.js";
+import { withinCheckout } from "../catalog/checkout-control.js";
 import { languageOfPath, CODE_RULE_DIALECTS, SOURCE_LANGUAGES } from "./code-rule-languages.js";
 
 export { SOURCE_LANGUAGES };

@@ -1,19 +1,21 @@
 import { join } from "node:path";
-import type { AdapterSession, RerailEventLoop } from "./adapter-contract.js";
-import { bundledModelPath } from "./extension.js";
-import { RerailRuntime } from "./runtime.js";
-import { ingestEngineEvent } from "./engine-service.js";
-import { daemonEngineSocket } from "./daemon-control.js";
+import type { AdapterSession, RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
+import { bundledModelPath } from "../engine/package-root.js";
+import { readRepositoryState } from "../presentation/session-presentation.js";
+import { isRerailStarted } from "../runtime/repository-start.js";
+import { RerailRuntime } from "../runtime/runtime.js";
+import { ingestEngineEvent } from "../runtime/engine-service.js";
+import { daemonEngineSocket } from "../runtime/daemon-control.js";
 import {
   bindSteerReceipt,
   withSessionLock,
   type HookHost,
   type HookOutput,
 } from "./hook-adapter.js";
-import type { SemanticEmbedder } from "./semantic-types.js";
-import { SqliteSessionStore } from "./session-store.js";
-import { defaultRerailDatabasePath } from "./database.js";
-import { readRepositoryId } from "./repository-identity.js";
+import type { SemanticEmbedder } from "../engine/native/semantic-types.js";
+import { SqliteSessionStore } from "../runtime/session-store.js";
+import { defaultRerailDatabasePath } from "../engine/storage/database.js";
+import { readRepositoryId } from "../engine/catalog/repository-identity.js";
 
 export * from "./hook-adapter.js";
 
@@ -33,6 +35,19 @@ function recordLocalReceipt(session: AdapterSession, databasePath: string): (rec
       store.close();
     }
   };
+}
+
+/**
+ * The check one-shot hooks make. A running daemon answers first, from its own environment and open
+ * database; without one, the hook reads the database itself, which never starts a daemon. An
+ * explicit database path (tests, embedded hosts) is always read directly.
+ */
+export async function hookRerailStarted(host: RerailHost, workspace: string, databasePath?: string): Promise<boolean> {
+  if (databasePath === undefined) {
+    const answered = await readRepositoryState(workspace, host);
+    if (answered !== null) return answered === "started";
+  }
+  return isRerailStarted(workspace, databasePath);
 }
 
 export interface HookOptions {

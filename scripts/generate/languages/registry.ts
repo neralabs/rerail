@@ -10,9 +10,9 @@ import { z } from "zod";
  * against the engine's tables.
  */
 
-const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
+const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..");
 export const LANGUAGES_DIRECTORY = resolve(ROOT, "languages");
-export const LANGUAGE_REGISTRY_MODULE_PATH = resolve(ROOT, "src", "code-rule-language-registry.generated.ts");
+export const LANGUAGE_REGISTRY_MODULE_PATH = resolve(ROOT, "src", "engine", "code-rule", "code-rule-language-registry.generated.ts");
 
 export const LANGUAGE_REGISTRY_FORMAT = "rerail.language/v1";
 /** The parser implementations a dialect may name. */
@@ -126,7 +126,7 @@ export function readLanguageRegistry(directory = LANGUAGES_DIRECTORY): LanguageE
 
 const literalList = (values: readonly string[]) => `[${values.map(value => JSON.stringify(value)).join(", ")}]`;
 
-/** `src/code-rule-language-registry.generated.ts`: the registry, and the named lists the host's types and schemas read. */
+/** `src/engine/code-rule/code-rule-language-registry.generated.ts`: the registry, and the named lists the host's types and schemas read. */
 export function renderLanguageRegistryModule(entries: readonly LanguageEntry[] = readLanguageRegistry()): string {
   const supported = entries.filter(entry => entry.status === "supported");
   const unique = (values: readonly string[]) => [...new Set(values)];

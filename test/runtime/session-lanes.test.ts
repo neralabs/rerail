@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SessionLanes } from "../src/session-lanes.js";
+import { SessionLanes } from "../../src/runtime/session-lanes.js";
 
 describe("SessionLanes", () => {
   it("preserves submission order within one session", async () => {

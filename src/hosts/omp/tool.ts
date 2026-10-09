@@ -1,7 +1,7 @@
 import type { AgentToolResult, ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import type { ConversationRuleRegistry } from "./registry.js";
-import { MUTATION_ENTRY_TYPE, type RuleMutation } from "./session-state.js";
-import { parseSampleSource, SAMPLE_BOUNDARIES } from "./rule-schema.js";
+import type { ConversationRuleRegistry } from "../../engine/catalog/registry.js";
+import { MUTATION_ENTRY_TYPE, type RuleMutation } from "../../runtime/session-state.js";
+import { parseSampleSource, SAMPLE_BOUNDARIES } from "../../engine/catalog/rule-schema.js";
 
 export interface ConversationRulesToolRuntime {
   registry?: () => ConversationRuleRegistry;

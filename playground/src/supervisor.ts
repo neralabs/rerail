@@ -27,18 +27,21 @@ import type {
   PlaygroundRunInput,
   PlaygroundTrace,
 } from "./protocol.js";
-import { storedRuleSchema } from "../../dist/api/operations.js";
-import { ruleDocumentDigest } from "../../dist/stable-json.js";
+import {
+  codeRuleSchema,
+  defaultRerailDatabasePath,
+  loadBundledRules,
+  openScopedRuleCatalog,
+  parseConversationRule,
+  ruleDocumentDigest,
+  startDaemon,
+  stopDaemon,
+  storedRuleSchema,
+} from "../../dist/index.js";
 import { createSandbox, managedProcess, spawnProcess, spawnPty, ompExecutable } from "./process.js";
 import type { ManagedProcess, PlaygroundProcess, Sandbox } from "./process.js";
 import { createWorkerChannel } from "./ipc.js";
 import type { WorkerChannel } from "./ipc.js";
-import { defaultRerailDatabasePath } from "../../dist/database.js";
-import { openScopedRuleCatalog } from "../../dist/scoped-rule-catalog.js";
-import { loadBundledRules } from "../../dist/rule-bootstrap.js";
-import { parseConversationRule } from "../../dist/rule-schema.js";
-import { codeRuleSchema } from "../../dist/code-rule-schema.js";
-import { startDaemon, stopDaemon } from "../../dist/daemon-control.js";
 import { prepareReplay, REAL_AGENT_LIFETIME_MS } from "./real-agent.js";
 import { createExperimentStore, validateScenarioFixtures } from "./experiments.js";
 import { generateScenarios } from "./generation.js";

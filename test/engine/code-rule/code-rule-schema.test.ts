@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { CODE_RULE_AST_LANGUAGES } from "../src/code-rule-languages.js";
-import { codeRuleMessageVariables, codeRuleSchema } from "../src/code-rule-schema.js";
+import { CODE_RULE_AST_LANGUAGES } from "../../../src/engine/code-rule/code-rule-languages.js";
+import { codeRuleMessageVariables, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 
 const astRule = (
   language: "blade" | "javascript" | "php" | "python" | "typescript",
@@ -27,7 +27,7 @@ describe("codeRuleMessageVariables", () => {
 
 describe("code rule language mirror", () => {
   it("matches the executable DSL capabilities language keys", () => {
-    const capabilities = JSON.parse(readFileSync(new URL("../code-rule-dsl/capabilities.json", import.meta.url), "utf8")) as {
+    const capabilities = JSON.parse(readFileSync(new URL("../../../code-rule-dsl/capabilities.json", import.meta.url), "utf8")) as {
       ast: { languages: Record<string, string> };
     };
     expect(Object.keys(capabilities.ast.languages).sort()).toEqual([...CODE_RULE_AST_LANGUAGES].sort());

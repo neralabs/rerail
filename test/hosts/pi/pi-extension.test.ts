@@ -13,26 +13,29 @@ vi.mock("node:child_process", async () => ({
 }));
 /** A main build's Pi goes through the daemon; tests that set `main` stand in for that daemon. */
 const daemonRoute = vi.hoisted(() => ({ main: undefined as boolean | undefined, startDaemonForPackage: vi.fn() }));
-vi.mock("../src/rerail-build.js", async () => {
-  const actual = await vi.importActual<typeof import("../src/rerail-build.js")>("../src/rerail-build.js");
+vi.mock("../../../src/engine/native/rerail-build.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/engine/native/rerail-build.js")>("../../../src/engine/native/rerail-build.js");
   return { ...actual, isMainRerailBuild: () => daemonRoute.main ?? actual.isMainRerailBuild() };
 });
-vi.mock("../src/daemon-control.js", async () => ({
-  ...await vi.importActual<Record<string, unknown>>("../src/daemon-control.js"),
+vi.mock("../../../src/runtime/daemon-control.js", async () => ({
+  ...await vi.importActual<Record<string, unknown>>("../../../src/runtime/daemon-control.js"),
   startDaemonForPackage: daemonRoute.startDaemonForPackage,
 }));
 import Database from "better-sqlite3";
-import { RULE_MESSAGE_TYPE } from "../src/adapter-contract.js";
-import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistory } from "../src/database.js";
-import { resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
-import { createPiConversationRulesExtension } from "../src/pi-extension.js";
-import { SqliteAuditControlStore } from "../src/audit-control.js";
-import { steerBlock } from "../src/rerail-steer.js";
-import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../src/session-state.js";
-import { SqliteSessionStore } from "../src/session-store.js";
-import type { ConversationRule } from "../src/rule-schema.js";
-import type { RerailCommandContext } from "../src/rerail-command.js";
-import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
+import {
+  RULE_MESSAGE_TYPE,
+  defaultRerailDatabasePath,
+  openRerailDatabase,
+  resetRepositoryHistory,
+  resolveRepositoryContext,
+  SqliteAuditControlStore,
+  steerBlock,
+} from "../../../src/engine/index.js";
+import { createPiConversationRulesExtension } from "../../../src/hosts/pi/pi-extension.js";
+import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE, SqliteSessionStore } from "../../../src/runtime/index.js";
+import type { ConversationRule } from "../../../src/engine/index.js";
+import type { RerailCommandContext } from "../../../src/harness/index.js";
+import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 
 // Every test here builds real sessions (native model, engine, rule catalog); on a loaded CI runner a
 // build alone can pass the 5 s default, whichever test happens to pay the cold start.

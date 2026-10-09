@@ -5,7 +5,7 @@ plugin's own findings on its rule tests and on two pinned corpora (fastify, pret
 workspace path, with every disagreement declared in `divergences.json` (none today).
 
 It follows the [pack structure and validation contract](../../docs/pack-format.md) and is checked by
-`npx vitest run test/packs.test.ts -t "pack node"`.
+`npx vitest run test/engine/catalog/packs.test.ts -t "pack node"`.
 
 | Path | What |
 |---|---|

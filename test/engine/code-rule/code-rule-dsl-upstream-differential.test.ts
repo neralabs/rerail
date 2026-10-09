@@ -4,12 +4,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { afterAll, describe, expect, it } from "vitest";
-import { loadNativeBinding } from "../src/native.js";
-import { UPSTREAM_FIELD_CASES } from "./fixtures/upstream-field-cases.js";
-import { UPSTREAM_NTH_CHILD_CASES } from "./fixtures/upstream-nth-child-cases.js";
-import { UPSTREAM_RELATIONAL_CASES, type UpstreamCase } from "./fixtures/upstream-relational-cases.js";
-import { UPSTREAM_STOP_BY_CASES } from "./fixtures/upstream-stop-by-cases.js";
-import { UPSTREAM_UTILS_CASES } from "./fixtures/upstream-utils-cases.js";
+import { loadNativeBinding } from "../../../src/engine/native/native.js";
+import { UPSTREAM_FIELD_CASES } from "../../fixtures/upstream-field-cases.js";
+import { UPSTREAM_NTH_CHILD_CASES } from "../../fixtures/upstream-nth-child-cases.js";
+import { UPSTREAM_RELATIONAL_CASES, type UpstreamCase } from "../../fixtures/upstream-relational-cases.js";
+import { UPSTREAM_STOP_BY_CASES } from "../../fixtures/upstream-stop-by-cases.js";
+import { UPSTREAM_UTILS_CASES } from "../../fixtures/upstream-utils-cases.js";
 
 // The pinned devDependency is the oracle; ast-grep-core in native/Cargo.toml is pinned to the same version.
 const UPSTREAM_VERSION = "0.45.3";

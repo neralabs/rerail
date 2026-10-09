@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { conversationRuleSchema, parseConversationRule, parseConversationRuleDocument } from "../src/rule-schema.js";
+import { conversationRuleSchema, parseConversationRule, parseConversationRuleDocument } from "../../../src/engine/catalog/rule-schema.js";
 
 describe("parseConversationRuleDocument", () => {
   it("accepts a versioned dissimilarity rule", () => {
@@ -138,7 +138,7 @@ describe("structural match conditions", () => {
 describe("rule-schema module", () => {
   it("imports nothing but zod and the import-free rule modes, because browser bundles share it", () => {
     const imports = (path: string) => [...readFileSync(resolve(path), "utf8").matchAll(/^import\b.*?from\s+"([^"]+)"/gmu)].map(match => match[1]);
-    expect(imports("src/rule-schema.ts")).toEqual(["zod", "./rule-mode.js"]);
-    expect(imports("src/rule-mode.ts")).toEqual([]);
+    expect(imports("src/engine/catalog/rule-schema.ts")).toEqual(["zod", "./rule-mode.js"]);
+    expect(imports("src/engine/catalog/rule-mode.ts")).toEqual([]);
   });
 });

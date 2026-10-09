@@ -3,18 +3,25 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { auditControlsResponseSchema } from "../src/api/operations.js";
-import { RerailDaemon } from "../src/daemon.js";
-import { resetRepositoryHistory } from "../src/database.js";
-import { openScopedRuleCatalog, resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
-import { NativeCodeRuleEnforcer } from "../src/code-rule-enforcer.js";
-import { bootstrapCodeRuleDslCatalog } from "../src/code-rule-dsl-catalog.js";
-import { RerailRuntime, type RerailRuntimeOptions } from "../src/runtime.js";
-import { runAuditCommand } from "../src/audit-cli.js";
-import { SqliteAuditControlStore } from "../src/audit-control.js";
-import { auditRequestSchema } from "../src/audit-control-schema.js";
-import { registerRerailCommands, type RerailCommandHost } from "../src/rerail-command.js";
-import { isRerailStarted, workspaceStartState } from "../src/repository-start.js";
+import { auditControlsResponseSchema } from "../../src/api/index.js";
+import { RerailDaemon } from "../../src/daemon/index.js";
+import {
+  resetRepositoryHistory,
+  openScopedRuleCatalog,
+  resolveRepositoryContext,
+  NativeCodeRuleEnforcer,
+  bootstrapCodeRuleDslCatalog,
+  SqliteAuditControlStore,
+  auditRequestSchema,
+} from "../../src/engine/index.js";
+import {
+  RerailRuntime,
+  type RerailRuntimeOptions,
+  isRerailStarted,
+  workspaceStartState,
+} from "../../src/runtime/index.js";
+import { runAuditCommand } from "../../src/cli/audit-cli.js";
+import { registerRerailCommands, type RerailCommandHost } from "../../src/harness/index.js";
 
 const fixtures: Array<{ root: string; runtime: RerailRuntime; daemon: RerailDaemon }> = [];
 afterEach(async () => {

@@ -17,7 +17,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import {
   isClaudeStatusLine,
@@ -27,9 +27,10 @@ import {
   type ClaudeStatusRegistration,
   type ClaudeStatusLine,
 } from "./claude-status-store.js";
-import { commandFileText, MANAGED_SKILL_MARKER, type CommandFileContext } from "./rerail-command-files.js";
-import { RERAIL_COMMANDS, type RerailCommandName } from "./rerail-commands.js";
-import { stableJsonText } from "./stable-json.js";
+import { commandFileText, MANAGED_SKILL_MARKER, type CommandFileContext } from "../harness/rerail-command-files.js";
+import { RERAIL_COMMANDS, type RerailCommandName } from "../harness/rerail-commands.js";
+import { stableJsonText } from "../engine/stable-json.js";
+import { ENTRY_POINTS } from "../engine/package-root.js";
 
 export type Harness = "omp" | "pi" | "claude-code" | "codex" | "cursor";
 
@@ -142,9 +143,6 @@ export const CURSOR_HOOK_EVENTS: readonly string[] = [
   "stop",
 ];
 
-/** The `dist` entry exec-form hooks start; see src/hook-launcher.ts. */
-const HOOK_LAUNCHER = "hook-launcher.js";
-
 const EMPTY_RULES_DOCUMENT: JsonObject = { version: 1, rules: [] };
 
 function isObject(value: unknown): value is JsonObject {
@@ -167,9 +165,15 @@ function shellArgument(value: string, platform: NodeJS.Platform): string {
   return /^[\w./:@+=-]+$/.test(value) ? value : `"${value.replace(/(["\\$`])/g, "\\$1")}"`;
 }
 
-/** `<recorded node> <root>/dist/<executable>`, both quoted for the platform's shell. */
+/** `<recorded node> <root>/<executable>`, both quoted for the platform's shell; `executable` is an `ENTRY_POINTS` path. */
 function directCommand(context: Context, executable: string): string {
-  return `${shellArgument(context.nodePath, context.platform)} ${shellArgument(join(context.root, "dist", executable), context.platform)}`;
+  return `${shellArgument(context.nodePath, context.platform)} ${shellArgument(join(context.root, executable), context.platform)}`;
+}
+
+/** The package root of a registered `script` when it is that package's `executable`; undefined for any other script. */
+function registeredRoot(script: string, executable: string): string | undefined {
+  const tail = `${sep}${normalize(executable)}`;
+  return script.endsWith(tail) ? script.slice(0, -tail.length) : undefined;
 }
 
 async function isRerailPackageRoot(context: Context, root: string): Promise<boolean> {
@@ -205,15 +209,18 @@ function shellHookTarget(context: Context, command: string, executable: string):
   const words = direct.match(windows ? /"[^"]+"/gu : /"(?:\\["\\$`]|[^"\\$`])*"|[\w./:@+=-]+/gu);
   if (words?.length !== 2 || words.join(" ") !== direct) return undefined;
   const target = { nodePath: unquoteShellWord(words[0]!, windows), script: unquoteShellWord(words[1]!, windows) };
-  const recorded = { ...context, root: dirname(dirname(target.script)), nodePath: target.nodePath };
+  const root = registeredRoot(target.script, executable);
+  if (root === undefined) return undefined;
+  const recorded = { ...context, root, nodePath: target.nodePath };
   return hookCommand(recorded, executable) === command || directCommand(recorded, executable) === command ? target : undefined;
 }
 
-/** Node and hook script of a generated exec-form entry: `node <dist>/hook-launcher.js <recorded node> <dist>/<hook>`. */
-function execHookTarget(command: string, args: unknown): HookTarget | undefined {
+/** Node and hook script of a generated exec-form entry: `node <root>/<hook launcher> <recorded node> <root>/<hook>`. */
+function execHookTarget(command: string, args: unknown, executable: string): HookTarget | undefined {
   if (command !== "node" || !Array.isArray(args) || args.length !== 3 || !args.every(arg => typeof arg === "string")) return undefined;
   const [launcher, nodePath, script] = args as [string, string, string];
-  return basename(launcher) === HOOK_LAUNCHER && dirname(launcher) === dirname(script) ? { nodePath, script } : undefined;
+  const root = registeredRoot(script, executable);
+  return root !== undefined && launcher === join(root, ENTRY_POINTS.hookLauncher) ? { nodePath, script } : undefined;
 }
 
 /**
@@ -223,11 +230,11 @@ function execHookTarget(command: string, args: unknown): HookTarget | undefined 
 async function isRerailHookEntry(context: Context, entry: JsonObject, executable: string): Promise<boolean> {
   const { command, args } = entry;
   if (typeof command !== "string") return false;
-  const target = args === undefined ? shellHookTarget(context, command, executable) : execHookTarget(command, args);
+  const target = args === undefined ? shellHookTarget(context, command, executable) : execHookTarget(command, args, executable);
   if (target === undefined) return false;
   const { nodePath, script } = target;
-  if (!/^node(?:\.exe)?$/iu.test(nodePath.split(/[\\/]/u).at(-1)!) || !isAbsolute(script) || basename(script) !== executable) return false;
-  const root = dirname(dirname(script));
+  const root = registeredRoot(script, executable);
+  if (!/^node(?:\.exe)?$/iu.test(nodePath.split(/[\\/]/u).at(-1)!) || !isAbsolute(script) || root === undefined) return false;
   return context.mode === "unregister" ? root === context.root : isRerailPackageRoot(context, root);
 }
 
@@ -240,18 +247,21 @@ async function isRerailHookEntry(context: Context, entry: JsonObject, executable
  */
 function hookCommand(context: Context, executable: string): string {
   const node = shellArgument(context.nodePath, context.platform);
-  const hook = shellArgument(join(context.root, "dist", executable), context.platform);
+  const hook = shellArgument(join(context.root, executable), context.platform);
   if (context.platform === "win32") return `cmd /d /c "if exist ${node} (${node} ${hook}) else (node ${hook})"`;
   return `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' ${node} ${hook}`;
 }
 
 /**
  * The same recorded-first, PATH-fallback order without a shell, for hosts that spawn exec-form hooks directly:
- * `node` from PATH starts `hook-launcher.js`, which hands the hook to the recorded node while that binary exists.
+ * `node` from PATH starts the hook launcher, which hands the hook to the recorded node while that binary exists.
  */
 function hookExecEntry(context: Context, executable: string): JsonObject {
-  const dist = join(context.root, "dist");
-  return { type: "command", command: "node", args: [join(dist, HOOK_LAUNCHER), context.nodePath, join(dist, executable)] };
+  return {
+    type: "command",
+    command: "node",
+    args: [join(context.root, ENTRY_POINTS.hookLauncher), context.nodePath, join(context.root, executable)],
+  };
 }
 
 
@@ -265,7 +275,7 @@ const RETIRED_PROMPT_COMMANDS: readonly string[] = ["rerail-session", "rerail-di
 const RETIRED_CODEX_SKILLS: readonly string[] = [];
 
 function commandContext(context: Context): CommandFileContext {
-  return { cli: directCommand(context, "cli.js"), packageRoot: context.root };
+  return { cli: directCommand(context, ENTRY_POINTS.cli), packageRoot: context.root };
 }
 
 function describe(context: Context, detail: string): string {
@@ -464,7 +474,7 @@ function registerClaudeStatus(
   context: Context, path: string, next: JsonObject, statusLine: ClaudeStatusLine | undefined,
   inherited: ClaudeStatusLine | undefined, registration: ClaudeStatusRegistration | undefined,
 ): ClaudeStatusRegistration {
-  const command = directCommand(context, "claude-status.js")
+  const command = directCommand(context, ENTRY_POINTS.claudeStatus)
     + (path === join(context.home, ".claude", "settings.json") ? "" : ` ${shellArgument(path, context.platform)}`);
   const ownsStatus = registration !== undefined && statusLine?.command === registration.installedCommand;
   const previous = statusLine ?? inherited;
@@ -514,10 +524,10 @@ async function planClaudeSettings(
   // Claude Code runs shell-form hooks through Git Bash on Windows, which rewrites `cmd /d /c` into drive paths;
   // cmd then reads the hook's JSON from stdin as commands. Exec form (`args`) spawns node with no shell.
   const hookEntry = context.platform === "win32"
-    ? hookExecEntry(context, "claude-hook.js")
-    : { type: "command", command: hookCommand(context, "claude-hook.js") };
+    ? hookExecEntry(context, ENTRY_POINTS.claudeHook)
+    : { type: "command", command: hookCommand(context, ENTRY_POINTS.claudeHook) };
   const next = global
-    ? await updateGroupedHooks(existing.value, path, context, CLAUDE_HOOK_EVENTS, CLAUDE_TOOL_EVENTS, "claude-hook.js", hookEntry)
+    ? await updateGroupedHooks(existing.value, path, context, CLAUDE_HOOK_EVENTS, CLAUDE_TOOL_EVENTS, ENTRY_POINTS.claudeHook, hookEntry)
     : { ...existing.value };
   let nextRegistration: ClaudeStatusRegistration | undefined = registration;
   if (context.mode === "register") {
@@ -549,7 +559,7 @@ function isClaudeStatusWrapper(command: string): boolean {
   const words = command.match(/"(?:\\.|[^"\\])*"|[\w./:@+=-]+/gu);
   if (words === null || (words.length !== 2 && words.length !== 3) || words.join(" ") !== command) return false;
   return /^node(?:\.exe)?$/iu.test(unquoteShellWord(words[0]!).split(/[\\/]/u).at(-1)!)
-    && unquoteShellWord(words[1]!).split(/[\\/]/u).at(-1) === "claude-status.js";
+    && unquoteShellWord(words[1]!).split(/[\\/]/u).at(-1) === basename(ENTRY_POINTS.claudeStatus);
 }
 
 const execGit = promisify(execFile);
@@ -610,13 +620,13 @@ async function planClaudeProjectSettings(workspace: string, context: Context): P
 
 function planCursor(context: Context): Promise<Plan> {
   const path = join(context.home, ".cursor", "hooks.json");
-  const command = hookCommand(context, "cursor-hook.js");
+  const command = hookCommand(context, ENTRY_POINTS.cursorHook);
   const detail =
     context.mode === "register"
       ? `register rerail hooks for ${CURSOR_HOOK_EVENTS.length} Cursor events`
       : "remove rerail hooks from Cursor hooks.json";
   return planJsonFile("cursor", path, context, detail, async (value) => {
-    const hooks = await stripHookEvents(hooksObject(value, path), context, "cursor-hook.js", false);
+    const hooks = await stripHookEvents(hooksObject(value, path), context, ENTRY_POINTS.cursorHook, false);
     if (context.mode === "register") {
       for (const event of CURSOR_HOOK_EVENTS) {
         const entries = hooks[event] ?? [];
@@ -711,7 +721,7 @@ function planOmpMcp(context: Context): Promise<Plan> {
           ...kept,
           [RERAIL_MCP_SERVER_NAME]: {
             command: context.nodePath,
-            args: [join(context.root, "dist", "cli.js"), "mcp-bridge"],
+            args: [join(context.root, ENTRY_POINTS.cli), "mcp-bridge"],
           },
         }
         : kept;
@@ -728,7 +738,7 @@ function codexSkillPath(context: Context, name: string): string {
 
 /** Removes a Codex skill only when Rerail wrote it for this installation; a skill someone else owns stays. */
 function planCodexSkillRemoval(context: Context, name: string, path: string, existing: TextFile): Plan {
-  if (!existing.text.includes(MANAGED_SKILL_MARKER) || !existing.text.includes(join(context.root, "dist", "cli.js"))) {
+  if (!existing.text.includes(MANAGED_SKILL_MARKER) || !existing.text.includes(join(context.root, ENTRY_POINTS.cli))) {
     return { change: { harness: "codex", path, action: "unchanged", detail: `no $${name} skill from this Rerail installation to remove` } };
   }
   return planMutation(context, "codex", path, "updated", `remove the $${name} skill`, () => unlink(path));
@@ -756,7 +766,7 @@ function promptCommandPath(context: Context, harness: PromptCommandHarness, name
 /** Removes a prompt command only when it runs this package's CLI; anyone else's file is left in place. */
 function planPromptCommandRemoval(context: Context, harness: PromptCommandHarness, name: string, path: string, existing: TextFile): Plan {
   if (!existing.exists) return { change: { harness, path, action: "unchanged", detail: `no /${name} command: nothing to remove` } };
-  if (!existing.text.includes(join(context.root, "dist", "cli.js")))
+  if (!existing.text.includes(join(context.root, ENTRY_POINTS.cli)))
     return { change: { harness, path, action: "unchanged", detail: `/${name} command is not Rerail's: left in place` } };
   return planMutation(context, harness, path, "updated", `remove the /${name} command`, () => unlink(path));
 }
@@ -806,7 +816,7 @@ function planHarness(harness: Harness, context: Context): Promise<Plan> {
         context,
         CODEX_HOOK_EVENTS,
         CODEX_TOOL_EVENTS,
-        "codex-hook.js",
+        ENTRY_POINTS.codexHook,
         "Codex",
       );
     case "cursor":

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type CodeRuleViolation, renderSteer, STEER_FIX_CHARS } from "../src/code-rule.js";
+import { type CodeRuleViolation, renderSteer, STEER_FIX_CHARS } from "../../../src/engine/code-rule/code-rule.js";
 
 const span = (startLine: number, startColumn: number, endLine: number, endColumn: number) => ({
   startByte: 0, endByte: 0, startLine, startColumn, endLine, endColumn,

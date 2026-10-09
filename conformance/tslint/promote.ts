@@ -18,7 +18,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
-import { codeRuleSchema, type CodeRuleScope } from "../../src/code-rule-schema.js";
+import { codeRuleSchema, type CodeRuleScope } from "../../src/engine/index.js";
 import { PASS_AUDIT } from "./audit.js";
 import { ensureFixtures, loadScoredRules, RERAIL_ROOT } from "./fixtures.js";
 import {

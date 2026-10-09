@@ -1,8 +1,8 @@
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
-import { registerConversationRulesCommand } from "../src/command.js";
-import { ConversationRuleRegistry } from "../src/registry.js";
+import { registerConversationRulesCommand } from "../../../src/hosts/omp/command.js";
+import { ConversationRuleRegistry } from "../../../src/engine/index.js";
 
 const rule = {
   id: "checkout",

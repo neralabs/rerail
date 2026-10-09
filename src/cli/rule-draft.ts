@@ -1,27 +1,27 @@
 import { readFileSync, type Dirent } from "node:fs";
 import { opendir, readFile, stat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { bundledModelPath } from "../engine/package-root.js";
 import { z } from "zod";
-import { ruleUpsertSchema } from "./api/operations.js";
-import { parseArguments } from "./daemon.js";
-import { defaultRerailDatabasePath } from "./database.js";
-import { IGNORED_DIRECTORIES, languageFor } from "./code-rule-enforcer.js";
+import { ruleUpsertSchema } from "../api/operations.js";
+import { parseArguments } from "../daemon/daemon.js";
+import { defaultRerailDatabasePath } from "../engine/storage/database.js";
+import { IGNORED_DIRECTORIES, languageFor } from "../engine/code-rule/code-rule-enforcer.js";
 import {
   encodeCodeRuleWorkspaceRequest,
   loadNativeBinding,
   type NativeBinding,
   type NativeCompiledCodeRuleDsl,
-} from "./native.js";
-import { bundledCodeRuleDslDirectory, CodeRuleCompileError, EngineUnavailableError } from "./code-rule-compile.js";
-import { CODE_RULE_DIALECTS } from "./code-rule-languages.js";
-import type { CodeRule } from "./code-rule-schema.js";
-import { ConversationRuleRegistry } from "./registry.js";
-import { repositoryIdentityLocation, repositoryName } from "./repository-identity.js";
-import { parseConversationRule, sampleSourceSchema, SAMPLE_BOUNDARIES, type ConversationRule } from "./rule-schema.js";
-import { resolveRepositoryContext, ScopedRuleCatalog } from "./scoped-rule-catalog.js";
-import { dashboardOrigin } from "./session-presentation.js";
-import { stableJsonText } from "./stable-json.js";
+} from "../engine/native/native.js";
+import { bundledCodeRuleDslDirectory, CodeRuleCompileError, EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
+import { CODE_RULE_DIALECTS } from "../engine/code-rule/code-rule-languages.js";
+import type { CodeRule } from "../engine/code-rule/code-rule-schema.js";
+import { ConversationRuleRegistry } from "../engine/catalog/registry.js";
+import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
+import { parseConversationRule, sampleSourceSchema, SAMPLE_BOUNDARIES, type ConversationRule } from "../engine/catalog/rule-schema.js";
+import { resolveRepositoryContext, ScopedRuleCatalog } from "../engine/catalog/scoped-rule-catalog.js";
+import { dashboardOrigin } from "../presentation/session-presentation.js";
+import { stableJsonText } from "../engine/stable-json.js";
 
 /** How many repository matches the report shows; the count covers every match. */
 const REPOSITORY_EXAMPLES = 5;
@@ -293,7 +293,7 @@ function conversationCaseResults(rule: ConversationRule, cases: ReadonlyArray<{ 
   let registry: ConversationRuleRegistry;
   try {
     registry = new ConversationRuleRegistry({
-      modelPath: process.env.RERAIL_MODEL_PATH ?? resolve(fileURLToPath(import.meta.url), "..", "..", "model"),
+      modelPath: process.env.RERAIL_MODEL_PATH ?? bundledModelPath(),
     });
   } catch (error) {
     throw engineUnavailable(rule.id, errorMessage(error));

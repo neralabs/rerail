@@ -1,10 +1,10 @@
 import { existsSync, renameSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import Database from "better-sqlite3";
-import { parseArguments } from "./daemon.js";
-import { defaultRerailDatabasePath, resetRepositoryHistory } from "./database.js";
-import { defaultRulesDumpPath, exportScopedRules, importScopedRules } from "./rule-bootstrap.js";
-import { openScopedRuleCatalog, resolveRepositoryContext } from "./scoped-rule-catalog.js";
+import { parseArguments } from "../daemon/daemon.js";
+import { defaultRerailDatabasePath, resetRepositoryHistory } from "../engine/storage/database.js";
+import { defaultRulesDumpPath, exportScopedRules, importScopedRules } from "../engine/catalog/rule-bootstrap.js";
+import { openScopedRuleCatalog, resolveRepositoryContext } from "../engine/catalog/scoped-rule-catalog.js";
 
 /** Where `rerail update` leaves a consistent copy of the Rerail database before it switches versions. */
 export function preUpdateSnapshotPath(databasePath: string): string {

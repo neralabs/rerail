@@ -3,9 +3,9 @@ import { mkdir, realpath, rename } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { RERAIL_DATABASE_FILE } from "./database.js";
-import { lookupDaemon, startDaemon, stopDaemon } from "./daemon-control.js";
-import { parseArguments, parsePort } from "./daemon.js";
+import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
+import { lookupDaemon, startDaemon, stopDaemon } from "../runtime/daemon-control.js";
+import { parseArguments, parsePort } from "../daemon/daemon.js";
 import {
   HARNESSES,
   registerHarnesses,
@@ -13,8 +13,8 @@ import {
   type Harness,
   type RegistrationOptions,
   type RegistrationReport,
-} from "./harness-registration.js";
-import type { ManagedUpdater } from "./updater.js";
+} from "../setup/harness-registration.js";
+import type { ManagedUpdater } from "../setup/updater.js";
 
 export interface SetupContext {
   /** Rerail's own state directory (`~/.rerail` unless `RERAIL_HOME`); versions, launcher, daemon live here. */

@@ -1,7 +1,7 @@
-import { LANGUAGE_NOT_SUPPORTED } from "./code-rule-language-support.js";
-import { codeRuleSchema, type CodeRule } from "./code-rule-schema.js";
-import type { RuleKind } from "./schema.js";
-import { ruleDocumentDigest } from "./stable-json.js";
+import { LANGUAGE_NOT_SUPPORTED } from "../code-rule/code-rule-language-support.js";
+import { codeRuleSchema, type CodeRule } from "../code-rule/code-rule-schema.js";
+import type { RuleKind } from "../storage/schema.js";
+import { ruleDocumentDigest } from "../stable-json.js";
 
 /** Digest of a stored rule body exactly as it sits in the row, valid or not. */
 export function storedDocumentDigest(kind: RuleKind, rule: unknown): string {

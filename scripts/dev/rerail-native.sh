@@ -9,7 +9,7 @@
 # and runs the build.
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TOOLCHAIN_FILE="$REPO_ROOT/rust-toolchain.toml"
 pinned_toolchain="$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' "$TOOLCHAIN_FILE")"
 [ -n "$pinned_toolchain" ] || { printf '\033[31m!!\033[0m %s\n' "No channel pinned in $TOOLCHAIN_FILE" >&2; exit 1; }

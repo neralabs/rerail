@@ -4,10 +4,9 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { Readable } from "node:stream";
 import { afterEach } from "vitest";
-import type { AdapterDelivery, AdapterEvent, RerailEventLoop } from "../src/adapter-contract.js";
-import { serveHook, type HookInput, type HookOptions, type HookOutput } from "../src/hook-host.js";
-import type { SemanticEmbedder } from "../src/semantic-types.js";
-import { startTestRepository } from "./support/started-repository.js";
+import type { AdapterDelivery, AdapterEvent, RerailEventLoop, SemanticEmbedder } from "../../src/engine/index.js";
+import { serveHook, type HookInput, type HookOptions, type HookOutput } from "../../src/harness/index.js";
+import { startTestRepository } from "./started-repository.js";
 
 /** Replaces the native model so hooks and runtimes run where the addon is absent. */
 export const testEmbedder: SemanticEmbedder = {

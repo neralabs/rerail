@@ -1,6 +1,6 @@
 /**
  * Parity of the complexity pack (packs/complexity/) with lizard 1.24.0. The corpus under
- * test/fixtures/complexity/<language>/ is scored by lizard once, by hand (scripts/record-lizard-complexity.mjs), into
+ * test/fixtures/complexity/<language>/ is scored by lizard once, by hand (scripts/dsl/record-lizard-complexity.mjs), into
  * lizard-1.24.0.tsv; lizard is never a test or runtime dependency. Each rule must report exactly the in-scope functions
  * lizard scores above 6, with lizard's number in the message, apart from the deviations listed here; a measuring variant
  * of each rule (same counting, no threshold) must give every function lizard's number, so functions at the limit and
@@ -11,12 +11,12 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
-import { languageFor } from "../src/code-rule-enforcer.js";
-import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../src/native.js";
-import { loadBundledRules } from "../src/rule-bootstrap.js";
+import { languageFor } from "../../../src/engine/code-rule/code-rule-enforcer.js";
+import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../src/engine/native/native.js";
+import { loadBundledRules } from "../../../src/engine/catalog/rule-bootstrap.js";
 
-const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../code-rule-dsl/", import.meta.url));
-const CORPUS = fileURLToPath(new URL("./fixtures/complexity/", import.meta.url));
+const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../code-rule-dsl/", import.meta.url));
+const CORPUS = fileURLToPath(new URL("../../fixtures/complexity/", import.meta.url));
 const capabilities = readFileSync(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
 

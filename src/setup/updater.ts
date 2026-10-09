@@ -20,12 +20,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep, win32 as windowsPath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { RERAIL_EVENT_PROTOCOL_PREFACE } from "./event-protocol.js";
-import { runNpm } from "./npm.js";
-import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
-import { defaultRerailHome } from "./rerail-home.js";
+import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
+import { runNpm } from "../runtime/npm.js";
+import { ensureSqlite, type SqliteRepairResult } from "../runtime/sqlite-repair.js";
+import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 
-export const RERAIL_PACKAGE_NAME = "@neralabs/rerail";
 export const DEFAULT_UPDATE_CHANNEL = "latest";
 
 const UPDATE_STATE_VERSION = 1;
@@ -216,7 +216,7 @@ export function launcherShim(
   platform: NodeJS.Platform = process.platform,
 ): string {
   const cliPath =
-    platform === "win32" ? windowsPath.join(currentLink, "dist", "cli.js") : join(currentLink, "dist", "cli.js");
+    platform === "win32" ? windowsPath.join(currentLink, ENTRY_POINTS.cli) : join(currentLink, ENTRY_POINTS.cli);
   if (platform === "win32") {
     const escapedNodePath = nodePath.replaceAll("%", "%%");
     const escapedCliPath = cliPath.replaceAll("%", "%%");
@@ -269,7 +269,7 @@ export async function validateManagedInstallation(installation: Installation): P
     throw new Error(`Installed package identity mismatch at ${manifestPath}`);
   }
 
-  const entrypoint = join(installation.packageRoot, "dist", "index.js");
+  const entrypoint = join(installation.packageRoot, ENTRY_POINTS.index);
   // A child loads the staged engine: on Windows a process with the engine mapped cannot rename the staging
   // directory into place or remove it, so an in-process check failed every install there with EPERM.
   const healthScript = [
@@ -298,12 +298,12 @@ export async function validateManagedInstallation(installation: Installation): P
   const env = { ...process.env, RERAIL_HOME: join(root, "home"), RERAIL_STORAGE_ROOT: storageRoot, RERAIL_AUTOSTART: "0" };
   try {
     await mkdir(workspace);
-    await startHealthRepository(join(installation.packageRoot, "dist", "cli.js"), workspace, env);
+    await startHealthRepository(join(installation.packageRoot, ENTRY_POINTS.cli), workspace, env);
   } catch (error) {
     await rm(root, { recursive: true, force: true });
     throw new Error(`Installed CLI could not start a health-check repository: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const child = spawn(process.execPath, [join(installation.packageRoot, "dist", "event-stream.js")], {
+  const child = spawn(process.execPath, [join(installation.packageRoot, ENTRY_POINTS.eventStream)], {
     cwd: workspace,
     env,
     stdio: ["pipe", "pipe", "pipe"],

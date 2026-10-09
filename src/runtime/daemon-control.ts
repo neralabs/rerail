@@ -3,12 +3,48 @@ import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
-import type { DaemonHealth, DaemonState } from "./daemon.js";
-import { loadNativeBinding } from "./native.js";
+import { loadNativeBinding } from "../engine/native/native.js";
+import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { resolveExecutable } from "./npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
-import { defaultRerailHome } from "./rerail-home.js";
+import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+
+/** What `rerail status` and the launcher need to find a running daemon. */
+export interface DaemonState {
+  pid: number;
+  host: string;
+  port: number;
+  url: string;
+  version: string;
+  /** The Rerail database: rules and every repository's history. */
+  databasePath: string;
+  /** Local IPC endpoint used by host adapters: a Unix socket or Windows named pipe. */
+  kernelSocketPath: string;
+  /**
+   * `bundled` serves the packaged page from `dist/ui`; `dev` is a daemon started with `--dev`
+   * (or `RERAIL_DEV=1`), serving the committed `ui/` source, or one embedded without any page.
+   */
+  ui: "bundled" | "dev";
+  startedAt: number;
+  /** The package the daemon was launched from; `rerail setup` restarts a daemon whose root is no longer `current`. */
+  packageRoot: string;
+  workspaceRoot?: string;
+  /** Same-user capability for normal native sessions; never exposed by health/API responses. */
+  nativeToken?: string;
+}
+
+export type NativeStatus = { ok: true; kernelVersion: string } | { ok: false; error: string };
+
+export interface DaemonHealth extends Pick<DaemonState, "version" | "pid" | "ui"> {
+  status: "ok";
+  uptimeMs: number;
+  database: { path: string; exists: boolean };
+  native: NativeStatus;
+  /** Absolute checkout path native sessions address. */
+  workspaceRoot: string;
+  /** Stable identity of the repository the page, listings, and rule context are scoped to. */
+  repositoryId: string;
+}
 
 /**
  * Rerail CLI children require Node; a compiled Bun host's execPath may launch the host itself. There the name
@@ -309,7 +345,7 @@ export async function daemonUsesPackageRoot(daemon: Pick<DaemonState, "packageRo
  */
 export async function daemonEngineSocket(replaceOtherPackage: boolean): Promise<string> {
   const home = defaultRerailHome();
-  const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const packageRoot = PACKAGE_ROOT;
   const control = { home, packageRoot };
   const options = { dev: false };
   const daemon = process.env.RERAIL_AUTOSTART === "0"
@@ -330,7 +366,7 @@ interface LaunchedDaemon {
 
 function daemonArguments(control: DaemonControl, options: DaemonLaunchOptions, stateFile: string): string[] {
   const args = [
-    join(control.packageRoot, "dist", "daemon.js"),
+    join(control.packageRoot, ENTRY_POINTS.daemon),
     "--state-file", stateFile,
   ];
   if (options.dev) args.push("--dev");
@@ -413,14 +449,14 @@ export function autostartDaemon(): void {
   const setting = process.env.RERAIL_AUTOSTART;
   if (setting === "0" || setting === "false") return;
   const home = defaultRerailHome();
-  const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const packageRoot = PACKAGE_ROOT;
   try {
     mkdirSync(home, { recursive: true, mode: 0o700 });
     const log = openSync(join(home, DAEMON_LOG_FILE), "a", 0o600);
     try {
       const child = spawn(
         nodeExecutable(),
-        [join(packageRoot, "dist", "cli.js"), "daemon", "start"],
+        [join(packageRoot, ENTRY_POINTS.cli), "daemon", "start"],
         { detached: true, stdio: ["ignore", log, log], env: process.env },
       );
       child.on("error", () => undefined);

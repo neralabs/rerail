@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
-import { SqliteAuditReader, SqliteAuditStore } from "../src/audit-store.js";
+import { SqliteAuditReader, SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 
 const temporaryDirectories: string[] = [];
 

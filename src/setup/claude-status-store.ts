@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type * as Sqlite from "node:sqlite";
-import { enableWal } from "./sqlite-wal.js";
+import { enableWal } from "../engine/storage/sqlite-wal.js";
 
 /** Installation recovery has its own schema in `harness.sqlite`, separate from the Rerail database. */
 const STATUS_COLUMNS = `settings_path AS settingsPath, installed_command AS installedCommand,

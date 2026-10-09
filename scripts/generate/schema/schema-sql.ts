@@ -21,12 +21,12 @@ import {
   rules,
   sessions,
   workLinks,
-} from "../src/schema.js";
+} from "../../../src/engine/index.js";
 
-export const SCHEMA_SQL_PATH = resolve(fileURLToPath(import.meta.url), "..", "..", "src", "schema-sql.ts");
+export const SCHEMA_SQL_PATH = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..", "src", "engine", "storage", "schema-sql.generated.ts");
 
 /**
- * Render the DDL for the Drizzle tables in `src/schema.ts` as an idempotent
+ * Render the DDL for the Drizzle tables in `src/engine/storage/schema.ts` as an idempotent
  * statement list, applied verbatim every time a database is opened.
  */
 export async function renderRerailSchemaStatements(): Promise<string[]> {

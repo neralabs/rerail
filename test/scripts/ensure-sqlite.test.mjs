@@ -6,11 +6,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
-import { ensureSqlite, parseEnsureSqliteArguments } from "./ensure-sqlite.mjs";
+import { ensureSqlite, parseEnsureSqliteArguments } from "../../scripts/build/ensure-sqlite.mjs";
 
 const execute = promisify(execFile);
-const script = join(dirname(fileURLToPath(import.meta.url)), "ensure-sqlite.mjs");
-const checkoutRoot = resolve(dirname(script), "..");
+const script = fileURLToPath(new URL("../../scripts/build/ensure-sqlite.mjs", import.meta.url));
+const checkoutRoot = resolve(dirname(script), "..", "..");
 
 const ABI_MISMATCH =
   "The module 'better_sqlite3.node' was compiled against a different Node.js version using NODE_MODULE_VERSION 137. " +

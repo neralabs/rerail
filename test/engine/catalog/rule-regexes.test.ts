@@ -2,11 +2,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { assertEngineRegexes, engineRegexIssues } from "../src/rule-regexes.js";
-import { parseConversationRule, type ConversationRule, type MatchCondition } from "../src/rule-schema.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
-import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
-import { MOCK_CONVERSATION_RULES } from "../src/seed.js";
+import { assertEngineRegexes, engineRegexIssues } from "../../../src/engine/catalog/rule-regexes.js";
+import { parseConversationRule, type ConversationRule, type MatchCondition } from "../../../src/engine/catalog/rule-schema.js";
+import { SqliteRuleStore } from "../../../src/engine/catalog/rule-store.js";
+import { ScopedRuleCatalog } from "../../../src/engine/catalog/scoped-rule-catalog.js";
+import { MOCK_CONVERSATION_RULES } from "../../../src/cli/index.js";
 
 const LOOK_AROUND = /^is not a valid regex: .*look-around/su;
 const command = (regex: string): MatchCondition => ({ field: "input.command", regex });

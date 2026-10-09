@@ -3,14 +3,14 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CodeRuleBridge, generatedEditPaths } from "../src/code-rule-bridge.js";
-import type { CodeRuleEditBatch, CodeRuleAuditor } from "../src/code-rule.js";
-import { languageFor, NativeCodeRuleEnforcer } from "../src/code-rule-enforcer.js";
-import type { AuditRecorder, AuditInput, AuditResult } from "../src/audit.js";
-import { bootstrapCodeRuleDslCatalog, bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
-import { codeRuleDialectForPath } from "../src/code-rule-languages.js";
-import { codeRuleSchema } from "../src/code-rule-schema.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
+import { CodeRuleBridge, generatedEditPaths } from "../../../src/engine/code-rule/code-rule-bridge.js";
+import type { CodeRuleEditBatch, CodeRuleAuditor } from "../../../src/engine/code-rule/code-rule.js";
+import { languageFor, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
+import type { AuditRecorder, AuditInput, AuditResult } from "../../../src/engine/audit/audit.js";
+import { bootstrapCodeRuleDslCatalog, bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
+import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
+import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
+import { SqliteRuleStore } from "../../../src/engine/catalog/rule-store.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });

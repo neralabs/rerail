@@ -8,9 +8,7 @@ import type {
   PlaygroundOutcome,
   PlaygroundRunInput,
 } from "./protocol.js";
-import type { AuditRecord } from "../../dist/audit.js";
-import type { CodeRule } from "../../dist/code-rule-schema.js";
-import type { ConversationRule } from "../../dist/rule-schema.js";
+import type { AuditRecord, CodeRule, ConversationRule } from "../../dist/index.js";
 import { initializeWorkerChannel, workerControl } from "./ipc.js";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -161,21 +159,16 @@ export default async function playgroundHarness(api: ExtensionAPI): Promise<void
     const [
       { createMockModel },
       { AssistantMessageEventStream },
-      { createConversationRulesExtension, deliverOmpGuidance, bundledModelPath, MATCH_ENTRY_TYPE },
-      { RULE_MESSAGE_TYPE, ADAPTER_CAPABILITIES },
-      { ruleDocumentDigest },
-      { parseConversationRule },
-      { codeRuleSchema },
+      {
+        createConversationRulesExtension, deliverOmpGuidance, bundledModelPath, MATCH_ENTRY_TYPE, RULE_MESSAGE_TYPE,
+        ADAPTER_CAPABILITIES, ruleDocumentDigest, parseConversationRule, codeRuleSchema,
+      },
       { ThinkingLevel },
       { installReplayFixtures, replayTools, REPLAY_TOOL_NAMES },
     ] = await Promise.all([
       import("@oh-my-pi/pi-ai"),
       import("@oh-my-pi/pi-ai/utils/event-stream"),
-      import("../../dist/extension.js"),
-      import("../../dist/adapter-contract.js"),
-      import("../../dist/stable-json.js"),
-      import("../../dist/rule-schema.js"),
-      import("../../dist/code-rule-schema.js"),
+      import("../../dist/index.js"),
       import("@oh-my-pi/pi-agent-core"),
       import("./replay-tools.js"),
     ]);

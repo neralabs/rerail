@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
-import type { AdapterDelivery, AdapterEvent } from "./adapter-contract.js";
-import { RULE_MODES } from "./rule-mode.js";
+import type { AdapterDelivery, AdapterEvent } from "../engine/adapter-contract.js";
+import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 
 export const RERAIL_EVENT_PROTOCOL_PREFACE = "RERAIL-EVENTS/1";
 export const RERAIL_EVENT_MAX_FRAME_BYTES = 1024 * 1024;

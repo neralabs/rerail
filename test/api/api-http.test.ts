@@ -4,17 +4,24 @@ import { join } from "node:path";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createRerailApi } from "../src/api/http.js";
-import { operations, type RerailApiStores } from "../src/api/operations.js";
-import { openRerailDatabase, type RerailDatabase } from "../src/database.js";
-import { startStateReader } from "../src/repository-start.js";
-import type { CodeRuleViolation } from "../src/code-rule.js";
-import { SqliteAuditReader, SqliteAuditStore } from "../src/audit-store.js";
-import { SqlitePresentationPreferenceStore } from "../src/presentation-preference-store.js";
-import { SqliteAuditControlStore } from "../src/audit-control.js";
-import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
-import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../src/seed.js";
-import { SqliteSessionReader, SqliteSessionStore } from "../src/session-store.js";
+import { createRerailApi } from "../../src/api/http.js";
+import { operations, type RerailApiStores } from "../../src/api/operations.js";
+import {
+  openRerailDatabase,
+  type RerailDatabase,
+  SqliteAuditReader,
+  SqliteAuditStore,
+  SqliteAuditControlStore,
+  ScopedRuleCatalog,
+} from "../../src/engine/index.js";
+import {
+  startStateReader,
+  SqlitePresentationPreferenceStore,
+  SqliteSessionReader,
+  SqliteSessionStore,
+} from "../../src/runtime/index.js";
+import type { CodeRuleViolation } from "../../src/engine/index.js";
+import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
 
 /** The host a browser addressed the page to through a container port mapping; the fixture never binds it. */
 const PAGE_HOST = "localhost:35831";

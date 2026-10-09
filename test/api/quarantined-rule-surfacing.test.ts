@@ -3,14 +3,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
-import { createRerailApi } from "../src/api/http.js";
-import { operations, type RerailApiStores } from "../src/api/operations.js";
-import { NativeCodeRuleEnforcer } from "../src/code-rule-enforcer.js";
-import type { AuditRecorder, AuditInput, AuditResult } from "../src/audit.js";
-import { bootstrapCodeRuleDslCatalog } from "../src/code-rule-dsl-catalog.js";
-import { codeRuleSchema, type CodeRule } from "../src/code-rule-schema.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
-import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
+import { createRerailApi } from "../../src/api/http.js";
+import { operations, type RerailApiStores } from "../../src/api/operations.js";
+import {
+  NativeCodeRuleEnforcer,
+  bootstrapCodeRuleDslCatalog,
+  codeRuleSchema,
+  type CodeRule,
+  SqliteRuleStore,
+  ScopedRuleCatalog,
+} from "../../src/engine/index.js";
+import type { AuditRecorder, AuditInput, AuditResult } from "../../src/engine/index.js";
 
 function codeRule(id: string): CodeRule {
   return codeRuleSchema.parse({

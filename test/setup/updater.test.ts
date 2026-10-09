@@ -9,7 +9,7 @@ import {
   launcherShim,
   type Installation,
   type PackageRegistry,
-} from "../src/updater.js";
+} from "../../src/setup/updater.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -69,7 +69,7 @@ describe("managed launcher shims", () => {
       "win32",
     );
     expect(shim).toContain('set "RERAIL_NODE=C:\\Program Files\\nodejs\\node.exe"');
-    expect(shim).toContain(String.raw`"C:\Users\100%% User\.rerail\current\dist\cli.js" %*`);
+    expect(shim).toContain(String.raw`"C:\Users\100%% User\.rerail\current\dist\cli\cli.js" %*`);
     expect(shim.endsWith("\r\n")).toBe(true);
   });
 });
@@ -373,7 +373,7 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
     expect(await readlink(updater.currentLink)).toBe(installed.current.packageRoot);
     const shim = await readFile(updater.launcherPath, "utf8");
     expect(shim.startsWith("#!/bin/sh\n")).toBe(true);
-    expect(shim).toContain(`'${join(updater.currentLink, "dist", "cli.js")}'`);
+    expect(shim).toContain(`'${join(updater.currentLink, "dist", "cli", "cli.js")}'`);
     expect(shim).toContain(`NODE='${process.execPath}'`);
     expect((await stat(updater.launcherPath)).mode & 0o111).toBe(0o111);
     expect(shim).toBe(launcherShim(updater.currentLink, process.execPath));

@@ -2,13 +2,10 @@ import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { RerailHost } from "../src/adapter-contract.js";
-import { RerailDaemon } from "../src/daemon.js";
-import { defaultRerailDatabasePath, openRerailDatabase } from "../src/database.js";
-import { startRepository } from "../src/repository-start.js";
-import { openScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
-import { AdapterEventSchema } from "../src/event-protocol.js";
-import { SqliteSessionReader } from "../src/session-store.js";
+import type { RerailHost } from "../../src/engine/index.js";
+import { RerailDaemon } from "../../src/daemon/index.js";
+import { defaultRerailDatabasePath, openRerailDatabase, openScopedRuleCatalog } from "../../src/engine/index.js";
+import { startRepository, AdapterEventSchema, SqliteSessionReader } from "../../src/runtime/index.js";
 
 /**
  * The code-rule half of the exercise. The smoke owns its rule rather than depending on which
@@ -60,7 +57,7 @@ type Evidence = {
 };
 
 const HOSTS: readonly RerailHost[] = ["omp", "pi", "claude-code", "codex", "cursor"];
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DIST = join(ROOT, "dist");
 const timeoutSetting = process.env.RERAIL_SMOKE_TIMEOUT_MS ?? "180000";
 const TIMEOUT_MS = Number(timeoutSetting);
@@ -76,7 +73,7 @@ const MAX_OUTPUT = 16_000;
 const SOURCE_OMP_DB = join(process.env.HOME ?? "", ".omp", "agent", "agent.db");
 
 function usage(): never {
-  throw new Error("Usage: node --import tsx scripts/host-smoke.ts --host <omp|pi|claude-code|codex|cursor|all>");
+  throw new Error("Usage: node --import tsx scripts/host/host-smoke.ts --host <omp|pi|claude-code|codex|cursor|all>");
 }
 function selectedHosts(): RerailHost[] {
   const args = process.argv.slice(2);
@@ -312,7 +309,7 @@ async function importAccessOnlyAuth(
   const result = await run(
     "sandbox-exec",
     ["-f", profile, process.execPath, "--import", join(ROOT, "node_modules/tsx/dist/loader.mjs"),
-      join(ROOT, "scripts/host-auth.ts"), kind, source, destination, String(TIMEOUT_MS)],
+      join(ROOT, "scripts/host/host-auth.ts"), kind, source, destination, String(TIMEOUT_MS)],
     { cwd: ROOT, env, timeout: 60_000 },
   );
   if (result.exitCode !== 0)

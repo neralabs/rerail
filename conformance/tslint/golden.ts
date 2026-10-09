@@ -16,7 +16,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { TSLINT_PACK } from "./fixtures.js";
-import { compareDeterministicStrings } from "../../src/stable-json.js";
+import { compareDeterministicStrings } from "../../src/engine/index.js";
 
 export const PACK_DIRECTORY = join(TSLINT_PACK, "rules");
 export const GOLDEN_MANIFEST = join(TSLINT_PACK, "conformance.json");

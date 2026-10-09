@@ -5,8 +5,8 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Writable } from "node:stream";
-import type { AdapterDelivery, RerailHost } from "./adapter-contract.js";
-import { RULE_MODES, steers } from "./rule-mode.js";
+import type { AdapterDelivery, RerailHost } from "../engine/adapter-contract.js";
+import { RULE_MODES, steers } from "../engine/catalog/rule-mode.js";
 
 export type HookInput = Record<string, unknown>;
 export type HookOutput = Record<string, unknown>;

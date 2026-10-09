@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-const LAUNCHER = resolve(import.meta.dirname, "../src/hook-launcher.ts");
+const LAUNCHER = resolve(import.meta.dirname, "../../src/harness/hook-launcher.ts");
 
 // Reports which node ran it, its argv[1], and the event on stdin, then exits non-zero like a failing hook.
 const HOOK = [

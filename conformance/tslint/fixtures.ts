@@ -2,9 +2,9 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { CodeRuleSourceLanguage } from "../../src/code-rule.js";
+import type { CodeRuleSourceLanguage } from "../../src/engine/index.js";
 import { parseLintFile, type ParsedLintFile } from "./lint-format.js";
-import { compareDeterministicStrings } from "../../src/stable-json.js";
+import { compareDeterministicStrings } from "../../src/engine/index.js";
 
 /** palantir/tslint master at the time the harness was built (the repository is archived; master no longer moves). */
 export const TSLINT_REPOSITORY = "https://github.com/palantir/tslint";

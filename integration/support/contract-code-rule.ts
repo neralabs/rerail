@@ -1,7 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { defaultRerailDatabasePath } from "../src/database.js";
-import { openScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
+import { defaultRerailDatabasePath, openScopedRuleCatalog } from "../../src/engine/index.js";
 
 /**
  * The example code rule the engine/host contract tests exercise: an api-scoped rule that flags

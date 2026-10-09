@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadNativeBinding } from "../src/native.js";
+import { loadNativeBinding } from "../../../src/engine/native/native.js";
 
 describe("native model", () => {
   it("loads the pinned local artifact and exposes its fingerprint", () => {

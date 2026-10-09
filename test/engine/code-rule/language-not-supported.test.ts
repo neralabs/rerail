@@ -2,17 +2,16 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
-import { createRerailApi } from "../src/api/http.js";
-import { operations, type RerailApiStores } from "../src/api/operations.js";
-import { NativeCodeRuleEnforcer } from "../src/code-rule-enforcer.js";
-import type { AuditInput, AuditRecorder, AuditResult } from "../src/audit.js";
-import { bootstrapCodeRuleDslCatalog } from "../src/code-rule-dsl-catalog.js";
-import { assertCodeRuleCompiles, CodeRuleCompileError } from "../src/code-rule-compile.js";
-import { LANGUAGE_NOT_SUPPORTED, codeRuleLanguageNotSupported } from "../src/code-rule-language-support.js";
-import { CODE_RULE_PLANNED_LANGUAGES } from "../src/code-rule-languages.js";
-import { codeRuleSchema, type CodeRule } from "../src/code-rule-schema.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
-import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
+import { createRerailApi, operations, type RerailApiStores } from "../../../src/api/index.js";
+import { NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
+import type { AuditInput, AuditRecorder, AuditResult } from "../../../src/engine/audit/audit.js";
+import { bootstrapCodeRuleDslCatalog } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
+import { assertCodeRuleCompiles, CodeRuleCompileError } from "../../../src/engine/code-rule/code-rule-compile.js";
+import { LANGUAGE_NOT_SUPPORTED, codeRuleLanguageNotSupported } from "../../../src/engine/code-rule/code-rule-language-support.js";
+import { CODE_RULE_PLANNED_LANGUAGES } from "../../../src/engine/code-rule/code-rule-languages.js";
+import { codeRuleSchema, type CodeRule } from "../../../src/engine/code-rule/code-rule-schema.js";
+import { SqliteRuleStore } from "../../../src/engine/catalog/rule-store.js";
+import { ScopedRuleCatalog } from "../../../src/engine/catalog/scoped-rule-catalog.js";
 
 /** One forbid clause over an ast query of `language`, reporting every identifier of every file. */
 function astCodeRule(id: string, language: string): CodeRule {

@@ -3,13 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createRerailApi } from "../src/api/http.js";
-import { createRerailMcpHandler } from "../src/api/mcp.js";
-import { operations, type RerailApiStores } from "../src/api/operations.js";
-import { findDuplicateJsonKeys, parseJsonWithoutDuplicateKeys } from "../src/json-duplicate-keys.js";
-import { exportScopedRules, importScopedRules, loadBundledRules } from "../src/rule-bootstrap.js";
-import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
-import { MOCK_CODE_RULES } from "../src/seed.js";
+import { createRerailApi, createRerailMcpHandler, operations, type RerailApiStores } from "../../../src/api/index.js";
+import { findDuplicateJsonKeys, parseJsonWithoutDuplicateKeys } from "../../../src/engine/json-duplicate-keys.js";
+import { exportScopedRules, importScopedRules, loadBundledRules } from "../../../src/engine/catalog/rule-bootstrap.js";
+import { ScopedRuleCatalog } from "../../../src/engine/catalog/scoped-rule-catalog.js";
+import { MOCK_CODE_RULES } from "../../../src/cli/index.js";
 
 describe("findDuplicateJsonKeys", () => {
   it("finds repeated keys at any depth with their JSON Pointer", () => {

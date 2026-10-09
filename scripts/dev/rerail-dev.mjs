@@ -27,7 +27,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const SCRIPT = fileURLToPath(import.meta.url);
-const CHECKOUT = resolve(dirname(SCRIPT), "..");
+const CHECKOUT = resolve(dirname(SCRIPT), "..", "..");
 
 export const DEV_DIRECTORY = join(".rerail", "dev");
 export const INSTANCE_FILE = join(DEV_DIRECTORY, "instance.json");
@@ -318,8 +318,8 @@ export async function stopDevCheckout(checkout = CHECKOUT) {
 const NATIVE_INPUTS = ["native/src", "native/grammars", "native/Cargo.toml", "native/build.rs", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml"];
 const TS_INPUTS = ["src", "package.json", "tsconfig.json", "tsconfig.build.json"];
 const TS_OUTPUTS = [
-  "dist/cli.js", "dist/daemon.js", "dist/session-presentation.js", "dist/default-extension.js", "dist/event-stream.js",
-  "dist/cursor-hook.js", "dist/claude-hook.js", "dist/codex-hook.js",
+  "dist/cli/cli.js", "dist/daemon/daemon.js", "dist/presentation/session-presentation.js", "dist/hosts/omp/default-extension.js", "dist/harness/event-stream.js",
+  "dist/hosts/cursor/cursor-hook.js", "dist/hosts/claude/claude-hook.js", "dist/hosts/codex/codex-hook.js",
 ];
 const TS_BUILD_SCRIPTS = ["build:ts", "build:omp", "build:events", "build:cursor", "build:claude", "build:codex"];
 
@@ -435,7 +435,7 @@ function buildStale(checkout) {
   }
   if (freshness.native !== "fresh") {
     info(`Native rules engine is ${freshness.native}; building it`);
-    run("/bin/bash", [join(checkout, "scripts", "rerail-native.sh")]);
+    run("/bin/bash", [join(checkout, "scripts", "dev", "rerail-native.sh")]);
   }
   if (freshness.typescript !== "fresh" || freshness.dependencies === "missing") {
     info(`TypeScript build is ${freshness.typescript}; building it`);
@@ -460,7 +460,7 @@ function requireInstance() {
 }
 
 function requireBuild() {
-  if (!existsSync(join(CHECKOUT, "dist", "cli.js"))) throw new Error("this checkout is not built; run just rerail-dev");
+  if (!existsSync(join(CHECKOUT, "dist", "cli", "cli.js"))) throw new Error("this checkout is not built; run just rerail-dev");
 }
 
 async function setup() {
@@ -471,7 +471,7 @@ async function setup() {
 }
 
 async function loadRestore() {
-  return await import(pathToFileURL(join(CHECKOUT, "scripts", "rerail-restore.mjs")).href);
+  return await import(pathToFileURL(join(CHECKOUT, "scripts", "dev", "rerail-restore.mjs")).href);
 }
 
 /** Frees the reserved port and the target home of this checkout's daemons; anything else in the way is refused. */
@@ -510,7 +510,7 @@ async function up(argv) {
   if (launch.installBridge) {
     info("Registering this checkout's build with every coding agent");
     const bridgeEnv = { ...process.env, RERAIL_HOME: defaultRerailHome() };
-    run(process.execPath, [join(CHECKOUT, "dist", "cli.js"), "install", "--root", CHECKOUT], { env: bridgeEnv });
+    run(process.execPath, [join(CHECKOUT, "dist", "cli", "cli.js"), "install", "--root", CHECKOUT], { env: bridgeEnv });
     instance = await setupDevInstance(CHECKOUT);
     info(`The coding agents' hooks record into ${instance.home}; this dev daemon now runs there`);
   }
@@ -521,7 +521,7 @@ async function up(argv) {
     info(`Restored the Rerail databases from ${result.backupDir} into ${instance.home}${rules}`);
   }
   info(`Starting this checkout's Rerail dev daemon on ${instance.url}`);
-  run(process.execPath, [join(CHECKOUT, "dist", "cli.js"), "daemon", "start", "--dev", "--port", String(instance.port)], {
+  run(process.execPath, [join(CHECKOUT, "dist", "cli", "cli.js"), "daemon", "start", "--dev", "--port", String(instance.port)], {
     env: cliEnvironment(instance),
   });
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
@@ -568,7 +568,7 @@ async function status() {
 
 function cli(instance, args) {
   requireBuild();
-  const result = spawnSync(process.execPath, [join(CHECKOUT, "dist", "cli.js"), ...args], {
+  const result = spawnSync(process.execPath, [join(CHECKOUT, "dist", "cli", "cli.js"), ...args], {
     cwd: process.cwd(),
     env: cliEnvironment(instance),
     stdio: "inherit",

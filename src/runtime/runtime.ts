@@ -10,29 +10,29 @@ import {
   type AdapterSession,
   type RerailEventLoop,
   type RerailHost,
-} from "./adapter-contract.js";
+} from "../engine/adapter-contract.js";
 import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState } from "./host-runtime.js";
 import { autostartDaemon } from "./daemon-control.js";
-import { CodeRuleBridge, generatedEditPaths, type SourceObservationCache } from "./code-rule-bridge.js";
-import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
-import type { CodeRuleAuditor, AuditSettings, RuleSteerDelivery } from "./code-rule.js";
-import type { AuditRecorder, AuditRecord } from "./audit.js";
-import { SqliteAuditStore } from "./audit-store.js";
-import { DEFAULT_AUDIT_SETTINGS, SqliteAuditControlStore, type PolicyOwnerClaim } from "./audit-control.js";
-import { bootstrapCodeRuleDslCatalog, type CodeRuleDslCatalog } from "./code-rule-dsl-catalog.js";
-import { loadBundledRules } from "./rule-bootstrap.js";
-import { defaultRerailDatabasePath } from "./database.js";
-import { resolveRepositoryContext, ScopedRuleCatalog, type RepositoryContext } from "./scoped-rule-catalog.js";
+import { CodeRuleBridge, generatedEditPaths, type SourceObservationCache } from "../engine/code-rule/code-rule-bridge.js";
+import { NativeCodeRuleEnforcer } from "../engine/code-rule/code-rule-enforcer.js";
+import type { CodeRuleAuditor, AuditSettings, RuleSteerDelivery } from "../engine/code-rule/code-rule.js";
+import type { AuditRecorder, AuditRecord } from "../engine/audit/audit.js";
+import { SqliteAuditStore } from "../engine/audit/audit-store.js";
+import { DEFAULT_AUDIT_SETTINGS, SqliteAuditControlStore, type PolicyOwnerClaim } from "../engine/audit/audit-control.js";
+import { bootstrapCodeRuleDslCatalog, type CodeRuleDslCatalog } from "../engine/code-rule/code-rule-dsl-catalog.js";
+import { loadBundledRules } from "../engine/catalog/rule-bootstrap.js";
+import { defaultRerailDatabasePath } from "../engine/storage/database.js";
+import { resolveRepositoryContext, ScopedRuleCatalog, type RepositoryContext } from "../engine/catalog/scoped-rule-catalog.js";
 import { contextStartState, RepositoryStartWatch } from "./repository-start.js";
-import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "./semantic-primitives.js";
-import { ConversationRuleRegistry, type RuleMatch } from "./registry.js";
-import { LiveConversationRules } from "./conversation-rule-sync.js";
-import { parseSampleSource, SAMPLE_BOUNDARIES } from "./rule-schema.js";
-import { conversationRuleLoader } from "./rule-sources.js";
-import { RULE_MODES } from "./rule-mode.js";
+import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "../engine/native/semantic-primitives.js";
+import { ConversationRuleRegistry, type RuleMatch } from "../engine/catalog/registry.js";
+import { LiveConversationRules } from "../engine/catalog/conversation-rule-sync.js";
+import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-schema.js";
+import { conversationRuleLoader } from "../engine/catalog/rule-sources.js";
+import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { restorableRule, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
-import { steerBlock } from "./rerail-steer.js";
+import { steerBlock } from "../engine/code-rule/rerail-steer.js";
 import { SqliteSessionStore } from "./session-store.js";
 import type {
   ContentItem,
@@ -49,7 +49,7 @@ import type {
   WatermarkChange,
   WatermarkSnapshot,
   WatermarkStore,
-} from "./semantic-types.js";
+} from "../engine/native/semantic-types.js";
 
 const RULE_DIRECTORIES: Readonly<Partial<Record<RerailHost, string>>> = {
   "claude-code": ".claude",

@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { DeviceSecretStore } from "./device-keystore.js";
 import { deviceSecretStore } from "./device-keystore.js";
-import { stableJsonText } from "./stable-json.js";
+import { stableJsonText } from "../engine/stable-json.js";
 
 const PROFILE_SCHEMA_VERSION = 1;
 const ACTIVATION_REQUEST_VERSION = 1;

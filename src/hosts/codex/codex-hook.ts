@@ -1,8 +1,7 @@
-import { hookText } from "./adapter-contract.js";
+import { hookText } from "../../engine/adapter-contract.js";
 import { handleCodexEvent, supportsCodexHook } from "./codex-hook-adapter.js";
-import { hookRerailStarted } from "./repository-start.js";
-import { launchedDirectly, serveHook, type HookInput, type HookOutput } from "./hook-adapter.js";
-import { runHostHook, type HookOptions } from "./hook-host.js";
+import { launchedDirectly, serveHook, type HookInput, type HookOutput } from "../../harness/hook-adapter.js";
+import { hookRerailStarted, runHostHook, type HookOptions } from "../../harness/hook-host.js";
 
 export { codexHookOutput, handleCodexEvent } from "./codex-hook-adapter.js";
 export { serveHook };

@@ -2,7 +2,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanCommandError, environmentForNode, resolveExecutable, runNpm } from "../src/npm.js";
+import { cleanCommandError, environmentForNode, resolveExecutable, runNpm } from "../../src/runtime/npm.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {

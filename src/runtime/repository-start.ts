@@ -1,14 +1,12 @@
 import { existsSync } from "node:fs";
 import { basename, dirname, resolve, sep } from "node:path";
 import { eq, sql } from "drizzle-orm";
-import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "./database.js";
-import type { Harness } from "./harness-registration.js";
-import { readRepositoryIdAt, repositoryIdentityLocation, repositoryName, type RepositoryIdentityLocation } from "./repository-identity.js";
-import { loadBundledRules } from "./rule-bootstrap.js";
-import { checkoutStarts, repositoryStarts, ruleRepositories } from "./schema.js";
-import { resolveRepositoryContext, ScopedRuleCatalog, type RepositoryContext } from "./scoped-rule-catalog.js";
-import type { RerailHost } from "./adapter-contract.js";
-import { readRepositoryState } from "./session-presentation.js";
+import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { readRepositoryIdAt, repositoryIdentityLocation, repositoryName, type RepositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
+import { loadBundledRules } from "../engine/catalog/rule-bootstrap.js";
+import { checkoutStarts, repositoryStarts, ruleRepositories } from "../engine/storage/schema.js";
+import { resolveRepositoryContext, ScopedRuleCatalog, type RepositoryContext } from "../engine/catalog/scoped-rule-catalog.js";
+import type { RerailHost } from "../engine/adapter-contract.js";
 
 /**
  * Rerail is off until started. Set-up and rules belong to a repository, shared by every worktree through
@@ -290,19 +288,6 @@ export function isRerailStarted(workspace: string, databasePath = defaultRerailD
   return workspaceStartState(workspace, databasePath) === "started";
 }
 
-/**
- * The check one-shot hooks make. A running daemon answers first, from its own environment and open
- * database; without one, the hook reads the database itself, which never starts a daemon. An
- * explicit database path (tests, embedded hosts) is always read directly.
- */
-export async function hookRerailStarted(host: RerailHost, workspace: string, databasePath?: string): Promise<boolean> {
-  if (databasePath === undefined) {
-    const answered = await readRepositoryState(workspace, host);
-    if (answered !== null) return answered === "started";
-  }
-  return isRerailStarted(workspace, databasePath);
-}
-
 /** How start and stop name the checkout they changed: the repository, or a worktree of it. */
 function checkoutName(workspace: string): string {
   const repository = repositoryName(workspace);
@@ -321,7 +306,7 @@ export interface RepositorySetupIo {
 export interface RepositorySetupOptions {
   databasePath?: string;
   /** Coding agents named by `rerail start --agents`; the set-up screens decide what to do with them. */
-  agents?: readonly Harness[];
+  agents?: readonly RerailHost[];
 }
 
 export interface RepositoryStartReport {

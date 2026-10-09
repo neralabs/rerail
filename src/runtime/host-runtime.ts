@@ -1,14 +1,14 @@
 import { StreamingSampleChunker } from "./chunker.js";
-import { stableJsonText } from "./stable-json.js";
+import { stableJsonText } from "../engine/stable-json.js";
 import { SessionLanes } from "./session-lanes.js";
-import { steers, type RuleMode } from "./rule-mode.js";
+import { steers, type RuleMode } from "../engine/catalog/rule-mode.js";
 import type {
   AdapterCapabilityProfile,
   AdapterDelivery,
   AdapterEvent,
   AdapterSample,
   AdapterSession,
-} from "./adapter-contract.js";
+} from "../engine/adapter-contract.js";
 
 export interface HostRuntimeSessionState {
   processedEventIds: readonly string[];

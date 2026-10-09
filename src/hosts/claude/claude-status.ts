@@ -4,9 +4,9 @@ import { isAbsolute, resolve } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { readClaudeStatusCommand, type ClaudeStatusLine } from "./claude-status-store.js";
-import { formatTerminalStatus, readPresentation } from "./session-presentation.js";
-import type { RepositoryStartState } from "./repository-start.js";
+import { readClaudeStatusCommand, type ClaudeStatusLine } from "../../setup/claude-status-store.js";
+import { formatTerminalStatus, readPresentation } from "../../presentation/session-presentation.js";
+import type { RepositoryStartState } from "../../runtime/repository-start.js";
 
 /**
  * The checkout's start state from the database, read-only: the status line refreshes often and must never
@@ -15,7 +15,7 @@ import type { RepositoryStartState } from "./repository-start.js";
  */
 async function localStartState(root: string): Promise<RepositoryStartState | undefined> {
   // Static import cannot work here: it would load Drizzle and SQLite on every status-line run, daemon or not.
-  const reader = await import("./repository-start.js");
+  const reader = await import("../../runtime/repository-start.js");
   return reader.readOnlyStartState(root);
 }
 

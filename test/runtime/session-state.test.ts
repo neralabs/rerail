@@ -1,9 +1,9 @@
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { ConversationRuleRegistry } from "../src/registry.js";
-import { replaySessionState } from "../src/session-state.js";
-import { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../src/extension.js";
-import type { ConversationRule } from "../src/rule-schema.js";
+import { ConversationRuleRegistry } from "../../src/engine/index.js";
+import { replaySessionState } from "../../src/runtime/session-state.js";
+import { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../../src/hosts/omp/index.js";
+import type { ConversationRule } from "../../src/engine/index.js";
 
 const rule: ConversationRule = {
   id: "checkout",

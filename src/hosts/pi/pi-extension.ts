@@ -6,26 +6,26 @@ import {
   type AdapterDelivery,
   type AdapterSample,
   type AdapterSession,
-} from "./adapter-contract.js";
-import { LiveConversationRules } from "./conversation-rule-sync.js";
-import { isRerailStarted } from "./repository-start.js";
-import { bundledModelPath, PACKAGE_ROOT } from "./extension.js";
-import type { SessionDatabaseOptions } from "./session-database-options.js";
-import type { ModelFingerprint } from "./native.js";
-import type { NativeSemanticToolRuntime } from "./native-semantic-tools.js";
-import { NativeSemanticRuntime } from "./native-semantic-runtime.js";
-import type { NativeSessionClient } from "./native-session-client.js";
-import { createOmpPresentation } from "./omp-presentation.js";
-import { linkDeliveries } from "./session-presentation.js";
+} from "../../engine/adapter-contract.js";
+import { LiveConversationRules } from "../../engine/catalog/conversation-rule-sync.js";
+import { isRerailStarted } from "../../runtime/repository-start.js";
+import { bundledModelPath, PACKAGE_ROOT } from "../../engine/package-root.js";
+import type { SessionDatabaseOptions } from "../../harness/session-database-options.js";
+import type { ModelFingerprint } from "../../engine/native/native.js";
+import type { NativeSemanticToolRuntime } from "../../harness/native-semantic-tools.js";
+import { NativeSemanticRuntime } from "../../runtime/native-semantic-runtime.js";
+import type { NativeSessionClient } from "../../harness/native-session-client.js";
+import { createOmpPresentation } from "../../presentation/omp-presentation.js";
+import { linkDeliveries } from "../../presentation/session-presentation.js";
 import { PiNativeSession } from "./pi-native-session.js";
 import { registerPiHostAdapter } from "./pi-host-adapter.js";
-import { ConversationRuleRegistry, type RuleMatch } from "./registry.js";
-import { conversationRuleLoader, type ConversationRuleSourceOptions } from "./rule-sources.js";
-import { loadBundledRules } from "./rule-bootstrap.js";
-import { openScopedRuleCatalog } from "./scoped-rule-catalog.js";
-import { defaultRerailDatabasePath } from "./database.js";
-import { RerailRuntime } from "./runtime.js";
-import { MATCH_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE } from "./session-state.js";
+import { ConversationRuleRegistry, type RuleMatch } from "../../engine/catalog/registry.js";
+import { conversationRuleLoader, type ConversationRuleSourceOptions } from "../../engine/catalog/rule-sources.js";
+import { loadBundledRules } from "../../engine/catalog/rule-bootstrap.js";
+import { openScopedRuleCatalog } from "../../engine/catalog/scoped-rule-catalog.js";
+import { defaultRerailDatabasePath } from "../../engine/storage/database.js";
+import { RerailRuntime } from "../../runtime/runtime.js";
+import { MATCH_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE } from "../../runtime/session-state.js";
 
 export interface PiConversationRulesOptions extends SessionDatabaseOptions, ConversationRuleSourceOptions {
   modelPath?: string;

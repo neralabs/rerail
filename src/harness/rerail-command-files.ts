@@ -10,7 +10,7 @@ import {
 export type CommandFileAgent = "claude-code" | "cursor" | "codex";
 
 export interface CommandFileContext {
-  /** The shell-quoted launcher, `<node> <root>/dist/cli.js`, as the hooks run it. */
+  /** The shell-quoted launcher, `<node> <root>/dist/cli/cli.js`, as the hooks run it. */
   cli: string;
   /** The installed package root the launcher belongs to. */
   packageRoot: string;

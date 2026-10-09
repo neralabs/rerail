@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { readPresentation, readRulesDashboard, readSummaryState } from "./session-presentation.js";
-import type { RepositoryStartState } from "./repository-start.js";
-import { nodeExecutable, openDashboard, type PageOpening } from "./daemon-control.js";
+import { ENTRY_POINTS } from "../engine/package-root.js";
+import { readPresentation, readRulesDashboard, readSummaryState } from "../presentation/session-presentation.js";
+import type { RepositoryStartState } from "../runtime/repository-start.js";
+import { nodeExecutable, openDashboard, type PageOpening } from "../runtime/daemon-control.js";
 import { createRuleInstructions, RERAIL_COMMANDS, type RerailCommandName } from "./rerail-commands.js";
 import { renderRerailSummary } from "./rerail-summary.js";
-import { repositoryName } from "./repository-identity.js";
+import { repositoryName } from "../engine/catalog/repository-identity.js";
 
 /** Minimal command-host surface shared by OMP and Pi. */
 export interface RerailCommandHost {
@@ -28,7 +29,7 @@ export interface RerailCommandContext {
 }
 
 export interface RerailCommandOptions {
-  /** Installed package root; the launcher runs `<packageRoot>/dist/cli.js`. */
+  /** Installed package root; the launcher runs `<packageRoot>/dist/cli/cli.js`. */
   packageRoot: string;
   host?: "omp" | "pi";
   cwd(): string;
@@ -58,7 +59,7 @@ function databaseArgs(options: RerailCommandOptions): string[] {
 }
 
 async function runLauncher(options: RerailCommandOptions, args: readonly string[], hostArgs: readonly string[] = []): Promise<LauncherResult> {
-  const child = spawn(nodeExecutable(), [join(options.packageRoot, "dist", "cli.js"), ...args, ...hostArgs], {
+  const child = spawn(nodeExecutable(), [join(options.packageRoot, ENTRY_POINTS.cli), ...args, ...hostArgs], {
     cwd: options.cwd(),
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -163,7 +164,7 @@ export function registerRerailCommands(pi: RerailCommandHost, options: RerailCom
   });
 
   register("rerail-create", async (_ctx, request) => {
-    const cli = `${shellWord(nodeExecutable())} ${shellWord(join(options.packageRoot, "dist", "cli.js"))}`;
+    const cli = `${shellWord(nodeExecutable())} ${shellWord(join(options.packageRoot, ENTRY_POINTS.cli))}`;
     pi.sendUserMessage(createRuleInstructions({ cli, packageRoot: options.packageRoot, request: request === "" ? "(none given)" : `"${request}"` }));
   }, true);
 

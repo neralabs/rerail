@@ -1,4 +1,4 @@
-import type { RerailHost } from "./adapter-contract.js";
+import type { RerailHost } from "../adapter-contract.js";
 
 /**
  * The steer, as the coding agent and the person read it (design A3): one line naming the rule, the

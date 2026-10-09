@@ -4,12 +4,12 @@ import {
   type AdapterEvent,
   type AdapterSample,
   type AdapterSession,
-} from "../src/adapter-contract.js";
+} from "../../src/engine/index.js";
 import {
   RerailHostRuntime,
   type HostRuntimePort,
   type HostRuntimeSessionState,
-} from "../src/host-runtime.js";
+} from "../../src/runtime/host-runtime.js";
 
 class RetryableEndPort implements HostRuntimePort {
   readonly events: AdapterEvent[] = [];

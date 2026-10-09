@@ -20,7 +20,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import ts from "typescript";
 import { FIXTURE_CHECKOUT } from "./fixtures.js";
-import { compareDeterministicStrings } from "../../src/stable-json.js";
+import { compareDeterministicStrings } from "../../src/engine/index.js";
 
 /** Globals and members a rule may legitimately target that are not in the ES lib: host, module system, React. */
 const HOST_NAMES = [

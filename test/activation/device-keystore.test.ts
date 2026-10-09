@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { deviceSecretStore, FileDeviceSecretStore, SystemDeviceSecretStore } from "../src/device-keystore.js";
+import { deviceSecretStore, FileDeviceSecretStore, SystemDeviceSecretStore } from "../../src/activation/device-keystore.js";
 
 const directories: string[] = [];
 afterEach(async () => {

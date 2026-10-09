@@ -1,13 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { AdapterDelivery } from "../src/adapter-contract.js";
-import { codexHookOutput, handleCodexEvent, runCodexHook } from "../src/codex-hook.js";
-import type { HookOptions } from "../src/hook-host.js";
-import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "./hook-fixtures.js";
-import { sessionStartNote } from "../src/rerail-steer.js";
-import { dashboardOrigin } from "../src/session-presentation.js";
-import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
+import type { AdapterDelivery } from "../../../src/engine/index.js";
+import { codexHookOutput, handleCodexEvent, runCodexHook } from "../../../src/hosts/codex/codex-hook.js";
+import type { HookOptions } from "../../../src/harness/index.js";
+import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
+import { sessionStartNote } from "../../../src/engine/index.js";
+import { dashboardOrigin } from "../../../src/presentation/index.js";
+import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-codex-hook-");
 

@@ -30,8 +30,9 @@ for (const entry of entries) {
     plugins: [{
       name: "external-rerail-runtime",
       setup(context) {
-        // Rerail's compiled runtime stays external: its model/native asset paths are relative to
-        // import.meta.url, and src/ and dist/ sit at the same depth so the specifier is unchanged.
+        // Rerail's compiled runtime stays external: it finds its package root (model, native engine)
+        // from its own location, and playground/src/ and playground/dist/ sit at the same depth so the
+        // specifier is unchanged.
         context.onResolve({ filter: /^\.{1,2}\// }, args => {
           if (!insideRerailDist(resolve(args.resolveDir, args.path))) return;
           return { path: args.path, external: true };

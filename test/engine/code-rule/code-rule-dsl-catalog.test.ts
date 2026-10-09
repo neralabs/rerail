@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadNativeBinding } from "../src/native.js";
-import { bootstrapCodeRuleDslCatalog, bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
+import { loadNativeBinding } from "../../../src/engine/native/native.js";
+import { bootstrapCodeRuleDslCatalog, bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import {
   CODE_RULE_LATEST_ECMA_VERSION,
   CODE_RULE_PARSE_GRAMMARS,
@@ -14,11 +14,11 @@ import {
   CODE_RULE_TYPESCRIPT_VALUE_TYPES,
   codeRuleSchema,
   type CodeRule,
-} from "../src/code-rule-schema.js";
-import { applyCodeRuleConfig } from "../src/code-rule-options.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
-import { MOCK_CONVERSATION_RULES } from "../src/seed.js";
-import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
+} from "../../../src/engine/code-rule/code-rule-schema.js";
+import { applyCodeRuleConfig } from "../../../src/engine/code-rule/code-rule-options.js";
+import { SqliteRuleStore } from "../../../src/engine/catalog/rule-store.js";
+import { MOCK_CONVERSATION_RULES } from "../../../src/cli/index.js";
+import { ScopedRuleCatalog } from "../../../src/engine/catalog/scoped-rule-catalog.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -1239,7 +1239,7 @@ describe("code rule schema and engine agree on unsupported fields", () => {
   });
 
   it("pins parse's grammars and kinds to the engine's", () => {
-    const literal = (file: string) => readFileSync(new URL(`../native/src/code_rule_dsl/literal/${file}`, import.meta.url), "utf8");
+    const literal = (file: string) => readFileSync(new URL(`../../../native/src/code_rule_dsl/literal/${file}`, import.meta.url), "utf8");
     const grammars = [...literal("mod.rs").matchAll(/^\s+"(\w+)" => Some\(Self::\w+\),$/gm)].map(match => match[1]).filter(name => name !== "testChars");
     expect(grammars).toEqual([...CODE_RULE_PARSE_GRAMMARS]);
     const kinds = (file: string) => [...(literal(file).split("KINDS: &[&str] = &[")[1]!.split("];")[0]!.matchAll(/"(\w+)"/g))].map(match => match[1]);
@@ -1250,17 +1250,17 @@ describe("code rule schema and engine agree on unsupported fields", () => {
   });
 
   it("pins value.type's names to the engine's", () => {
-    const valueSource = readFileSync(new URL("../native/src/code_rule_dsl/compile/value.rs", import.meta.url), "utf8");
+    const valueSource = readFileSync(new URL("../../../native/src/code_rule_dsl/compile/value.rs", import.meta.url), "utf8");
     const names = (constant: string) => [...(valueSource.split(`${constant}: &[&str] = &[`)[1]!.split("];")[0]!.matchAll(/"(\w+)"/g))].map(match => match[1]);
     expect(names("PYTHON_TYPES")).toEqual([...CODE_RULE_PYTHON_VALUE_TYPES]);
     expect(names("TYPESCRIPT_TYPES")).toEqual([...CODE_RULE_TYPESCRIPT_VALUE_TYPES]);
   });
 
   it("pins the latest ecmaVersion and the Python versions of the engine's builtins tables", () => {
-    const table = JSON.parse(readFileSync(new URL("../native/src/code_rule_dsl/scope/data/es_globals.json", import.meta.url), "utf8")) as { latest: number; versions: Record<string, unknown> };
+    const table = JSON.parse(readFileSync(new URL("../../../native/src/code_rule_dsl/scope/data/es_globals.json", import.meta.url), "utf8")) as { latest: number; versions: Record<string, unknown> };
     expect(table.latest).toBe(CODE_RULE_LATEST_ECMA_VERSION);
     expect(Object.keys(table.versions)).toContain(String(CODE_RULE_LATEST_ECMA_VERSION));
-    const python = JSON.parse(readFileSync(new URL("../native/src/code_rule_dsl/scope/data/python_builtins.json", import.meta.url), "utf8")) as { versions: Record<string, unknown> };
+    const python = JSON.parse(readFileSync(new URL("../../../native/src/code_rule_dsl/scope/data/python_builtins.json", import.meta.url), "utf8")) as { versions: Record<string, unknown> };
     expect(Object.keys(python.versions)).toEqual([...CODE_RULE_PYTHON_VERSIONS]);
   });
 

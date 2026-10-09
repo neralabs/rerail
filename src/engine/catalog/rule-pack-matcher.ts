@@ -2,9 +2,9 @@ import { spawnSync } from "node:child_process";
 import { lstatSync, readdirSync, readFileSync, realpathSync, type Dirent } from "node:fs";
 import { dirname, join, posix, relative, sep } from "node:path";
 import { withinCheckout } from "./checkout-control.js";
-import { IGNORED_DIRECTORIES } from "./code-rule-enforcer.js";
+import { IGNORED_DIRECTORIES } from "../code-rule/code-rule-enforcer.js";
 import { GIT_EXECUTABLE } from "./repository-identity.js";
-import { compareDeterministicStrings } from "./stable-json.js";
+import { compareDeterministicStrings } from "../stable-json.js";
 
 /**
  * The local half of rule pack matching: list a repository's files once, read its `package.json`

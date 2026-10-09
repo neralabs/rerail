@@ -13,8 +13,8 @@ the core package at the repository root.
   planned one, or one that ports another tool's rules.
 
 ```sh
-npx vitest run test/packs.test.ts                    # every pack: checks 1 to 6 and each rule's status
-npx vitest run test/packs.test.ts -t "pack python"   # one pack
+npx vitest run test/engine/catalog/packs.test.ts                    # every pack: checks 1 to 6 and each rule's status
+npx vitest run test/engine/catalog/packs.test.ts -t "pack python"   # one pack
 ```
 
 A pull request that changes a pack adds a changeset (`npx changeset`); see
@@ -41,4 +41,4 @@ inactive and reported as `not supported yet` until core reads the language.
 
 Packs derived from upstream rule sets keep the upstream licence under `packs/<id>/licenses/<project>/`. The
 repository's `REUSE.toml` maps the copied files to their licence, `reuse lint` must pass, and the licence check
-rejects any licence outside the repository's allowlist (`scripts/licence-allowlist.json`).
+rejects any licence outside the repository's allowlist (`scripts/check/licence-allowlist.json`).

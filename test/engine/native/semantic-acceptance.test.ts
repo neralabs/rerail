@@ -3,9 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadNativeBinding, type NativeCompiledCodeRuleDsl, type NativeCodeRuleDslWorkspace } from "../src/native.js";
-import { applyCodeRuleConfig, resolveCodeRuleOptions } from "../src/code-rule-options.js";
-import { contentStorePath } from "../src/rerail-build.js";
+import { loadNativeBinding, type NativeCompiledCodeRuleDsl, type NativeCodeRuleDslWorkspace } from "../../../src/engine/native/native.js";
+import { applyCodeRuleConfig, resolveCodeRuleOptions } from "../../../src/engine/code-rule/code-rule-options.js";
+import { contentStorePath } from "../../../src/engine/native/rerail-build.js";
 
 /** The reference binary intentionally retains these reviewed defects. */
 const REFERENCE_BUGS: Record<string, true> = { B1: true, B2: true, B3: true, B5: true, B6: true, B7: true, B11: true, B12: true, B13: true, B14: true, B15: true, B19: true };

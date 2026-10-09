@@ -4,16 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { NativeCodeRuleEnforcer } from "../src/code-rule-enforcer.js";
-import type { AuditRecorder, AuditInput, AuditResult } from "../src/audit.js";
-import { bootstrapCodeRuleDslCatalog, bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
-import { codeRuleSchema } from "../src/code-rule-schema.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
+import { NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
+import type { AuditRecorder, AuditInput, AuditResult } from "../../../src/engine/audit/audit.js";
+import { bootstrapCodeRuleDslCatalog, bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
+import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
+import { SqliteRuleStore } from "../../../src/engine/catalog/rule-store.js";
 
 // T6 of the language-pack standard (docs/design/rerail-language-conformance.md): Python, TypeScript, PHP and Blade
 // in one repository, through the built addon and the TypeScript host, by Git index and by directory walk.
 
-const FIXTURE = fileURLToPath(new URL("./fixtures/mixed-repository", import.meta.url));
+const FIXTURE = fileURLToPath(new URL("../../fixtures/mixed-repository", import.meta.url));
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 

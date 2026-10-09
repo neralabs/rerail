@@ -2,14 +2,14 @@ import { chmod, mkdir } from "node:fs/promises";
 import { createServer, request } from "node:http";
 import { dirname, resolve as resolvePath } from "node:path";
 import { z } from "zod/v4";
-import type { AdapterDelivery, AdapterEvent } from "./adapter-contract.js";
+import type { AdapterDelivery, AdapterEvent } from "../engine/adapter-contract.js";
 import {
   AdapterEventSchema,
   decodeRerailEventResult,
   encodeRerailEventResult,
   RERAIL_EVENT_MAX_FRAME_BYTES,
 } from "./event-protocol.js";
-import { defaultRerailDatabasePath } from "./database.js";
+import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
 

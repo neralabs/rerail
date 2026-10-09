@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { steers, type RuleMode } from "./rule-mode.js";
+import { steers, type RuleMode } from "./catalog/rule-mode.js";
 
 export type RerailHost = "omp" | "pi" | "claude-code" | "codex" | "cursor";
 export type AssistantObservation = "streaming" | "completed";

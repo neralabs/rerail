@@ -5,7 +5,7 @@ plugin's own findings on the plugin's rule tests, through the engine's productio
 declared today, so the pack has no `divergences.json`.
 
 The pack follows the [pack structure and validation contract](../../docs/pack-format.md): it is checked by
-`npx vitest run test/packs.test.ts -t "pack next"`.
+`npx vitest run test/engine/catalog/packs.test.ts -t "pack next"`.
 
 | Path | What |
 |---|---|

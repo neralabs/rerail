@@ -15,7 +15,7 @@ import {
   authorizedUpdateChannel,
   runProfileCommand,
   signedUpdatePolicy,
-} from "../src/activation-cli.js";
+} from "../../src/cli/index.js";
 import {
   CustomerActivationManager,
   type ActivationFetch,
@@ -23,9 +23,9 @@ import {
   type ActivationTrustRoots,
   type CustomerProfile,
   type FlattenedJws,
-} from "../src/customer-profile.js";
-import type { DeviceSecretStore } from "../src/device-keystore.js";
-import { stableJsonText } from "../src/stable-json.js";
+} from "../../src/activation/customer-profile.js";
+import type { DeviceSecretStore } from "../../src/activation/device-keystore.js";
+import { stableJsonText } from "../../src/engine/index.js";
 
 const NOW = new Date("2026-09-01T12:00:00.000Z");
 const temporaryDirectories: string[] = [];

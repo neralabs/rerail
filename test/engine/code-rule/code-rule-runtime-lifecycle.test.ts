@@ -2,17 +2,17 @@ import { mkdir, opendir, realpath, writeFile } from "node:fs/promises";
 import type * as FsPromises from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { AdapterDelivery, RerailHost } from "../src/adapter-contract.js";
-import type { CodeRuleAuditor, RuleSteerDelivery } from "../src/code-rule.js";
-import { NativeCodeRuleEnforcer } from "../src/code-rule-enforcer.js";
-import { bootstrapCodeRuleDslCatalog } from "../src/code-rule-dsl-catalog.js";
-import { SqliteAuditStore } from "../src/audit-store.js";
-import { codeRuleSchema } from "../src/code-rule-schema.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
-import { RerailRuntime } from "../src/runtime.js";
-import { temporaryDirectories, testEmbedder } from "./hook-fixtures.js";
-import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
-import { gateStorageAttachments } from "./storage-attach-gate.js";
+import type { AdapterDelivery, RerailHost } from "../../../src/engine/adapter-contract.js";
+import type { CodeRuleAuditor, RuleSteerDelivery } from "../../../src/engine/code-rule/code-rule.js";
+import { NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
+import { bootstrapCodeRuleDslCatalog } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
+import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
+import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
+import { SqliteRuleStore } from "../../../src/engine/catalog/rule-store.js";
+import { RerailRuntime } from "../../../src/runtime/index.js";
+import { temporaryDirectories, testEmbedder } from "../../support/hook-events.js";
+import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
+import { gateStorageAttachments } from "../support/storage-attach-gate.js";
 
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof FsPromises>();

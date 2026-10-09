@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadNativeBinding, type NativeRuleInput, type NativeSample } from "../src/native.js";
+import { loadNativeBinding, type NativeRuleInput, type NativeSample } from "../../../src/engine/native/native.js";
 
 function rule(overrides: Partial<NativeRuleInput> = {}): NativeRuleInput {
   return {

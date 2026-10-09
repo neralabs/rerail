@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "./native.js";
+import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../native/native.js";
 import { bundledCodeRuleDslDirectory } from "./code-rule-compile.js";
 import { languageNotSupportedOf } from "./code-rule-language-support.js";
-import { reportQuarantinedRule, type QuarantinedRule } from "./rule-quarantine.js";
-import type { AuditRuleProvenance } from "./audit.js";
-import { SqliteRuleStore } from "./rule-store.js";
-import type { ScopedRuleCatalog } from "./scoped-rule-catalog.js";
-import { ruleDocumentDigest, stableJsonText } from "./stable-json.js";
+import { reportQuarantinedRule, type QuarantinedRule } from "../catalog/rule-quarantine.js";
+import type { AuditRuleProvenance } from "../audit/audit.js";
+import { SqliteRuleStore } from "../catalog/rule-store.js";
+import type { ScopedRuleCatalog } from "../catalog/scoped-rule-catalog.js";
+import { ruleDocumentDigest, stableJsonText } from "../stable-json.js";
 
 interface SourcedCodeRule {
   policyId: string;

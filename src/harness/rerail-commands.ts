@@ -47,7 +47,7 @@ export function rerailCommandList(sigil: CommandSigil): string {
 }
 
 export interface CreateRuleInstructionsInput {
-  /** The shell-quoted launcher the agent runs, e.g. `'/usr/bin/node' '/home/me/.rerail/current/dist/cli.js'`. */
+  /** The shell-quoted launcher the agent runs, e.g. `'/usr/bin/node' '/home/me/.rerail/current/dist/cli/cli.js'`. */
   cli: string;
   /** Where the installed package keeps example file rules and the rule grammar. */
   packageRoot: string;

@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { NativeSample } from "../src/native.js";
-import { ConversationRuleRegistry } from "../src/registry.js";
-import { parseConversationRuleDocument } from "../src/rule-schema.js";
-import { stableJsonText } from "../src/stable-json.js";
+import type { NativeSample } from "../../../src/engine/native/native.js";
+import { ConversationRuleRegistry } from "../../../src/engine/catalog/registry.js";
+import { parseConversationRuleDocument } from "../../../src/engine/catalog/rule-schema.js";
+import { stableJsonText } from "../../../src/engine/stable-json.js";
 
 const FORCE_PUSH = "oss:no-force-push";
 const SKIP_VERIFY = "oss:no-skip-verify";

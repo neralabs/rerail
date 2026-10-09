@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import type { AdapterEvent, AdapterSession } from "../src/adapter-contract.js";
-import { registerPiHostAdapter } from "../src/pi-host-adapter.js";
+import type { AdapterEvent, AdapterSession } from "../../../src/engine/index.js";
+import { registerPiHostAdapter } from "../../../src/hosts/pi/pi-host-adapter.js";
 
 type Handler = (event: unknown, context: ExtensionContext) => unknown;
 

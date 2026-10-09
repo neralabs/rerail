@@ -4,8 +4,8 @@ import { existsSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod/v4";
-import { openRerailDatabase, type RerailDatabase } from "./database.js";
-import { repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions } from "./schema.js";
+import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
+import { repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions } from "../storage/schema.js";
 
 import {
   auditSettingsSchema, auditSettingsPatchSchema, repositoryAuditSchema, auditRequestInputSchema, auditRequestSchema,

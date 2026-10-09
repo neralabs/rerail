@@ -2,13 +2,16 @@ import { mkdir, mkdtemp, readFile, rm, truncate, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { NativeCodeRuleEnforcer } from "../src/code-rule-enforcer.js";
-import type { AuditRecorder, AuditInput, AuditResult } from "../src/audit.js";
-import { defaultRerailDatabasePath } from "../src/database.js";
-import { SqliteAuditReader } from "../src/audit-store.js";
-import { bootstrapCodeRuleDslCatalog, bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
-import { codeRuleSchema } from "../src/code-rule-schema.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
+import {
+  NativeCodeRuleEnforcer,
+  defaultRerailDatabasePath,
+  SqliteAuditReader,
+  bootstrapCodeRuleDslCatalog,
+  bundledCodeRuleDslDirectory,
+  codeRuleSchema,
+  SqliteRuleStore,
+} from "../src/engine/index.js";
+import type { AuditRecorder, AuditInput, AuditResult } from "../src/engine/index.js";
 
 const directories: string[] = [];
 afterEach(async () => {

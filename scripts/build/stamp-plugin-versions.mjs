@@ -2,7 +2,7 @@
 // Stamps package.json's version into the Claude, Codex, and Cursor plugin manifests, or restores their
 // versionless source form. npm runs `stamp` as prepack and `restore` as postpack, so packed tarballs carry
 // the release version while the checkout never does. A pack that fails after prepack skips postpack and
-// leaves the manifests stamped; `node scripts/stamp-plugin-versions.mjs restore` (idempotent) cleans them up.
+// leaves the manifests stamped; `node scripts/build/stamp-plugin-versions.mjs restore` (idempotent) cleans them up.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 

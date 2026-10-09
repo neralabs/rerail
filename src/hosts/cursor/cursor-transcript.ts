@@ -1,10 +1,10 @@
 import { mkdir, open, readFile, rename, writeFile, type FileHandle } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
-import type { AdapterEvent, AdapterSession, RerailEventLoop } from "./adapter-contract.js";
+import type { AdapterEvent, AdapterSession, RerailEventLoop } from "../../engine/adapter-contract.js";
 import { createHash } from "node:crypto";
-import { pendingPath, type HookInput, persistPending } from "./hook-adapter.js";
-import { steers } from "./rule-mode.js";
+import { pendingPath, type HookInput, persistPending } from "../../harness/hook-adapter.js";
+import { steers } from "../../engine/catalog/rule-mode.js";
 
 const CursorTranscriptStateSchema = z
   .object({

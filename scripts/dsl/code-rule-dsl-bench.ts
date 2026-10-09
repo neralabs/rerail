@@ -1,14 +1,18 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { IGNORED_DIRECTORIES, languageFor } from "../src/code-rule-enforcer.js";
-import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../src/native.js";
-import { bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
+import {
+  IGNORED_DIRECTORIES,
+  languageFor,
+  loadNativeBinding,
+  type NativeCompiledCodeRuleDsl,
+  bundledCodeRuleDslDirectory,
+} from "../../src/engine/index.js";
 
 /**
  * Throughput check for TypeScript AST rules over a real source tree.
  *
- *   node --import tsx scripts/code-rule-dsl-bench.ts [directory] [--pattern <ast-grep pattern>] [--runs <n>]
+ *   node --import tsx scripts/dsl/code-rule-dsl-bench.ts [directory] [--pattern <ast-grep pattern>] [--runs <n>]
  *
  * The directory must lie inside this repository. Defaults to `src` and a `console.log($$$ARGS)` rule. `.ts` files
  * parse with the TypeScript grammar and `.tsx` with TSX, so a tree holding both exercises both grammars.
@@ -16,7 +20,7 @@ import { bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
  * reported as a per-file failure while every other file still yields violations.
  */
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 type SnapshotFile = { language: "typescript" | "tsx"; path: string; source: string };
 
 function option(name: string, fallback: string): string {

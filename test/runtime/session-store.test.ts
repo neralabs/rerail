@@ -6,18 +6,22 @@ import Database from "better-sqlite3";
 import { is } from "drizzle-orm";
 import { getTableConfig, SQLiteTable } from "drizzle-orm/sqlite-core";
 import { afterEach, describe, expect, it } from "vitest";
-import { createConversationRulesExtension } from "../src/extension.js";
-import { RerailRuntime } from "../src/runtime.js";
-import { defaultRerailDatabasePath, resetRepositoryHistory } from "../src/database.js";
-import { resolveRepositoryContext, ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
-import * as schema from "../src/schema.js";
-import { SqlitePresentationPreferenceStore } from "../src/presentation-preference-store.js";
-import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../src/seed.js";
-import { decodeEventPayload, SqliteSessionReader, SqliteSessionStore } from "../src/session-store.js";
-import { testEmbedder } from "./hook-fixtures.js";
-import { closeNativeTestDaemons, startNativeTestDaemon } from "./native-daemon-fixture.js";
-import { NativeSessionClient } from "../src/native-session-client.js";
-import { startTestRepository } from "./support/started-repository.js";
+import { createConversationRulesExtension } from "../../src/hosts/omp/index.js";
+import { RerailRuntime } from "../../src/runtime/runtime.js";
+import {
+  defaultRerailDatabasePath,
+  resetRepositoryHistory,
+  resolveRepositoryContext,
+  ScopedRuleCatalog,
+  schema,
+} from "../../src/engine/index.js";
+import { SqlitePresentationPreferenceStore } from "../../src/runtime/presentation-preference-store.js";
+import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
+import { decodeEventPayload, SqliteSessionReader, SqliteSessionStore } from "../../src/runtime/session-store.js";
+import { testEmbedder } from "../support/hook-events.js";
+import { closeNativeTestDaemons, startNativeTestDaemon } from "../support/native-daemon.js";
+import { NativeSessionClient } from "../../src/harness/index.js";
+import { startTestRepository } from "../support/started-repository.js";
 
 const temporaryDirectories: string[] = [];
 const temporaryConnections: Array<{ close(): void }> = [];

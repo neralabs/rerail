@@ -1,6 +1,6 @@
 import { PassThrough, Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import { runRerailMcpBridge } from "../src/mcp-bridge.js";
+import { runRerailMcpBridge } from "../../src/api/mcp-bridge.js";
 
 type FetchStep = Response | Error;
 

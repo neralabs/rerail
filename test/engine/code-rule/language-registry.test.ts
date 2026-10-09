@@ -7,10 +7,10 @@ import {
   readLanguageRegistry,
   renderLanguageRegistryModule,
   type LanguageEntry,
-} from "../scripts/generate-language-registry.js";
-import { languageFor } from "../src/code-rule-enforcer.js";
-import { generatedEditPaths } from "../src/code-rule-bridge.js";
-import { LANGUAGE_REGISTRY, CODE_RULE_DIALECTS, codeRuleDialectForPath } from "../src/code-rule-languages.js";
+} from "../../../scripts/generate/languages/registry.js";
+import { languageFor } from "../../../src/engine/code-rule/code-rule-enforcer.js";
+import { generatedEditPaths } from "../../../src/engine/code-rule/code-rule-bridge.js";
+import { LANGUAGE_REGISTRY, CODE_RULE_DIALECTS, codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
 
 const capabilities = (support: "supported" | "refused" | "not-supported-yet") => ({ scope: support, value: support, arguments: support, calls: support, formatArgs: support });
 

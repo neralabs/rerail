@@ -3,12 +3,12 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { ADAPTER_CAPABILITIES, type RerailHost } from "./adapter-contract.js";
-import { claudeWorkspace } from "./claude-event-adapter.js";
-import { readPresentation, readRulesDashboard, readSummaryState } from "./session-presentation.js";
-import { renderRerailSummary } from "./rerail-summary.js";
+import { join, resolve } from "node:path";
+import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contract.js";
+import { ENTRY_POINTS, PACKAGE_ROOT as packageRoot } from "../engine/package-root.js";
+import { claudeWorkspace } from "../hosts/claude/claude-event-adapter.js";
+import { readPresentation, readRulesDashboard, readSummaryState } from "../presentation/session-presentation.js";
+import { renderRerailSummary } from "../harness/rerail-summary.js";
 import {
   assertLocalEngineEntitlement,
   authorizedUpdateChannel,
@@ -19,13 +19,13 @@ import {
   takeOption,
   type SignedUpdatePolicy,
 } from "./activation-cli.js";
-import { CustomerActivationManager, CustomerProfileStore } from "./customer-profile.js";
+import { CustomerActivationManager, CustomerProfileStore } from "../activation/customer-profile.js";
 import {
   readOnlyStartState, startRerail, stopRerail, workspaceStartState, type RepositorySetupIo, type RepositoryStartState,
-} from "./repository-start.js";
-import { readRepositoryIdAt, repositoryIdentityLocation, repositoryName } from "./repository-identity.js";
-import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "./daemon.js";
-import { defaultRerailDatabasePath, RERAIL_DATABASE_FILE } from "./database.js";
+} from "../runtime/repository-start.js";
+import { readRepositoryIdAt, repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
+import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "../daemon/daemon.js";
+import { defaultRerailDatabasePath, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import {
   lookupDaemon,
   openInBrowser,
@@ -34,24 +34,23 @@ import {
   stopDaemon,
   DAEMON_LOG_FILE,
   type RunningDaemon,
-} from "./daemon-control.js";
-import { deviceSecretStore } from "./device-keystore.js";
-import { runRerailMcpBridge } from "./mcp-bridge.js";
+} from "../runtime/daemon-control.js";
+import { deviceSecretStore } from "../activation/device-keystore.js";
+import { runRerailMcpBridge } from "../api/mcp-bridge.js";
 import { runResetCommand, runRulesCommand, snapshotDatabaseBeforeUpdate } from "./project-cli.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
-import { openScopedRuleCatalog, ScopedRuleCatalog } from "./scoped-rule-catalog.js";
+import { openScopedRuleCatalog, ScopedRuleCatalog } from "../engine/catalog/scoped-rule-catalog.js";
 import { parseHostNames, runInstallCommand, runSetupCommand } from "./setup-cli.js";
-import { defaultRerailHome } from "./rerail-home.js";
+import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import {
   ManagedUpdater,
   type UpdateResult,
   type UpdateStatus,
-} from "./updater.js";
+} from "../setup/updater.js";
 
 const MANAGED_CHILD_ARGUMENT = "--rerail-managed-child";
-const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 interface PackageManifest {
   name: string;
@@ -226,7 +225,7 @@ async function runUiCommand(args: readonly string[]): Promise<number> {
 async function dispatchToManagedVersion(args: readonly string[], updater: ManagedUpdater): Promise<number | undefined> {
   const state = await updater.readState();
   if (resolve(state.current.packageRoot) === packageRoot) return undefined;
-  const managedCli = join(state.current.packageRoot, "dist", "cli.js");
+  const managedCli = join(state.current.packageRoot, ENTRY_POINTS.cli);
   if (!existsSync(managedCli)) {
     throw new Error(`Active Rerail launcher is missing: ${managedCli}. Run rerail update rollback.`);
   }
@@ -236,7 +235,7 @@ async function dispatchToManagedVersion(args: readonly string[], updater: Manage
 /** The persistent event stream for out-of-process hosts. It never checks for or installs updates; `rerail update` is the only way a new version arrives. */
 async function runEvents(policy?: SignedUpdatePolicy): Promise<number> {
   assertLocalEngineEntitlement(policy);
-  return await runChild(process.execPath, [join(packageRoot, "dist", "event-stream.js")]);
+  return await runChild(process.execPath, [join(packageRoot, ENTRY_POINTS.eventStream)]);
 }
 
 async function runUpdateCommand(

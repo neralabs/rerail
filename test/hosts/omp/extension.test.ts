@@ -4,8 +4,8 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 /** Attach-retry tests replace daemon discovery, which polls on real timers, with a daemon that is already up. */
 const daemonRoute = vi.hoisted(() => ({ start: undefined as (() => Promise<unknown>) | undefined }));
-vi.mock("../src/daemon-control.js", async () => {
-  const actual = await vi.importActual<typeof import("../src/daemon-control.js")>("../src/daemon-control.js");
+vi.mock("../../../src/runtime/daemon-control.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/runtime/daemon-control.js")>("../../../src/runtime/daemon-control.js");
   return {
     ...actual,
     startDaemonForPackage: (...args: Parameters<typeof actual.startDaemonForPackage>) =>
@@ -15,17 +15,21 @@ vi.mock("../src/daemon-control.js", async () => {
 import Database from "better-sqlite3";
 import type { CustomMessagePayload, ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { z } from "zod";
-import { RULE_MESSAGE_TYPE } from "../src/adapter-contract.js";
-import { createConversationRulesExtension } from "../src/extension.js";
-import type { ConversationRule } from "../src/rule-schema.js";
-import { closeNativeTestDaemons, startNativeTestDaemon } from "./native-daemon-fixture.js";
-import { defaultRerailDatabasePath, resetRepositoryHistory } from "../src/database.js";
-import { openScopedRuleCatalog, resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
-import { SqliteSessionReader } from "../src/session-store.js";
-import { isRerailStarted } from "../src/repository-start.js";
-import { startTestRepository } from "./support/started-repository.js";
-import { linkSteers, steerBlock } from "../src/rerail-steer.js";
-import { dashboardOrigin } from "../src/session-presentation.js";
+import {
+  RULE_MESSAGE_TYPE,
+  defaultRerailDatabasePath,
+  resetRepositoryHistory,
+  openScopedRuleCatalog,
+  resolveRepositoryContext,
+  linkSteers,
+  steerBlock,
+} from "../../../src/engine/index.js";
+import { createConversationRulesExtension } from "../../../src/hosts/omp/extension.js";
+import type { ConversationRule } from "../../../src/engine/index.js";
+import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
+import { SqliteSessionReader, isRerailStarted } from "../../../src/runtime/index.js";
+import { startTestRepository } from "../../support/started-repository.js";
+import { dashboardOrigin } from "../../../src/presentation/index.js";
 
 /** The steer block a rule delivers, with its `Why?` link made absolute the way the OMP adapter does for `cwd`. */
 async function deliveredSteer(cwd: string, ruleId: string, guidance: string): Promise<string> {

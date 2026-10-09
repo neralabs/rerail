@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "./database.js";
+import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { readStoredCodeRule, reportQuarantinedRule, storedDocumentDigest, type QuarantinedRule } from "./rule-quarantine.js";
-import { assertCodeRuleStorable } from "./code-rule-compile.js";
-import { codeRuleSchema, type CodeRule } from "./code-rule-schema.js";
+import { assertCodeRuleStorable } from "../code-rule/code-rule-compile.js";
+import { codeRuleSchema, type CodeRule } from "../code-rule/code-rule-schema.js";
 import { assertEngineRegexes } from "./rule-regexes.js";
 import { parseConversationRule, type ConversationRule } from "./rule-schema.js";
 import {
@@ -18,7 +18,7 @@ import {
   type RuleApplicability,
   type RuleKind,
   type RuleOrigin,
-} from "./schema.js";
+} from "../storage/schema.js";
 import {
   bundledRuleBody,
   type BundledRuleDocument,
@@ -27,7 +27,7 @@ import {
   type SeedReport,
 } from "./rule-store.js";
 import { repositoryIdentityLocation } from "./repository-identity.js";
-import { ruleDocumentDigest } from "./stable-json.js";
+import { ruleDocumentDigest } from "../stable-json.js";
 
 const GLOBAL_OWNER = "global";
 

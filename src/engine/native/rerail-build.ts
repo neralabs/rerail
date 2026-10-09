@@ -1,10 +1,9 @@
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import { loadNativeBinding } from "./native.js";
-import { defaultRerailHome } from "./rerail-home.js";
-import { RERAIL_PACKAGE_NAME } from "./updater.js";
+import { defaultRerailHome } from "../storage/rerail-home.js";
+import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
 
 /**
  * Which Rerail is running. `main` is the managed installation, loaded from
@@ -15,9 +14,6 @@ import { RERAIL_PACKAGE_NAME } from "./updater.js";
 export type RerailBuild =
   | { kind: "main"; home: string; version: string; packageRoot: string }
   | { kind: "dev"; packageRoot: string; checkout: string };
-
-/** This package's root: `src/` and `dist/` both sit one level below it. */
-const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** The managed installation whose real package root is `realPackageRoot`, if it is one. */
 function managedBuild(

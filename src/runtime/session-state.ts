@@ -1,5 +1,5 @@
-import type { ConversationRuleRegistry } from "./registry.js";
-import { parseConversationRule, type ConversationRule } from "./rule-schema.js";
+import type { ConversationRuleRegistry } from "../engine/catalog/registry.js";
+import { parseConversationRule, type ConversationRule } from "../engine/catalog/rule-schema.js";
 
 export const MATCH_ENTRY_TYPE = "rerail.match";
 export const MUTATION_ENTRY_TYPE = "rerail.mutation";

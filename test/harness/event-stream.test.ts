@@ -3,12 +3,12 @@ const routing = vi.hoisted(() => ({
   isMainRerailBuild: vi.fn<() => boolean>(),
   daemonEngineSocket: vi.fn<(replaceOtherPackage: boolean) => Promise<string>>(),
 }));
-vi.mock("../src/rerail-build.js", async () => ({
-  ...await vi.importActual<Record<string, unknown>>("../src/rerail-build.js"),
+vi.mock("../../src/engine/native/rerail-build.js", async () => ({
+  ...await vi.importActual<Record<string, unknown>>("../../src/engine/native/rerail-build.js"),
   isMainRerailBuild: routing.isMainRerailBuild,
 }));
-vi.mock("../src/daemon-control.js", async () => ({
-  ...await vi.importActual<Record<string, unknown>>("../src/daemon-control.js"),
+vi.mock("../../src/runtime/daemon-control.js", async () => ({
+  ...await vi.importActual<Record<string, unknown>>("../../src/runtime/daemon-control.js"),
   daemonEngineSocket: routing.daemonEngineSocket,
 }));
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -16,11 +16,11 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
-import type { AdapterDelivery, AdapterEvent, RerailEventLoop } from "../src/adapter-contract.js";
-import { steerBlock } from "../src/rerail-steer.js";
-import { encodeRerailEventResult, RERAIL_EVENT_PROTOCOL_PREFACE } from "../src/event-protocol.js";
-import { runRerailEventStream, serveRerailEventStream } from "../src/event-stream.js";
-import { startTestRepository } from "./support/started-repository.js";
+import type { AdapterDelivery, AdapterEvent, RerailEventLoop } from "../../src/engine/index.js";
+import { steerBlock } from "../../src/engine/index.js";
+import { encodeRerailEventResult, RERAIL_EVENT_PROTOCOL_PREFACE } from "../../src/runtime/index.js";
+import { runRerailEventStream, serveRerailEventStream } from "../../src/harness/event-stream.js";
+import { startTestRepository } from "../support/started-repository.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 

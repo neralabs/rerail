@@ -5,7 +5,7 @@ and the `generate_*` scripts that record each, grouped by language family. Nothi
 or shipped to users: no package's `files` includes this directory.
 
 Rerail's code-rule DSL engine tests compare against these oracles. They read this directory, or `RERAIL_FIXTURES_DIR`
-when it is set (for Rust through `native/build.rs`, for TypeScript through `test/oracles.ts`).
+when it is set (for Rust through `native/build.rs`, for TypeScript through `test/support/oracles.ts`).
 
 Maintainers run the generators by hand against the pinned upstream versions their headers name; CI and the product
 never do.

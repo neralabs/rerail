@@ -1,12 +1,12 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { AdapterDelivery, AdapterEvent, AdapterSession } from "./adapter-contract.js";
+import type { AdapterDelivery, AdapterEvent, AdapterSession } from "../../engine/adapter-contract.js";
 import {
   createNativeSession,
   NativeSessionClient,
   type NativeSessionInitializationOptions,
   type NativeSessionRoute,
   type NativeSessionHost,
-} from "./native-session-client.js";
+} from "../../harness/native-session-client.js";
 
 export interface PiNativeSessionOptions {
   entries(context?: ExtensionContext): readonly unknown[];

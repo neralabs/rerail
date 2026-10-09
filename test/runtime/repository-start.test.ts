@@ -5,9 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
-import { openRerailDatabase } from "../src/database.js";
-import { loadBundledRules } from "../src/rule-bootstrap.js";
-import { MOCK_CONVERSATION_RULES, seedRerailDatabase } from "../src/seed.js";
+import {
+  openRerailDatabase,
+  loadBundledRules,
+  repositoryIdentityLocation,
+  resolveRepositoryContext,
+  ScopedRuleCatalog,
+} from "../../src/engine/index.js";
+import { MOCK_CONVERSATION_RULES, seedRerailDatabase } from "../../src/cli/index.js";
 import {
   isRerailStarted,
   repositoryStartState,
@@ -18,11 +23,9 @@ import {
   stopRerail,
   workspaceStartState,
   type RepositorySetupIo,
-} from "../src/repository-start.js";
-import { repositoryIdentityLocation } from "../src/repository-identity.js";
-import { resolveRepositoryContext, ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
-import { RerailRuntime } from "../src/runtime.js";
-import { testEmbedder } from "./hook-fixtures.js";
+} from "../../src/runtime/repository-start.js";
+import { RerailRuntime } from "../../src/runtime/runtime.js";
+import { testEmbedder } from "../support/hook-events.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {

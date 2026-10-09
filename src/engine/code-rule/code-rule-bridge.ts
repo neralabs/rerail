@@ -12,8 +12,8 @@ import type {
   AuditSettings,
   CodeRuleSourceLanguage,
 } from "./code-rule.js";
-import type { AuditMode } from "./audit.js";
-import { compareDeterministicStrings } from "./stable-json.js";
+import type { AuditMode } from "../audit/audit.js";
+import { compareDeterministicStrings } from "../stable-json.js";
 import { languageOfPath, SOURCE_LANGUAGES } from "./code-rule-languages.js";
 
 
@@ -624,7 +624,7 @@ export class CodeRuleBridge {
   #sourceLocation(root: string, configuredPath: string): SourceLocation | undefined {
     const absolute = isAbsolute(configuredPath) ? configuredPath : resolve(root, configuredPath);
     const path = relative(root, absolute).replaceAll("\\", "/");
-    if (path.startsWith("../") || path === ".." || isAbsolute(path)) return undefined;
+    if (path.startsWith("../../../") || path === ".." || isAbsolute(path)) return undefined;
     const language = languageOfPath(SOURCE_LANGUAGES, path);
     if (language === undefined || !this.#auditor.acceptsPath(path)) return undefined;
     return { absolute, path, language };

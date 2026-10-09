@@ -7,7 +7,7 @@ import type {
   WatermarkChange,
   WatermarkSnapshot,
   WatermarkStore,
-} from "./semantic-types.js";
+} from "../engine/native/semantic-types.js";
 
 export const OMP_WATERMARK_ENTRY_TYPE = "rerail.watermark";
 

@@ -5,8 +5,8 @@ import type {
   AdapterEvent,
   AdapterSample,
   AdapterSession,
-} from "../../src/adapter-contract.js";
-import { RULE_MODES } from "../../src/rule-mode.js";
+} from "../../src/engine/index.js";
+import { RULE_MODES } from "../../src/engine/index.js";
 
 export interface PersistedContractEntry {
   sessionId: string;

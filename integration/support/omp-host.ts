@@ -6,10 +6,10 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
-import { stopDaemon } from "../src/daemon-control.js";
+import { stopDaemon } from "../../src/runtime/index.js";
 import { seedContractCodeRule } from "./contract-code-rule.js";
-import { startTestRepository } from "../test/support/started-repository.js";
-import type { OmpSessionEntryLike } from "../src/omp-semantic.js";
+import { startTestRepository } from "../../test/support/started-repository.js";
+import type { OmpSessionEntryLike } from "../../src/runtime/index.js";
 
 export interface HostResponse {
   content: Array<string | { type: "toolCall"; name: string; arguments: Record<string, unknown> }>;
@@ -57,7 +57,7 @@ export class OmpHost {
     if (extension !== "none") seedContractCodeRule(join(cwd, "home"), cwd);
     startTestRepository(cwd, join(cwd, "home", "rerail.sqlite"));
     await writeFile(config, JSON.stringify({ responses, engine: extension === "engine",
-      extension: extension === "none" ? undefined : join(root, "dist", "default-extension.js"),
+      extension: extension === "none" ? undefined : join(root, "dist", "hosts", "omp", "default-extension.js"),
       modelPath: join(root, "model"), evidencePath: join(cwd, "host-evidence.json"), authPath: options.authPath,
     }));
     const temporaryDirectory = await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "rerail-omp-test-"));

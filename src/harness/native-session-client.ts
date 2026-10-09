@@ -1,13 +1,12 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { PACKAGE_ROOT } from "../engine/package-root.js";
 import superjson from "superjson";
-import type { AdapterDelivery, AdapterEvent, AdapterSession } from "./adapter-contract.js";
+import type { AdapterDelivery, AdapterEvent, AdapterSession } from "../engine/adapter-contract.js";
 import type { NativeSemanticToolRuntime } from "./native-semantic-tools.js";
-import type { ProjectionSpec, RelationSpec, SelectionSpec, WatermarkChange } from "./semantic-types.js";
-import { startDaemonForPackage } from "./daemon-control.js";
-import { isMainRerailBuild } from "./rerail-build.js";
-import { defaultRerailHome } from "./rerail-home.js";
-import { RULE_MODES } from "./rule-mode.js";
+import type { ProjectionSpec, RelationSpec, SelectionSpec, WatermarkChange } from "../engine/native/semantic-types.js";
+import { startDaemonForPackage } from "../runtime/daemon-control.js";
+import { isMainRerailBuild } from "../engine/native/rerail-build.js";
+import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 
 /** The daemon a client talks to: its URL and the checkout its native sessions address. */
 interface NativeSessionEndpoint {
@@ -103,7 +102,7 @@ export async function createNativeSession<Context>(
   }
   const { daemon } = await startDaemonForPackage({
     home: defaultRerailHome(),
-    packageRoot: resolve(dirname(fileURLToPath(import.meta.url)), ".."),
+    packageRoot: PACKAGE_ROOT,
   }, {
     dev: false,
     port: 0,

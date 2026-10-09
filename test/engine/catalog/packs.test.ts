@@ -13,11 +13,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test } from "vitest";
 import { z } from "zod";
-import { PACK_CHECKS, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../conformance/pack-validation.js";
-import { compareDeterministicStrings } from "../src/stable-json.js";
+import { PACK_CHECKS, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../../../conformance/pack-validation.js";
+import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 
-const PACKS = fileURLToPath(new URL("../packs/", import.meta.url));
-const FIXTURES = fileURLToPath(new URL("./fixtures/packs/", import.meta.url));
+const PACKS = fileURLToPath(new URL("../../../packs/", import.meta.url));
+const FIXTURES = fileURLToPath(new URL("../../fixtures/packs/", import.meta.url));
 const TIMEOUT = 600_000;
 
 const CORPORA: ValidatePackOptions = process.env.RERAIL_PACK_CORPORA === "1" ? { corpora: true } : process.env.RERAIL_PACK_CORPORA === "0" ? { corpora: false } : {};

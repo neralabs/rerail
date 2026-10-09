@@ -4,7 +4,7 @@
 #
 # Publishes this checkout's package to a throwaway Verdaccio on localhost that, like
 # @neralabs/rerail on npm before launch, serves @neralabs/* only to a logged-in user.
-# Runs the real `just rerail` installer (scripts/rerail-setup.mjs) against it inside a
+# Runs the real `just rerail` installer (scripts/dev/rerail-setup.mjs) against it inside a
 # sandbox HOME that carries fake coding-agent directories, first logged out (it must stop
 # with a request to npm login) and then logged in, exercises the installed rerail launcher
 # (status, daemon stop/start, update check, update to a newer published version, a
@@ -14,7 +14,7 @@
 # npmjs. KEEP=1 leaves the sandbox for inspection.
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MIN_NODE_MAJOR=24
 PACKAGE="@neralabs/rerail"
 VERDACCIO="verdaccio@6"
@@ -44,7 +44,7 @@ node_major="$("$NODE" -p 'process.versions.node.split(".")[0]')"
 
 # 1. A publishable build: the native engine plus dist/ (runtime, hook bundles, UI). An existing
 #    complete build is packed as it is; run `npm run build` first to pack fresh sources.
-if [ ! -f "$REPO_ROOT/dist/cli.js" ] || ! ls "$REPO_ROOT"/native/*.node >/dev/null 2>&1; then
+if [ ! -f "$REPO_ROOT/dist/cli/cli.js" ] || ! ls "$REPO_ROOT"/native/*.node >/dev/null 2>&1; then
   info "No complete build in this checkout; running npm run build"
   (cd "$REPO_ROOT" && "$NPM" run build)
 fi
@@ -217,9 +217,9 @@ sandbox "$LAUNCHER" status
 
 info "Rerail is off until started: the hook does nothing and the HUD says not on here"
 sandbox "$NODE" -e 'process.stdout.write(JSON.stringify({hook_event_name:"SessionStart",session_id:"installer-smoke-off",cwd:process.cwd(),source:"startup"}))' \
-  | sandbox "$NODE" "$RERAIL_DIR/current/dist/claude-hook.js" >/dev/null
+  | sandbox "$NODE" "$RERAIL_DIR/current/dist/hosts/claude/claude-hook.js" >/dev/null
 status_output="$(sandbox "$NODE" -e 'process.stdout.write(JSON.stringify({session_id:"installer-smoke-off",cwd:process.cwd()}))' \
-  | sandbox "$NODE" "$RERAIL_DIR/current/dist/claude-status.js")"
+  | sandbox "$NODE" "$RERAIL_DIR/current/dist/hosts/claude/claude-status.js")"
 case "$status_output" in *"not on here"*) ;; *) fail "the HUD in a repository that was never started does not say not on here" ;; esac
 
 info "rerail start"
@@ -229,9 +229,9 @@ case "$start_output" in *"Rerail is on in proj."*" rules are on."*) ;; *) fail "
 
 info "Exercising the installed Claude hook, composed HUD, and exact-session command"
 sandbox "$NODE" -e 'process.stdout.write(JSON.stringify({hook_event_name:"SessionStart",session_id:"installer-smoke",cwd:process.cwd(),source:"startup"}))' \
-  | sandbox "$NODE" "$RERAIL_DIR/current/dist/claude-hook.js" >/dev/null
+  | sandbox "$NODE" "$RERAIL_DIR/current/dist/hosts/claude/claude-hook.js" >/dev/null
 status_output="$(sandbox "$NODE" -e 'process.stdout.write(JSON.stringify({session_id:"installer-smoke",cwd:process.cwd()}))' \
-  | sandbox "$NODE" "$RERAIL_DIR/current/dist/claude-status.js")"
+  | sandbox "$NODE" "$RERAIL_DIR/current/dist/hosts/claude/claude-status.js")"
 case "$status_output" in
   *user-status*" rules"*"steered 0×"*) ;;
   *) fail "installed HUD did not preserve the user status and render actual session counters" ;;

@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { duplicateJsonKeyError } from "../json-duplicate-keys.js";
+import { duplicateJsonKeyError } from "../engine/json-duplicate-keys.js";
 import { allowedHost, type PublicHosts } from "./http.js";
 import { ApiError, operationInputShape, type Operation, type RerailApiStores } from "./operations.js";
 

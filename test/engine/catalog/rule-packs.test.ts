@@ -6,12 +6,16 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { afterEach, describe, expect, it } from "vitest";
-import { createRerailApi } from "../src/api/http.js";
-import { languageFor } from "../src/code-rule-enforcer.js";
-import { loadNativeBinding } from "../src/native.js";
-import { operations, type RerailApiStores } from "../src/api/operations.js";
-import { rulePackListSchema, rulePackRecommendationsSchema } from "../src/api/rule-pack-contracts.js";
-import { globPattern } from "../src/rule-pack-matcher.js";
+import {
+  createRerailApi,
+  operations,
+  type RerailApiStores,
+  rulePackListSchema,
+  rulePackRecommendationsSchema,
+} from "../../../src/api/index.js";
+import { languageFor } from "../../../src/engine/code-rule/code-rule-enforcer.js";
+import { loadNativeBinding } from "../../../src/engine/native/native.js";
+import { globPattern } from "../../../src/engine/catalog/rule-pack-matcher.js";
 import {
   cachedRecommendRulePacks,
   loadRulePacks,
@@ -19,10 +23,10 @@ import {
   readRulePacks,
   recommendRulePacks,
   type RulePack,
-} from "../src/rule-packs.js";
-import { corePackDirectories, loadBundledRules } from "../src/rule-bootstrap.js";
-import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
-import { MOCK_CONVERSATION_RULES } from "../src/seed.js";
+} from "../../../src/engine/catalog/rule-packs.js";
+import { corePackDirectories, loadBundledRules } from "../../../src/engine/catalog/rule-bootstrap.js";
+import { ScopedRuleCatalog } from "../../../src/engine/catalog/scoped-rule-catalog.js";
+import { MOCK_CONVERSATION_RULES } from "../../../src/cli/index.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -80,7 +84,7 @@ async function withRepositoryPack(): Promise<readonly RulePack[]> {
   return readRulePacks([...corePackDirectories(), acme]);
 }
 
-const capabilities = readFileSync(fileURLToPath(new URL("../code-rule-dsl/capabilities.json", import.meta.url)), "utf8");
+const capabilities = readFileSync(fileURLToPath(new URL("../../../code-rule-dsl/capabilities.json", import.meta.url)), "utf8");
 const evaluationSchema = z.object({ violations: z.array(z.object({ ruleId: z.string() })).default([]), failures: z.array(z.unknown()).default([]) });
 
 /** Whether the file rule `ruleId`, evaluated on `text` at `path`, reports a violation. */
@@ -117,7 +121,7 @@ describe("shipped rule packs", () => {
   });
 
   it("are the packs core ships, whose rules are exactly the documents seeded disabled", () => {
-    expect(corePackDirectories()).toEqual(["tslint", "complexity"].map(id => fileURLToPath(new URL(`../packs/${id}`, import.meta.url))));
+    expect(corePackDirectories()).toEqual(["tslint", "complexity"].map(id => fileURLToPath(new URL(`../../../packs/${id}`, import.meta.url))));
     expect(packs.flatMap(found => found.rules).every(rule => bundled.some(document => document.rule.id === rule.id))).toBe(true);
   });
 });

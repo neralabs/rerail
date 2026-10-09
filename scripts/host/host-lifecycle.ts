@@ -5,7 +5,7 @@
  *
  *   npm run test:e2e:lifecycle                       # omp, the user's default model
  *   npm run test:e2e:lifecycle:pi                    # pi, the user's default model
- *   node --import tsx scripts/host-lifecycle.ts pi -- --provider <provider> --model <model>
+ *   node --import tsx scripts/host/host-lifecycle.ts pi -- --provider <provider> --model <model>
  *                                                    # anything after `--` goes to the host verbatim
  *   LIFECYCLE_KEEP=1 ...                             # keep the scratch project and print its path
  *   LIFECYCLE_DUMP=1 ...                             # print every host transcript entry (truncated)
@@ -34,16 +34,18 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { RULE_MESSAGE_TYPE } from "../src/adapter-contract.js";
-import { CODE_RULE_FORMAT } from "../src/code-rule-schema.js";
-import { openRerailDatabase } from "../src/database.js";
-import { startRepository } from "../src/repository-start.js";
-import { openScopedRuleCatalog, resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
-import { SqliteSessionReader, type SessionEventRecord } from "../src/session-store.js";
+import {
+  RULE_MESSAGE_TYPE,
+  CODE_RULE_FORMAT,
+  openRerailDatabase,
+  openScopedRuleCatalog,
+  resolveRepositoryContext,
+} from "../../src/engine/index.js";
+import { startRepository, SqliteSessionReader, type SessionEventRecord } from "../../src/runtime/index.js";
 
 type Host = "omp" | "pi";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DIST = join(ROOT, "dist");
 const TIMEOUT_MS = 180_000;
 /**
@@ -229,7 +231,7 @@ function extensionErrors(run: Run): string[] {
 async function ensureFresh(extension: string): Promise<void> {
   const built = await stat(extension).catch(() => undefined);
   if (built === undefined) throw new Error(`${extension} is missing: run \`npm run build:ts\` first`);
-  for (const name of await readdir(join(ROOT, "src"))) {
+  for (const name of await readdir(join(ROOT, "src"), { recursive: true })) {
     const source = await stat(join(ROOT, "src", name));
     if (source.isFile() && source.mtimeMs > built.mtimeMs) throw new Error(`${extension} is older than src/${name}: run \`npm run build:ts\` first`);
   }

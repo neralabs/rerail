@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { z } from "zod";
-import { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
+import { parseJsonWithoutDuplicateKeys } from "../json-duplicate-keys.js";
 import { corePackDirectories, readRuleDocument } from "./rule-bootstrap.js";
 import { globPattern, matchReason, scanRepository, type RulePackMatch, type RulePackSignal } from "./rule-pack-matcher.js";
 import { RULE_MODES, type RuleMode } from "./rule-mode.js";

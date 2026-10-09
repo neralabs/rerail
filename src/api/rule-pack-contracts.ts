@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { RULE_MODES } from "../rule-mode.js";
-import { RULE_PACK_CATEGORIES } from "../rule-packs.js";
-import { RULE_KINDS } from "../schema.js";
+import { RULE_MODES } from "../engine/catalog/rule-mode.js";
+import { RULE_PACK_CATEGORIES } from "../engine/catalog/rule-packs.js";
+import { RULE_KINDS } from "../engine/storage/schema.js";
 
 const ruleExampleSchema = z.object({ path: z.string().optional(), text: z.string() }).strict();
 

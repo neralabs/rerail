@@ -1,7 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import { blob, check, index, integer, primaryKey, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
-import { ADAPTER_CAPABILITIES, type RerailHost } from "./adapter-contract.js";
-import type { CodeRuleViolation } from "./code-rule.js";
+import { ADAPTER_CAPABILITIES, type RerailHost } from "../adapter-contract.js";
+import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import {
   AUDIT_MODES,
   AUDIT_STATUSES,
@@ -11,11 +11,11 @@ import {
   type AuditStatus,
   type AuditScope,
   type AuditRuleProvenance,
-} from "./audit.js";
-import { CODE_RULE_FORMAT, type CodeRuleClause, type CodeRuleScope } from "./code-rule-schema.js";
-import { RULE_MODES } from "./rule-mode.js";
-import type { ConversationRule } from "./rule-schema.js";
-import type { RuleDocument } from "./rule-store.js";
+} from "../audit/audit.js";
+import { CODE_RULE_FORMAT, type CodeRuleClause, type CodeRuleScope } from "../code-rule/code-rule-schema.js";
+import { RULE_MODES } from "../catalog/rule-mode.js";
+import type { ConversationRule } from "../catalog/rule-schema.js";
+import type { RuleDocument } from "../catalog/rule-store.js";
 
 /**
  * One machine database holds the rule catalog and every repository's execution history.

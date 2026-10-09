@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 const HOSTS = ["claude", "codex", "cursor"] as const;
-const STAMPER = resolve("scripts/stamp-plugin-versions.mjs");
+const STAMPER = resolve("scripts/build/stamp-plugin-versions.mjs");
 
 // Source manifests carry no version; `npm pack` stamps package.json's version in (prepack) and removes it again (postpack).
 const PluginManifestSchema = z.object({
@@ -20,11 +20,15 @@ const PackageSchema = z.object({
   version: z.string(),
   files: z.array(z.string()),
   scripts: z.record(z.string(), z.string()),
-  bin: z.object({ rerail: z.literal("dist/cli.js") }).strict(),
+  bin: z.object({ rerail: z.literal("dist/cli/cli.js") }).strict(),
   exports: z.object({
     ".": z.object({
       types: z.literal("./dist/index.d.ts"),
       import: z.literal("./dist/index.js"),
+    }),
+    "./schemas": z.object({
+      types: z.literal("./dist/engine/schemas.d.ts"),
+      import: z.literal("./dist/engine/schemas.js"),
     }),
   }),
   engines: z.object({ node: z.string().regex(/^>=24$/u) }),
@@ -40,15 +44,15 @@ describe("supported host plugin manifests", () => {
   it("publishes native OMP and Pi extension manifests", async () => {
     const manifest = PackageSchema.parse(await json("package.json"));
 
-    expect(manifest.omp.extensions).toEqual(["./dist/default-extension.js"]);
-    expect(manifest.pi.extensions).toEqual(["./dist/pi-extension.js"]);
+    expect(manifest.omp.extensions).toEqual(["./dist/hosts/omp/default-extension.js"]);
+    expect(manifest.pi.extensions).toEqual(["./dist/hosts/pi/pi-extension.js"]);
   });
 
   it("publishes a Node 24 CLI and library entrypoint from the packed dist directory", async () => {
     const manifest = PackageSchema.parse(await json("package.json"));
 
     expect(manifest.files).toContain("dist");
-    expect(manifest.bin.rerail).toBe("dist/cli.js");
+    expect(manifest.bin.rerail).toBe("dist/cli/cli.js");
     expect(manifest.exports["."]).toEqual({
       types: "./dist/index.d.ts",
       import: "./dist/index.js",
@@ -67,7 +71,7 @@ describe("supported host plugin manifests", () => {
       expect(packageManifest.files).toContain(directory);
       expect(manifest).not.toHaveProperty("mcpServers");
       expect(manifest.hooks).toBe(`./hooks/${host}.json`);
-      expect(packageManifest.scripts[`build:${host}`]).toContain(`--outfile=dist/${host}-hook.js`);
+      expect(packageManifest.scripts[`build:${host}`]).toContain(`--outfile=dist/hosts/${host}/${host}-hook.js`);
     }
     expect(packageManifest.files).toContain("hooks");
   });
@@ -75,8 +79,8 @@ describe("supported host plugin manifests", () => {
   it("stamps the package version into the plugin manifests around npm pack", async () => {
     const packageManifest = PackageSchema.parse(await json("package.json"));
 
-    expect(packageManifest.scripts.prepack).toBe("node scripts/stamp-plugin-versions.mjs stamp");
-    expect(packageManifest.scripts.postpack).toBe("node scripts/stamp-plugin-versions.mjs restore");
+    expect(packageManifest.scripts.prepack).toBe("node scripts/build/stamp-plugin-versions.mjs stamp");
+    expect(packageManifest.scripts.postpack).toBe("node scripts/build/stamp-plugin-versions.mjs restore");
   });
 
   it("writes the package version right after the name and restores the source form", async () => {
@@ -147,7 +151,7 @@ describe("supported host plugin manifests", () => {
     for (const [event, groups] of Object.entries(claude.hooks)) {
       expect(groups).toHaveLength(1);
       expect(groups[0]!.matcher).toBe(/^(Pre|Post)Tool/.test(event) ? "" : undefined);
-      expect(groups[0]!.hooks).toEqual([{ type: "command", command: "node ${CLAUDE_PLUGIN_ROOT}/dist/claude-hook.js" }]);
+      expect(groups[0]!.hooks).toEqual([{ type: "command", command: "node ${CLAUDE_PLUGIN_ROOT}/dist/hosts/claude/claude-hook.js" }]);
     }
 
     const codex = HooksSchema.parse(await json("hooks/codex.json"));
@@ -155,7 +159,7 @@ describe("supported host plugin manifests", () => {
     for (const [event, groups] of Object.entries(codex.hooks)) {
       expect(groups).toEqual([{
         ...(event === "PostToolUse" ? { matcher: "" } : {}),
-        hooks: [{ type: "command", command: "node \"$PLUGIN_ROOT/dist/codex-hook.js\"" }],
+        hooks: [{ type: "command", command: "node \"$PLUGIN_ROOT/dist/hosts/codex/codex-hook.js\"" }],
       }]);
     }
   });

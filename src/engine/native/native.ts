@@ -1,8 +1,8 @@
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join, resolve } from "node:path";
-import type { MatchOperator, SampleBoundary, SampleSource } from "./rule-schema.js";
+import { join, resolve } from "node:path";
+import { PACKAGE_ROOT } from "../package-root.js";
+import type { MatchOperator, SampleBoundary, SampleSource } from "../catalog/rule-schema.js";
 
 export interface NativeHealth {
   ok: boolean;
@@ -229,10 +229,8 @@ export function resolveNativeBindingPath(configuredPath = process.env.RERAIL_NAT
     if (!existsSync(addonPath)) throw new Error(`RERAIL_NATIVE_KERNEL_PATH does not exist: ${addonPath}`);
     return addonPath;
   }
-  const moduleDirectory = dirname(fileURLToPath(import.meta.url));
-  const packageRoot = dirname(moduleDirectory);
   const fileName = `rerail.${nativePlatformSuffix()}.node`;
-  const candidates = [join(packageRoot, "native", fileName), join(packageRoot, "native", "rerail.node")];
+  const candidates = [join(PACKAGE_ROOT, "native", fileName), join(PACKAGE_ROOT, "native", "rerail.node")];
   const addonPath = candidates.find(existsSync);
   if (addonPath === undefined) {
     throw new Error(`Unsupported platform or missing native addon: ${fileName}`);

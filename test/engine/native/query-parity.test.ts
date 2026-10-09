@@ -5,11 +5,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { compareSides, coverage, parseOptions } from "../benchmark/query-parity.js";
-import { resolveNativeBindingPath } from "../src/native.js";
+import { compareSides, coverage, parseOptions } from "../../../benchmark/query-parity.js";
+import { resolveNativeBindingPath } from "../../../src/engine/native/native.js";
 
 const execute = promisify(execFile);
-const rerailRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const rerailRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const script = join(rerailRoot, "benchmark", "query-parity.ts");
 
 const temporaryRoots: string[] = [];

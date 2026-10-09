@@ -7,8 +7,8 @@ import {
   type NativeCodeRuleDslRuntimeConstructor,
   type NativeCodeRuleDslWorkspace,
   type CodeRuleDslEvaluationMode as EvaluationMode,
-} from "../src/native.js";
-import { RULE_MODES } from "../src/rule-mode.js";
+} from "../../../src/engine/native/native.js";
+import { RULE_MODES } from "../../../src/engine/catalog/rule-mode.js";
 
 const sourceSpanSchema = z.strictObject({
   startByte: z.number().int().nonnegative(),
@@ -154,7 +154,7 @@ function compileJson(clauses: unknown[], capabilityJson = capabilities()): Nativ
 
 /** Code-rule documents kept as engine-contract fixtures (formerly bundled defaults; the shipped set lives in code-rule-dsl/). */
 function compileCodeRuleFile(name: string): NativeCompiledCodeRule {
-  const source = readFileSync(new URL(`./fixtures/code-rule-dsl/${name}.json`, import.meta.url), "utf8");
+  const source = readFileSync(new URL(`../../fixtures/code-rule-dsl/${name}.json`, import.meta.url), "utf8");
   return nativeRuntime().compile(source, "json", capabilities());
 }
 
@@ -2121,7 +2121,7 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
       failures.map(({ clauseId, code, path }) => ({ clauseId, code, path }))
         .sort((left, right) => left.clauseId.localeCompare(right.clauseId));
     // A missing comma, which TypeScript rejects too, so the error region stays whatever the grammar fixes.
-    const missingComma = 'const m = importOriginal(1 load("./api"));\ndebugger;\n';
+    const missingComma = 'const m = importOriginal(1 load("../../api"));\ndebugger;\n';
     const jsxAmpersand = "export const View = () => <p>Domain & capability map</p>;\ndebugger;\n";
 
     it.each([

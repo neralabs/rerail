@@ -3,7 +3,7 @@ import type { ConversationRule } from "./rule-schema.js";
 import type { DatabaseConversationRules } from "./rule-sources.js";
 import type { SqliteRuleStore } from "./rule-store.js";
 import type { ScopedRuleCatalog } from "./scoped-rule-catalog.js";
-import { stableJsonText } from "./stable-json.js";
+import { stableJsonText } from "../stable-json.js";
 
 /** Merge the database's enabled conversation rule rows with whatever else the host supplies (JSON files, options). */
 export type ConversationRuleLoader = (database: DatabaseConversationRules) => readonly ConversationRule[];

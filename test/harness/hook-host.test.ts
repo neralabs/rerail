@@ -2,13 +2,13 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
-import type { AdapterDelivery } from "../src/adapter-contract.js";
-import { emitHookOutput, pendingPath, persistPending, readPending, serveHook, takePending, withSessionLock, type HookInput, type HookOptions, type HookOutput } from "../src/hook-host.js";
-import { runClaudeHook } from "../src/claude-hook.js";
-import { runCodexHook } from "../src/codex-hook.js";
-import { runCursorHook } from "../src/cursor-hook.js";
-import { hookOptions, serveText, temporaryDirectories, sessionDatabaseQuery } from "./hook-fixtures.js";
-import { sessionStartNote } from "../src/rerail-steer.js";
+import type { AdapterDelivery } from "../../src/engine/index.js";
+import { emitHookOutput, pendingPath, persistPending, readPending, serveHook, takePending, withSessionLock, type HookInput, type HookOptions, type HookOutput } from "../../src/harness/hook-host.js";
+import { runClaudeHook } from "../../src/hosts/claude/index.js";
+import { runCodexHook } from "../../src/hosts/codex/index.js";
+import { runCursorHook } from "../../src/hosts/cursor/index.js";
+import { hookOptions, serveText, temporaryDirectories, sessionDatabaseQuery } from "../support/hook-events.js";
+import { sessionStartNote } from "../../src/engine/index.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-hook-host-");
 

@@ -1,11 +1,15 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
-import { IGNORED_DIRECTORIES, languageFor } from "../../src/code-rule-enforcer.js";
-import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../src/native.js";
+import {
+  IGNORED_DIRECTORIES,
+  languageFor,
+  loadNativeBinding,
+  type NativeCompiledCodeRuleDsl,
+  compareDeterministicStrings,
+} from "../../src/engine/index.js";
 import { RERAIL_ROOT } from "./fixtures.js";
 import { capabilitiesJson, INFORMATIONAL_FAILURE_CODES } from "../engine.js";
 import { applyToWorkspace, compileDocument, findPort, listPortedRules } from "./runner.js";
-import { compareDeterministicStrings } from "../../src/stable-json.js";
 
 type CorpusFile = { language: "typescript" | "tsx" | "javascript"; path: string; source: string };
 

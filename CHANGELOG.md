@@ -69,3 +69,4 @@ First release of Rerail as `@neralabs/rerail`, licensed under Apache-2.0.
 - Explicit updates only: `rerail update` resolves an npm dist-tag (`latest`, `beta`, `next`), validates the native engine and a real event-stream round-trip before activating, copies the database to `rerail.sqlite.pre-update` first, and keeps the previous version for `rerail update rollback`.
 - Signed customer activation profiles (`rerail activate`, online or offline) with device keys in macOS Keychain, Linux Secret Service, or Windows Credential Manager.
 - Prebuilt native engines for macOS, Linux glibc, and Windows MSVC on arm64 and x64; the Windows engines link the C runtime statically.
+- The package's built entry points mirror the source layers: `rerail` runs `dist/cli/cli.js`, the hooks `dist/hosts/<harness>/<harness>-hook.js`, the OMP and Pi extensions `dist/hosts/{omp,pi}/`, and `@neralabs/rerail/schemas` exports the rule-document schemas without the Node runtime.

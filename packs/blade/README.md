@@ -5,7 +5,7 @@ template), tlint 9.7.0 (5 lints) and stillat/blade-parser 2.1.0 (4 validators). 
 findings on the tool's test fixtures and on three pinned corpora, through the engine's production workspace path, with
 every disagreement declared in `divergences.json`.
 
-It is checked by `npx vitest run test/packs.test.ts -t "pack blade"` ([pack structure and validation
+It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack blade"` ([pack structure and validation
 contract](../../docs/pack-format.md)).
 
 | Path | What |

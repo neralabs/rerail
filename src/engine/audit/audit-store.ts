@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { and, count, desc, eq, sql, type SQL } from "drizzle-orm";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
-import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "./database.js";
-import type { CodeRuleViolation } from "./code-rule.js";
+import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../storage/database.js";
+import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import type {
   AuditRecorder,
   AuditInput,
@@ -13,8 +13,8 @@ import type {
   AuditScope,
   AuditStatus,
 } from "./audit.js";
-import type { RuleMode } from "./rule-mode.js";
-import { repositoryAudits, auditResultPages, audits, sessionsOfRepository, type AuditRow } from "./schema.js";
+import type { RuleMode } from "../catalog/rule-mode.js";
+import { repositoryAudits, auditResultPages, audits, sessionsOfRepository, type AuditRow } from "../storage/schema.js";
 
 export interface AuditQuery {
   auditId?: string;

@@ -1,13 +1,13 @@
 import { and, asc, count, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
-import { openRerailDatabase, type RerailDatabase } from "./database.js";
+import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { readStoredCodeRule, reportQuarantinedRule, storedDocumentDigest, type QuarantinedRule } from "./rule-quarantine.js";
-import { assertCodeRuleStorable } from "./code-rule-compile.js";
-import { codeRuleSchema, type CodeRule } from "./code-rule-schema.js";
+import { assertCodeRuleStorable } from "../code-rule/code-rule-compile.js";
+import { codeRuleSchema, type CodeRule } from "../code-rule/code-rule-schema.js";
 import { RULE_MODES, type RuleMode } from "./rule-mode.js";
 import { assertEngineRegexes } from "./rule-regexes.js";
 import { parseConversationRule, type ConversationRule, type SampleBoundary } from "./rule-schema.js";
-import { RULE_KINDS, RULE_SCOPES, rules, type NewRuleRow, type RuleKind, type RuleRow, type RuleScope } from "./schema.js";
-import { ruleDocumentDigest } from "./stable-json.js";
+import { RULE_KINDS, RULE_SCOPES, rules, type NewRuleRow, type RuleKind, type RuleRow, type RuleScope } from "../storage/schema.js";
+import { ruleDocumentDigest } from "../stable-json.js";
 
 interface StoredRuleBase {
   enabled: boolean;

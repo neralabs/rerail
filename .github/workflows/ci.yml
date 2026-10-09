@@ -38,7 +38,7 @@ jobs:
 
       # Only allowlisted (permissive) licences in LICENSES/, and no copyleft production dependency.
       - name: Licence allowlist and copyleft gate
-        run: node scripts/check-licenses.mjs
+        run: node scripts/check/check-licenses.mjs
 
   # Type checks and generated-reference checks need neither Rust nor a build.
   lint:
@@ -95,7 +95,7 @@ jobs:
               - 'fixtures/**'
               - 'packs/**'
               - 'languages/**'
-              - 'src/code-rule-language-registry.generated.ts'
+              - 'src/engine/code-rule/code-rule-language-registry.generated.ts'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
@@ -272,7 +272,7 @@ jobs:
 
       - name: Provision pinned standalone OMP host
         run: |
-          host="$(node scripts/install-omp-host.mjs)"
+          host="$(node scripts/host/install-omp-host.mjs)"
           printf 'RERAIL_OMP_EXECUTABLE=%s\n' "$host" >> "$GITHUB_ENV"
 
       - name: Integration tests
@@ -357,7 +357,7 @@ jobs:
 
       - name: Provision pinned standalone OMP host
         run: |
-          host="$(node scripts/install-omp-host.mjs)"
+          host="$(node scripts/host/install-omp-host.mjs)"
           printf 'RERAIL_OMP_EXECUTABLE=%s\n' "$host" >> "$GITHUB_ENV"
 
       - name: Exercise OMP and Pi real-session runtime paths
@@ -366,10 +366,10 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
           results="$RUNNER_TEMP/rerail-harness-smoke"
           mkdir -p "$results"
-          node --import tsx scripts/host-lifecycle.ts omp -- \
+          node --import tsx scripts/host/host-lifecycle.ts omp -- \
             --provider azure --model "$RERAIL_SMOKE_OMP_MODEL" > "$results/omp.log" 2>&1 &
           omp_pid=$!
-          node --import tsx scripts/host-lifecycle.ts pi -- \
+          node --import tsx scripts/host/host-lifecycle.ts pi -- \
             --provider azure-openai-responses --model "$RERAIL_SMOKE_PI_MODEL" > "$results/pi.log" 2>&1 &
           pi_pid=$!
           status=0
@@ -495,11 +495,11 @@ jobs:
           set -euo pipefail
           results="$RUNNER_TEMP/rerail-provider-smoke"
           mkdir -p "$results"
-          node --import tsx scripts/host-smoke.ts --host claude-code > "$results/claude-code.log" 2>&1 &
+          node --import tsx scripts/host/host-smoke.ts --host claude-code > "$results/claude-code.log" 2>&1 &
           claude_pid=$!
-          RERAIL_SMOKE_ACCEPTANCE=transport RERAIL_SMOKE_TIMEOUT_MS=300000 node --import tsx scripts/host-smoke.ts --host codex > "$results/codex.log" 2>&1 &
+          RERAIL_SMOKE_ACCEPTANCE=transport RERAIL_SMOKE_TIMEOUT_MS=300000 node --import tsx scripts/host/host-smoke.ts --host codex > "$results/codex.log" 2>&1 &
           codex_pid=$!
-          RERAIL_SMOKE_ACCEPTANCE=transport node --import tsx scripts/host-smoke.ts --host cursor > "$results/cursor.log" 2>&1 &
+          RERAIL_SMOKE_ACCEPTANCE=transport node --import tsx scripts/host/host-smoke.ts --host cursor > "$results/cursor.log" 2>&1 &
           cursor_pid=$!
           status=0
           if ! wait "$claude_pid"; then status=1; fi

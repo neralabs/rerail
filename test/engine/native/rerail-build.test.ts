@@ -10,7 +10,7 @@ import {
   isMainRerailBuild,
   mainContentStoreDirectory,
   resolveRerailBuild,
-} from "../src/rerail-build.js";
+} from "../../../src/engine/native/rerail-build.js";
 
 /** This binary's store file (`STORE_FILE_NAME`, raised with the store schema floor). */
 const STORE_FILE = "content-v1.sqlite";
@@ -107,7 +107,7 @@ describe("resolveRerailBuild", () => {
 
 describe("currentRerailBuild", () => {
   test("this checkout's tests are a dev build that never opens the machine-wide store", () => {
-    const packageRoot = realpathSync(join(dirname(fileURLToPath(import.meta.url)), ".."));
+    const packageRoot = realpathSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".."));
     const checkout = realpathSync(
       execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: packageRoot, encoding: "utf8" }).trim(),
     );

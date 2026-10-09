@@ -5,12 +5,12 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
-import { openRerailDatabase } from "../src/database.js";
-import { codeRuleSchema, type CodeRule } from "../src/code-rule-schema.js";
-import { loadBundledRules } from "../src/rule-bootstrap.js";
-import { SqliteRuleStore, type BundledRuleDocument, type RuleDocument } from "../src/rule-store.js";
-import { ruleDocumentDigest } from "../src/stable-json.js";
-import { RERAIL_SCHEMA_VERSION } from "../src/schema.js";
+import { openRerailDatabase } from "../../../src/engine/storage/database.js";
+import { codeRuleSchema, type CodeRule } from "../../../src/engine/code-rule/code-rule-schema.js";
+import { loadBundledRules } from "../../../src/engine/catalog/rule-bootstrap.js";
+import { SqliteRuleStore, type BundledRuleDocument, type RuleDocument } from "../../../src/engine/catalog/rule-store.js";
+import { ruleDocumentDigest } from "../../../src/engine/stable-json.js";
+import { RERAIL_SCHEMA_VERSION } from "../../../src/engine/storage/schema.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -170,7 +170,7 @@ describe("database schema", () => {
   // seven fails without it, so 48 openers leave well under a 0.1% chance of a false pass.
   it("creates one database when many processes open it at the same time", async () => {
     const opener = `
-      import { openRerailDatabase } from ${JSON.stringify(pathToFileURL(resolve("dist/database.js")).href)};
+      import { openRerailDatabase } from ${JSON.stringify(pathToFileURL(resolve("dist/engine/storage/database.js")).href)};
       openRerailDatabase(process.argv[1]).$client.close();
     `;
     for (let round = 0; round < 6; round += 1) {

@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   InMemoryWatermarkStore,
   SemanticWorkspace,
-} from "../src/semantic-primitives.js";
+} from "../../../src/engine/native/semantic-primitives.js";
 import type {
   ContentSource,
   SemanticEmbedder,
   Watermark,
-} from "../src/semantic-types.js";
+} from "../../../src/engine/native/semantic-types.js";
 
 const source: ContentSource = {
   id: "messages",

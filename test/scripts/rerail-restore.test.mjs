@@ -17,7 +17,7 @@ import {
   selectBackup,
   stageDatabase,
   stopDaemon,
-} from "./rerail-restore.mjs";
+} from "../../scripts/dev/rerail-restore.mjs";
 
 const { DatabaseSync } = await loadSqlite();
 

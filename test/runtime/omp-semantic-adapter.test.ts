@@ -4,8 +4,8 @@ import {
   OmpWatermarkStore,
   OMP_WATERMARK_ENTRY_TYPE,
   type OmpSessionEntryLike,
-} from "../src/omp-semantic.js";
-import type { Watermark } from "../src/semantic-types.js";
+} from "../../src/runtime/omp-semantic.js";
+import type { Watermark } from "../../src/engine/index.js";
 
 function mark(): Watermark {
   return {

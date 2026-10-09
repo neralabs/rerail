@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerPiConversationRulesTool } from "../src/pi-tool.js";
-import { MUTATION_ENTRY_TYPE } from "../src/session-state.js";
+import { registerPiConversationRulesTool } from "../../../src/hosts/pi/pi-tool.js";
+import { MUTATION_ENTRY_TYPE } from "../../../src/runtime/index.js";
 
 interface RegisteredTool {
   execute(toolCallId: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;

@@ -1,5 +1,5 @@
-import type { AuditFailure, AuditMode, AuditScope } from "./audit.js";
-import type { RuleMode } from "./rule-mode.js";
+import type { AuditFailure, AuditMode, AuditScope } from "../audit/audit.js";
+import type { RuleMode } from "../catalog/rule-mode.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
 import { steerBlock } from "./rerail-steer.js";
@@ -1220,7 +1220,7 @@ export interface CodeRuleViolation {
   fix?: CodeRuleViolationFix | undefined; // NOSONAR - exactOptionalPropertyTypes: zod-parsed native violations carry `fix: undefined`
 }
 
-export type { AuditFailure } from "./audit.js";
+export type { AuditFailure } from "../audit/audit.js";
 
 export interface CodeRuleResponse {
   revision: number;

@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import type { ConversationRuleRegistry } from "./registry.js";
-import { describeMatch } from "./rule-schema.js";
+import type { ConversationRuleRegistry } from "../../engine/catalog/registry.js";
+import { describeMatch } from "../../engine/catalog/rule-schema.js";
 
 export interface ConversationRulesCommandRuntime {
   registry?: () => ConversationRuleRegistry;

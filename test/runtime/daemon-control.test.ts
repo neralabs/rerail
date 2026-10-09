@@ -21,7 +21,8 @@ vi.mock("node:child_process", async () => {
       opener.intercept?.(command, args) ?? actual.spawn(command, args, options),
   };
 });
-import { defaultEngineSocketPath, RerailDaemon, type DaemonState } from "../src/daemon.js";
+import { defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js";
+import type { DaemonState } from "../../src/runtime/daemon-control.js";
 import {
   autostartDaemon,
   DAEMON_STATE_FILE,
@@ -36,7 +37,7 @@ import {
   startDaemonForPackage,
   stopDaemon,
   withStartLock,
-} from "../src/daemon-control.js";
+} from "../../src/runtime/daemon-control.js";
 
 /** A pid no live process can hold on the platforms Rerail supports. */
 const DEAD_PID = 2 ** 22 - 1;
@@ -241,7 +242,7 @@ describe("Rerail daemon control", () => {
   });
 
   it("repairs the SQLite binding before spawning, and surfaces an unrepairable binding instead of a daemon crash", async () => {
-    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     const repaired: string[] = [];
     const running = await startDaemon(
       { home, packageRoot, ensureSqlite: async root => { repaired.push(root); return { prefix: root, rebuilt: false }; } },
@@ -264,7 +265,7 @@ describe("Rerail daemon control", () => {
   });
 
   it("replaces a healthy daemon from the previous managed package before using the active package", async () => {
-    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     const first = await startDaemon({ home, packageRoot }, { dev: true, port: 0 });
     try {
       await writeFile(
@@ -370,6 +371,6 @@ describe("autostartDaemon", () => {
     autostartDaemon();
     expect(spawned).toHaveLength(1);
     expect(spawned[0]!.slice(1)).toEqual(["daemon", "start"]);
-    expect(spawned[0]![0]).toMatch(/[\\/]dist[\\/]cli\.js$/u);
+    expect(spawned[0]![0]).toMatch(/[\\/]dist[\\/]cli[\\/]cli\.js$/u);
   });
 });

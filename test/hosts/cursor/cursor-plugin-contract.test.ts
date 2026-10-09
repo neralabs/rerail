@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-import type { AdapterDelivery, AdapterEvent, RerailEventLoop } from "../src/adapter-contract.js";
-import { cursorHookEvent, cursorHookOutput, handleCursorEvent } from "../src/cursor-hook.js";
+import type { AdapterDelivery, AdapterEvent, RerailEventLoop } from "../../../src/engine/index.js";
+import { cursorHookEvent, cursorHookOutput, handleCursorEvent } from "../../../src/hosts/cursor/cursor-hook.js";
 
 async function json(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, "utf8")) as unknown;
@@ -61,7 +61,7 @@ describe("Cursor plugin contract", () => {
       "stop",
     ]);
     for (const handlers of Object.values(hooks.hooks)) {
-      expect(handlers).toEqual([{ command: "node ./dist/cursor-hook.js" }]);
+      expect(handlers).toEqual([{ command: "node ./dist/hosts/cursor/cursor-hook.js" }]);
     }
   });
 

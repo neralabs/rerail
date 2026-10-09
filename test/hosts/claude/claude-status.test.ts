@@ -3,19 +3,19 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type * as ClaudeStatusStore from "../src/claude-status-store.js";
+import type { ClaudeStatusLine } from "../../../src/setup/index.js";
 
 const mocks = vi.hoisted(() => ({ command: vi.fn(), presentation: vi.fn() }));
-vi.mock("../src/claude-status-store.js", () => ({ readClaudeStatusCommand: mocks.command }));
-vi.mock("../src/session-presentation.js", () => ({
+vi.mock("../../../src/setup/claude-status-store.js", () => ({ readClaudeStatusCommand: mocks.command }));
+vi.mock("../../../src/presentation/session-presentation.js", () => ({
   readPresentation: mocks.presentation,
   formatTerminalStatus: () => "Rerail | 2 rules | steered 1×",
 }));
-import { runClaudeStatus } from "../src/claude-status.js";
+import { runClaudeStatus } from "../../../src/hosts/claude/claude-status.js";
 
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
-function nodePredecessor(script: string): ClaudeStatusStore.ClaudeStatusLine {
+function nodePredecessor(script: string): ClaudeStatusLine {
   return { type: "command", command: `${quote(process.execPath)} -e ${quote(script)}` };
 }
 
@@ -35,7 +35,7 @@ beforeEach(() => {
 describe("composed Claude status", () => {
   it("selects the installed project predecessor independently of the global registration", async () => {
     const home = await mkdtemp(join(tmpdir(), "rerail-claude-status-"));
-    const store = await vi.importActual<typeof ClaudeStatusStore>("../src/claude-status-store.js");
+    const store = await vi.importActual<typeof import("../../../src/setup/claude-status-store.js")>("../../../src/setup/claude-status-store.js");
     const globalSettingsPath = join(home, ".claude", "settings.json");
     const projectSettingsPath = join(home, "project", ".claude", "settings.local.json");
     try {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { nativeHealth } from "../src/index.js";
-import { nativePlatformSuffix } from "../src/native.js";
+import { nativeHealth } from "../../../src/index.js";
+import { nativePlatformSuffix } from "../../../src/engine/native/native.js";
 
 describe("native binding", () => {
   it("loads in the JavaScript runtime and reports its kernel version", () => {

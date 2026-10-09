@@ -18,9 +18,9 @@ import {
   probeAccess,
   validateRegistry,
   validateTag,
-} from "./rerail-setup.mjs";
+} from "../../scripts/dev/rerail-setup.mjs";
 
-const SCRIPT = fileURLToPath(new URL("./rerail-setup.mjs", import.meta.url));
+const SCRIPT = fileURLToPath(new URL("../../scripts/dev/rerail-setup.mjs", import.meta.url));
 
 function withTempDir(body) {
   const dir = mkdtempSync(join(tmpdir(), "rerail-setup-test-"));

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { RuleDocument } from "./rule-store.js";
+import type { RuleDocument } from "./catalog/rule-store.js";
 
 /** A JSON-representable value. */
 export type Json =

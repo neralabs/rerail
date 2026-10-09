@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { excludedCount, type ConformanceReport } from "./report.js";
-import { compareDeterministicStrings } from "../../src/stable-json.js";
+import { compareDeterministicStrings } from "../../src/engine/index.js";
 
 /** One scalar row per rule: the committed, diffable record of a run. The full per-fixture detail stays in tmp/. */
 const rowSchema = z.object({

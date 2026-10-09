@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import type { ConversationRuleLoader } from "./conversation-rule-sync.js";
-import { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
+import { parseJsonWithoutDuplicateKeys } from "../json-duplicate-keys.js";
 import { parseConversationRuleDocument, type ConversationRule } from "./rule-schema.js";
 
 export interface ConversationRuleSourceOptions {

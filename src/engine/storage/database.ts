@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { sql } from "drizzle-orm";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
-import { RERAIL_SCHEMA_STATEMENTS } from "./schema-sql.js";
+import { RERAIL_SCHEMA_STATEMENTS } from "./schema-sql.generated.js";
 import { enableWal } from "./sqlite-wal.js";
 import { defaultRerailHome } from "./rerail-home.js";
 

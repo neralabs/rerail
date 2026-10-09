@@ -4,11 +4,17 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
-import { renderRerailSchemaModule, SCHEMA_SQL_PATH } from "../scripts/generate-schema-sql.js";
-import { parseConversationRuleDocument } from "../src/rule-schema.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
-import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, MOCK_SESSION_ID, mockSessionId, seedRerailDatabase } from "../src/seed.js";
-import { SqliteSessionReader, SqliteSessionStore } from "../src/session-store.js";
+import { renderRerailSchemaModule, SCHEMA_SQL_PATH } from "../../../scripts/generate/schema/schema-sql.js";
+import { parseConversationRuleDocument } from "../../../src/engine/catalog/rule-schema.js";
+import { SqliteRuleStore } from "../../../src/engine/catalog/rule-store.js";
+import {
+  MOCK_CONVERSATION_RULES,
+  MOCK_CODE_RULES,
+  MOCK_SESSION_ID,
+  mockSessionId,
+  seedRerailDatabase,
+} from "../../../src/cli/index.js";
+import { SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/index.js";
 
 const TOOL_CALL_RULES = parseConversationRuleDocument(JSON.parse(readFileSync(resolve("test/fixtures/tool-call-rules.json"), "utf8")));
 

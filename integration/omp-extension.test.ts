@@ -4,14 +4,20 @@ import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import Database from "better-sqlite3";
-import { NativeSemanticEmbedder, SemanticWorkspace } from "../src/semantic-primitives.js";
-import { OmpMessageContentSource, OmpWatermarkStore } from "../src/omp-semantic.js";
-import { defaultRerailDatabasePath } from "../src/database.js";
-import { openScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
-import type { ConversationRule } from "../src/rule-schema.js";
-import { SqlitePresentationPreferenceStore } from "../src/presentation-preference-store.js";
-import { OmpHost } from "./omp-host.js";
-import type { HostEvidence } from "./omp-host.js";
+import {
+  NativeSemanticEmbedder,
+  SemanticWorkspace,
+  defaultRerailDatabasePath,
+  openScopedRuleCatalog,
+} from "../src/engine/index.js";
+import {
+  OmpMessageContentSource,
+  OmpWatermarkStore,
+  SqlitePresentationPreferenceStore,
+} from "../src/runtime/index.js";
+import type { ConversationRule } from "../src/engine/index.js";
+import { OmpHost } from "./support/omp-host.js";
+import type { HostEvidence } from "./support/omp-host.js";
 
 const originalRerailHome = process.env.RERAIL_HOME;
 const temporaryDirectories: string[] = [];
@@ -129,7 +135,7 @@ describe("installed OMP extension in standalone host", () => {
       expectNoExtensionErrors(host);
       expect(recorded()).toContain("turn-end");
       const before = await stat(databasePath);
-      const reset = spawnSync(process.execPath, [resolve("dist/cli.js"), "reset"], {
+      const reset = spawnSync(process.execPath, [resolve("dist/cli/cli.js"), "reset"], {
         cwd, env: { ...process.env, RERAIL_HOME: join(cwd, "home") }, encoding: "utf8", timeout: 30_000,
       });
       expect(reset.status, reset.stderr).toBe(0);

@@ -5,7 +5,7 @@ import {
   activationTrustRootsSchema,
   flattenedJwsSchema,
   type VerifiedCustomerProfile,
-} from "./customer-profile.js";
+} from "../activation/customer-profile.js";
 
 export interface ParsedOption {
   args: string[];

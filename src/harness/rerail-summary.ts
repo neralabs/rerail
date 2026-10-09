@@ -1,6 +1,6 @@
 import { rerailCommandList, type CommandSigil } from "./rerail-commands.js";
-import type { RepositoryStartState } from "./repository-start.js";
-import type { SessionPresentation } from "./session-presentation.js";
+import type { RepositoryStartState } from "../runtime/repository-start.js";
+import type { SessionPresentation } from "../presentation/session-presentation.js";
 
 export interface RerailSummaryInput {
   /** This session's presentation, read on demand; null where the coding agent cannot name its session (Cursor). */

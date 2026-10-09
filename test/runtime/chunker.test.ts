@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { StreamingSampleChunker } from "../src/chunker.js";
+import { StreamingSampleChunker } from "../../src/runtime/chunker.js";
 
 describe("StreamingSampleChunker", () => {
   it("emits complete sentences across streaming deltas", () => {

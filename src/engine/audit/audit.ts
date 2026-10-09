@@ -1,4 +1,4 @@
-import type { CodeRuleViolation } from "./code-rule.js";
+import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 
 export const AUDIT_SCOPES = ["repository", "touched-files", "ai-output"] as const;
 export const AUDIT_MODES = ["steer", "log"] as const;

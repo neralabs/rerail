@@ -9,12 +9,12 @@ import {
   userPromptEvent,
   type AdapterEvent,
   type AdapterSession,
-} from "./adapter-contract.js";
-import { registerPiSemanticTools, type NativeSemanticToolRuntime } from "./native-semantic-tools.js";
+} from "../../engine/adapter-contract.js";
+import { registerPiSemanticTools, type NativeSemanticToolRuntime } from "../../harness/native-semantic-tools.js";
 import { registerPiConversationRulesCommand, type PiConversationRulesCommandRuntime } from "./pi-command.js";
-import { registerRerailCommands } from "./rerail-command.js";
-import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote } from "./rerail-steer.js";
-import { dashboardOrigin } from "./session-presentation.js";
+import { registerRerailCommands } from "../../harness/rerail-command.js";
+import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote } from "../../engine/code-rule/rerail-steer.js";
+import { dashboardOrigin } from "../../presentation/session-presentation.js";
 import { registerPiConversationRulesTool, type PiConversationRulesToolRuntime } from "./pi-tool.js";
 
 interface PiMessage {

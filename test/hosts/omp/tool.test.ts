@@ -2,8 +2,8 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ExtensionAPI, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
 import * as zod from "@oh-my-pi/omptype/zod";
-import { ConversationRuleRegistry } from "../src/registry.js";
-import { registerConversationRulesTool } from "../src/tool.js";
+import { ConversationRuleRegistry } from "../../../src/engine/index.js";
+import { registerConversationRulesTool } from "../../../src/hosts/omp/tool.js";
 
 const rule = {
   id: "checkout",

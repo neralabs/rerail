@@ -4,12 +4,8 @@ import type {
   AdapterEvent,
   AdapterSample,
   AdapterSession,
-} from "../../src/adapter-contract.js";
-import {
-  RerailHostRuntime,
-  type HostRuntimePort,
-  type HostRuntimeSessionState,
-} from "../../src/host-runtime.js";
+} from "../../src/engine/index.js";
+import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState } from "../../src/runtime/index.js";
 import type {
   HostAdapterContractDriver,
   PersistedContractEntry,

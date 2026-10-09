@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../src/native.js";
-import { reactComponentSource, typescriptModuleSource } from "./support/synthetic-typescript.js";
+import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../src/engine/native/native.js";
+import { reactComponentSource, typescriptModuleSource } from "../../support/synthetic-typescript.js";
 
 /**
  * Scale guard for TypeScript AST evaluation: a `typescript` rule now compiles against the TypeScript and TSX

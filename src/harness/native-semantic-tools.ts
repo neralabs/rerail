@@ -6,7 +6,7 @@ import type {
   RelationSpec,
   SelectionSpec,
   WatermarkChange,
-} from "./semantic-types.js";
+} from "../engine/native/semantic-types.js";
 
 export interface NativeSemanticToolRuntime {
   mark(change: WatermarkChange): Promise<unknown>;

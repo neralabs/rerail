@@ -4,11 +4,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { defaultRerailDatabasePath } from "../src/database.js";
-import { loadBundledRules } from "../src/rule-bootstrap.js";
-import { runRuleDraftCommand, type RuleDraftReport } from "../src/rule-draft.js";
-import { resolveRepositoryContext, ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
-import { stableJsonText } from "../src/stable-json.js";
+import {
+  defaultRerailDatabasePath,
+  loadBundledRules,
+  resolveRepositoryContext,
+  ScopedRuleCatalog,
+  stableJsonText,
+} from "../../src/engine/index.js";
+import { runRuleDraftCommand, type RuleDraftReport } from "../../src/cli/rule-draft.js";
 
 const directories: string[] = [];
 

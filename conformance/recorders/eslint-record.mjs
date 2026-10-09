@@ -10,9 +10,9 @@ import { fileURLToPath } from "node:url";
 
 export const REPOSITORY = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
-/** The host's ignored directories (`IGNORED_DIRECTORIES`, rerail/src/code-rule-enforcer.ts). */
+/** The host's ignored directories (`IGNORED_DIRECTORIES`, rerail/src/engine/code-rule/code-rule-enforcer.ts). */
 const IGNORED = new Set([".git", ".hg", ".svn", ".rerail", ".venv", "__pycache__", "node_modules", "dist", "build", ".next", ".turbo", "coverage", "target", "vendor"]);
-/** The ecma family's extensions (`CODE_RULE_DIALECTS`, rerail/src/code-rule-languages.ts). */
+/** The ecma family's extensions (`CODE_RULE_DIALECTS`, rerail/src/engine/code-rule/code-rule-languages.ts). */
 export const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 
 /**
