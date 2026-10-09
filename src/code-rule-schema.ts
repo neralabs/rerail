@@ -26,7 +26,6 @@ import { RULE_MODES } from "./rule-mode.js";
 import type {
   CodeRuleDslArguments,
   CodeRuleDslAstWhen,
-  CodeRuleDslBindingFilter,
   CodeRuleDslBinds,
   CodeRuleDslCalls,
   CodeRuleDslFileCondition,
@@ -43,26 +42,8 @@ import {
   semanticRuleShape,
 } from "./code-rule-schema-semantic.js";
 import { isCodeRuleOptionName, CodeRuleOptionError, codeRuleOptionConditionHolds, codeRuleOptionValues, resolveCodeRuleOptions } from "./code-rule-options.js";
-import {
-  CODE_RULE_AST_LANGUAGES,
-  CODE_RULE_LANGUAGE_IDS,
-  codeRuleLanguageCapability,
-  codeRuleLanguageFamily,
-  codeRuleLanguageSuppressions,
-  isCodeRuleAstLanguage,
-} from "./code-rule-languages.js";
-import type { CodeRuleAstLanguage, CodeRuleLanguageFamily, CodeRuleSuppression } from "./code-rule-languages.js";
-import { CODE_RULE_PREDICATE_CAPABILITIES } from "./code-rule-language-support.js";
-
-// The families whose restrictions this schema mirrors from the engine; they move into each language's adapter in
-// the adapter refactor (docs/language-packs.md).
-const PYTHON_FAMILY = "python" satisfies CodeRuleLanguageFamily;
-const ECMA_FAMILY = "ecma" satisfies CodeRuleLanguageFamily;
-const PHP_FAMILY = "php" satisfies CodeRuleLanguageFamily;
-const BLADE_FAMILY = "blade" satisfies CodeRuleLanguageFamily;
-
-/** Whether a family's values, arguments and variables are PHP's: PHP's, and those of the PHP a Blade template embeds (the engine's `Family::reads_php`). */
-const readsPhp = (family: CodeRuleLanguageFamily): boolean => family === PHP_FAMILY || family === BLADE_FAMILY;
+import { CODE_RULE_AST_LANGUAGES, CODE_RULE_LANGUAGE_IDS, isCodeRuleAstLanguage } from "./code-rule-languages.js";
+import type { CodeRuleAstLanguage } from "./code-rule-languages.js";
 
 export { CODE_RULE_AST_LANGUAGES };
 export type { CodeRuleAstLanguage };
@@ -78,8 +59,9 @@ export type { CodeRuleAstLanguage };
  * ast-grep patterns and fact relations are checked structurally only; the
  * engine remains the authority on whether a pattern parses for its grammar, a
  * relation exists in the workspace capabilities, or a pattern fits the
- * capabilities' `maxAstPatternBytes` / `maxRegexPatternBytes` limits. Anything
- * this schema rejects, the engine rejects too.
+ * capabilities' `maxAstPatternBytes` / `maxRegexPatternBytes` limits, and on
+ * what a rule's language lacks: every write compiles in the engine
+ * (`validateCodeRule`). Anything this schema rejects, the engine rejects too.
  */
 
 export const CODE_RULE_FORMAT = "rerail.policy/v1" as const;
@@ -94,8 +76,6 @@ export const CODE_RULE_COMPARE_COLLATIONS = ["ordinal", "fold-lower", "fold-uppe
 export const CODE_RULE_COMPARE_TEXTS = ["source", "unquoted", ...CODE_RULE_SEMANTIC_COMPARE_TEXTS, "tokens", "node", "index"] as const;
 /** The compare texts that test equality only, under the ordinal collation. */
 const CODE_RULE_EQUALITY_TEXTS: readonly string[] = ["tokens", "structure", "structure-hash", "structure-parts", "node", "reference", "reference-no-static-keys"];
-/** The compare texts that read Python syntax (Ruff's structural equalities). */
-const CODE_RULE_STRUCTURE_TEXTS: readonly string[] = ["structure", "structure-hash", "structure-parts"];
 /** `witness.span` | `witness.start` | `witness.end` | `file.start` (byte 0 of the file) | `capture.<NAME>`; the engine checks capture names against the query. */
 export const CODE_RULE_VIOLATION_ANCHOR_PATTERN = /^(?:witness\.(?:span|start|end)|file\.start|capture\.\w+)$/;
 export { codeRuleSuppressSchema };
@@ -440,12 +420,6 @@ function transformSourceName(transformation: CodeRuleDslTransformation): string 
 /** Whether a transformation reads its capture's node (lines, counts) rather than its text. */
 const readsNode = (transformation: CodeRuleDslTransformation): boolean => "line" in transformation || "lines" in transformation || "count" in transformation;
 
-/** Python's type names for `value.type` (the engine's `PYTHON_TYPES`). */
-export const CODE_RULE_PYTHON_VALUE_TYPES = ["int", "float", "complex", "str", "bytes", "bool", "NoneType", "ellipsis", "tuple", "list", "set", "dict"] as const;
-/** TypeScript's type names for `value.type` (the engine's `TYPESCRIPT_TYPES`). */
-export const CODE_RULE_TYPESCRIPT_VALUE_TYPES = ["string", "number", "bigint", "boolean", "null", "undefined", "array", "object", "regexp"] as const;
-/** PHP's `get_debug_type` names for `value.type` (the engine's `PHP_TYPES`). */
-export const CODE_RULE_PHP_VALUE_TYPES = ["int", "float", "string", "bool", "null", "array"] as const;
 const valueStrings = z.union([nonEmptyString, z.array(nonEmptyString).min(1).max(1024)]);
 export const codeRuleValueTestSchema = z
   .object({
@@ -499,10 +473,8 @@ export const CODE_RULE_SOURCE_TYPES = ["script", "module", "commonjs"] as const;
 export const CODE_RULE_MAX_LANGUAGE_GLOBALS = 16384 as const;
 /** The Python versions of the engine's pinned builtins table (Ruff 0.16.9's target versions). */
 export const CODE_RULE_PYTHON_VERSIONS = ["3.7", "3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"] as const;
-const PYTHON_ONLY_OPTIONS = ["pythonVersion", "typingModules", "extendGenerics"] as const;
 /** Names `typingModules` or `extendGenerics` may list (the engine's bound). */
 export const CODE_RULE_MAX_TYPING_NAMES = 256 as const;
-const TYPESCRIPT_ONLY_OPTIONS = ["ecmaVersion", "sourceType", "globals", "parserOptions", "jsxPragma", "jsxFragmentName", "lib"] as const;
 /** ESLint's global settings with its aliases (`normalizeConfigGlobal`). */
 const CODE_RULE_GLOBAL_SETTINGS = ["readonly", "writable", "off", "readable", "writeable", "true", "false"] as const;
 
@@ -510,8 +482,8 @@ const CODE_RULE_GLOBAL_SETTINGS = ["readonly", "writable", "off", "readable", "w
 const resolveIdentifier = z.string().max(256).regex(/^[A-Za-z_$][A-Za-z0-9_$]*$/, "Must be an identifier (A-Z, a-z, 0-9, _, $).");
 /**
  * A Python dotted name, or a PHP name: labels (a letter, `_` or any non-ASCII character, then those or digits:
- * the engine's `php_names::is_label`) joined by single `\`, optionally fully qualified. Each family refuses the
- * other's shape. The engine reads Unicode scalar values (no lone surrogate) and bounds a name's UTF-8 bytes.
+ * the engine's `php_names::is_label`) joined by single `\`, optionally fully qualified. The engine refuses each
+ * family the other's shape. It reads Unicode scalar values (no lone surrogate) and bounds a name's UTF-8 bytes.
  */
 const RESOLVE_DOTTED_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*$/;
 const PHP_LABEL = String.raw`[A-Za-z_\u0080-\ud7ff\ue000-\u{10ffff}][A-Za-z0-9_\u0080-\ud7ff\ue000-\u{10ffff}]*`;
@@ -525,8 +497,8 @@ const resolveDottedName = z
   });
 /** A Python dotted name: ASCII identifiers without `$` joined by `.` (the engine's check). */
 const pythonDottedName = z.string().max(256).regex(/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/, "Must be a dotted name (identifiers joined by .).");
-/** The binding forms Python and TypeScript bindings are made in (the engine's `FORMS`). */
-const CODE_RULE_SHARED_BINDING_FORMS = [
+/** Every binding form a binding filter names: the engine's `FORMS`, and PHP's `static`. */
+export const CODE_RULE_BINDING_FORMS = [
   "assignment",
   "annotated",
   "annotation",
@@ -547,25 +519,10 @@ const CODE_RULE_SHARED_BINDING_FORMS = [
   "field",
   "method",
   "accessor",
+  "static",
 ] as const;
-/** The forms a PHP variable is bound in (the engine's `PHP_FORMS`). */
-export const CODE_RULE_PHP_BINDING_FORMS = ["assignment", "augmented", "for", "except", "parameter", "global", "static"] as const;
-/** Every binding form a binding filter names; each family narrows to its own. */
-export const CODE_RULE_BINDING_FORMS = [...CODE_RULE_SHARED_BINDING_FORMS, "static"] as const;
-export const CODE_RULE_PYTHON_SCOPE_KINDS = ["module", "class", "function", "lambda", "comprehension", "typeParameters"] as const;
-/** TypeScript's scope kinds (the engine's): `global` is a script's top level, `module` a module's or CommonJS file's. */
-export const CODE_RULE_TYPESCRIPT_SCOPE_KINDS = ["global", "module", "function", "class", "block", "namespace", "typeParameters", "functionName"] as const;
-/** PHP's variable scopes (the engine's `PHP_SCOPES`): the file's top level, a function or method, a closure or arrow function. */
-export const CODE_RULE_PHP_SCOPE_KINDS = ["global", "function", "closure"] as const;
-/** Every scope kind a binding filter names, Python's first (the engine's order). */
-export const CODE_RULE_SCOPE_KINDS = [...new Set([...CODE_RULE_PYTHON_SCOPE_KINDS, ...CODE_RULE_TYPESCRIPT_SCOPE_KINDS, ...CODE_RULE_PHP_SCOPE_KINDS])] as unknown as readonly [
-  ...typeof CODE_RULE_PYTHON_SCOPE_KINDS,
-  "global",
-  "block",
-  "namespace",
-  "functionName",
-  "closure",
-];
+/** Every scope kind a binding filter names: Python's, then TypeScript's and PHP's others (the engine's order). */
+export const CODE_RULE_SCOPE_KINDS = ["module", "class", "function", "lambda", "comprehension", "typeParameters", "global", "block", "namespace", "functionName", "closure"] as const;
 const bindingFilterShape = {
   form: z.union([z.enum(CODE_RULE_BINDING_FORMS), z.array(z.enum(CODE_RULE_BINDING_FORMS)).min(1)]).optional(),
   scope: z.union([z.enum(CODE_RULE_SCOPE_KINDS), z.array(z.enum(CODE_RULE_SCOPE_KINDS)).min(1)]).optional(),
@@ -723,8 +680,6 @@ const moduleRegex = z
   .object({ regex: nonEmptyString.optional(), notRegex: nonEmptyString.optional() })
   .strict()
   .refine(condition => condition.regex !== undefined || condition.notRegex !== undefined, "Set regex, notRegex or both.");
-/** The `file` keys that read a Python file's module path. */
-const PYTHON_FILE_KEYS = ["module", "moduleName", "package", "inPackage"] as const;
 export const codeRuleFileConditionSchema = z
   .object({
     path: moduleRegex.optional(),
@@ -993,203 +948,9 @@ function containsCalls(value: unknown): boolean {
 type ParseGrammar = (typeof CODE_RULE_PARSE_GRAMMARS)[number];
 type RulePath = (string | number)[];
 type RuleIssue = (path: RulePath, message: string) => void;
-/** The query's language options, or `"shared"` for a define's utility (it compiles with each caller's). */
-type AstLanguageOptions = CodeRuleDslLanguageOptions | undefined | "shared";
 
-/** A rule's language checks, as the engine reads them. */
+/** A rule's structural checks, as the engine reads them. */
 type AstRuleVisit = (rule: CodeRuleDslAstRule, path: RulePath, parsed?: ParseGrammar, fields?: boolean) => void;
-
-/** A family as the engine's refusals name it. */
-const FAMILY_NAMES: Record<CodeRuleLanguageFamily, string> = { python: "Python", ecma: "TypeScript", php: "php", blade: "blade" };
-
-/** The `resolves` keys php and blade answer: names through `import`, `imported` and `prefix`, variables through `global`, `unresolved` and `binding` (`write` is refused apart). */
-const PHP_RESOLVES: Record<string, true> = { import: true, imported: true, prefix: true, global: true, unresolved: true, binding: true, write: true };
-
-/** The `resolves` keys php has no counterpart for, and why (the engine's `PHP_REFUSED_RESOLVES`). */
-const PHP_REFUSED_RESOLVES: Record<string, string> = {
-  this: "this asks whether JavaScript's this is the global object; PHP's $this never is: outside an object context it is undefined, which unresolved: true reports",
-  sloppyFunctions: "sloppy-mode functions are JavaScript's; PHP has no strict and sloppy modes",
-  directives: "/* global */ comments are ESLint's; PHP's superglobals are fixed, and a function declares a global with a global statement, which binding reads",
-  declared: "declared globals come from ESLint's and Ruff's configuration; PHP's superglobals are always declared, and no languageOptions configure others",
-  scriptDeclarations: "scripts are ESLint's; a PHP file has no script mode, and a superglobal is never a file's declaration",
-  relative: String.raw`a use statement names what it imports fully qualified (use namespace\A; does not parse); import resolves a namespace\A reference`,
-  seenBefore: "Ruff's seen_module asks whether a module was imported before; a PHP use only aliases a name for the rest of its namespace and loads nothing",
-  beforeLocal: "a PHP function sees no variable of an enclosing scope, so a read before the function binds the name is undefined, which unresolved: true reports",
-};
-
-/** PHP's superglobals, by the names `resolves.global` lists them (the engine's `PHP_SUPERGLOBALS`). */
-export const CODE_RULE_PHP_SUPERGLOBALS = ["GLOBALS", "_SERVER", "_GET", "_POST", "_FILES", "_COOKIE", "_SESSION", "_REQUEST", "_ENV"] as const;
-
-/** The binding filters php and blade refuse, and what each reads. */
-const PHP_REFUSED_FILTERS: readonly (readonly [keyof CodeRuleDslBindingFilter, string])[] = [
-  ["exported", "Python's re-exports and TypeScript's exports; a PHP file exports no variables (an including file shares its global scope, which no declaration exports)"],
-  ["builtin", "ESLint's configured globals; PHP's superglobals are no file's bindings (an assignment to $_GET writes the superglobal)"],
-  ["directives", "ESLint's /* exported */ comments; PHP exports no variables"],
-];
-
-/** A key a rule of some language families may not use (or, without languageOptions, cannot read), where it sits, and why. */
-interface LanguageRestriction {
-  /** The families whose rules the restriction applies to; undefined for every family. */
-  family: CodeRuleLanguageFamily | readonly CodeRuleLanguageFamily[] | undefined;
-  path: readonly string[];
-  applies: (rule: CodeRuleDslAstRule, languageOptions: AstLanguageOptions) => boolean;
-  /** Why, as the engine words it for the rule's family. */
-  message: string | ((rule: CodeRuleDslAstRule, family: CodeRuleLanguageFamily) => string);
-}
-
-/** The families whose variables and calls are PHP's. */
-const PHP_READERS = [PHP_FAMILY, BLADE_FAMILY] as const;
-
-/** Binding and import keys, checked before a rule's occurrences. */
-const BINDING_RESTRICTIONS: readonly LanguageRestriction[] = [
-  { family: PYTHON_FAMILY, path: ["resolves", "directives"], applies: rule => rule.resolves?.directives !== undefined, message: "/* global */ comments are ESLint's; Python has none." },
-  { family: ECMA_FAMILY, path: ["resolves", "import"], applies: rule => rule.resolves?.import !== undefined, message: "Import resolution is Python-only for now; TypeScript rules can use global." },
-  { family: ECMA_FAMILY, path: ["resolves", "imported"], applies: rule => rule.resolves?.imported !== undefined, message: "Import resolution is Python-only for now; TypeScript rules can use global." },
-  { family: ECMA_FAMILY, path: ["resolves", "binding", "latest"], applies: rule => rule.resolves?.binding?.latest !== undefined, message: "latest reads Python's binding order and declarations; TypeScript has none." },
-  { family: ECMA_FAMILY, path: ["resolves", "binding", "outer"], applies: rule => rule.resolves?.binding?.outer !== undefined, message: "outer reads Python's binding order and declarations; TypeScript has none." },
-  { family: ECMA_FAMILY, path: ["binds", "latest"], applies: rule => rule.binds?.latest !== undefined, message: "latest reads Python's binding order and declarations; TypeScript has none." },
-  { family: ECMA_FAMILY, path: ["binds", "outer"], applies: rule => rule.binds?.outer !== undefined, message: "outer reads Python's binding order and declarations; TypeScript has none." },
-  { family: ECMA_FAMILY, path: ["binds", "redefines", "sameImport"], applies: rule => rule.binds?.redefines?.sameImport !== undefined, message: "Qualified import names are Python's; TypeScript has none." },
-  { family: PYTHON_FAMILY, path: ["binds", "redefines", "every"], applies: rule => rule.binds?.redefines?.every !== undefined, message: "Python's redefines reads the one binding shadowed; every is TypeScript's." },
-  {
-    family: PHP_READERS,
-    path: ["binds", "redefines", "sameImport"],
-    applies: rule => rule.binds?.redefines?.sameImport !== undefined,
-    message: (_rule, family) => `Qualified import names are Python's; a ${family === PHP_FAMILY ? "PHP" : FAMILY_NAMES[family]} variable is never bound by an import.`,
-  },
-];
-
-/** Resolution, argument and compare keys, checked after a rule's binding filters. */
-const RESOLUTION_RESTRICTIONS: readonly LanguageRestriction[] = [
-  { family: ECMA_FAMILY, path: ["resolves", "beforeLocal"], applies: rule => rule.resolves?.beforeLocal !== undefined, message: "beforeLocal reads Python's binding order; TypeScript has none." },
-  {
-    family: ECMA_FAMILY,
-    path: ["resolves", "unresolved"],
-    applies: rule => rule.resolves?.unresolved === "star",
-    message: 'unresolved: "star" asks whether a Python star import binds the name; TypeScript has none.',
-  },
-  { family: PYTHON_FAMILY, path: ["resolves", "this"], applies: rule => rule.resolves?.this !== undefined, message: "this is TypeScript's; Python has none." },
-  { family: PYTHON_FAMILY, path: ["resolves", "scriptDeclarations"], applies: rule => rule.resolves?.scriptDeclarations !== undefined, message: "Scripts are ESLint's; Python has none." },
-  {
-    family: ECMA_FAMILY,
-    path: ["resolves", "scriptDeclarations"],
-    applies: (rule, languageOptions) => rule.resolves?.scriptDeclarations !== undefined && languageOptions === undefined,
-    message: "Whether a file is a script comes from languageOptions.sourceType; declare languageOptions.",
-  },
-  {
-    family: undefined,
-    path: ["resolves", "declared"],
-    applies: (rule, languageOptions) => rule.resolves?.declared !== undefined && languageOptions === undefined,
-    message: "The declared globals come from languageOptions; declare languageOptions.",
-  },
-  {
-    family: ECMA_FAMILY,
-    path: ["resolves", "this"],
-    applies: (rule, languageOptions) => rule.resolves?.this !== undefined && languageOptions === undefined,
-    message: "The global object depends on languageOptions.sourceType; declare languageOptions.",
-  },
-  { family: ECMA_FAMILY, path: ["resolves", "binding", "stopAtGlobal"], applies: rule => rule.resolves?.binding?.stopAtGlobal !== undefined, message: "global statements are Python's; TypeScript has none." },
-  {
-    family: PHP_READERS,
-    path: ["resolves", "binding", "stopAtGlobal"],
-    applies: rule => rule.resolves?.binding?.stopAtGlobal === false,
-    message: (_rule, family) =>
-      `a ${FAMILY_NAMES[family]} read after global $x reads that statement's binding; which top-level binding the global variable then holds depends on when the function runs, so ${FAMILY_NAMES[family]} has no lookup through it.`,
-  },
-  {
-    family: PYTHON_FAMILY,
-    path: ["resolves", "binding", "destructuredValue"],
-    applies: rule => rule.resolves?.binding?.destructuredValue !== undefined,
-    message: "destructured values are TypeScript's; a Python unpacked name keeps its element.",
-  },
-  {
-    family: ECMA_FAMILY,
-    path: ["arguments", "signature"],
-    applies: rule => rule.arguments?.signature.some(entry => entry === "/" || entry === "*") === true,
-    message: "/ and * mark Python's positional-only and keyword-only slots; JavaScript passes arguments by position only.",
-  },
-  {
-    family: PHP_READERS,
-    path: ["arguments", "signature"],
-    applies: rule => rule.arguments?.signature.some(entry => entry === "/" || entry === "*") === true,
-    message: "/ and * mark Python's positional-only and keyword-only slots; PHP has no positional-only or keyword-only parameters.",
-  },
-  {
-    family: ECMA_FAMILY,
-    path: ["arguments", "mode"],
-    applies: rule => rule.arguments?.mode === "syntactic",
-    message: "syntactic finds arguments by position and keyword as Ruff's find_argument does; TypeScript has no keywords.",
-  },
-  { family: PYTHON_FAMILY, path: ["arguments", "mode"], applies: rule => rule.arguments?.mode === "estree", message: "estree reads ESLint's node.arguments; use language or syntactic for Python." },
-  {
-    family: PHP_READERS,
-    path: ["arguments", "mode"],
-    applies: rule => rule.arguments?.mode === "estree",
-    message: (_rule, family) => `estree reads ESLint's node.arguments of ESTree, JavaScript's syntax tree; ${FAMILY_NAMES[family]} has none (use language or syntactic).`,
-  },
-  {
-    family: PYTHON_FAMILY,
-    path: ["compare", "text"],
-    applies: rule => rule.compare?.text === "key" || rule.compare?.text === "member",
-    message: rule => `${rule.compare?.text} reads JavaScript and PHP property names; Python has none.`,
-  },
-  {
-    family: PYTHON_FAMILY,
-    path: ["compare", "text"],
-    applies: rule => rule.compare?.text === "reference" || rule.compare?.text === "reference-no-static-keys",
-    message: rule => `${rule.compare?.text} reads JavaScript and PHP references (ESLint's isSameReference); use structure for Python.`,
-  },
-  {
-    family: PYTHON_FAMILY,
-    path: ["compare", "text"],
-    applies: rule => rule.compare?.text === "name",
-    message: "name reads the names JavaScript and PHP identifiers and strings write; use unquoted for Python.",
-  },
-  {
-    family: ECMA_FAMILY,
-    path: ["compare", "text"],
-    applies: rule => rule.compare?.text !== undefined && CODE_RULE_STRUCTURE_TEXTS.includes(rule.compare.text),
-    message: "The structural modes compare Python and PHP syntax; use tokens for TypeScript.",
-  },
-  {
-    family: PHP_FAMILY,
-    path: ["compare", "text"],
-    applies: rule => rule.compare?.text === "structure-parts",
-    message: "structure-parts compares Python's implicitly concatenated string parts; PHP has no implicit string concatenation.",
-  },
-  {
-    family: BLADE_FAMILY,
-    path: ["compare", "text"],
-    applies: rule => rule.compare?.text === "structure-parts",
-    message: "structure-parts compares Python's implicitly concatenated string parts; blade embeds PHP, which has no implicit string concatenation.",
-  },
-];
-
-/** Each family's restrictions, in table order: a rule's visit runs on every node of every stored code rule it reads, so it filters by family once here rather than per node. */
-type FamilyRestrictions = Readonly<Record<CodeRuleLanguageFamily, readonly LanguageRestriction[]>>;
-
-function restrictionsByFamily(restrictions: readonly LanguageRestriction[]): FamilyRestrictions {
-  const of = (family: CodeRuleLanguageFamily): readonly LanguageRestriction[] =>
-    restrictions.filter(restriction => restriction.family === undefined || [restriction.family].flat().includes(family));
-  return { [PYTHON_FAMILY]: of(PYTHON_FAMILY), [ECMA_FAMILY]: of(ECMA_FAMILY), [PHP_FAMILY]: of(PHP_FAMILY), [BLADE_FAMILY]: of(BLADE_FAMILY) };
-}
-
-const BINDING_RESTRICTIONS_BY_FAMILY = restrictionsByFamily(BINDING_RESTRICTIONS);
-const RESOLUTION_RESTRICTIONS_BY_FAMILY = restrictionsByFamily(RESOLUTION_RESTRICTIONS);
-
-function checkLanguageRestrictions(
-  restrictions: FamilyRestrictions,
-  rule: CodeRuleDslAstRule,
-  path: RulePath,
-  family: CodeRuleLanguageFamily,
-  languageOptions: AstLanguageOptions,
-  issue: RuleIssue,
-): void {
-  for (const restriction of restrictions[family]) {
-    if (!restriction.applies(rule, languageOptions)) continue;
-    issue([...path, ...restriction.path], typeof restriction.message === "string" ? restriction.message : restriction.message(rule, family));
-  }
-}
 
 /** `host` reads the literal a parse holds: only inside parse, not on formatArgs' fields, and not over an annotation. */
 function checkHost(rule: CodeRuleDslAstRule, path: RulePath, parsed: ParseGrammar | undefined, fields: boolean, issue: RuleIssue, visit: AstRuleVisit): void {
@@ -1234,73 +995,18 @@ function checkParsedNode(rule: CodeRuleDslAstRule, path: RulePath, parsed: Parse
   }
 }
 
-/** The family whose literals each grammar parses, and what they are (the engine's `Grammar::host`); a Blade template's literals are those of the PHP it embeds. */
-const GRAMMAR_HOSTS: Record<ParseGrammar, CodeRuleLanguageFamily> = {
-  percentFormat: PYTHON_FAMILY,
-  braceFormat: PYTHON_FAMILY,
-  annotation: PYTHON_FAMILY,
-  eslintDirective: ECMA_FAMILY,
-  printfFormat: PHP_FAMILY,
-  scanfFormat: PHP_FAMILY,
-  phpDoc: PHP_FAMILY,
-};
-const HOST_NAMES: Record<ParseGrammar, string> = {
-  percentFormat: "Python literals",
-  braceFormat: "Python literals",
-  annotation: "Python literals",
-  eslintDirective: "TypeScript comments",
-  printfFormat: "PHP strings",
-  scanfFormat: "PHP strings",
-  phpDoc: "PHP doc comments",
-};
-
-/** Why a family's literals have no tree of another family's grammar: its counterpart, or what it lacks. */
-const UNHOSTED_REASONS: Partial<Record<CodeRuleLanguageFamily, Partial<Record<ParseGrammar, string>>>> = {
-  [PHP_FAMILY]: {
-    percentFormat: "; PHP's printf formats are printfFormat",
-    braceFormat: "; PHP has no str.format templates (its printf formats are printfFormat)",
-    annotation: "; PHP holds no type in a string: its declared types are syntax, and its PHPDoc types are phpDoc",
-  },
-  [BLADE_FAMILY]: {
-    percentFormat: "; blade embeds PHP, whose printf formats are printfFormat",
-    braceFormat: "; blade embeds PHP, which has no str.format templates (its printf formats are printfFormat)",
-    annotation: "; blade embeds PHP, which holds no type in a string: its declared types are syntax, and its PHPDoc types are phpDoc",
-  },
-  [PYTHON_FAMILY]: {
-    printfFormat: "; Python's printf formats are percentFormat",
-    scanfFormat: "; Python has no scanf formats",
-  },
-};
-
-/** `parse`: its grammar reads the query's language family's literals, and its rule is a rule over that grammar's tree. */
-function visitParse(rule: CodeRuleDslAstRule, path: RulePath, family: CodeRuleLanguageFamily, issue: RuleIssue, visit: AstRuleVisit): void {
+/** `parse`: its rule is a rule over its grammar's tree. */
+function visitParse(rule: CodeRuleDslAstRule, path: RulePath, visit: AstRuleVisit): void {
   if (rule.parse === undefined) return;
   const grammar = rule.parse.grammar as ParseGrammar;
-  const host = GRAMMAR_HOSTS[grammar];
-  if (CODE_RULE_PARSE_GRAMMARS.includes(grammar) && host !== family && !(host === PHP_FAMILY && readsPhp(family))) {
-    issue([...path, "parse", "grammar"], `${grammar} parses ${HOST_NAMES[grammar]}${UNHOSTED_REASONS[family]?.[grammar] ?? ""}.`);
-  }
   if (CODE_RULE_PARSE_GRAMMARS.includes(grammar)) visit(rule.parse, [...path, "parse"], grammar);
 }
 
 const STYLE_GRAMMARS: Record<CodeRuleDslFormatArgs["style"], ParseGrammar> = { brace: "braceFormat", percent: "percentFormat", printf: "printfFormat", scanf: "scanfFormat" };
 
-/** Why a family does not read a style's format calls: the style is another family's (ecma has no formatArgs). */
-function foreignStyle(family: CodeRuleLanguageFamily, style: CodeRuleDslFormatArgs["style"]): string | undefined {
-  if (family === PYTHON_FAMILY && style === "printf") return "printf reads PHP's printf-family calls; Python's printf formats are style percent.";
-  if (family === PYTHON_FAMILY && style === "scanf") return "scanf reads PHP's sscanf and fscanf calls; Python has no scanf formats.";
-  if (family === PHP_FAMILY && style === "percent") return "percent reads Python's % formats; PHP's printf-family calls are style printf.";
-  if (family === PHP_FAMILY && style === "brace") return "brace reads Python's str.format calls; PHP has no such templates (its printf-family calls are style printf).";
-  if (family === BLADE_FAMILY && style === "percent") return "percent reads Python's % formats; blade embeds PHP, whose printf-family calls are style printf.";
-  if (family === BLADE_FAMILY && style === "brace") return "brace reads Python's str.format calls; blade embeds PHP, which has no such templates (its printf-family calls are style printf).";
-  return undefined;
-}
-
-/** `formatArgs`: a style of the query's family; its unused arguments are the host's nodes, its missing fields nodes of the format's tree. */
-function visitFormatArgs(rule: CodeRuleDslAstRule, path: RulePath, family: CodeRuleLanguageFamily, parsed: ParseGrammar | undefined, issue: RuleIssue, visit: AstRuleVisit): void {
+/** `formatArgs`: its unused arguments are the host's nodes, its missing fields nodes of the format's tree. */
+function visitFormatArgs(rule: CodeRuleDslAstRule, path: RulePath, parsed: ParseGrammar | undefined, visit: AstRuleVisit): void {
   if (rule.formatArgs === undefined) return;
-  const foreign = foreignStyle(family, rule.formatArgs.style);
-  if (foreign !== undefined) issue([...path, "formatArgs", "style"], foreign);
   if (rule.formatArgs.unused !== undefined) visit(rule.formatArgs.unused, [...path, "formatArgs", "unused"], parsed);
   const grammar = STYLE_GRAMMARS[rule.formatArgs.style];
   if (rule.formatArgs.missing !== undefined) visit(rule.formatArgs.missing, [...path, "formatArgs", "missing"], grammar, false);
@@ -1313,131 +1019,14 @@ function visitCalls(rule: CodeRuleDslAstRule, path: RulePath, parsed: ParseGramm
   visit(inner, [...path, "calls"], parsed);
 }
 
-/** A binding's `occurrence` is TypeScript's; its rule is a rule over the occurrence. */
-function visitOccurrences(rule: CodeRuleDslAstRule, path: RulePath, family: CodeRuleLanguageFamily, issue: RuleIssue, visit: AstRuleVisit): void {
+/** A binding's `occurrence` is a rule over the occurrence. */
+function visitOccurrences(rule: CodeRuleDslAstRule, path: RulePath, visit: AstRuleVisit): void {
   for (const [owner, ownerPath] of [
     [rule.binds, [...path, "binds"]],
     [rule.resolves?.binding, [...path, "resolves", "binding"]],
   ] as const) {
-    if (owner?.occurrence === undefined) continue;
-    if (family === PYTHON_FAMILY) issue([...ownerPath, "occurrence"], `A variable's occurrences are TypeScript's; ${FAMILY_NAMES[family]} has none.`);
-    visit(owner.occurrence, [...ownerPath, "occurrence"]);
+    if (owner?.occurrence !== undefined) visit(owner.occurrence, [...ownerPath, "occurrence"]);
   }
-}
-
-/** Each of a filter's `form` or `scope` names is one of `known`. */
-function checkFilterNames(names: string | readonly string[] | undefined, at: RulePath, known: readonly string[], what: string, issue: RuleIssue): void {
-  [names ?? []].flat().forEach((name, index) => {
-    if (!known.includes(name)) issue(Array.isArray(names) ? [...at, index] : at, `${name} is not a ${what}; expected one of ${known.join(", ")}.`);
-  });
-}
-
-/** Each family's scope kinds, as its binding filters name them. */
-const SCOPE_KINDS: Record<CodeRuleLanguageFamily, readonly string[]> = {
-  [PYTHON_FAMILY]: CODE_RULE_PYTHON_SCOPE_KINDS,
-  [ECMA_FAMILY]: CODE_RULE_TYPESCRIPT_SCOPE_KINDS,
-  [PHP_FAMILY]: CODE_RULE_PHP_SCOPE_KINDS,
-  [BLADE_FAMILY]: CODE_RULE_PHP_SCOPE_KINDS,
-};
-
-/** The filter keys a family refuses, each with why: directives and configured globals are ESLint's; php and blade read neither Ruff's binding order nor exports. */
-function refusedFilterKeys(family: CodeRuleLanguageFamily): readonly (readonly [keyof CodeRuleDslBindingFilter, string])[] {
-  if (family === PYTHON_FAMILY) {
-    return [
-      ["directives", "/* exported */ comments are ESLint's; Python has none."],
-      ["builtin", "Configured globals are ESLint's; Python has none."],
-    ];
-  }
-  if (!readsPhp(family)) return [];
-  return PHP_REFUSED_FILTERS.map(([key, what]) => [key, `${key} reads ${what}; ${FAMILY_NAMES[family]} has none.`] as const);
-}
-
-/** A binding filter's forms and scope kinds are its language's, and it holds no key its family refuses. */
-function checkBindingFilters(rule: CodeRuleDslAstRule, path: RulePath, family: CodeRuleLanguageFamily, language: CodeRuleAstLanguage, issue: RuleIssue): void {
-  const filters: [CodeRuleDslBindingFilter | undefined, RulePath][] = [
-    [rule.binds, [...path, "binds"]],
-    [rule.binds?.redefines, [...path, "binds", "redefines"]],
-    [rule.resolves?.binding, [...path, "resolves", "binding"]],
-  ];
-  const forms: readonly string[] = readsPhp(family) ? CODE_RULE_PHP_BINDING_FORMS : CODE_RULE_SHARED_BINDING_FORMS;
-  const refused = refusedFilterKeys(family);
-  for (const [filter, filterPath] of filters) {
-    if (filter === undefined) continue;
-    checkFilterNames(filter.form, [...filterPath, "form"], forms, `${language} binding form`, issue);
-    checkFilterNames(filter.scope, [...filterPath, "scope"], SCOPE_KINDS[family], `${language} scope kind`, issue);
-    for (const [key, message] of refused) {
-      if (filter[key] !== undefined) issue([...filterPath, key], message);
-    }
-  }
-}
-
-/** php's and blade's resolves: names through import and prefix, variables through superglobals, unresolved and binding; one resolves asks names or variables. */
-function checkPhpResolves(rule: CodeRuleDslAstRule, path: RulePath, family: CodeRuleLanguageFamily, issue: RuleIssue): void {
-  const resolves = rule.resolves;
-  if (!readsPhp(family) || resolves === undefined) return;
-  const name = FAMILY_NAMES[family];
-  const at = [...path, "resolves"];
-  for (const key of Object.keys(resolves)) {
-    const why = PHP_REFUSED_RESOLVES[key];
-    if (why !== undefined) issue([...at, key], `${why}; ${name} has none.`);
-    else if (!Object.hasOwn(PHP_RESOLVES, key)) issue([...at, key], `resolves.${key} is not available for ${name} policies.`);
-  }
-  if ((resolves.import !== undefined || resolves.imported !== undefined) && (resolves.global !== undefined || resolves.unresolved !== undefined)) {
-    issue(at, "import and imported resolve class, function and constant names; global and unresolved resolve variables; one resolves asks one of them.");
-  }
-  if (resolves.unresolved !== undefined && resolves.unresolved !== true) issue([...at, "unresolved"], `${name} policies ask unresolved: true.`);
-  const superglobals: readonly string[] = CODE_RULE_PHP_SUPERGLOBALS;
-  [resolves.global === true ? [] : (resolves.global ?? [])].flat().forEach((global, index) => {
-    if (!superglobals.includes(global)) issue([...at, "global", index], `${global} is no PHP superglobal; expected one of ${superglobals.join(", ")}.`);
-  });
-}
-
-/** The import-name shape a family refuses, as the engine's `compile_resolves` does: Python imports are dotted, PHP names join labels with `\`. */
-const dottedPhpName = (name: string): string | undefined => (name.includes(".") ? String.raw`${name} is a dotted name; PHP names join labels with \.` : undefined);
-const FOREIGN_IMPORT_NAMES: Partial<Record<CodeRuleLanguageFamily, (name: string) => string | undefined>> = {
-  [PYTHON_FAMILY]: name => (name.includes("\\") ? `${name} is a PHP name; Python imports are dotted names.` : undefined),
-  [PHP_FAMILY]: dottedPhpName,
-  [BLADE_FAMILY]: dottedPhpName,
-};
-
-/** Each import and imported name is in its family's shape; the name schema admits both. */
-function checkImportNames(rule: CodeRuleDslAstRule, path: RulePath, family: CodeRuleLanguageFamily, issue: RuleIssue): void {
-  const foreign = FOREIGN_IMPORT_NAMES[family];
-  const resolves = rule.resolves;
-  if (foreign === undefined || resolves === undefined) return;
-  for (const key of ["import", "imported"] as const) {
-    const listed = resolves[key];
-    const names: readonly string[] = listed === true || listed === undefined ? [] : listed;
-    names.forEach((name, index) => {
-      const why = foreign(name);
-      if (why !== undefined) issue([...path, "resolves", key, index], why);
-    });
-  }
-}
-
-/** Why a family has no `resolves.write`: where ESLint reports a variable is TypeScript's. */
-const WRITE_REFUSALS: Partial<Record<CodeRuleLanguageFamily, string>> = {
-  [PYTHON_FAMILY]: "Where ESLint reports a variable is TypeScript's; Python has none.",
-  [PHP_FAMILY]:
-    "ESLint reports an unused variable once, at its last write; php's usage oracle, Psalm, reports each unused assignment, which binds: { used: false } matches.",
-  [BLADE_FAMILY]:
-    "ESLint reports an unused variable once, at its last write; blade reads its embedded PHP, whose usage oracle, Psalm, reports each unused assignment, which binds: { used: false } matches.",
-};
-
-/** Each family's value type names. */
-const VALUE_TYPES: Record<CodeRuleLanguageFamily, readonly string[]> = {
-  [PYTHON_FAMILY]: CODE_RULE_PYTHON_VALUE_TYPES,
-  [ECMA_FAMILY]: CODE_RULE_TYPESCRIPT_VALUE_TYPES,
-  [PHP_FAMILY]: CODE_RULE_PHP_VALUE_TYPES,
-  [BLADE_FAMILY]: CODE_RULE_PHP_VALUE_TYPES,
-};
-
-function checkValueTypes(rule: CodeRuleDslAstRule, path: RulePath, family: CodeRuleLanguageFamily, language: CodeRuleAstLanguage, issue: RuleIssue): void {
-  const types = rule.value?.type === undefined ? [] : [rule.value.type].flat();
-  const known = VALUE_TYPES[family];
-  types.forEach((name, index) => {
-    if (!known.includes(name)) issue([...path, "value", "type", index], `${name} is not a ${language} type name; expected one of ${known.join(", ")}.`);
-  });
 }
 
 /** A rule's or count's relations: `field` only in has/inside, outside count and parse. */
@@ -1489,39 +1078,23 @@ function visitSubRules(rule: CodeRuleDslAstRule, path: RulePath, parsed: ParseGr
 }
 
 /**
- * The checks of a rule and its sub-rules that depend on the language: keys and values one language
- * lacks, and kinds a parsed tree's grammar lacks. `languageOptions` is the query's, or `"shared"`
- * for a define's utility, which compiles with each caller's options (so none is required of it).
- * Issues are reported in the order the engine reads the rule.
+ * The structural checks of a rule and its sub-rules: keys a parsed tree's grammar lacks, its kinds, and where `host`,
+ * `capture`, `field` and `calls` may appear. What a rule's language lacks is the engine's to refuse. Issues are
+ * reported in the order the engine reads the rule.
  */
-function astRuleVisitor(context: z.RefinementCtx, language: CodeRuleAstLanguage, languageOptions: AstLanguageOptions): AstRuleVisit {
-  const family = codeRuleLanguageFamily(language);
+function astRuleVisitor(context: z.RefinementCtx): AstRuleVisit {
   const issue: RuleIssue = (path, message) => context.addIssue({ code: "custom", path, message });
   const visit: AstRuleVisit = (rule, path, parsed, fields = true) => {
-    // A `not-supported-yet` capability is no schema error: compiling refuses it as language-not-supported.
-    for (const [predicate, capability] of Object.entries(CODE_RULE_PREDICATE_CAPABILITIES)) {
-      if (rule[predicate as keyof CodeRuleDslAstRule] === undefined || codeRuleLanguageCapability(language, capability) !== "refused") continue;
-      const at = [...path, predicate];
-      issue(at, `${at.join(".")}: \`${predicate}\` is not available for ${language} policies`);
-    }
     if (parsed === undefined && rule.capture !== undefined) issue([...path, "capture"], "capture binds a node of a parsed tree; use it inside parse.");
     checkHost(rule, path, parsed, fields, issue, visit);
     if (parsed !== undefined) {
       checkParsedKeys(rule, path, parsed, issue);
       checkParsedNode(rule, path, parsed, issue);
     }
-    visitParse(rule, path, family, issue, visit);
-    visitFormatArgs(rule, path, family, parsed, issue, visit);
+    visitParse(rule, path, visit);
+    visitFormatArgs(rule, path, parsed, visit);
     visitCalls(rule, path, parsed, issue, visit);
-    checkLanguageRestrictions(BINDING_RESTRICTIONS_BY_FAMILY, rule, path, family, languageOptions, issue);
-    visitOccurrences(rule, path, family, issue, visit);
-    const writeRefusal = WRITE_REFUSALS[family];
-    if (writeRefusal !== undefined && rule.resolves?.write !== undefined) issue([...path, "resolves", "write"], writeRefusal);
-    checkBindingFilters(rule, path, family, language, issue);
-    checkPhpResolves(rule, path, family, issue);
-    checkImportNames(rule, path, family, issue);
-    checkLanguageRestrictions(RESOLUTION_RESTRICTIONS_BY_FAMILY, rule, path, family, languageOptions, issue);
-    checkValueTypes(rule, path, family, language, issue);
+    visitOccurrences(rule, path, visit);
     visitSubRules(rule, path, parsed, fields, issue, visit);
   };
   return visit;
@@ -1559,48 +1132,6 @@ function checkTransformValue(name: string, transform: Record<string, CodeRuleDsl
   }
 }
 
-/** Language options the query's language family does not read. */
-function checkLanguageOptions(language: CodeRuleAstLanguage, languageOptions: CodeRuleDslLanguageOptions | undefined, context: z.RefinementCtx): void {
-  const family = codeRuleLanguageFamily(language);
-  if (readsPhp(family) && languageOptions !== undefined) {
-    context.addIssue({
-      code: "custom",
-      path: ["languageOptions"],
-      message: `languageOptions: \`languageOptions\` is not available for ${FAMILY_NAMES[family]} policies`,
-    });
-    return;
-  }
-  const foreign = family === PYTHON_FAMILY ? TYPESCRIPT_ONLY_OPTIONS : PYTHON_ONLY_OPTIONS;
-  for (const key of foreign) {
-    if (languageOptions?.[key] !== undefined) {
-      context.addIssue({ code: "custom", path: ["languageOptions", key], message: `${key} is not a ${language} language option.` });
-    }
-  }
-}
-
-/** `when` gates on another language family's versions. */
-function checkWhenGates(language: CodeRuleAstLanguage, when: CodeRuleDslAstWhen | undefined, context: z.RefinementCtx): void {
-  const foreignGates = codeRuleLanguageFamily(language) === PYTHON_FAMILY ? (["ecmaVersion", "sourceType", "ecmaFeatures"] as const) : (["pythonVersion"] as const);
-  for (const gate of foreignGates) {
-    if (when?.[gate] !== undefined) {
-      context.addIssue({ code: "custom", path: ["when", gate], message: `${gate} is not a ${language} gate.` });
-    }
-  }
-}
-
-/** File conditions the query's language family has no notion of. */
-function checkFileCondition(language: CodeRuleAstLanguage, file: CodeRuleDslFileCondition | undefined, context: z.RefinementCtx): void {
-  const family = codeRuleLanguageFamily(language);
-  for (const key of PYTHON_FILE_KEYS) {
-    if (family !== PYTHON_FAMILY && file?.[key] !== undefined) {
-      context.addIssue({ code: "custom", path: ["file", key], message: `Module paths are Python's; ${language} has none.` });
-    }
-  }
-  if (family === PYTHON_FAMILY && file?.declaration !== undefined) {
-    context.addIssue({ code: "custom", path: ["file", "declaration"], message: "Declaration files are TypeScript's; python has none." });
-  }
-}
-
 export const codeRuleQuerySchema: z.ZodType<CodeRuleDslQuery> = z.lazy(() =>
   z
     .object({
@@ -1627,12 +1158,9 @@ export const codeRuleQuerySchema: z.ZodType<CodeRuleDslQuery> = z.lazy(() =>
           // The engine is the authority; these are the cross-references a schema can see.
           const utils = ast.utils ?? {};
           checkTransforms(ast.transform ?? {}, context);
-          // A planned language has no checks of its own yet: compiling refuses it as language-not-supported.
+          // A planned language's rule is not read yet: compiling refuses it as language-not-supported.
           if (!isCodeRuleAstLanguage(ast.language)) return;
-          checkLanguageOptions(ast.language, ast.languageOptions, context);
-          checkFileCondition(ast.language, ast.file, context);
-          checkWhenGates(ast.language, ast.when, context);
-          const visit = astRuleVisitor(context, ast.language, ast.languageOptions);
+          const visit = astRuleVisitor(context);
           visit(ast.rule, ["rule"]);
           for (const [id, util] of Object.entries(utils)) visit(utilityParts(util).rule, ["utils", id, ...utilityParts(util).path]);
           for (const [name, constraint] of Object.entries(ast.constraints ?? {})) visit(constraint, ["constraints", name]);
@@ -1736,21 +1264,9 @@ function checkViolationCaptures(query: CodeRuleDslQuery | undefined, violation: 
   }
 }
 
-/** Which directive comments a violation's suppress may name: the query's language's, and only for an ast query. */
+/** A violation's suppress removes an ast query's violations; which linters' comments its language has is the engine's to check. */
 function checkViolationSuppress(ast: CodeRuleDslAstQuery["ast"] | undefined, violation: CodeRuleDslReportingClause["violation"], issue: ViolationIssue): void {
-  if (violation.suppress === undefined) return;
-  if (ast === undefined) return issue("suppress", "suppress removes an ast query's violations.");
-  if (!isCodeRuleAstLanguage(ast.language)) return;
-  const suppressions = codeRuleLanguageSuppressions(ast.language);
-  const refusals: ReadonlyArray<readonly [CodeRuleSuppression, string]> = [
-    ["eslint", "eslint-disable comments are ESLint's"],
-    ["noqa", "noqa comments are Ruff's"],
-    ["phpstan", "@phpstan-ignore comments are PHPStan's"],
-    ["psalm", "@psalm-suppress tags are Psalm's"],
-    ["phpcs", "phpcs: annotations are PHP_CodeSniffer's"],
-  ];
-  const refused = refusals.find(([linter]) => violation.suppress?.[linter] !== undefined && !suppressions.includes(linter));
-  if (refused !== undefined) issue("suppress", `${refused[1]}; a ${ast.language} query has none.`);
+  if (violation.suppress !== undefined && ast === undefined) issue("suppress", "suppress removes an ast query's violations.");
 }
 
 /**
@@ -1788,7 +1304,7 @@ export const codeRuleDefineSchema = z
   })
   .superRefine((define, context) => {
     if (define.language === undefined || !isCodeRuleAstLanguage(define.language)) return;
-    const visit = astRuleVisitor(context, define.language, "shared");
+    const visit = astRuleVisitor(context);
     for (const [id, util] of Object.entries(define.utils ?? {})) visit(utilityParts(util).rule, ["utils", id, ...utilityParts(util).path]);
   }) as unknown as z.ZodType<CodeRuleDslDefine>;
 
