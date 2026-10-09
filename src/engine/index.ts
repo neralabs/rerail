@@ -20,21 +20,49 @@ export { auditRequestSchema } from "./audit/audit-control-schema.js";
 export { SqliteAuditControlStore } from "./audit/audit-control.js";
 export { SqliteAuditReader, SqliteAuditStore } from "./audit/audit-store.js";
 export { type AuditInput, type AuditRecorder, type AuditResult } from "./audit/audit.js";
+export { loadBundledRules } from "./catalog/bundled-rule-documents.js";
+export { loadBundledCatalog } from "./catalog/bundled-rules.js";
 export { ConversationRuleRegistry } from "./catalog/registry.js";
-export { repositoryIdentityLocation } from "./catalog/repository-identity.js";
-export { exportScopedRules, importScopedRules, loadBundledRules } from "./catalog/rule-bootstrap.js";
-export { RULE_MODES } from "./catalog/rule-mode.js";
+export { repositoryIdentityLocation, resolveCloneId } from "./catalog/repository-identity.js";
 export {
+  type BundledCatalog,
+  CALLER_CWD_HEADER,
+  type CheckoutContext,
+  type CheckoutRuleSet,
+  type EffectiveRule,
+  type RepositoryKey,
+  type RepositoryStartState,
+  type RepositoryStatus,
+} from "./catalog/repository-model.js";
+export { checkoutStatus, listRepositories, lookupCheckout, recordCheckout } from "./catalog/repository-registry.js";
+export { exportRulesDump, importRulesDump, type RulesDump } from "./catalog/rule-bootstrap.js";
+export {
+  addAttachment,
+  listRepositoryRules,
+  removeAttachment,
+  ruleConfigurationSignature,
+  setRuleSetting,
+  setUpRepository,
+} from "./catalog/rule-configuration.js";
+export { getLibraryRule, listLibraryRules, upsertLibraryRule, writeLibraryRule } from "./catalog/rule-library.js";
+export { RULE_MODES, type RuleMode } from "./catalog/rule-mode.js";
+export {
+  loadRulePacks,
+  type RulePack,
   type RulePackFile,
   rulePackFileSchema,
   rulePackPackageName,
   rulePackPackageSchema,
 } from "./catalog/rule-packs.js";
-export { type ConversationRule } from "./catalog/rule-schema.js";
-export { SqliteRuleStore } from "./catalog/rule-store.js";
-export { openScopedRuleCatalog, resolveRepositoryContext, ScopedRuleCatalog } from "./catalog/scoped-rule-catalog.js";
+export { type ConversationRule, parseConversationRule } from "./catalog/rule-schema.js";
+export { type RuleDocument, SqliteRuleStore } from "./catalog/rule-store.js";
 export { CodeRuleBridge } from "./code-rule/code-rule-bridge.js";
-export { bootstrapCodeRuleDslCatalog, bundledCodeRuleDslDirectory } from "./code-rule/code-rule-dsl-catalog.js";
+export {
+  bundledCodeRuleDslDirectory,
+  CheckoutCatalogs,
+  CheckoutCodeRuleCatalog,
+  loadCodeRuleCapabilities,
+} from "./code-rule/code-rule-dsl-catalog.js";
 export { IGNORED_DIRECTORIES, languageFor, NativeCodeRuleEnforcer } from "./code-rule/code-rule-enforcer.js";
 export { languageNotSupportedOf } from "./code-rule/code-rule-language-support.js";
 export {
@@ -58,7 +86,7 @@ export {
 } from "./native/native.js";
 export { NativeSemanticEmbedder, SemanticWorkspace } from "./native/semantic-primitives.js";
 export { type SemanticEmbedder, type Watermark } from "./native/semantic-types.js";
-export { compareDeterministicStrings, stableJsonText } from "./stable-json.js";
+export { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "./stable-json.js";
 export {
   defaultRerailDatabasePath,
   openRerailDatabase,
@@ -72,18 +100,17 @@ export {
   auditResultPages,
   audits,
   auditSettings,
-  catalogRules,
-  checkoutStarts,
+  checkouts,
   events,
+  libraryRules,
   policySessionOwners,
   presentationPreferences,
+  repositories,
   repositoryAudits,
-  repositoryStarts,
+  ruleAttachments,
   ruleCatalogIdentities,
-  ruleProjectRepositories,
-  ruleProjects,
-  ruleRepositories,
   rules,
+  ruleSettings,
   sessions,
   workLinks,
 } from "./storage/schema.js";

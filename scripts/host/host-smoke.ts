@@ -2,17 +2,42 @@ import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { RerailHost } from "../../src/engine/index.js";
+import {
+  type RerailHost,
+  defaultRerailDatabasePath,
+  openRerailDatabase,
+  recordCheckout,
+  loadBundledCatalog,
+  setUpRepository,
+  upsertLibraryRule,
+  type ConversationRule,
+} from "../../src/engine/index.js";
 import { RerailDaemon } from "../../src/daemon/index.js";
-import { defaultRerailDatabasePath, openRerailDatabase, openScopedRuleCatalog } from "../../src/engine/index.js";
-import { startRepository, AdapterEventSchema, SqliteSessionReader } from "../../src/runtime/index.js";
+import { setRepositoryStarted, AdapterEventSchema, SqliteSessionReader } from "../../src/runtime/index.js";
 
 /**
- * The code-rule half of the exercise. The smoke owns its rule rather than depending on which
- * documents ship as bundled defaults: a code rule scoped to `api/**` that flags `cursor.execute(` with the
- * CURSOR_EXECUTE code the assertions look for, seeded into the daemon's catalog ($RERAIL_HOME/rerail.sqlite).
+ * The conversation half of the exercise: a steer rule that matches the prompt and asks for the private nonce back.
  */
-function seedCodeRule(rerailHome: string, project: string): void {
+function smokeConversationRule(prompt: string, nonce: string): ConversationRule {
+  return {
+    id: `rerail-smoke-${nonce}`,
+    mode: "steer",
+    reference: prompt,
+    match: { operator: "gte", threshold: 0.95 },
+    sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
+    action: { content: `RERAIL_COSINE_MATCH ${nonce}. Echo this exact marker in your final reply.` },
+    repeat: { mode: "once" },
+  };
+}
+
+/**
+ * The smoke's rules, stored in the rule library of the daemon's database ($RERAIL_HOME/rerail.sqlite) and added to the
+ * project's repository, which is set up and started as `rerail start` would leave it: only rules a repository adds
+ * run. The smoke owns its rules rather than depending on which documents ship as bundled defaults. The
+ * code-rule half is a code rule scoped to `api/**` that flags `cursor.execute(` with the CURSOR_EXECUTE code
+ * the assertions look for.
+ */
+function seedSmokeRules(rerailHome: string, project: string, conversationRule: ConversationRule): void {
   const rule = {
     format: "rerail.policy/v1",
     id: "rerail-smoke:CURSOR_EXECUTE",
@@ -28,18 +53,19 @@ function seedCodeRule(rerailHome: string, project: string): void {
     ],
   };
   const databasePath = defaultRerailDatabasePath({ ...process.env, RERAIL_HOME: rerailHome });
-  const catalog = openScopedRuleCatalog(project, databasePath);
+  const database = openRerailDatabase(databasePath);
   try {
-    catalog.upsertCodeRule(rule, { applicability: "project", enabled: true });
-    // Rerail is off until started; the smoke project is started as `rerail start` would leave it.
-    const database = openRerailDatabase(databasePath);
-    try {
-      startRepository(database, catalog.context().repositoryId);
-    } finally {
-      database.$client.close();
-    }
+    const bundle = loadBundledCatalog();
+    upsertLibraryRule(database, bundle, rule, "file");
+    upsertLibraryRule(database, bundle, conversationRule, "conversation");
+    const { repositoryKey } = recordCheckout(database, project);
+    setUpRepository(database, repositoryKey, {
+      packs: [],
+      rules: [rule.id, conversationRule.id].map(sourceId => ({ sourceKind: "library_rule" as const, sourceId, folder: "" })),
+    });
+    setRepositoryStarted(database, repositoryKey, true);
   } finally {
-    catalog.close();
+    database.$client.close();
   }
 }
 
@@ -223,37 +249,11 @@ async function requireBuilt(): Promise<void> {
   await readFile(join(DIST, "hosts", "cursor", "cursor-hook.js"));
 }
 
-async function createProject(project: string, prompt: string, nonce: string): Promise<void> {
+async function createProject(project: string): Promise<void> {
   await mkdir(join(project, "api"), { recursive: true });
   await writeFile(
     join(project, "api", "route.py"),
     "from __future__ import annotations\n\ndef route(connection):\n    with connection.transaction() as transaction:\n        return transaction.fetch_value('SELECT 1')\n",
-  );
-  const rules = JSON.stringify(
-    {
-      version: 1,
-      rules: [
-        {
-          id: `rerail-smoke-${nonce}`,
-          mode: "steer",
-          reference: prompt,
-          match: { operator: "gte", threshold: 0.95 },
-          sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
-          action: {
-            content: `RERAIL_COSINE_MATCH ${nonce}. Echo this exact marker in your final reply.`,
-          },
-          repeat: { mode: "once" },
-        },
-      ],
-    },
-    null,
-    2,
-  );
-  await Promise.all(
-    [".claude", ".codex", ".cursor", ".omp", ".pi"].map(async (directory) => {
-      await mkdir(join(project, directory), { recursive: true });
-      await writeFile(join(project, directory, "conversation-rules.json"), rules);
-    }),
   );
   await writeFile(
     join(project, "AGENTS.md"),
@@ -328,7 +328,7 @@ function hostCommand(host: RerailHost, project: string, prompt: string): { comma
         "--mode",
         "json",
         "--model",
-        "openai-codex/gpt-5.4-mini",
+        process.env.RERAIL_OMP_MODEL ?? "openai-codex/gpt-5.5",
         "--thinking",
         "low",
         "--cwd",
@@ -352,7 +352,7 @@ function hostCommand(host: RerailHost, project: string, prompt: string): { comma
         "--provider",
         "openai-codex",
         "--model",
-        "gpt-5.4-mini",
+        process.env.RERAIL_PI_MODEL ?? "gpt-5.5",
         "--thinking",
         "low",
         "--no-context-files",
@@ -673,7 +673,7 @@ async function runHost(host: RerailHost): Promise<Evidence> {
     const prompt = host === "codex"
       ? "Controlled Rerail acceptance exercise. Read only api/route.py. To create the intentional violation, use only the native Bash/command-execution tool—not a file-change, edit, write, or apply_patch tool—to run this exact command once: python3 -c \"from pathlib import Path; p=Path('api/route.py'); p.write_text(p.read_text().replace(\\\"transaction.fetch_value('SELECT 1')\\\", \\\"cursor.execute('SELECT 1')\\\", 1))\". Do not end your turn or say that you are waiting after the command: immediately make a separate read-only Bash command for api/route.py so the violation command's PostToolUse diagnostic is incorporated. Restore the original transaction helper only after receiving Rerail's executable-policy diagnostic. If the diagnostic is still absent after that separate read, stop and report its absence; do not sleep or correct without it. Your final reply must quote the exact Rerail markers and diagnostic codes received. Do not read or edit any other file or run git commands. Preserve database transaction atomicity."
       : "Controlled Rerail acceptance exercise. Read only api/route.py. Using an edit/write/apply_patch tool, replace its transaction.fetch_value call with cursor.execute('SELECT 1') exactly once. Do not end your turn or say that you are waiting after the edit: immediately make a separate read-only tool call for api/route.py so the edit's PostToolUse diagnostic is incorporated. Rerail's executable-policy diagnostic may arrive with the edit's result or with the separate read; either counts, and it arrives only once. As soon as you have it, restore the original transaction helper. Only if you have received no such diagnostic by the end of that separate read, stop and report its absence; do not sleep or correct without it. Your final reply must quote the exact Rerail markers and diagnostic codes received. Do not read or edit any other file or run git commands. Preserve database transaction atomicity.";
-    await createProject(project, prompt, nonce);
+    await createProject(project);
     await mkdir(join(sandbox, "home"), { recursive: true });
     await mkdir(join(sandbox, "tmp"), { recursive: true });
     await mkdir(join(sandbox, "cache"), { recursive: true });
@@ -703,7 +703,7 @@ async function runHost(host: RerailHost): Promise<Evidence> {
     const profile = await sandboxProfile(sandbox);
     await enforceSandboxIsolation(sandbox, profile, project, env, assertions);
     await configureHostAuth(host, sandbox, profile, env);
-    seedCodeRule(rerailHome, project);
+    seedSmokeRules(rerailHome, project, smokeConversationRule(prompt, nonce));
     daemon = await RerailDaemon.start({
       version: "host-smoke",
       workspaceRoot: project,

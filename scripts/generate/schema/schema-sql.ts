@@ -3,8 +3,6 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateSQLiteDrizzleJson, generateSQLiteMigration } from "drizzle-kit/api";
 import {
-  checkoutStarts,
-  catalogRules,
   events,
   presentationPreferences,
   repositoryAudits,
@@ -13,11 +11,12 @@ import {
   auditRequests,
   policySessionOwners,
   auditSettings,
+  repositories,
+  checkouts,
+  ruleAttachments,
+  ruleSettings,
+  libraryRules,
   ruleCatalogIdentities,
-  ruleProjectRepositories,
-  ruleProjects,
-  ruleRepositories,
-  repositoryStarts,
   rules,
   sessions,
   workLinks,
@@ -44,13 +43,12 @@ export async function renderRerailSchemaStatements(): Promise<string[]> {
   repositoryAudits: repositoryAudits,
   auditRequests: auditRequests,
   policySessionOwners,
-  ruleProjects,
-  ruleRepositories,
-  repositoryStarts,
-  checkoutStarts,
   ruleCatalogIdentities,
-  ruleProjectRepositories,
-  catalogRules,
+  repositories,
+  checkouts,
+  ruleAttachments,
+  ruleSettings,
+  libraryRules,
   });
   const statements = await generateSQLiteMigration(empty, current);
   return statements.map(statement =>

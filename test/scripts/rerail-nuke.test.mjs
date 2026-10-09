@@ -89,8 +89,8 @@ function statusDatabase(rerailHome, rows) {
 function ruleDatabase(directory, rows) {
   mkdirSync(directory, { recursive: true });
   const database = new DatabaseSync(join(directory, "rerail.sqlite"));
-  database.exec("CREATE TABLE catalog_rules (id text PRIMARY KEY)");
-  const insert = database.prepare("INSERT INTO catalog_rules VALUES (?)");
+  database.exec("CREATE TABLE library_rules (id text PRIMARY KEY)");
+  const insert = database.prepare("INSERT INTO library_rules VALUES (?)");
   for (const id of rows) insert.run(id);
   database.close();
 }
@@ -98,7 +98,7 @@ function ruleDatabase(directory, rows) {
 function ruleIds(path) {
   const database = new DatabaseSync(path, { readOnly: true });
   try {
-    return database.prepare("SELECT id FROM catalog_rules ORDER BY id").all().map(row => row.id);
+    return database.prepare("SELECT id FROM library_rules ORDER BY id").all().map(row => row.id);
   } finally {
     database.close();
   }

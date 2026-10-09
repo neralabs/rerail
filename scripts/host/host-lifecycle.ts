@@ -38,10 +38,12 @@ import {
   RULE_MESSAGE_TYPE,
   CODE_RULE_FORMAT,
   openRerailDatabase,
-  openScopedRuleCatalog,
-  resolveRepositoryContext,
+  recordCheckout,
+  loadBundledCatalog,
+  setUpRepository,
+  upsertLibraryRule,
 } from "../../src/engine/index.js";
-import { startRepository, SqliteSessionReader, type SessionEventRecord } from "../../src/runtime/index.js";
+import { setRepositoryStarted, SqliteSessionReader, type SessionEventRecord } from "../../src/runtime/index.js";
 
 type Host = "omp" | "pi";
 
@@ -241,18 +243,17 @@ async function project(): Promise<Workspace> {
   const root = await mkdtemp(join(tmpdir(), "rerail-lifecycle-"));
   await mkdir(join(root, "api"), { recursive: true });
   await writeFile(join(root, "api", "existing.py"), "def existing():\n    return 1\n");
+  // A private Rerail home keeps the run's rules and history out of the user's.
   const rerailHome = join(root, ".rerail-home");
   const databasePath = join(rerailHome, "rerail.sqlite");
-  const catalog = openScopedRuleCatalog(root, databasePath);
-  try {
-    catalog.upsertCodeRule(CODE_RULE, { applicability: "project", enabled: true });
-  } finally {
-    catalog.close();
-  }
-  // Rerail is off until started; start the project as `rerail start` would.
+  // The project runs the one inline rule from the library, set up and started as `rerail start` would leave it.
   const database = openRerailDatabase(databasePath);
   try {
-    startRepository(database, resolveRepositoryContext(root).repositoryId);
+    const bundle = loadBundledCatalog();
+    upsertLibraryRule(database, bundle, CODE_RULE, "file");
+    const { repositoryKey } = recordCheckout(database, root);
+    setUpRepository(database, repositoryKey, { packs: [], rules: [{ sourceKind: "library_rule", sourceId: CODE_RULE.id, folder: "" }] });
+    setRepositoryStarted(database, repositoryKey, true);
   } finally {
     database.$client.close();
   }

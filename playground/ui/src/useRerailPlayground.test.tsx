@@ -50,7 +50,7 @@ it("keeps paid generation single-flight from the initial click until completion,
   });
   await waitFor(() => expect(PlaygroundSocket.instances).toHaveLength(1));
   const socket = PlaygroundSocket.instances[0]!;
-  const rule = { id: "rule", kind: "conversation", definition: "{}", digest: "digest", updatedAt: "now", enabled: false };
+  const rule = { id: "rule", kind: "conversation", definition: "{}", digest: "digest", updatedAt: "now", source: "library" };
   const scenario = {
     id: "scenario",
     title: "Positive",

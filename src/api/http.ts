@@ -19,15 +19,9 @@ import { semanticSchemaComponents } from "../engine/code-rule/code-rule-schema-s
 
 import { conversationRuleSchema, matchConditionSchema, sampleSourceSchema } from "../engine/catalog/rule-schema.js";
 import { auditControlsSchema, auditRequestSchema } from "../engine/audit/audit-control-schema.js";
-import {
-  ApiError,
-  eventRecordSchema,
-  storedRuleSchema,
-  auditRecordSchema,
-  presentationPreferenceSchema,
-  type Operation,
-  type RerailApiStores,
-} from "./operations.js";
+import { ApiError, invokeOperation, type Operation, type RerailApiStores } from "./operation.js";
+import { eventRecordSchema, auditRecordSchema, presentationPreferenceSchema } from "./operations.js";
+import { deciderSchema, effectiveRuleSchema, libraryRuleRecordSchema, repositorySummarySchema } from "./repository-contracts.js";
 import { sessionResponseSchema, sessionSummarySchema } from "./session-contracts.js";
 
 // Named components give the generated client stable type names, and break the recursive
@@ -46,8 +40,10 @@ const COMPONENTS: ReadonlyArray<[z.ZodType, string]> = [
   [codeRuleSchema, "FileRule"],
   [matchConditionSchema, "MatchCondition"],
   [conversationRuleSchema, "ConversationRule"],
-  [storedRuleSchema, "StoredRule"],
-  [sessionSummarySchema, "SessionSummary"],
+  [effectiveRuleSchema, "EffectiveRule"],
+  [deciderSchema, "RuleDecider"],
+  [libraryRuleRecordSchema, "LibraryRule"],
+  [repositorySummarySchema, "RepositorySummary"],
   [sessionResponseSchema, "SessionResponse"],
   [eventRecordSchema, "EventRecord"],
   [auditRecordSchema, "AuditRecord"],
@@ -80,11 +76,13 @@ const jsonContent = (schema: z.ZodType, description: string) => ({
 });
 
 /**
- * GET operations answered entirely from the rule catalog, so the catalog's own change token dates
- * them without running the handler. Conditional requests are an HTTP concern, so they live here
- * rather than in the shared operation shape that MCP tools also read.
+ * GET operations answered entirely from the database, so its change token dates them without running the
+ * handler. Conditional requests are an HTTP concern, so they live here rather than in the shared operation
+ * shape that MCP tools also read.
  */
-const CATALOG_ETAG_OPERATIONS: ReadonlySet<string> = new Set(["rules_list", "rules_get"]);
+const DATABASE_ETAG_OPERATIONS: ReadonlySet<string> = new Set([
+  "repositories_list", "repository_rules_get", "library_rules_list", "library_rules_get", "rerail_rules_list",
+]);
 
 /**
  * GET operations that read audit history, which has no cheap change token: their tag is a
@@ -92,7 +90,7 @@ const CATALOG_ETAG_OPERATIONS: ReadonlySet<string> = new Set(["rules_list", "rul
  */
 const RESULT_ETAG_OPERATIONS: ReadonlySet<string> = new Set(["rules_activity", "violations_list", "sessions_list"]);
 
-const ETAG_OPERATIONS: ReadonlySet<string> = new Set([...CATALOG_ETAG_OPERATIONS, ...RESULT_ETAG_OPERATIONS]);
+const ETAG_OPERATIONS: ReadonlySet<string> = new Set([...DATABASE_ETAG_OPERATIONS, ...RESULT_ETAG_OPERATIONS]);
 
 /** Key order in a query string must not change the tag; two filters that differ must. */
 function normalizedInput(input: Record<string, unknown>): string {
@@ -242,6 +240,7 @@ export function createRerailApi(
           ? { 304: { description: "Unchanged since the tag in If-None-Match; the response has no body." } }
           : {}),
         400: jsonContent(z.union([invalidRequestSchema, errorSchema]), "Invalid request"),
+        403: jsonContent(errorSchema, "Not permitted, e.g. a coding agent changing a set-up repository's rules"),
         404: jsonContent(errorSchema, "Not found"),
         409: jsonContent(errorSchema, "Conflict"),
         503: jsonContent(errorSchema, "A dependency the operation needs, such as the native kernel, is unavailable"),
@@ -255,13 +254,14 @@ export function createRerailApi(
         return matchesEtag(context.req.header("if-none-match"), etag) ? context.body(null, 304) : undefined;
       };
       try {
-        if (CATALOG_ETAG_OPERATIONS.has(operation.id)) {
+        if (DATABASE_ETAG_OPERATIONS.has(operation.id)) {
           // `dataVersion()` is a `PRAGMA data_version` read plus a local write counter, so it
           // catches commits from other processes as well as this daemon's own, at constant cost.
-          const unchanged = conditional(entityTag(operation.id, instanceSalt, normalizedInput(input), stores.rules().dataVersion()));
+          const unchanged = conditional(entityTag(operation.id, instanceSalt, normalizedInput(input), stores.dataVersion()));
           if (unchanged !== undefined) return unchanged;
         }
-        const result = operation.handler(stores, input);
+        // `/api` callers are people (the dashboard, the CLI); coding agents come through `/mcp`.
+        const result = invokeOperation(operation, stores, input, { kind: "person" });
         if (RESULT_ETAG_OPERATIONS.has(operation.id)) {
           const unchanged = conditional(entityTag(operation.id, JSON.stringify(result) ?? ""));
           if (unchanged !== undefined) return unchanged;

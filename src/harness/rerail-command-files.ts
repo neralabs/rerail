@@ -102,10 +102,13 @@ function commandBody(agent: CommandFileAgent, name: RerailCommandName, context: 
       };
     }
     case "rerail-start":
-      return { text: runOne(`${cli} start`, "Start Rerail in this checkout, setting the repo up the first time."), allowed: [`${cli} start`] };
+      return {
+        text: runOne(`${cli} start`, "Start Rerail in this checkout and the worktrees inside it, setting the repo up the first time with its recommended rule packs."),
+        allowed: [`${cli} start`],
+      };
     case "rerail-stop":
       return {
-        text: runOne(`${cli} stop`, "Stop Rerail in this checkout and the worktrees that follow it. Rules and history are kept."),
+        text: runOne(`${cli} stop`, "Stop Rerail in this checkout and the worktrees inside it. Rules and history are kept."),
         allowed: [`${cli} stop`],
       };
     case "rerail-update":

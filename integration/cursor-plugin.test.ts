@@ -4,9 +4,9 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startEngineService, type EngineService } from "../src/runtime/index.js";
-import { startTestRepository } from "../test/support/started-repository.js";
 import { sessionStartNote } from "../src/engine/index.js";
-import { dashboardOrigin } from "../src/presentation/index.js";
+import { dashboardOrigin, presentedSessionNoteRules } from "../src/presentation/index.js";
+import { startTestRepository } from "../test/support/started-repository.js";
 
 const temporaryDirectories: string[] = [];
 const engineServices: EngineService[] = [];
@@ -59,7 +59,7 @@ describe("Cursor packaged event adapter", () => {
     engineServices.push(await startEngineService({ socketPath: kernelSocketPath, storageRoot: join(root, ".rerail/sessions"), modelPath: join(process.cwd(), "model") }));
 
     expect(await invokeCursorHook(executable, { ...common, hook_event_name: "sessionStart" }, kernelSocketPath)).toEqual({
-      additional_context: sessionStartNote(await dashboardOrigin(root), "cursor", common.conversation_id),
+      additional_context: sessionStartNote(await dashboardOrigin(root), "cursor", common.conversation_id, await presentedSessionNoteRules({ host: "cursor", sessionId: common.conversation_id, cwd: root })),
     });
     expect(await invokeCursorHook(executable, {
       ...common,

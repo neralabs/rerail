@@ -9,6 +9,7 @@ export {
   runProfileCommand,
   signedUpdatePolicy,
 } from "./activation-cli.js";
+export { runRulesCommand } from "./project-cli.js";
 export {
   MOCK_CODE_RULES,
   MOCK_CONVERSATION_RULES,

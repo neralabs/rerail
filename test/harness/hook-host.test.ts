@@ -2,13 +2,23 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
-import type { AdapterDelivery } from "../../src/engine/index.js";
-import { emitHookOutput, pendingPath, persistPending, readPending, serveHook, takePending, withSessionLock, type HookInput, type HookOptions, type HookOutput } from "../../src/harness/hook-host.js";
+import { type AdapterDelivery, sessionStartNote } from "../../src/engine/index.js";
+import {
+  emitHookOutput,
+  pendingPath,
+  persistPending,
+  readPending,
+  serveHook,
+  takePending,
+  withSessionLock,
+  type HookInput,
+  type HookOutput,
+} from "../../src/harness/hook-adapter.js";
+import type { HookOptions } from "../../src/harness/hook-host.js";
 import { runClaudeHook } from "../../src/hosts/claude/index.js";
 import { runCodexHook } from "../../src/hosts/codex/index.js";
 import { runCursorHook } from "../../src/hosts/cursor/index.js";
 import { hookOptions, serveText, temporaryDirectories, sessionDatabaseQuery } from "../support/hook-events.js";
-import { sessionStartNote } from "../../src/engine/index.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-hook-host-");
 
@@ -29,7 +39,7 @@ function receiptPayloads(root: string): unknown[] {
 const sessionStart = (host: "claude-code" | "codex") => ({
   input: (cwd: string): HookInput => ({ cwd, session_id: "session-1", hook_event_name: "SessionStart", source: "startup" }),
   expected: {
-    hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: `${sessionStartNote(undefined, host, "session-1")}\n\nfirst\n\nsecond` },
+    hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: `${sessionStartNote(undefined, host, "session-1", { setUp: true, ruleCount: null })}\n\nfirst\n\nsecond` },
   },
 });
 const hookCases: Array<{
@@ -43,7 +53,7 @@ const hookCases: Array<{
   {
     host: "cursor", run: runCursorHook,
     input: cwd => ({ workspace_roots: [cwd], conversation_id: "session-1", hook_event_name: "sessionStart" }),
-    expected: { additional_context: `${sessionStartNote(undefined, "cursor", "session-1")}\n\nfirst\n\nsecond` },
+    expected: { additional_context: `${sessionStartNote(undefined, "cursor", "session-1", { setUp: true, ruleCount: null })}\n\nfirst\n\nsecond` },
   },
 ];
 
@@ -108,7 +118,7 @@ describe("hook steers", () => {
       }),
       stderr: { write() {} },
     });
-    expect(JSON.parse(failedWrite)).toEqual({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: `${sessionStartNote(undefined, "claude-code", "session-1")}\n\nguidance` } });
+    expect(JSON.parse(failedWrite)).toEqual({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: `${sessionStartNote(undefined, "claude-code", "session-1", { setUp: true, ruleCount: null })}\n\nguidance` } });
     output.circular = output;
     await expect(emitHookOutput(output)).rejects.toThrow(/circular/i);
     const fallback = await serveText(async () => output, "{}");
@@ -128,7 +138,7 @@ describe("hook steers", () => {
     await rename(databasePath, `${databasePath}.backup`);
     await mkdir(databasePath);
     const served = await serveText(async () => output, "{}");
-    expect(JSON.parse(served.stdout)).toEqual({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: `${sessionStartNote(undefined, "claude-code", "session-1")}\n\nguidance` } });
+    expect(JSON.parse(served.stdout)).toEqual({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: `${sessionStartNote(undefined, "claude-code", "session-1", { setUp: true, ruleCount: null })}\n\nguidance` } });
     expect(served.stderr).toMatch(/^rerail hook: /);
   });
 });

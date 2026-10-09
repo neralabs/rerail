@@ -42,8 +42,6 @@ export interface DaemonHealth extends Pick<DaemonState, "version" | "pid" | "ui"
   native: NativeStatus;
   /** Absolute checkout path native sessions address. */
   workspaceRoot: string;
-  /** Stable identity of the repository the page, listings, and rule context are scoped to. */
-  repositoryId: string;
 }
 
 /**
@@ -439,9 +437,9 @@ let autostartAttempted = false;
  * it could exit. The launcher's own output goes to `daemon.log`; a failure
  * is visible there and through `rerail status`, never in the host.
  *
- * Every session records into the one database in the Rerail home. The first
- * session to start wins the daemon, and with it the repository its page lists;
- * later sessions in other repositories reuse it for their engine service and status.
+ * Every session records into the one database in the Rerail home, and the one
+ * daemon serves every repository; sessions in any repository reuse it for their
+ * engine service and status.
  */
 export function autostartDaemon(): void {
   if (autostartAttempted) return;

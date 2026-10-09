@@ -3,12 +3,13 @@
 Status: the layout and the validation contract (checks 1 to 6) are implemented. `test/engine/catalog/packs.test.ts` validates every
 `packs/*` directory: `python`, `php`, `blade`, `typescript`, `react`, `node`, `next` and `tslint`. Core does not load
 installed packs yet: it ships the TSLint pack inside its own package (`packs/tslint/pack.json` and `packs/tslint/rules/`
-in its `files`, read from `CORE_RULE_PACKS` in `src/engine/catalog/rule-bootstrap.ts`; see [rule packs](rule-packs.md)), and no pack
+in its `files`, read from `CORE_RULE_PACKS` in `src/engine/catalog/bundled-rule-documents.ts`; see [rule packs](rule-packs.md)), and no pack
 is published. A pack introduces no new file format: it combines the two schemas the repository already has. To start
 one, see [language packs](language-packs.md#start-a-pack).
 
-Core has no rules of its own: every rule document it ships is in a pack, and pack rules are seeded disabled. The
-engine's `capabilities.json`, which every code rule compiles against, is `native/src/code_rule_dsl/capabilities.json`.
+Core has no rules of its own: every rule document it ships is in a pack. Like every By Rerail rule, a pack's rules run
+only in repositories that add them (or the pack). The engine's `capabilities.json`, which every code rule compiles
+against, is `native/src/code_rule_dsl/capabilities.json`.
 
 ## Principles
 

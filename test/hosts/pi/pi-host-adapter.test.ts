@@ -38,6 +38,7 @@ function lifecycleHarness(changeOwnerBeforeFailure: boolean) {
     conversationRulesCommand: {},
     packageRoot: "/rerail",
     started: () => true,
+    sessionNoteRules: async () => ({ setUp: false }),
   });
   return { context, handlers, ingested: () => ingested };
 }

@@ -2,12 +2,12 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import type { AdapterDelivery } from "../../../src/engine/index.js";
-import { claudeHookOutput, handleClaudeEvent, runClaudeHook } from "../../../src/hosts/claude/claude-hook.js";
+import { type AdapterDelivery, sessionStartNote, steerBlock } from "../../../src/engine/index.js";
+import { claudeHookOutput, handleClaudeEvent } from "../../../src/hosts/claude/claude-hook-adapter.js";
+import { runClaudeHook } from "../../../src/hosts/claude/claude-hook.js";
 import type { HookOptions } from "../../../src/harness/index.js";
+import { dashboardOrigin, presentedSessionNoteRules } from "../../../src/presentation/index.js";
 import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
-import { sessionStartNote, steerBlock } from "../../../src/engine/index.js";
-import { dashboardOrigin } from "../../../src/presentation/index.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-claude-hook-");
@@ -22,7 +22,7 @@ describe("Claude Code one-shot hook", () => {
     const options = hookOptions(root);
     const common = { session_id: "claude-session", cwd: root, transcript_path: "/tmp/transcript.jsonl", permission_mode: "default" };
 
-    const note = sessionStartNote(await dashboardOrigin(root), "claude-code", "claude-session");
+    const note = sessionStartNote(await dashboardOrigin(root), "claude-code", "claude-session", await presentedSessionNoteRules({ host: "claude-code", sessionId: "claude-session", cwd: root }));
     expect(await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, options)).toEqual({
       hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: note },
     });
@@ -144,7 +144,7 @@ describe("Claude Code one-shot hook", () => {
     expect(await handleClaudeEvent({ ...common, hook_event_name: "SessionStart", source: "startup" }, startLoop, storageRoot)).toEqual({
       hookSpecificOutput: {
         hookEventName: "SessionStart",
-        additionalContext: `${sessionStartNote(await dashboardOrigin(root), "claude-code", "claude-session")}\n\nRead the conventions.`,
+        additionalContext: `${sessionStartNote(await dashboardOrigin(root), "claude-code", "claude-session", await presentedSessionNoteRules({ host: "claude-code", sessionId: "claude-session", cwd: root }))}\n\nRead the conventions.`,
       },
     });
 

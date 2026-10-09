@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,21 +19,22 @@ import {
   RULE_MESSAGE_TYPE,
   defaultRerailDatabasePath,
   resetRepositoryHistory,
-  openScopedRuleCatalog,
-  resolveRepositoryContext,
   linkSteers,
   steerBlock,
+  type ConversationRule,
+  openRerailDatabase,
+  setRuleSetting,
 } from "../../../src/engine/index.js";
 import { createConversationRulesExtension } from "../../../src/hosts/omp/extension.js";
-import type { ConversationRule } from "../../../src/engine/index.js";
-import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
 import { SqliteSessionReader, isRerailStarted } from "../../../src/runtime/index.js";
+import { steerDashboard } from "../../../src/presentation/index.js";
+import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
+import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
-import { dashboardOrigin } from "../../../src/presentation/index.js";
 
 /** The steer block a rule delivers, with its `Why?` link made absolute the way the OMP adapter does for `cwd`. */
 async function deliveredSteer(cwd: string, ruleId: string, guidance: string): Promise<string> {
-  return linkSteers(steerBlock(ruleId, guidance), await dashboardOrigin(cwd));
+  return linkSteers(steerBlock(ruleId, guidance), await steerDashboard(cwd));
 }
 
 // Every test here builds real sessions (native model, engine, rule catalog); on a loaded CI runner a
@@ -70,11 +71,15 @@ interface RegisteredTool {
   execute(id: string, input: unknown): Promise<unknown>;
 }
 
-async function createHarness({ started = true }: { started?: boolean } = {}) {
+/**
+ * A checkout whose repository is started and set up with `rules` added, unless `started` is false. Only rules a
+ * repository adds run.
+ */
+async function createHarness({ started = true, rules = [] }: { started?: boolean; rules?: readonly ConversationRule[] } = {}) {
   const cwd = mkdtempSync(join(tmpdir(), "rerail-omp-extension-"));
   process.env.RERAIL_HOME = join(cwd, "home");
   temporaryDirectories.push(cwd);
-  if (started) startTestRepository(cwd);
+  const repositoryKey = started ? setUpTestRepository(cwd, { library: rules.map(rule => ({ kind: "conversation" as const, rule })) }) : undefined;
   await startNativeTestDaemon(cwd);
   const handlers = new Map<string, Handler>();
   const commands = new Map<string, CommandHandler>();
@@ -105,7 +110,7 @@ async function createHarness({ started = true }: { started?: boolean } = {}) {
     hasPendingMessages: () => true,
   } as unknown as ExtensionContext;
   shutdowns.push(async () => handlers.get("session_shutdown")?.({}, context));
-  return { handlers, commands, messages, entries, pi, context };
+  return { handlers, commands, messages, entries, pi, context, repositoryKey };
 }
 
 function receiptCount(context: ExtensionContext): number {
@@ -130,10 +135,9 @@ const sentenceRule: ConversationRule = {
 
 describe("OMP conversation-rules extension", () => {
   it.each(["steer", "block"] as const)("steers immediately when a streamed sentence matches a %s rule", async mode => {
-    const harness = await createHarness();
+    const harness = await createHarness({ rules: [{ ...sentenceRule, mode }] });
     createConversationRulesExtension({
       modelPath: resolve("model"),
-      rules: [{ ...sentenceRule, mode }],
       registerTool: false,
       registerCommand: false,
     })(harness.pi);
@@ -176,17 +180,14 @@ describe("OMP conversation-rules extension", () => {
   });
 
   it("records accepted guidance delivered while the agent is idle", async () => {
-    const harness = await createHarness();
+    const idleRule: ConversationRule = { ...sentenceRule, sample: { source: "user-input", boundary: "message" } };
+    const harness = await createHarness({ rules: [idleRule] });
     Object.assign(harness.context, {
       isIdle: () => true,
       hasPendingMessages: () => false,
     });
     createConversationRulesExtension({
       modelPath: resolve("model"),
-      rules: [{
-        ...sentenceRule,
-        sample: { source: "user-input", boundary: "message" },
-      }],
       registerTool: false,
       registerCommand: false,
     })(harness.pi);
@@ -202,10 +203,10 @@ describe("OMP conversation-rules extension", () => {
   });
 
   it("does not count a rejected native send", async () => {
-    const harness = await createHarness();
+    const harness = await createHarness({ rules: [sentenceRule] });
     harness.pi.sendMessage = () => { throw new Error("host rejected guidance"); };
     createConversationRulesExtension({
-      modelPath: resolve("model"), rules: [sentenceRule], registerTool: false, registerCommand: false,
+      modelPath: resolve("model"), registerTool: false, registerCommand: false,
     })(harness.pi);
     await harness.handlers.get("session_start")?.({ type: "session_start" }, harness.context);
     await expect(harness.handlers.get("message_update")?.({
@@ -216,28 +217,23 @@ describe("OMP conversation-rules extension", () => {
     expect(receiptCount(harness.context)).toBe(0);
   });
 
-  it("loads enabled conversation rules from the project database and lets them override file rules", async () => {
-    const harness = await createHarness();
-    mkdirSync(join(harness.context.cwd, ".omp"));
-    writeFileSync(join(harness.context.cwd, ".omp", "conversation-rules.json"), JSON.stringify({
-      version: 1,
+  it("runs the repository's conversation rules, except one switched off in the repository", async () => {
+    const harness = await createHarness({
       rules: [
-        { ...sentenceRule, action: { content: "From the JSON file." } },
-        { ...sentenceRule, id: "file-only", action: { content: "First file." } },
+        { ...sentenceRule, action: { content: "From the library." } },
+        { ...sentenceRule, id: "switched-off", action: { content: "Switched off." } },
       ],
-    }), { flag: "wx" });
-    writeFileSync(join(harness.context.cwd, ".omp", "second-rules.json"), JSON.stringify({
-      version: 1,
-      rules: [{ ...sentenceRule, id: "file-only", action: { content: "File-only rule." } }],
-    }), { flag: "wx" });
-    const store = openScopedRuleCatalog(harness.context.cwd);
-    store.upsertConversationRule({ ...sentenceRule, action: { content: "From the database." } });
-    store.upsertConversationRule({ ...sentenceRule, id: "disabled", action: { content: "Disabled rule." } }, { enabled: false });
-    store.close();
+    });
+    const database = openRerailDatabase(defaultRerailDatabasePath());
+    try {
+      setRuleSetting(database, {
+        owner: { kind: "repository", repositoryKey: harness.repositoryKey! }, folder: "", targetKind: "rule", targetId: "switched-off", on: false, mode: null,
+      });
+    } finally {
+      database.$client.close();
+    }
     createConversationRulesExtension({
       modelPath: resolve("model"),
-      rules: [{ ...sentenceRule, id: "file-only", action: { content: "Host fallback." } }],
-      ruleFiles: [".omp/conversation-rules.json", ".omp/second-rules.json"],
       registerTool: false,
       registerCommand: false,
     })(harness.pi);
@@ -253,17 +249,15 @@ describe("OMP conversation-rules extension", () => {
     );
 
     expect(harness.messages.map(sent => sent.message.content)).toEqual([
-      await deliveredSteer(harness.context.cwd, "checkout", "From the database."),
-      await deliveredSteer(harness.context.cwd, "file-only", "File-only rule."),
+      await deliveredSteer(harness.context.cwd, "checkout", "From the library."),
     ]);
-    expect(harness.entries.map(entry => (entry.data as { ruleId: string }).ruleId)).toEqual(["checkout", "file-only"]);
+    expect(harness.entries.map(entry => (entry.data as { ruleId: string }).ruleId)).toEqual(["checkout"]);
   });
 
   it("counts after-gap repeats across separate agent runs", async () => {
-    const harness = await createHarness();
+    const harness = await createHarness({ rules: [{ ...sentenceRule, repeat: { mode: "after-gap", gapTurns: 2 } }] });
     createConversationRulesExtension({
       modelPath: resolve("model"),
-      rules: [{ ...sentenceRule, repeat: { mode: "after-gap", gapTurns: 2 } }],
       registerTool: false,
       registerCommand: false,
     })(harness.pi);
@@ -301,7 +295,6 @@ describe("OMP conversation-rules extension", () => {
   });
 
   it("samples awaited tool calls and tolerates malformed tool arguments", async () => {
-    const harness = await createHarness();
     const toolRule: ConversationRule = {
       ...sentenceRule,
       id: "tool-input",
@@ -310,9 +303,9 @@ describe("OMP conversation-rules extension", () => {
       sample: { source: "tool:submit", boundary: "tool-call", minimumTokens: 1 },
       action: { content: "Observe the tool." },
     };
+    const harness = await createHarness({ rules: [toolRule] });
     createConversationRulesExtension({
       modelPath: resolve("model"),
-      rules: [toolRule],
       registerTool: false,
       registerCommand: false,
     })(harness.pi);
@@ -363,7 +356,6 @@ describe("OMP conversation-rules extension", () => {
   });
 
   it("steers on a structural tool-call rule and ignores the tool result that echoes it", async () => {
-    const harness = await createHarness();
     const forcePush: ConversationRule = {
       id: "no-force-push",
       mode: "log",
@@ -372,9 +364,9 @@ describe("OMP conversation-rules extension", () => {
       action: { content: "Do not force-push." },
       repeat: { mode: "always" },
     };
+    const harness = await createHarness({ rules: [forcePush] });
     createConversationRulesExtension({
       modelPath: resolve("model"),
-      rules: [forcePush],
       registerTool: false,
       registerCommand: false,
     })(harness.pi);
@@ -407,11 +399,10 @@ describe("OMP conversation-rules extension", () => {
   });
 
   it("detaches the current OMP runtime when Rerail is stopped in the repository", async () => {
-    const harness = await createHarness();
+    const harness = await createHarness({ rules: [sentenceRule] });
     const notices: Array<{ message: string; level: string }> = [];
     createConversationRulesExtension({
       modelPath: resolve("model"),
-      rules: [sentenceRule],
       registerTool: false,
     })(harness.pi);
     await harness.handlers.get("session_start")?.({ type: "session_start" }, harness.context);
@@ -437,7 +428,6 @@ describe("OMP conversation-rules extension", () => {
     createConversationRulesExtension({
       modelPath: resolve("model"),
       databasePath: configured,
-      rules: [sentenceRule],
       registerTool: false,
     })(harness.pi);
     await harness.handlers.get("session_start")?.({ type: "session_start" }, harness.context);
@@ -455,7 +445,6 @@ describe("OMP conversation-rules extension", () => {
     const harness = await createHarness({ started: false });
     createConversationRulesExtension({
       modelPath: resolve("model"),
-      rules: [sentenceRule],
       registerTool: false,
     })(harness.pi);
     await harness.handlers.get("session_start")?.({ type: "session_start" }, harness.context);
@@ -474,10 +463,9 @@ describe("OMP conversation-rules extension", () => {
   });
 
   it("retires the live owner before rebuilding the same OMP session through a conversation rules reload", async () => {
-    const harness = await createHarness();
+    const harness = await createHarness({ rules: [sentenceRule] });
     createConversationRulesExtension({
       modelPath: resolve("model"),
-      rules: [sentenceRule],
       registerTool: false,
     })(harness.pi);
     await harness.handlers.get("session_start")?.({ type: "session_start" }, harness.context);
@@ -499,10 +487,9 @@ describe("OMP conversation-rules extension", () => {
   });
 
   it("keeps recording and delivering guidance after an in-place reset beneath the daemon", async () => {
-    const harness = await createHarness();
+    const harness = await createHarness({ rules: [{ ...sentenceRule, repeat: { mode: "always" } }] });
     createConversationRulesExtension({
       modelPath: resolve("model"),
-      rules: [{ ...sentenceRule, repeat: { mode: "always" } }],
       registerTool: false, registerCommand: false,
     })(harness.pi);
     await harness.handlers.get("session_start")?.({}, harness.context);
@@ -512,7 +499,7 @@ describe("OMP conversation-rules extension", () => {
     }, harness.context);
     await emit("before-reset");
     const databasePath = defaultRerailDatabasePath();
-    resetRepositoryHistory(databasePath, resolveRepositoryContext(harness.context.cwd).repositoryId);
+    resetRepositoryHistory(databasePath, harness.repositoryKey!);
     await emit("after-reset");
 
     expect(harness.messages.map(sent => sent.message.content)).toEqual([
@@ -562,7 +549,7 @@ describe("OMP conversation-rules extension", () => {
       const daemon = flakyDaemon(harness.context.cwd);
       vi.useFakeTimers();
       const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-      createConversationRulesExtension({ modelPath: resolve("model"), rules: [sentenceRule], registerTool: false, registerCommand: false })(harness.pi);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
       daemon.state.down.add("omp-test-session");
       await expect(harness.handlers.get("session_start")!({ type: "session_start" }, harness.context)).rejects.toThrow("fetch failed");
       expect(daemon.initializes("omp-test-session")).toBe(1);
@@ -576,7 +563,8 @@ describe("OMP conversation-rules extension", () => {
       daemon.state.down.delete("omp-test-session");
       await vi.advanceTimersByTimeAsync(4_000);
       await vi.waitFor(() => expect(daemon.initializes("omp-test-session")).toBe(4));
-      expect(stderr).toHaveBeenCalledTimes(1);
+      // The 4th initialize is counted when it is sent; the report is written once its reply arrives.
+      await vi.waitFor(() => expect(stderr).toHaveBeenCalledTimes(1));
       expect(stderr).toHaveBeenCalledWith(expect.stringContaining("Rerail attached after 3 failed attempt(s)"));
       await harness.handlers.get("before_agent_start")!({ type: "before_agent_start", prompt: "hello" }, harness.context);
       expect(daemon.requests.at(-1)).toEqual({ operation: "ingest", sessionId: "omp-test-session" });
@@ -588,7 +576,7 @@ describe("OMP conversation-rules extension", () => {
       const daemon = flakyDaemon(harness.context.cwd);
       vi.useFakeTimers();
       vi.spyOn(process.stderr, "write").mockReturnValue(true);
-      createConversationRulesExtension({ modelPath: resolve("model"), rules: [sentenceRule], registerTool: false, registerCommand: false })(harness.pi);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
       const next = { ...harness.context, sessionManager: { getSessionId: () => "omp-next-session", getBranch: () => [] } } as unknown as ExtensionContext;
       daemon.state.down.add("omp-test-session");
       await expect(harness.handlers.get("session_start")!({ type: "session_start" }, harness.context)).rejects.toThrow();
@@ -616,7 +604,7 @@ describe("OMP conversation-rules extension", () => {
       const daemon = flakyDaemon(harness.context.cwd);
       vi.useFakeTimers();
       vi.spyOn(process.stderr, "write").mockReturnValue(true);
-      createConversationRulesExtension({ modelPath: resolve("model"), rules: [sentenceRule], registerTool: false, registerCommand: false })(harness.pi);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
       daemon.state.down.add("omp-test-session");
       await expect(harness.handlers.get("session_start")!({ type: "session_start" }, harness.context)).rejects.toThrow();
 
@@ -639,7 +627,7 @@ describe("OMP conversation-rules extension", () => {
       const daemon = flakyDaemon(harness.context.cwd);
       vi.useFakeTimers();
       vi.spyOn(process.stderr, "write").mockReturnValue(true);
-      createConversationRulesExtension({ modelPath: resolve("model"), rules: [sentenceRule], registerTool: false, registerCommand: false })(harness.pi);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
       const next = { ...harness.context, sessionManager: { getSessionId: () => "omp-next-session", getBranch: () => [] } } as unknown as ExtensionContext;
       await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
       expect(daemon.initializes("omp-test-session")).toBe(1);

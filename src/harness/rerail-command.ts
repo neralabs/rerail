@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { ENTRY_POINTS } from "../engine/package-root.js";
 import { readPresentation, readRulesDashboard, readSummaryState } from "../presentation/session-presentation.js";
-import type { RepositoryStartState } from "../runtime/repository-start.js";
+import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { nodeExecutable, openDashboard, type PageOpening } from "../runtime/daemon-control.js";
 import { createRuleInstructions, RERAIL_COMMANDS, type RerailCommandName } from "./rerail-commands.js";
 import { renderRerailSummary } from "./rerail-summary.js";
@@ -79,7 +79,7 @@ async function runLauncher(options: RerailCommandOptions, args: readonly string[
   return promise;
 }
 
-const START_STATES: readonly RepositoryStartState[] = ["started", "stopped", "never"];
+const START_STATES: readonly RepositoryStartState[] = ["started", "stopped", "not-set-up"];
 
 /** `rerail state` for this checkout, as `/rerail-start` reads it; OMP runs on Bun, which cannot open the database itself. */
 async function launcherStartState(options: RerailCommandOptions): Promise<RepositoryStartState> {
@@ -88,6 +88,19 @@ async function launcherStartState(options: RerailCommandOptions): Promise<Reposi
   const known = START_STATES.find(candidate => candidate === state);
   if (result.code !== 0 || known === undefined) throw new Error(`rerail state failed: ${(result.stdout + result.stderr).trim()}`);
   return known;
+}
+
+/**
+ * Whether this checkout's repository is set up (`rerail state --set-up`), read apart from its start state: a repository
+ * Rerail has never seen reads as stopped, and is not set up either.
+ */
+async function launcherSetUp(options: RerailCommandOptions): Promise<boolean> {
+  const result = await runLauncher(options, ["state", "--set-up"], databaseArgs(options));
+  const answer = result.stdout.trim();
+  if (result.code !== 0 || (answer !== "set-up" && answer !== "not-set-up")) {
+    throw new Error(`rerail state --set-up failed: ${(result.stdout + result.stderr).trim()}`);
+  }
+  return answer === "set-up";
 }
 
 function notifyResult(ctx: RerailCommandContext, name: string, result: LauncherResult): void {
@@ -99,14 +112,21 @@ function openingNotice(url: string, opening: PageOpening): string {
   return opening === "orca-tab" ? `Opening ${url} in the Orca window` : `Opening ${url}`;
 }
 
+const RECOMMENDED_RULES = "Add the recommended rules";
+const PICK_MYSELF = "I'll pick rules myself";
+
 /**
- * First-time set-up of a repository where Rerail was never started, from OMP or Pi. Today it runs
- * `rerail start`, whose set-up text the person reads in the notice. A native set-up picker is to replace
- * this body: its questions asked through `ctx.ui.select` / `ctx.ui.input` and answered
- * back to the launcher. It returns what the person should see, as the launcher's result.
+ * First-time set-up of a repository that is not set up yet, from OMP or Pi: ask once whether to add the
+ * recommended rule packs, then run `rerail start` (with `--no-packs` for "pick myself", which sets the
+ * repository up with no rules). Without a UI the recommended packs are added, as `rerail start` does.
  */
-async function setUpRepository(options: RerailCommandOptions, _ctx: RerailCommandContext): Promise<LauncherResult> {
-  return runLauncher(options, ["start"], databaseArgs(options));
+async function setUpFromCommand(options: RerailCommandOptions, ctx: RerailCommandContext): Promise<LauncherResult> {
+  const choice = ctx.hasUI === false
+    ? RECOMMENDED_RULES
+    : await ctx.ui.select("Set up Rerail in this repository", [RECOMMENDED_RULES, PICK_MYSELF]);
+  if (choice === undefined) return { code: 0, stdout: "Rerail was not set up.\n", stderr: "" };
+  const packs = choice === PICK_MYSELF ? ["--no-packs"] : [];
+  return runLauncher(options, ["start", ...packs], databaseArgs(options));
 }
 
 /** A POSIX single-quoted shell word, for the launcher command the coding agent runs from `/rerail-create`. */
@@ -171,10 +191,9 @@ export function registerRerailCommands(pi: RerailCommandHost, options: RerailCom
   // Start and stop run the launcher, so the CLI owns the wording; without a terminal it addresses the coding agent's user.
   // Re-attaching attaches the runtime where Rerail is started, and leaves only the "not on here" footer where it is not.
   register("rerail-start", async ctx => {
-    const state = await runLauncher(options, ["state"], databaseArgs(options));
-    const result = state.code === 0 && state.stdout.trim() === "never"
-      ? await setUpRepository(options, ctx)
-      : await runLauncher(options, ["start"], databaseArgs(options));
+    const result = await launcherSetUp(options)
+      ? await runLauncher(options, ["start"], databaseArgs(options))
+      : await setUpFromCommand(options, ctx);
     if (result.code === 0) await options.reattach?.();
     notifyResult(ctx, "rerail-start", result);
   });

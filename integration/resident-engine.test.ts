@@ -6,18 +6,17 @@ import { ingestEngineEvent, startEngineService, stopDaemon, SqliteSessionReader 
 import { runCodexHook } from "../src/hosts/codex/index.js";
 import { RerailDaemon } from "../src/daemon/index.js";
 import { runCursorHook } from "../src/hosts/cursor/index.js";
-import type { AdapterDelivery } from "../src/engine/index.js";
+import { type AdapterDelivery, steerHeadlines, parseConversationRule } from "../src/engine/index.js";
 import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedContractCodeRule } from "./support/contract-code-rule.js";
 import { cursorRelayed, steerText } from "./support/steer-text.js";
-import { steerHeadlines } from "../src/engine/index.js";
-import { startTestRepository, startTestRepositoryById } from "../test/support/started-repository.js";
+import { startTestRepository } from "../test/support/started-repository.js";
+import { setUpTestRepository } from "../test/support/repository-rules.js";
 const originalRerailHome = process.env.RERAIL_HOME;
 let isolatedRerailHome: string;
 
 beforeAll(async () => {
   isolatedRerailHome = await mkdtemp(join(tmpdir(), "rerail-resident-home-"));
   process.env.RERAIL_HOME = isolatedRerailHome;
-  seedContractCodeRule(isolatedRerailHome, isolatedRerailHome);
 });
 
 afterAll(async () => {
@@ -25,6 +24,11 @@ afterAll(async () => {
   else process.env.RERAIL_HOME = originalRerailHome;
   await rm(isolatedRerailHome, { recursive: true, force: true });
 });
+
+/** Add conversation rules from the library to `root`'s repository, set up and started: only rules a repository adds run. */
+function addConversationRules(root: string, rules: readonly unknown[], databasePath?: string): void {
+  setUpTestRepository(root, { library: rules.map(rule => ({ kind: "conversation" as const, rule: parseConversationRule(rule) })) }, databasePath);
+}
 
 async function awaitCodeRuleSteer(
   initial: readonly AdapterDelivery[],
@@ -45,7 +49,7 @@ async function awaitCodeRuleSteer(
 describe("engine service", () => {
   it("preserves code rule correlation across one-shot hook connections", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-resident-kernel-"));
-    startTestRepository(root);
+    seedContractCodeRule(isolatedRerailHome, root);
     const socketPath = join(root, "engine.sock");
     const storageRoot = join(root, ".rerail", "sessions");
     let service: { close(): Promise<void> } | undefined;
@@ -102,7 +106,7 @@ describe("engine service", () => {
   }, 30_000);
   it("keeps code rule state when each Codex hook invocation closes its client", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-resident-hooks-"));
-    startTestRepository(root);
+    seedContractCodeRule(isolatedRerailHome, root);
     const socketPath = join(root, "engine.sock");
     const storageRoot = join(root, ".rerail/sessions");
     let service: { close(): Promise<void> } | undefined;
@@ -161,33 +165,24 @@ describe("engine service", () => {
   }, 30_000);
   it("serves the native engine for hooks throughout the daemon lifetime", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-daemon-kernel-"));
-    startTestRepositoryById("resident-engine-test", join(root, ".rerail/rerail.sqlite"));
     let daemon: RerailDaemon | undefined;
     try {
-      await mkdir(join(root, ".claude"));
-      await writeFile(
-        join(root, ".claude/conversation-rules.json"),
-        JSON.stringify({
-          version: 1,
-          rules: [
-            {
-              id: "resident",
-              mode: "steer",
-              reference: "Preserve database transaction atomicity",
-              match: { operator: "gte", threshold: 0.95 },
-              sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
-              action: { content: "DAEMON_ENGINE_MATCH" },
-              repeat: { mode: "once" },
-            },
-          ],
-        }),
-      );
+      addConversationRules(root, [
+        {
+          id: "resident",
+          mode: "steer",
+          reference: "Preserve database transaction atomicity",
+          match: { operator: "gte", threshold: 0.95 },
+          sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
+          action: { content: "DAEMON_ENGINE_MATCH" },
+          repeat: { mode: "once" },
+        },
+      ], join(root, ".rerail/rerail.sqlite"));
       daemon = await RerailDaemon.start({
         version: "test",
         port: 0,
         databasePath: join(root, ".rerail/rerail.sqlite"),
         workspaceRoot: root,
-        repositoryContext: { repositoryId: "resident-engine-test", workspaceRoot: root },
       });
       const session = { host: "claude-code" as const, sessionId: "daemon-session", cwd: root };
       await ingestEngineEvent(daemon.state().kernelSocketPath, { kind: "session-start", eventId: "start", session });
@@ -217,7 +212,7 @@ describe("engine service", () => {
   }, 30_000);
   it("retains captured pre-edit source when the daemon restarts during a tool call", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-kernel-restart-"));
-    startTestRepository(root);
+    seedContractCodeRule(isolatedRerailHome, root);
     const socketPath = join(root, "engine.sock");
     const options = { socketPath, storageRoot: join(root, ".rerail/sessions"), modelPath: resolve("model") };
     let service: { close(): Promise<void> } | undefined;
@@ -279,25 +274,17 @@ describe("engine service", () => {
       });
       for (const project of ["first", "second"]) {
         const cwd = join(root, project);
-        await mkdir(join(cwd, ".claude"), { recursive: true });
-        startTestRepository(cwd, join(cwd, ".rerail/rerail.sqlite"));
-        await writeFile(
-          join(cwd, ".claude/conversation-rules.json"),
-          JSON.stringify({
-            version: 1,
-            rules: [
-              {
-                id: "project-rule",
-                mode: "steer",
-                reference: "Preserve database transaction atomicity",
-                match: { operator: "gte", threshold: 0.95 },
-                sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
-                action: { content: project },
-                repeat: { mode: "once" },
-              },
-            ],
-          }),
-        );
+        addConversationRules(cwd, [
+          {
+            id: "project-rule",
+            mode: "steer",
+            reference: "Preserve database transaction atomicity",
+            match: { operator: "gte", threshold: 0.95 },
+            sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
+            action: { content: project },
+            repeat: { mode: "once" },
+          },
+        ], join(cwd, ".rerail/rerail.sqlite"));
         const configuration = {
           storageRoot: join(cwd, ".rerail/sessions"),
           modelPath: resolve("model"),
@@ -335,29 +322,21 @@ describe("engine service", () => {
 
   it("defers Cursor failure-event steers to the next supported tool context", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-cursor-delivery-"));
-    startTestRepository(root);
     const socketPath = join(root, "engine.sock");
     const storageRoot = join(root, ".rerail/sessions");
     let service: { close(): Promise<void> } | undefined;
     try {
-      await mkdir(join(root, ".cursor"));
-      await writeFile(
-        join(root, ".cursor/conversation-rules.json"),
-        JSON.stringify({
-          version: 1,
-          rules: [
-            {
-              id: "recovery",
-              mode: "steer",
-              reference: "The requested operation failed",
-              match: { operator: "gte", threshold: 0.95 },
-              sample: { source: "tool:Write", boundary: "tool-call", minimumTokens: 1 },
-              action: { content: "CURSOR_RECOVERY" },
-              repeat: { mode: "once" },
-            },
-          ],
-        }),
-      );
+      addConversationRules(root, [
+        {
+          id: "recovery",
+          mode: "steer",
+          reference: "The requested operation failed",
+          match: { operator: "gte", threshold: 0.95 },
+          sample: { source: "tool:Write", boundary: "tool-call", minimumTokens: 1 },
+          action: { content: "CURSOR_RECOVERY" },
+          repeat: { mode: "once" },
+        },
+      ]);
       service = await startEngineService({ socketPath, storageRoot, modelPath: resolve("model") });
       const options = { storageRoot, modelPath: resolve("model"), kernelSocketPath: socketPath };
       const common = { workspace_roots: [root], conversation_id: "cursor", generation_id: "one" };
@@ -405,42 +384,35 @@ describe("engine service", () => {
   }, 30_000);
   it("observes Cursor Read and Write phases sharing one native tool call ID", async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-cursor-phases-")));
-    startTestRepository(root);
+    seedContractCodeRule(isolatedRerailHome, root);
     const socketPath = join(root, "engine.sock");
     const storageRoot = join(root, ".rerail/sessions");
     let service: { close(): Promise<void> } | undefined;
     try {
-      await mkdir(join(root, ".cursor"));
       await mkdir(join(root, "api"));
       const file = join(root, "api/route.py");
       await writeFile(file, "def route():\n    return 1\n");
       const input = { content: "def route(cursor):\n    cursor.execute('SELECT 1')\n", file_path: file };
-      await writeFile(
-        join(root, ".cursor/conversation-rules.json"),
-        JSON.stringify({
-          version: 1,
-          rules: [
-            {
-              id: "write-call",
-              mode: "steer",
-              reference: JSON.stringify(input),
-              match: { operator: "gte", threshold: 0.95 },
-              sample: { source: "tool:Write", boundary: "tool-call", minimumTokens: 1 },
-              action: { content: "CURSOR_WRITE_CALL" },
-              repeat: { mode: "once" },
-            },
-            {
-              id: "write-result",
-              mode: "steer",
-              reference: "The route was written",
-              match: { operator: "gte", threshold: 0.95 },
-              sample: { source: "tool:Write", boundary: "tool-call", minimumTokens: 1 },
-              action: { content: "CURSOR_WRITE_RESULT" },
-              repeat: { mode: "once" },
-            },
-          ],
-        }),
-      );
+      addConversationRules(root, [
+        {
+          id: "write-call",
+          mode: "steer",
+          reference: JSON.stringify(input),
+          match: { operator: "gte", threshold: 0.95 },
+          sample: { source: "tool:Write", boundary: "tool-call", minimumTokens: 1 },
+          action: { content: "CURSOR_WRITE_CALL" },
+          repeat: { mode: "once" },
+        },
+        {
+          id: "write-result",
+          mode: "steer",
+          reference: "The route was written",
+          match: { operator: "gte", threshold: 0.95 },
+          sample: { source: "tool:Write", boundary: "tool-call", minimumTokens: 1 },
+          action: { content: "CURSOR_WRITE_RESULT" },
+          repeat: { mode: "once" },
+        },
+      ]);
       service = await startEngineService({ socketPath, storageRoot, modelPath: resolve("model") });
       const options = { storageRoot, modelPath: resolve("model"), kernelSocketPath: socketPath };
       const common = {
@@ -485,29 +457,21 @@ describe("engine service", () => {
 
   it("starts a Codex continuation when a turn-boundary conversation rule fires at Stop", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-codex-stop-rule-"));
-    startTestRepository(root);
     const socketPath = join(root, "engine.sock");
     const storageRoot = join(root, ".rerail/sessions");
     let service: { close(): Promise<void> } | undefined;
     try {
-      await mkdir(join(root, ".codex"));
-      await writeFile(
-        join(root, ".codex/conversation-rules.json"),
-        JSON.stringify({
-          version: 1,
-          rules: [
-            {
-              id: "turn-steer",
-              mode: "steer",
-              reference: "Preserve database transaction atomicity",
-              match: { operator: "gte", threshold: 0.95 },
-              sample: { source: "assistant-text", boundary: "turn", minimumTokens: 1 },
-              action: { content: "CONTINUE_AFTER_STOP" },
-              repeat: { mode: "once" },
-            },
-          ],
-        }),
-      );
+      addConversationRules(root, [
+        {
+          id: "turn-steer",
+          mode: "steer",
+          reference: "Preserve database transaction atomicity",
+          match: { operator: "gte", threshold: 0.95 },
+          sample: { source: "assistant-text", boundary: "turn", minimumTokens: 1 },
+          action: { content: "CONTINUE_AFTER_STOP" },
+          repeat: { mode: "once" },
+        },
+      ]);
       service = await startEngineService({ socketPath, storageRoot, modelPath: resolve("model") });
       const options = { storageRoot, modelPath: resolve("model"), kernelSocketPath: socketPath };
       const common = { cwd: root, session_id: "stop-rule", turn_id: "turn" };
@@ -559,30 +523,22 @@ describe("engine service", () => {
     const socketPath = join(root, "engine.sock");
     const storageRoot = join(root, ".rerail/sessions");
     const databasePath = join(root, ".rerail/rerail.sqlite");
-    startTestRepository(root, databasePath);
     const transcriptPath = join(root, "cursor-transcript.jsonl");
     const marker =
       "PRIVATE_CURSOR_TRANSCRIPT_CONVERSATION\n<timestamp>literal</timestamp>\n<user_query>\nPreserve these user-supplied tags.\n</user_query>";
     let service: { close(): Promise<void> } | undefined;
     try {
-      await mkdir(join(root, ".cursor"));
-      await writeFile(
-        join(root, ".cursor/conversation-rules.json"),
-        JSON.stringify({
-          version: 1,
-          rules: [
-            {
-              id: "transcript-prompt",
-              mode: "steer",
-              reference: marker,
-              match: { operator: "gte", threshold: 0.95 },
-              sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
-              action: { content: marker },
-              repeat: { mode: "once" },
-            },
-          ],
-        }),
-      );
+      addConversationRules(root, [
+        {
+          id: "transcript-prompt",
+          mode: "steer",
+          reference: marker,
+          match: { operator: "gte", threshold: 0.95 },
+          sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
+          action: { content: marker },
+          repeat: { mode: "once" },
+        },
+      ], databasePath);
       service = await startEngineService({ socketPath, storageRoot, modelPath: resolve("model") });
       const options = {
         storageRoot,
@@ -687,29 +643,21 @@ describe("engine service", () => {
     const socketPath = join(root, "engine.sock");
     const storageRoot = join(root, ".rerail/sessions");
     const databasePath = join(root, ".rerail/rerail.sqlite");
-    startTestRepository(root, databasePath);
     const transcriptPath = join(root, "cursor-transcript.jsonl");
     const marker = "PRIVATE_CURSOR_NATIVE_MODE_CONVERSATION";
     let service: { close(): Promise<void> } | undefined;
     try {
-      await mkdir(join(root, ".cursor"));
-      await writeFile(
-        join(root, ".cursor/conversation-rules.json"),
-        JSON.stringify({
-          version: 1,
-          rules: [
-            {
-              id: "native-prompt",
-              mode: "steer",
-              reference: marker,
-              match: { operator: "gte", threshold: 0.95 },
-              sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
-              action: { content: marker },
-              repeat: { mode: "once" },
-            },
-          ],
-        }),
-      );
+      addConversationRules(root, [
+        {
+          id: "native-prompt",
+          mode: "steer",
+          reference: marker,
+          match: { operator: "gte", threshold: 0.95 },
+          sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
+          action: { content: marker },
+          repeat: { mode: "once" },
+        },
+      ], databasePath);
       service = await startEngineService({ socketPath, storageRoot, modelPath: resolve("model") });
       const options = {
         storageRoot,

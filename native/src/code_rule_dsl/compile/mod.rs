@@ -217,6 +217,7 @@ pub(super) fn compile_scope(value: Option<&Value>) -> Result<CodeRuleScope> {
     Ok(CodeRuleScope {
         include: compile_glob_set(&include, "/scope/include")?,
         exclude: compile_glob_set(&exclude, "/scope/exclude")?,
+        placement: None,
     })
 }
 
@@ -274,12 +275,11 @@ pub(super) fn compile_document(
         return Err(invalid("/format must equal rerail.policy/v1"));
     }
     let id = required_str(document, "id", "/")?.to_owned();
-    let rule_mode = match document.get("mode").and_then(Value::as_str) {
-        Some("log") => RuleMode::Log,
-        Some("steer") => RuleMode::Steer,
-        Some("block") => RuleMode::Block,
-        _ => return Err(invalid("/mode must equal log, steer, or block")),
-    };
+    let rule_mode = document
+        .get("mode")
+        .and_then(Value::as_str)
+        .and_then(RuleMode::parse)
+        .ok_or_else(|| invalid("/mode must equal log, steer, or block"))?;
     let scope = compile_scope(document.get("scope"))?;
     let clauses = document
         .get("clauses")

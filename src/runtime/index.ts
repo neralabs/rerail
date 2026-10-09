@@ -23,10 +23,10 @@ export { OmpMessageContentSource, type OmpSessionEntryLike, OmpWatermarkStore } 
 export { SqlitePresentationPreferenceStore } from "./presentation-preference-store.js";
 export {
   isRerailStarted,
-  type RepositoryStartState,
-  startRepository,
+  setCheckoutStarted,
+  setRepositoryStarted,
   startStateReader,
-  stopRepository,
+  stopRerail,
   workspaceStartState,
 } from "./repository-start.js";
 export { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";

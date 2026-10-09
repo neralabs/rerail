@@ -58,7 +58,7 @@ describe("Rerail persistent event stream", () => {
   test("ingests lifecycle events without MCP and restores idempotency after restart", async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), "rerail-event-stream-"));
     temporaryDirectories.push(storageRoot);
-    const session = { host: "claude-code", sessionId: "stream-session", cwd: storageRoot };
+    const session = { host: "claude-code", sessionId: "stream-session", cwd: `${storageRoot}.workspace` };
 
     const firstRun = await runFrames(storageRoot, [
       frame({ kind: "session-start", eventId: "start", session }),
@@ -115,7 +115,7 @@ describe("Rerail persistent event stream", () => {
     const valid = frame({
       kind: "session-start",
       eventId: "start",
-      session: { host: "codex", sessionId: "s1", cwd: storageRoot },
+      session: { host: "codex", sessionId: "s1", cwd: `${storageRoot}.workspace` },
     });
     expect(await runFrames(storageRoot, ["not-json", valid])).toEqual([
       expect.objectContaining({ eventId: null, error: expect.objectContaining({ code: "invalid-event" }) }),

@@ -2,7 +2,9 @@ import type { CodeRule } from "../engine/code-rule/code-rule-schema.js";
 import type { ConversationRule } from "../engine/catalog/rule-schema.js";
 import { CODE_RULE_AST_LANGUAGES } from "../engine/code-rule/code-rule-languages.js";
 
-import { SqliteRuleStore } from "../engine/catalog/rule-store.js";
+import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
+import { openRerailDatabase } from "../engine/storage/database.js";
+import { upsertLibraryRule } from "../engine/catalog/rule-library.js";
 import { SqliteSessionStore, type WorkLink } from "../runtime/session-store.js";
 
 /**
@@ -121,16 +123,16 @@ export interface SeedResult {
   workLinks: number;
 }
 
+/** Stores the mock rules in the library (rules created by you); adding them to a repository is the caller's choice. */
 export function seedRerailDatabase(path: string, options: SeedOptions = {}): SeedResult {
   const now = options.now ?? Date.now();
-  const rules = new SqliteRuleStore(path);
+  const database = openRerailDatabase(path);
   try {
-    for (const rule of MOCK_CODE_RULES) rules.upsertCodeRule(rule, { now });
-    for (const [index, rule] of MOCK_CONVERSATION_RULES.entries()) {
-      rules.upsertConversationRule(rule, { now, revision: 1, enabled: index === 0 });
-    }
+    const bundle = loadBundledCatalog();
+    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, bundle, rule, "file", { now });
+    for (const rule of MOCK_CONVERSATION_RULES) upsertLibraryRule(database, bundle, rule, "conversation", { now, revision: 1 });
   } finally {
-    rules.close();
+    database.$client.close();
   }
 
   const sessionStore = new SqliteSessionStore(path, { repositoryId: options.repositoryId });

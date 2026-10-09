@@ -14,23 +14,31 @@ import {
 } from "./hook-adapter.js";
 import type { SemanticEmbedder } from "../engine/native/semantic-types.js";
 import { SqliteSessionStore } from "../runtime/session-store.js";
-import { defaultRerailDatabasePath } from "../engine/storage/database.js";
-import { readRepositoryId } from "../engine/catalog/repository-identity.js";
+import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
+import { lookupCheckout } from "../engine/catalog/repository-registry.js";
 
 export * from "./hook-adapter.js";
+
+/** The repository key of the checkout `cwd` is in, read without recording anything; undefined when unknown. */
+function repositoryKeyOf(cwd: string, databasePath: string): string | undefined {
+  let database;
+  try {
+    database = openRerailDatabase(databasePath, { readonly: true });
+    return lookupCheckout(database, cwd)?.repositoryKey;
+  } catch {
+    return undefined;
+  } finally {
+    database?.$client.close();
+  }
+}
 
 function recordLocalReceipt(session: AdapterSession, databasePath: string): (receiptId: string, ruleIds: readonly string[]) => void {
   return (receiptId, ruleIds) => {
     // Attribution matters only when a reset removed the session row and this receipt restores it.
-    let repositoryId: string | undefined;
+    const repositoryKey = repositoryKeyOf(session.cwd, databasePath);
+    const store = new SqliteSessionStore(databasePath);
     try {
-      repositoryId = readRepositoryId(session.cwd);
-    } catch {
-      repositoryId = undefined;
-    }
-    const store = new SqliteSessionStore(databasePath, { repositoryId });
-    try {
-      store.recordSteer(session, receiptId, ruleIds);
+      store.recordSteer(session, receiptId, ruleIds, repositoryKey === undefined ? {} : { repositoryKey });
     } finally {
       store.close();
     }
@@ -45,7 +53,7 @@ function recordLocalReceipt(session: AdapterSession, databasePath: string): (rec
 export async function hookRerailStarted(host: RerailHost, workspace: string, databasePath?: string): Promise<boolean> {
   if (databasePath === undefined) {
     const answered = await readRepositoryState(workspace, host);
-    if (answered !== null) return answered === "started";
+    if (answered !== null) return answered !== "stopped";
   }
   return isRerailStarted(workspace, databasePath);
 }

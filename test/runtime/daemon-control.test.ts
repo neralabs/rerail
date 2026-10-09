@@ -22,8 +22,8 @@ vi.mock("node:child_process", async () => {
   };
 });
 import { defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js";
-import type { DaemonState } from "../../src/runtime/daemon-control.js";
 import {
+  type DaemonState,
   autostartDaemon,
   DAEMON_STATE_FILE,
   daemonUsesPackageRoot,
@@ -109,7 +109,6 @@ describe("Rerail daemon control", () => {
       version: "0.0.0-test",
       databasePath: join(home, "rerail.sqlite"),
       workspaceRoot: home,
-      repositoryContext: { repositoryId: "daemon-control-test", workspaceRoot: home },
       port: 0,
       nativeHealth: () => ({ ok: true, kernelVersion: "1" }),
     });
@@ -226,7 +225,6 @@ describe("Rerail daemon control", () => {
       version: "0.0.0-test",
       databasePath: join(home, "rerail.sqlite"),
       workspaceRoot: home,
-      repositoryContext: { repositoryId: "daemon-control-test", workspaceRoot: home },
       port: 0,
       stateFile: join(home, DAEMON_STATE_FILE),
       nativeHealth: () => ({ ok: true, kernelVersion: "1" }),

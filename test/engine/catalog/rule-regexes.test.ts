@@ -2,10 +2,16 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { loadBundledCatalog } from "../../../src/engine/catalog/bundled-rules.js";
+import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { assertEngineRegexes, engineRegexIssues } from "../../../src/engine/catalog/rule-regexes.js";
-import { parseConversationRule, type ConversationRule, type MatchCondition } from "../../../src/engine/catalog/rule-schema.js";
+import {
+  parseConversationRule,
+  type ConversationRule,
+  type MatchCondition,
+} from "../../../src/engine/catalog/rule-schema.js";
 import { SqliteRuleStore } from "../../../src/engine/catalog/rule-store.js";
-import { ScopedRuleCatalog } from "../../../src/engine/catalog/scoped-rule-catalog.js";
+import { listLibraryRules, upsertLibraryRule } from "../../../src/engine/catalog/rule-library.js";
 import { MOCK_CONVERSATION_RULES } from "../../../src/cli/index.js";
 
 const LOOK_AROUND = /^is not a valid regex: .*look-around/su;
@@ -67,10 +73,12 @@ describe("engine regex validation", () => {
     expect(store.list()).toEqual([]);
     store.close();
 
-    const catalog = ScopedRuleCatalog.open(join(root, "catalog.sqlite"), { repositoryId: "repo", workspaceRoot: "/repo" });
-    expect(() => catalog.upsertConversationRule(bad)).toThrow(/^rule\.match\.regex is not a valid regex/u);
-    expect(() => catalog.restore([{ document: { kind: "conversation", rule: bad } }])).toThrow(/regex/u);
-    expect(catalog.listOwned()).toEqual([]);
-    catalog.close();
+    const library = openRerailDatabase(join(root, "rerail.sqlite"));
+    try {
+      expect(() => upsertLibraryRule(library, loadBundledCatalog(), bad, "conversation")).toThrow(/^rule\.match\.regex is not a valid regex/u);
+      expect(listLibraryRules(library)).toEqual([]);
+    } finally {
+      library.$client.close();
+    }
   });
 });

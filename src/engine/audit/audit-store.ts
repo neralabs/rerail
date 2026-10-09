@@ -119,18 +119,22 @@ export interface ViolationHistoryPage {
   total: number;
 }
 
+/**
+ * `repositoryIds`, where a method takes it, narrows that call to the runs of sessions recorded under those ids (a
+ * repository key and the clone ids of its checkouts); it replaces a reader's own scope.
+ */
 export interface AuditReader {
   get(auditId: string): AuditRecord | undefined;
-  list(query?: AuditQuery): AuditPage;
+  list(query?: AuditQuery, repositoryIds?: readonly string[]): AuditPage;
   latestSummary(sessionId: string): AuditSummary | undefined;
-  listRepositoryAudits(query?: RepositoryAuditQuery): RepositoryAuditPage;
+  listRepositoryAudits(query?: RepositoryAuditQuery, repositoryIds?: readonly string[]): RepositoryAuditPage;
   listRepositoryAuditEntries(query: RepositoryAuditEntryQuery): RepositoryAuditEntryPage | undefined;
-  ruleActivity(since: number): Map<string, RuleActivityTotals>;
-  listViolationHistory(query: ViolationHistoryQuery): ViolationHistoryPage;
+  ruleActivity(since: number, repositoryIds?: readonly string[]): Map<string, RuleActivityTotals>;
+  listViolationHistory(query: ViolationHistoryQuery, repositoryIds?: readonly string[]): ViolationHistoryPage;
 }
 
 /** A repository's runs are the runs of its sessions; unscoped (`undefined`) readers see every run. */
-type Repository = string | undefined;
+type Repository = string | readonly string[] | undefined;
 
 function scopedSessions(column: SQLiteColumn, repositoryId: Repository): SQL {
   return repositoryId === undefined ? sql`1 = 1` : sql`${column} IN (${sessionsOfRepository(repositoryId)})`;
@@ -577,20 +581,20 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
     const row = this.#database.select().from(audits).where(eq(audits.auditId, auditId)).get();
     return row === undefined ? undefined : record(row);
   }
-  list(query: AuditQuery = {}): AuditPage {
-    return listAudits(this.#database, query);
+  list(query: AuditQuery = {}, repositoryIds?: readonly string[]): AuditPage {
+    return listAudits(this.#database, query, repositoryIds);
   }
-  listRepositoryAudits(query: RepositoryAuditQuery = {}): RepositoryAuditPage {
-    return listRepositoryAudits(this.#database, query);
+  listRepositoryAudits(query: RepositoryAuditQuery = {}, repositoryIds?: readonly string[]): RepositoryAuditPage {
+    return listRepositoryAudits(this.#database, query, repositoryIds);
   }
   listRepositoryAuditEntries(query: RepositoryAuditEntryQuery): RepositoryAuditEntryPage | undefined {
     return listRepositoryAuditEntries(this.#database, query);
   }
-  ruleActivity(since: number): Map<string, RuleActivityTotals> {
-    return ruleActivity(this.#database, since);
+  ruleActivity(since: number, repositoryIds?: readonly string[]): Map<string, RuleActivityTotals> {
+    return ruleActivity(this.#database, since, repositoryIds);
   }
-  listViolationHistory(query: ViolationHistoryQuery): ViolationHistoryPage {
-    return listViolationHistory(this.#database, query);
+  listViolationHistory(query: ViolationHistoryQuery, repositoryIds?: readonly string[]): ViolationHistoryPage {
+    return listViolationHistory(this.#database, query, repositoryIds);
   }
 
   latestSummary(sessionId: string): AuditSummary | undefined {
@@ -604,7 +608,7 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
 
 /**
  * Read-only audit view that remains empty until a writer has created the database. With a
- * `repositoryId`, listings and aggregates cover only runs of that repository's sessions; a run or
+ * `repositoryId` (or several), listings and aggregates cover only runs of those sessions; a run or
  * session addressed by its id is found whichever repository recorded it.
  */
 export class SqliteAuditReader implements AuditReader {
@@ -612,7 +616,7 @@ export class SqliteAuditReader implements AuditReader {
   readonly #database: LazyReadonlyRerailDatabase;
   readonly #repositoryId: Repository;
 
-  constructor(path: string, { repositoryId }: { repositoryId?: string } = {}) {
+  constructor(path: string, { repositoryId }: { repositoryId?: string | readonly string[] } = {}) {
     this.path = path;
     this.#repositoryId = repositoryId;
     this.#database = new LazyReadonlyRerailDatabase(path);
@@ -624,25 +628,27 @@ export class SqliteAuditReader implements AuditReader {
     const row = database.select().from(audits).where(eq(audits.auditId, auditId)).get();
     return row === undefined ? undefined : record(row);
   }
-  list(query: AuditQuery = {}): AuditPage {
+  list(query: AuditQuery = {}, repositoryIds?: readonly string[]): AuditPage {
     const database = this.#database.open();
-    return database === undefined ? { audits: [], total: 0 } : listAudits(database, query, this.#repositoryId);
+    return database === undefined ? { audits: [], total: 0 } : listAudits(database, query, repositoryIds ?? this.#repositoryId);
   }
-  listRepositoryAudits(query: RepositoryAuditQuery = {}): RepositoryAuditPage {
+  listRepositoryAudits(query: RepositoryAuditQuery = {}, repositoryIds?: readonly string[]): RepositoryAuditPage {
     const database = this.#database.open();
-    return database === undefined ? { repositories: [], total: 0 } : listRepositoryAudits(database, query, this.#repositoryId);
+    return database === undefined
+      ? { repositories: [], total: 0 }
+      : listRepositoryAudits(database, query, repositoryIds ?? this.#repositoryId);
   }
   listRepositoryAuditEntries(query: RepositoryAuditEntryQuery): RepositoryAuditEntryPage | undefined {
     const database = this.#database.open();
     return database === undefined ? undefined : listRepositoryAuditEntries(database, query);
   }
-  ruleActivity(since: number): Map<string, RuleActivityTotals> {
+  ruleActivity(since: number, repositoryIds?: readonly string[]): Map<string, RuleActivityTotals> {
     const database = this.#database.open();
-    return database === undefined ? new Map() : ruleActivity(database, since, this.#repositoryId);
+    return database === undefined ? new Map() : ruleActivity(database, since, repositoryIds ?? this.#repositoryId);
   }
-  listViolationHistory(query: ViolationHistoryQuery): ViolationHistoryPage {
+  listViolationHistory(query: ViolationHistoryQuery, repositoryIds?: readonly string[]): ViolationHistoryPage {
     const database = this.#database.open();
-    return database === undefined ? { violations: [], total: 0 } : listViolationHistory(database, query, this.#repositoryId);
+    return database === undefined ? { violations: [], total: 0 } : listViolationHistory(database, query, repositoryIds ?? this.#repositoryId);
   }
 
   latestSummary(sessionId: string): AuditSummary | undefined {

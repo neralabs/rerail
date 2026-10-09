@@ -8,7 +8,7 @@ import {
   type AdapterSession,
 } from "../../engine/adapter-contract.js";
 import { LiveConversationRules } from "../../engine/catalog/conversation-rule-sync.js";
-import { isRerailStarted } from "../../runtime/repository-start.js";
+import { isRerailStarted, sessionNoteRules } from "../../runtime/repository-start.js";
 import { bundledModelPath, PACKAGE_ROOT } from "../../engine/package-root.js";
 import type { SessionDatabaseOptions } from "../../harness/session-database-options.js";
 import type { ModelFingerprint } from "../../engine/native/native.js";
@@ -20,14 +20,12 @@ import { linkDeliveries } from "../../presentation/session-presentation.js";
 import { PiNativeSession } from "./pi-native-session.js";
 import { registerPiHostAdapter } from "./pi-host-adapter.js";
 import { ConversationRuleRegistry, type RuleMatch } from "../../engine/catalog/registry.js";
-import { conversationRuleLoader, type ConversationRuleSourceOptions } from "../../engine/catalog/rule-sources.js";
-import { loadBundledRules } from "../../engine/catalog/rule-bootstrap.js";
-import { openScopedRuleCatalog } from "../../engine/catalog/scoped-rule-catalog.js";
+import { openCheckoutConversationRules } from "../../engine/code-rule/code-rule-dsl-catalog.js";
 import { defaultRerailDatabasePath } from "../../engine/storage/database.js";
 import { RerailRuntime } from "../../runtime/runtime.js";
 import { MATCH_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE } from "../../runtime/session-state.js";
 
-export interface PiConversationRulesOptions extends SessionDatabaseOptions, ConversationRuleSourceOptions {
+export interface PiConversationRulesOptions extends SessionDatabaseOptions {
   modelPath?: string;
   maxInputTokens?: number;
   maxRules?: number;
@@ -264,11 +262,8 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
         ...(options.maxInputTokens === undefined ? {} : { maxInputTokens: options.maxInputTokens }),
         ...(options.maxRules === undefined ? {} : { maxRules: options.maxRules }),
       });
-      const loadRules = conversationRuleLoader(options, ctx.cwd, ".pi/conversation-rules.json");
-      const ruleStore = openScopedRuleCatalog(ctx.cwd, databasePath);
-      const sync = new LiveConversationRules(ruleStore, next, loadRules);
+      const sync = new LiveConversationRules(openCheckoutConversationRules(databasePath, ctx.cwd), next);
       try {
-        ruleStore.seed(loadBundledRules());
         sync.prime();
         const nextTurn = replaySessionState(next, ctx.sessionManager.getBranch());
         const nextRuntime = new RerailRuntime({
@@ -278,7 +273,6 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
           modelPath: options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath(),
           databasePath,
           workspaceRoot: ctx.cwd,
-          repositoryContext: ruleStore.context(),
           startGate: true,
           beforeSessionPublish: async nextSession => {
             if (activeSession?.host === nextSession.host && activeSession.sessionId === nextSession.sessionId) {
@@ -345,6 +339,7 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
       packageRoot: PACKAGE_ROOT,
       started: cwd => isRerailStarted(cwd, configuredDatabasePath(options, cwd)),
       configuredDatabase: cwd => options.databasePath === undefined ? undefined : resolve(cwd, options.databasePath),
+      sessionNoteRules: async session => sessionNoteRules(session.cwd, configuredDatabasePath(options, session.cwd)),
     });
   };
 }

@@ -1,53 +1,42 @@
+import type { ConversationRuleSource } from "../code-rule/code-rule-dsl-catalog.js";
 import type { ConversationRuleRegistry } from "./registry.js";
 import type { ConversationRule } from "./rule-schema.js";
-import type { DatabaseConversationRules } from "./rule-sources.js";
-import type { SqliteRuleStore } from "./rule-store.js";
-import type { ScopedRuleCatalog } from "./scoped-rule-catalog.js";
 import { stableJsonText } from "../stable-json.js";
 
-/** Merge the database's enabled conversation rule rows with whatever else the host supplies (JSON files, options). */
-export type ConversationRuleLoader = (database: DatabaseConversationRules) => readonly ConversationRule[];
-
-
 /**
- * Keeps sourced conversation rules synchronized without disturbing session-local
+ * Keeps a session's configured conversation rules synchronized without disturbing session-local
  * mutations or delivery repeat state. Publishes only successfully loaded identity.
  */
 export class LiveConversationRules {
-  readonly #store: SqliteRuleStore | ScopedRuleCatalog;
+  readonly #source: ConversationRuleSource;
   readonly #registry: ConversationRuleRegistry;
-  readonly #load: ConversationRuleLoader;
   /** Every rule this sync put into the registry, by id, with its stable JSON. */
   readonly #managed = new Map<string, string>();
   sourceSignature = "";
 
-  constructor(store: SqliteRuleStore | ScopedRuleCatalog, registry: ConversationRuleRegistry, load: ConversationRuleLoader) {
-    this.#store = store;
+  constructor(source: ConversationRuleSource, registry: ConversationRuleRegistry) {
+    this.#source = source;
     this.#registry = registry;
-    this.#load = load;
   }
 
-  /** The session-start load: replace the registry's rules with the merged set. */
+  /** The session-start load: replace the registry's rules with the configured set. */
   prime(): void {
-    const sourceSignature = "ruleSignature" in this.#store ? this.#store.ruleSignature("conversation") : String(this.#store.dataVersion());
-    const database = this.#read();
-    const merged = this.#load(database);
-    this.#registry.replace(merged);
+    const sourceSignature = this.#source.signature();
+    const rules = this.#source.rules();
+    this.#registry.replace(rules);
     this.#managed.clear();
-    for (const rule of merged) this.#managed.set(rule.id, stable(rule));
+    for (const rule of rules) this.#managed.set(rule.id, stable(rule));
     this.sourceSignature = sourceSignature;
   }
 
-  /** Apply what changed in the database since the last look. Returns whether the registry changed. */
+  /** Apply what changed in the configuration since the last look. Returns whether the registry changed. */
   refresh(): boolean {
-    const sourceSignature = "ruleSignature" in this.#store ? this.#store.ruleSignature("conversation") : String(this.#store.dataVersion());
+    const sourceSignature = this.#source.signature();
     if (sourceSignature === this.sourceSignature) return false;
-    const database = this.#read();
-
-    const merged = this.#load(database);
-    const next = new Map(merged.map(rule => [rule.id, stable(rule)] as const));
+    const rules = this.#source.rules();
+    const next = new Map(rules.map(rule => [rule.id, stable(rule)] as const));
     let changed = false;
-    for (const rule of merged) {
+    for (const rule of rules) {
       if (this.#managed.get(rule.id) === next.get(rule.id)) continue;
       this.#registry.upsert(rule, { replace: true });
       changed = true;
@@ -65,12 +54,7 @@ export class LiveConversationRules {
   }
 
   close(): void {
-    this.#store.close();
-  }
-
-  #read(): DatabaseConversationRules {
-    const rules = this.#store.list({ kind: "conversation" }).flatMap(stored => stored.kind === "conversation" ? [stored] : []);
-    return { enabled: rules.filter(stored => stored.enabled).map(stored => stored.rule), ids: new Set(rules.map(stored => stored.rule.id)) };
+    this.#source.close();
   }
 }
 

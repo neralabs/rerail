@@ -4,20 +4,9 @@ import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 import type { CodeRuleViolation, CodeRuleViolationFix, CodeRuleSourceSpan } from "../engine/code-rule/code-rule.js";
 import type { AuditFailure } from "../engine/audit/audit.js";
-import type { AuditReader, AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../engine/audit/audit-store.js";
+import type { AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../engine/audit/audit-store.js";
 import { withinCheckout } from "../engine/catalog/checkout-control.js";
-import type { RerailDatabase } from "../engine/storage/database.js";
-import { listRepositories, repositorySetUp, setCheckoutState, startRepository, type RepositoryStartState } from "../runtime/repository-start.js";
-import {
-  audits,
-  presentationPreferences,
-  PRESENTATION_HOSTS,
-  RULE_APPLICABILITIES,
-  RULE_KINDS,
-  RULE_ORIGINS,
-  events,
-  workLinks,
-} from "../engine/storage/schema.js";
+import { audits, presentationPreferences, PRESENTATION_HOSTS, events, workLinks } from "../engine/storage/schema.js";
 import {
   auditControlsSchema,
   auditSettingsPatchSchema,
@@ -25,197 +14,18 @@ import {
   auditRequestInputSchema,
   auditRequestSchema,
 } from "../engine/audit/audit-control-schema.js";
-import type { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
-import { CodeRuleCompileError, EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
-import { LANGUAGE_NOT_SUPPORTED, codeRuleLanguageNotSupported, type CodeRuleLanguageNotSupported } from "../engine/code-rule/code-rule-language-support.js";
-import { codeRuleSchema } from "../engine/code-rule/code-rule-schema.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
-import { engineRegexIssues } from "../engine/catalog/rule-regexes.js";
-import { conversationRuleSchema, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-schema.js";
-import { QuarantinedGlobalRuleError, type ScopedRuleCatalog, type ScopedRuleQuery } from "../engine/catalog/scoped-rule-catalog.js";
-import { cachedRecommendRulePacks, loadRulePacks, rulePackIdOf } from "../engine/catalog/rule-packs.js";
-import { rulePackListSchema, rulePackRecommendationsSchema } from "./rule-pack-contracts.js";
-import { SESSION_EVENT_PAGE_LIMIT, type SqliteSessionReader, type SqliteSessionStore } from "../runtime/session-store.js";
-import type { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
+import { loadRulePacks } from "../engine/catalog/rule-packs.js";
+import { rulePackListSchema } from "./rule-pack-contracts.js";
+import { SESSION_EVENT_PAGE_LIMIT } from "../runtime/session-store.js";
+import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
+import { activityRules, historyRepositoryIds, repositoryOperations } from "./repository-operations.js";
+import { inactiveField, inactiveOf } from "./repository-contracts.js";
 import { presentationDaemonSchema, presentationResponseSchema, sessionResponseSchema, sessionSummarySchema } from "./session-contracts.js";
-
-/**
- * One operation definition feeds every consumer: the daemon's HTTP routes and
- * OpenAPI document, the MCP tool list, and (through OpenAPI) the generated web
- * client. `params`, `query`, and `body` are split for HTTP; MCP tools take
- * their union as one flat argument object.
- */
-export interface RerailApiStores {
-  /** Read-only view; tolerates a database that does not exist yet. */
-  readonly reader: SqliteSessionReader;
-  /** Machine catalog resolved for the daemon's repository/project context. */
-  rules(): ScopedRuleCatalog;
-  /** Writable session/event/work-link store; opening it creates the database. */
-  sessionStore(): SqliteSessionStore;
-  /** Durable per-session audit defaults and explicit audit requests. */
-  auditControls(): SqliteAuditControlStore;
-  /** Read-only audit history; remains empty before any writer creates the database. */
-  readonly audits: AuditReader;
-  /** Daemon-owned presentation settings in the project database. */
-  preferences(): SqlitePresentationPreferenceStore;
-  /** Writable handle for state with no store of its own: whether Rerail is started per repository. */
-  database(): RerailDatabase;
-  /** Whether Rerail is on in the checkout a workspace is in, over one held connection with cached identities. */
-  repositoryState(workspace: string): RepositoryStartState;
-  health(): z.infer<typeof presentationDaemonSchema>;
-}
-
-export type OperationMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-
-export interface OperationDefinition<
-  Params extends z.ZodRawShape,
-  Query extends z.ZodRawShape,
-  Body extends z.ZodRawShape,
-  Output extends z.ZodType,
-> {
-  /** MCP tool name and OpenAPI operationId: `[a-z0-9_]+`. */
-  id: string;
-  method: OperationMethod;
-  /** OpenAPI-style path, e.g. `/api/rules/{id}`. */
-  path: string;
-  summary: string;
-  params?: z.ZodObject<Params>;
-  query?: z.ZodObject<Query>;
-  body?: z.ZodObject<Body>;
-  output: Output;
-  handler: (
-    stores: RerailApiStores,
-    input: z.infer<z.ZodObject<Params>> & z.infer<z.ZodObject<Query>> & z.infer<z.ZodObject<Body>>,
-  ) => z.infer<Output>;
-}
-
-export type Operation = OperationDefinition<z.ZodRawShape, z.ZodRawShape, z.ZodRawShape, z.ZodType>;
-
-function defineOperation<
-  Params extends z.ZodRawShape,
-  Query extends z.ZodRawShape,
-  Body extends z.ZodRawShape,
-  Output extends z.ZodType,
->(operation: OperationDefinition<Params, Query, Body, Output>): Operation {
-  return operation as unknown as Operation;
-}
-
-/** Thrown by handlers; the HTTP adapter maps it to a status, the MCP adapter to an error result. */
-export class ApiError extends Error {
-  readonly status: number;
-  readonly code: string;
-
-  constructor(status: number, code: string, message: string) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-    this.code = code;
-  }
-}
 
 /** Query strings arrive as text; MCP arguments arrive typed. Accept both. */
 const booleanParameter = z.union([z.boolean(), z.stringbool()]);
 const countParameter = z.coerce.number().int().nonnegative();
-
-/** Filters shared by listing and by filter-driven bulk updates. */
-export const ruleFilterSchema = z
-  .object({
-    kind: z.enum(RULE_KINDS).optional(),
-    enabled: booleanParameter.optional(),
-    applicability: z.enum(RULE_APPLICABILITIES).optional(),
-    q: z.string().optional().describe("Case-insensitive substring over id, reference/description, and action content or clause bodies."),
-    source: z.string().min(1).optional().describe("Conversation sample source (user-input, assistant-text, tool:<name>)."),
-    boundary: z.enum(SAMPLE_BOUNDARIES).optional(),
-    mode: z.enum(RULE_MODES).optional().describe("Rule mode (log, steer, block); matches file and conversation rules."),
-  })
-  .strict();
-
-function ruleQuery(filter: z.infer<typeof ruleFilterSchema>): ScopedRuleQuery {
-  return {
-    ...(filter.kind === undefined ? {} : { kind: filter.kind }),
-    ...(filter.enabled === undefined ? {} : { enabled: filter.enabled }),
-    ...(filter.applicability === undefined ? {} : { applicability: filter.applicability }),
-    ...(filter.q === undefined ? {} : { text: filter.q }),
-    ...(filter.source === undefined ? {} : { source: filter.source }),
-    ...(filter.boundary === undefined ? {} : { boundary: filter.boundary }),
-    ...(filter.mode === undefined ? {} : { mode: filter.mode }),
-  };
-}
-
-const ruleOriginSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("global") }).strict(),
-  z.object({ kind: z.literal("project"), projectId: z.string().min(1) }).strict(),
-]);
-
-const quarantinedRuleSchema = z.object({
-  ruleId: z.string(),
-  kind: z.enum(RULE_KINDS),
-  owner: z.string().describe("global, project:<id>, or the per-project store's row scope."),
-  reason: z.string(),
-  code: z.literal(LANGUAGE_NOT_SUPPORTED).optional(),
-}).strict();
-
-const inactiveField = {
-  inactive: z
-    .object({ code: z.literal(LANGUAGE_NOT_SUPPORTED), reason: z.string() })
-    .strict()
-    .optional()
-    .describe("Present when the rule is stored but never evaluated: its language, or a capability it reads, is not supported yet."),
-};
-
-/** A stored rule, marked inactive when the engine does not read its language or a capability it uses yet. */
-function withSupport<T extends { kind: string; rule: unknown }>(stored: T): T & { inactive?: CodeRuleLanguageNotSupported } {
-  const unsupported = stored.kind === "file" ? codeRuleLanguageNotSupported(stored.rule) : undefined;
-  return unsupported === undefined ? stored : { ...stored, inactive: unsupported };
-}
-
-const storedRuleBase = {
-  enabled: z.boolean(),
-  applicability: z.enum(RULE_APPLICABILITIES),
-  origin: ruleOriginSchema,
-  catalogOrigin: z.enum(RULE_ORIGINS),
-  revision: z.number().int().positive(),
-  createdAt: z.number().int(),
-  updatedAt: z.number().int(),
-  sourceDigest: z.string().nullable(),
-  payloadHash: z.string(),
-};
-
-export const storedRuleSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("file"), rule: codeRuleSchema, ...storedRuleBase, ...inactiveField }).strict(),
-  z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, ...storedRuleBase }).strict(),
-]);
-
-const packIdField = { packId: z.string().nullable().describe("The rule pack this rule comes from; null for rules in no pack.") };
-const listedRuleSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("file"), rule: codeRuleSchema, ...storedRuleBase, ...packIdField, ...inactiveField }).strict(),
-  z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, ...storedRuleBase, ...packIdField }).strict(),
-]);
-
-export const ruleUpsertSchema = z
-  .object({
-    kind: z.enum(RULE_KINDS),
-    rule: z.union([codeRuleSchema, conversationRuleSchema]),
-    enabled: z.boolean().optional(),
-    applicability: z.enum(RULE_APPLICABILITIES).optional(),
-    /** Conversation rules only; file rules carry `rule.revision`. */
-    revision: z.number().int().positive().optional(),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    const looksCodeRule = "clauses" in value.rule;
-    if ((value.kind === "file") !== looksCodeRule) {
-      context.addIssue({ code: "custom", path: ["rule"], message: `rule body does not match kind ${value.kind}` });
-    }
-    if (value.kind === "file" && value.revision !== undefined) {
-      context.addIssue({ code: "custom", path: ["revision"], message: "file rules take their revision from rule.revision" });
-    }
-    if (value.kind === "conversation" && !("clauses" in value.rule)) {
-      for (const issue of engineRegexIssues(value.rule)) {
-        context.addIssue({ code: "custom", path: ["rule", ...issue.path], message: issue.message });
-      }
-    }
-  });
 
 export const eventRecordSchema = createSelectSchema(events)
   .omit({ payloadJson: true, payloadV8: true })
@@ -374,33 +184,14 @@ function sessionResponse(stores: RerailApiStores, sessionId: string): z.infer<ty
     : { session, hud: stores.reader.hud(sessionId), audit: stores.audits.latestSummary(sessionId) ?? null };
 }
 const sessionId = z.object({ sessionId: z.string().min(1) });
-const projectRepository = z.object({
-  projectId: z.string().min(1),
-  repositoryId: z.string().min(1),
-});
-const ruleContextSchema = z.object({
-  repositoryId: z.string().min(1),
-  workspaceRoot: z.string().min(1),
-  projectId: z.string().min(1),
-  projectName: z.string().min(1),
-});
 
-const repositoryStartSchema = z.object({
-  repositoryId: z.string().min(1),
-  name: z.string(),
-  root: z.string().describe("The checkout Rerail last ran in; empty when only the start state is known."),
-  state: z.enum(["started", "stopped", "never"]).describe(
-    "The main checkout's on/off, which every worktree without its own setting follows. stopped also when the repository was set up only in a worktree; never only when no checkout of it was ever started.",
-  ),
-  startedAt: z.number().int().nullable(),
-  stoppedAt: z.number().int().nullable(),
-}).strict();
-const repositoryParameter = z.object({ repositoryId: z.string().min(1) });
+const repositoryFilter = {
+  repository: z.string().min(1).optional().describe("Only this repository's history (its key or an alias); machine-wide without it."),
+};
 
-function knownRepository(stores: RerailApiStores, repositoryId: string): z.infer<typeof repositoryStartSchema> {
-  const repository = listRepositories(stores.database()).find(candidate => candidate.repositoryId === repositoryId);
-  if (repository === undefined) throw new ApiError(404, "repository-not-found", `repository ${repositoryId} is not known to Rerail`);
-  return repository;
+/** The session repository ids a `repository` filter matches; undefined (machine-wide) without one. */
+function historyIds(stores: RerailApiStores, repository: string | undefined): string[] | undefined {
+  return repository === undefined ? undefined : historyRepositoryIds(stores, repository);
 }
 
 const sinceParameter = countParameter.describe("Epoch milliseconds; only activity at or after this instant is counted. 0 means since install.");
@@ -494,124 +285,37 @@ export const operations: readonly Operation[] = [
       }
       const presence = stores.preferences().effective(repository, input.host);
       const repositoryState = stores.repositoryState(repository);
-      if (input.sessionId === undefined) return { presence, repositoryState };
+      const checkout = stores.checkouts()(repository);
+      const scope = checkout === undefined ? null : { repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath };
+      if (input.sessionId === undefined) return { presence, repositoryState, scope };
       const daemon = presentationDaemonSchema.parse(stores.health());
       if (presence === "silent" && !input.onDemand) session = null;
-      return { presence, repositoryState, context: { daemon, session } };
+      return { presence, repositoryState, scope, context: { daemon, session } };
     },
   }),
-  defineOperation({
-    id: "rule_context_get",
-    method: "GET",
-    path: "/api/rule-context",
-    summary: "Show the stable repository identity and project used to resolve effective rules.",
-    output: z.object({ context: ruleContextSchema }),
-    handler: stores => ({ context: stores.rules().context() }),
-  }),
-  defineOperation({
-    id: "project_repository_assign",
-    method: "PUT",
-    path: "/api/projects/{projectId}/repositories/{repositoryId}",
-    summary: "Assign one stable repository identity to a project.",
-    params: projectRepository,
-    body: z.object({ projectName: z.string().min(1) }).strict(),
-    output: projectRepository,
-    handler: (stores, input) => {
-      stores.rules().assignRepository(input.projectId, input.projectName, input.repositoryId);
-      return { projectId: input.projectId, repositoryId: input.repositoryId };
-    },
-  }),
-  defineOperation({
-    id: "project_repository_remove",
-    method: "DELETE",
-    path: "/api/projects/{projectId}/repositories/{repositoryId}",
-    summary: "Remove one repository from a project; its own daemon falls back to a repository-local project.",
-    params: projectRepository,
-    output: z.object({ removed: z.boolean() }),
-    handler: (stores, input) => ({ removed: stores.rules().removeRepository(input.projectId, input.repositoryId) }),
-  }),
-  defineOperation({
-    id: "repositories_list",
-    method: "GET",
-    path: "/api/repositories",
-    summary: "List the repositories Rerail knows, each Started, Stopped, or never set up.",
-    output: z.object({ repositories: z.array(repositoryStartSchema) }),
-    handler: stores => ({ repositories: listRepositories(stores.database()) }),
-  }),
-  defineOperation({
-    id: "repository_start",
-    method: "POST",
-    path: "/api/repositories/{repositoryId}/start",
-    summary: "Start Rerail in a repository's main checkout and the worktrees that follow it. A repository never set up is started with /rerail-start in a session there.",
-    params: repositoryParameter,
-    output: z.object({ repository: repositoryStartSchema }),
-    handler: (stores, input) => {
-      const database = stores.database();
-      if (!repositorySetUp(database, input.repositoryId)) {
-        throw new ApiError(409, "repository-not-set-up", `Rerail has not been set up in ${input.repositoryId}; run /rerail-start in a session there`);
-      }
-      startRepository(database, input.repositoryId);
-      return { repository: knownRepository(stores, input.repositoryId) };
-    },
-  }),
-  defineOperation({
-    id: "repository_stop",
-    method: "POST",
-    path: "/api/repositories/{repositoryId}/stop",
-    summary: "Stop Rerail in a repository's main checkout and the worktrees that follow it. Worktrees turned on or off themselves keep their state; rules and history are kept.",
-    params: repositoryParameter,
-    output: z.object({ repository: repositoryStartSchema }),
-    handler: (stores, input) => {
-      const repository = knownRepository(stores, input.repositoryId);
-      if (repository.state === "never") return { repository };
-      setCheckoutState(stores.database(), { repositoryId: input.repositoryId, root: repository.root, main: true }, "stopped");
-      return { repository: knownRepository(stores, input.repositoryId) };
-    },
-  }),
-  defineOperation({
-    id: "rules_list",
-    method: "GET",
-    path: "/api/rules",
-    summary: "List or search effective rules by kind, mode, enabled state, applicability, text, or conversation sample fields.",
-    query: ruleFilterSchema,
-    output: z.object({
-      rules: z.array(listedRuleSchema),
-      quarantined: z.array(quarantinedRuleSchema)
-        .describe("Stored rows of the requested kind that fail validation and are skipped by every read and evaluation."),
-    }),
-    handler: (stores, input) => {
-      const catalog = stores.rules();
-      const packs = loadRulePacks();
-      return {
-        rules: catalog.list(ruleQuery(input)).map(stored => withSupport({ ...stored, packId: rulePackIdOf(stored.rule.id, packs) })),
-        quarantined: catalog.quarantined().filter(entry => input.kind === undefined || entry.kind === input.kind),
-      };
-    },
-  }),
-  // Must stay ahead of `/api/rules/{id}`: the router matches in registration order, so the
-  // parameterized route would otherwise claim `activity` as a rule id.
   defineOperation({
     id: "rules_activity",
     method: "GET",
     path: "/api/rules/activity",
     summary: "Report what each rule actually caught since a given time: distinct violations, sessions, last sighting, how many audits evaluated it, and how many steering deliveries it drove. Use it to find rules worth disabling or rules that never fire.",
-    query: z.object({ since: sinceParameter }).strict(),
+    query: z.object({ since: sinceParameter, ...repositoryFilter }).strict(),
     output: z.object({ since: z.number().int().nonnegative(), rules: z.record(z.string(), ruleActivitySchema) }),
     handler: (stores, input) => {
-      const activity = stores.audits.ruleActivity(input.since);
-      const steers = stores.reader.steersByRule(input.since);
+      const ids = historyIds(stores, input.repository);
+      const activity = stores.audits.ruleActivity(input.since, ids);
+      const rerails = stores.reader.steersByRule(input.since, ids);
       const rules: Record<string, z.infer<typeof ruleActivitySchema>> = {};
-      for (const stored of stores.rules().list({})) {
-        // Every catalog rule is reported, so a caller never has to infer absence from a missing key.
-        const { inactive } = withSupport(stored);
-        const totals = stored.kind === "conversation" ? undefined : activity.get(stored.rule.id);
-        rules[stored.rule.id] = {
-          measured: stored.kind !== "conversation" && inactive === undefined,
+      for (const { id, kind, rule } of activityRules(stores, input.repository)) {
+        // Every rule is reported, so a caller never has to infer absence from a missing key.
+        const { inactive } = inactiveOf(kind, rule);
+        const totals = kind === "conversation" ? undefined : activity.get(id);
+        rules[id] = {
+          measured: kind !== "conversation" && inactive === undefined,
           distinctViolations: totals?.distinctViolations ?? 0,
           sessions: totals?.sessions ?? 0,
           lastSeenAt: totals?.lastSeenAt ?? null,
           audits: totals?.audits ?? 0,
-          rerails: stored.kind === "conversation" ? 0 : steers.get(stored.rule.id) ?? 0,
+          rerails: kind === "conversation" ? 0 : rerails.get(id) ?? 0,
           ...(inactive === undefined ? {} : { inactive }),
         };
       }
@@ -619,111 +323,12 @@ export const operations: readonly Operation[] = [
     },
   }),
   defineOperation({
-    id: "rules_get",
-    method: "GET",
-    path: "/api/rules/{id}",
-    summary: "Fetch one rule by id.",
-    params: ruleId,
-    output: z.object({ rule: storedRuleSchema }),
-    handler: (stores, input) => {
-      const rule = stores.rules().get(input.id);
-      if (rule === undefined) throw new ApiError(404, "rule-not-found", `rule ${input.id} does not exist`);
-      return { rule: withSupport(rule) };
-    },
-  }),
-  defineOperation({
-    id: "rules_upsert",
-    method: "PUT",
-    path: "/api/rules/{id}",
-    summary: "Create or replace a rule. The body is validated against its kind's schema, and a file rule is compiled in the kernel, before it is stored. A file rule whose language, or a capability it reads, is not supported yet is stored inactive and returned with `inactive`.",
-    params: ruleId,
-    body: ruleUpsertSchema,
-    output: z.object({ rule: storedRuleSchema }),
-    handler: (stores, input) => {
-      if (input.rule.id !== input.id) {
-        throw new ApiError(400, "rule-id-mismatch", `path id ${input.id} does not match rule.id ${input.rule.id}`);
-      }
-      const options = {
-        ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
-        ...(input.applicability === undefined ? {} : { applicability: input.applicability }),
-        ...(input.revision === undefined ? {} : { revision: input.revision }),
-      };
-      const store = stores.rules();
-      try {
-        return { rule: withSupport(input.kind === "file" ? store.upsertCodeRule(input.rule, options) : store.upsertConversationRule(input.rule, options)) };
-      } catch (error) {
-        if (error instanceof CodeRuleCompileError) throw new ApiError(400, "invalid-rule", error.message);
-        if (error instanceof EngineUnavailableError) throw new ApiError(503, "kernel-unavailable", error.message);
-        throw new ApiError(409, "rule-conflict", (error as Error).message);
-      }
-    },
-  }),
-  defineOperation({
-    id: "rules_set_enabled",
-    method: "PATCH",
-    path: "/api/rules",
-    summary: "Enable or disable rules in bulk, either by id or every rule matching a filter. Returns how many rows changed state.",
-    body: z
-      .object({
-        enabled: z.boolean(),
-        ids: z.array(z.string().min(1)).min(1).optional(),
-        filter: ruleFilterSchema.optional(),
-      })
-      .strict()
-      .superRefine((value, context) => {
-        if ((value.ids === undefined) === (value.filter === undefined)) {
-          context.addIssue({ code: "custom", path: ["ids"], message: "Provide exactly one of ids or filter." });
-        }
-      }),
-    output: z.object({ changed: z.number().int().nonnegative() }),
-    handler: (stores, input) => {
-      try {
-        return {
-          changed: stores.rules().setEnabled(
-            input.ids === undefined ? { filter: ruleQuery(input.filter ?? {}) } : { ids: input.ids },
-            input.enabled,
-          ),
-        };
-      } catch (error) {
-        if (error instanceof QuarantinedGlobalRuleError) throw new ApiError(409, "rule-conflict", error.message);
-        throw error;
-      }
-    },
-  }),
-  defineOperation({
-    id: "rules_remove",
-    method: "DELETE",
-    path: "/api/rules/{id}",
-    summary: "Delete one rule by id.",
-    params: ruleId,
-    query: z.object({ applicability: z.enum(RULE_APPLICABILITIES).optional() }).strict(),
-    output: z.object({ removed: z.literal(1) }),
-    handler: (stores, input) => {
-      if (stores.rules().remove([input.id], input.applicability) === 0) {
-        throw new ApiError(404, "rule-not-found", `rule ${input.id} does not exist`);
-      }
-      return { removed: 1 as const };
-    },
-  }),
-  defineOperation({
     id: "rule_packs_list",
     method: "GET",
     path: "/api/rule-packs",
-    summary: "List every rule pack that comes with Rerail: what it covers and its rules, each with a title, a group and the mode it starts in. Read-only; packs are not attached to repositories yet.",
+    summary: "List every rule pack that comes with Rerail: what it covers and its rules, each with a title, a group and the mode it starts in. Add a pack to a repository with repository_attachments_set.",
     output: rulePackListSchema,
     handler: () => ({ packs: loadRulePacks().map(({ match: _match, rules, ...pack }) => ({ ...pack, rules: [...rules] })) }),
-  }),
-  defineOperation({
-    id: "rule_packs_recommend",
-    method: "GET",
-    path: "/api/rule-packs/recommendations",
-    summary: "Recommend rule packs for this repository by matching its files and package.json dependencies against each pack. Local; changes nothing. The daemon rescans a repository at most once a minute.",
-    output: rulePackRecommendationsSchema,
-    handler: stores => {
-      const { repositoryId, workspaceRoot } = stores.rules().context();
-      const recommendations = cachedRecommendRulePacks(workspaceRoot).map(({ pack, ruleCount, reason }) => ({ packId: pack.id, ruleCount, reason }));
-      return { repositoryId, recommendations };
-    },
   }),
   defineOperation({
     id: "audit_settings_get",
@@ -783,12 +388,12 @@ export const operations: readonly Operation[] = [
     method: "GET",
     path: "/api/repository-audits",
     summary: "List one full repository audit baseline per historically scanned repository.",
-    query: repositoryAuditQuerySchema,
+    query: repositoryAuditQuerySchema.extend(repositoryFilter),
     output: z.object({
       repositories: z.array(repositoryAuditSummarySchema),
       total: z.number().int().nonnegative(),
     }),
-    handler: (stores, input) => stores.audits.listRepositoryAudits(repositoryAuditQuery(input)),
+    handler: (stores, input) => stores.audits.listRepositoryAudits(repositoryAuditQuery(input), historyIds(stores, input.repository)),
   }),
   defineOperation({
     id: "repository_audit_entries_list",
@@ -817,9 +422,9 @@ export const operations: readonly Operation[] = [
     method: "GET",
     path: "/api/audits",
     summary: "List durable audit history, filtered independently by session, status, scope, or mode.",
-    query: auditQuerySchema,
+    query: auditQuerySchema.extend(repositoryFilter),
     output: z.object({ audits: z.array(auditRecordSchema), total: z.number().int().nonnegative() }),
-    handler: (stores, input) => stores.audits.list(auditQuery(input)),
+    handler: (stores, input) => stores.audits.list(auditQuery(input), historyIds(stores, input.repository)),
   }),
   defineOperation({
     id: "violations_list",
@@ -830,7 +435,8 @@ export const operations: readonly Operation[] = [
       since: sinceParameter,
       limit: countParameter.min(1).max(200).optional().describe("Maximum violations to return; defaults to 50 and is capped at 200."),
       offset: countParameter.optional().describe("Number of matching violations to skip; defaults to 0."),
-      ruleId: z.string().min(1).optional().describe("Restrict to one catalog rule id."),
+      ruleId: z.string().min(1).optional().describe("Restrict to one rule id."),
+      ...repositoryFilter,
     }).strict(),
     output: z.object({ total: z.number().int().nonnegative(), violations: z.array(violationRecordSchema) }),
     handler: (stores, input) => {
@@ -839,7 +445,7 @@ export const operations: readonly Operation[] = [
         ...(input.limit === undefined ? {} : { limit: input.limit }),
         ...(input.offset === undefined ? {} : { offset: input.offset }),
         ...(input.ruleId === undefined ? {} : { ruleId: input.ruleId }),
-      });
+      }, historyIds(stores, input.repository));
       return {
         total: page.total,
         violations: page.violations.map(({ violation, sessionId, auditId, at }) => {
@@ -854,11 +460,15 @@ export const operations: readonly Operation[] = [
     method: "GET",
     path: "/api/sessions",
     summary: "List recorded harness sessions with their event counts, optionally only those started since a given time.",
-    query: z.object({ since: sinceParameter.optional().describe("Epoch milliseconds; only sessions started at or after this instant.") }).strict(),
+    query: z.object({
+      since: sinceParameter.optional().describe("Epoch milliseconds; only sessions started at or after this instant."),
+      ...repositoryFilter,
+    }).strict(),
     output: z.object({ sessions: z.array(sessionSummarySchema) }),
-    handler: (stores, input) => ({
-      sessions: [...(input.since === undefined ? stores.reader.sessions() : stores.reader.sessionsSince(input.since))],
-    }),
+    handler: (stores, input) => {
+      const ids = historyIds(stores, input.repository);
+      return { sessions: [...(input.since === undefined ? stores.reader.sessions(ids) : stores.reader.sessionsSince(input.since, ids))] };
+    },
   }),
   defineOperation({
     id: "sessions_get",
@@ -929,6 +539,7 @@ export const operations: readonly Operation[] = [
       return { workLinks: [...store.workLinks(input.sessionId)] };
     },
   }),
+  ...repositoryOperations,
 ];
 
 /** The flat argument object an MCP tool takes: path params, query, and body merged. */

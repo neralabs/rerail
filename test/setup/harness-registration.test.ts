@@ -1069,7 +1069,6 @@ describe("dry run", () => {
       home,
       nodePath,
       harnesses: HARNESSES,
-      projectDir: project,
       dryRun: true,
     });
     const actions = Object.fromEntries(
@@ -1081,18 +1080,13 @@ describe("dry run", () => {
     expect(actions).toEqual({
       "omp:/.omp/agent/extensions/rerail": "updated",
       "omp:/.omp/agent/mcp.json": "created",
-      "omp:/project/.omp/conversation-rules.json": "created",
       "pi:/.pi/agent/settings.json": "created",
-      "pi:/project/.pi/conversation-rules.json": "created",
       "claude-code:/.claude/settings.json": "updated",
       ...commands("claude-code", ".claude"),
-      "claude-code:/project/.claude/conversation-rules.json": "created",
       "codex:/.codex/hooks.json": "created",
       ...Object.fromEntries(RERAIL_COMMANDS.map(({ name }) => [`codex:/.codex/skills/${name}/SKILL.md`, "created"])),
-      "codex:/project/.codex/conversation-rules.json": "created",
       "cursor:/.cursor/hooks.json": "created",
       ...commands("cursor", ".cursor"),
-      "cursor:/project/.cursor/conversation-rules.json": "created",
     });
     expect(report.changes.every((entry) => entry.detail.endsWith("(dry run)"))).toBe(true);
 
@@ -1105,49 +1099,5 @@ describe("dry run", () => {
     await expect(lstat(join(home, ".pi"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(lstat(join(home, ".codex"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(lstat(join(home, ".cursor"))).rejects.toMatchObject({ code: "ENOENT" });
-  });
-});
-
-describe("project rules", () => {
-  it("seeds conversation-rules.json once per selected harness and never overwrites", async () => {
-    const { home, root, nodePath } = await fixture();
-    const project = join(home, "project");
-    const first = await registerHarnesses({
-      root,
-      home,
-      nodePath,
-      harnesses: ["claude-code", "cursor"],
-      projectDir: project,
-    });
-    expect(change(first.changes, "claude-code", "conversation-rules.json").action).toBe("created");
-    expect(change(first.changes, "cursor", "conversation-rules.json").action).toBe("created");
-    expect(first.changes.filter((entry) => entry.path.endsWith("conversation-rules.json"))).toHaveLength(2);
-    expect(await readJson(join(project, ".claude", "conversation-rules.json"))).toEqual({ version: 1, rules: [] });
-    expect(await readJson(join(project, ".cursor", "conversation-rules.json"))).toEqual({ version: 1, rules: [] });
-    await expect(lstat(join(project, ".codex"))).rejects.toMatchObject({ code: "ENOENT" });
-
-    const custom = '{"version":1,"rules":[{"id":"keep-me"}]}';
-    await writeFile(join(project, ".claude", "conversation-rules.json"), custom);
-    const second = await registerHarnesses({
-      root,
-      home,
-      nodePath,
-      harnesses: ["claude-code", "cursor"],
-      projectDir: project,
-    });
-    expect(change(second.changes, "claude-code", "conversation-rules.json").action).toBe("unchanged");
-    expect(change(second.changes, "cursor", "conversation-rules.json").action).toBe("unchanged");
-    expect(await readFile(join(project, ".claude", "conversation-rules.json"), "utf8")).toBe(custom);
-    expect(await readdir(join(project, ".claude"))).toEqual(["conversation-rules.json"]);
-
-    const removed = await unregisterHarnesses({
-      root,
-      home,
-      nodePath,
-      harnesses: ["claude-code", "cursor"],
-      projectDir: project,
-    });
-    expect(removed.changes.some((entry) => entry.path.endsWith("conversation-rules.json"))).toBe(false);
-    expect(await readFile(join(project, ".claude", "conversation-rules.json"), "utf8")).toBe(custom);
   });
 });

@@ -2,8 +2,9 @@
 
 Cyclomatic complexity rules for Python, TypeScript and JavaScript, with the decision points of
 [lizard](https://github.com/terryyin/lizard) 1.24.0 and without its tokenizer defects. One document per language, rule id
-`complexity:cyclomatic-<language>`. Rerail seeds them into the rule catalog **disabled**; enable the ones you want.
-Every document has `mode: "steer"`: an enabled rule steers the agent and never blocks.
+`complexity:cyclomatic-<language>`. They form the `complexity` rule pack, which is never recommended and runs only in
+repositories that add it (`repository_attachments_set`; see `docs/rule-packs.md`).
+Every document has `mode: "steer"`: a rule that runs steers the agent and never blocks.
 
 | Rule | Files |
 |---|---|

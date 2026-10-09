@@ -7,17 +7,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createConversationRulesExtension } from "../../../src/hosts/omp/extension.js";
 import { createPiConversationRulesExtension } from "../../../src/hosts/pi/index.js";
-import { CodeRuleBridge, linkSteers, steerBlock } from "../../../src/engine/index.js";
+import { CodeRuleBridge, type ConversationRule, linkSteers, steerBlock } from "../../../src/engine/index.js";
 import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../../../src/runtime/index.js";
-import type { ConversationRule } from "../../../src/engine/index.js";
-import { dashboardOrigin } from "../../../src/presentation/index.js";
+import { steerDashboard } from "../../../src/presentation/index.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
-import { startTestRepository } from "../../support/started-repository.js";
+import { setUpTestRepository } from "../../support/repository-rules.js";
 
 async function checkoutSteer(cwd: string): Promise<string> {
-  return linkSteers(steerBlock("checkout", "Check checkout requirements."), await dashboardOrigin(cwd));
+  return linkSteers(steerBlock("checkout", "Check checkout requirements."), await steerDashboard(cwd));
 }
-
 type Context = OmpContext & PiContext;
 type Handler = (event: unknown, context: Context) => unknown;
 const directories: string[] = [];
@@ -37,7 +35,6 @@ async function harness(host: "omp" | "pi") {
   const cwd = mkdtempSync(join(tmpdir(), `rerail-${host}-startup-`));
   directories.push(cwd);
   vi.stubEnv("RERAIL_HOME", join(cwd, "home"));
-  startTestRepository(cwd);
   if (host === "omp") await startNativeTestDaemon(cwd);
   const handlers = new Map<string, Handler>();
   const commands = new Map<string, { handler(args: string, context: Context): unknown }>();
@@ -66,8 +63,10 @@ async function harness(host: "omp" | "pi") {
     action: { content: "Check checkout requirements." },
     repeat: { mode: "always" },
   };
+  // Only rules a repository adds run.
+  setUpTestRepository(cwd, { library: [{ kind: "conversation", rule }] });
   const createExtension = host === "omp" ? createConversationRulesExtension : createPiConversationRulesExtension;
-  createExtension({ modelPath: resolve("model"), rules: [rule], registerTool: false })(api);
+  createExtension({ modelPath: resolve("model"), registerTool: false })(api);
   let tornDown = false;
   const live = (run: () => unknown): Promise<unknown> => tornDown
     ? Promise.reject(new Error("session-lifecycle harness used after its test was torn down"))

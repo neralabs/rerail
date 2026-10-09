@@ -12,7 +12,7 @@ import {
   type HookOutput,
 } from "../../harness/hook-adapter.js";
 import { sessionStartNote, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
-import { dashboardOrigin, linkDeliveries } from "../../presentation/session-presentation.js";
+import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules } from "../../presentation/session-presentation.js";
 import { steers } from "../../engine/catalog/rule-mode.js";
 
 export type CursorHookInput = HookInput;
@@ -168,6 +168,6 @@ export async function handleCursorEvent(
     sessionStart: true, postToolUse: true,
   });
   // The runtime keeps steer links relative; they point at this checkout's dashboard only here.
-  const note = hook === "sessionStart" ? sessionStartNote(await dashboardOrigin(descriptor.cwd), "cursor", descriptor.sessionId) : undefined;
+  const note = hook === "sessionStart" ? sessionStartNote(await dashboardOrigin(descriptor.cwd), "cursor", descriptor.sessionId, await presentedSessionNoteRules(descriptor)) : undefined;
   return cursorHookOutput(hook, await linkDeliveries(available, descriptor.cwd), note);
 }

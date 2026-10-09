@@ -534,7 +534,6 @@ export default async function playgroundHarness(api: ExtensionAPI): Promise<void
       return createConversationRulesExtension({
         modelPath: bundledModelPath(),
         databasePath: databasePath,
-        ruleFiles: [],
         registerCommand: false,
         registerTool: false,
       })(tracedApi);

@@ -5,10 +5,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import type { AuditRecorder, AuditInput, AuditResult } from "../../../src/engine/audit/audit.js";
-import { bootstrapCodeRuleDslCatalog, bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
+import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-compile.js";
 import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
-import { SqliteRuleStore } from "../../../src/engine/catalog/rule-store.js";
 import { fixturesPath } from "../../support/oracles.js";
+import { testCodeRuleCatalog } from "../../support/repository-rules.js";
 
 // T6 of the language-pack standard (docs/design/rerail-language-conformance.md): Python, TypeScript, PHP and Blade
 // in one repository, through the built addon and the TypeScript host, by Git index and by directory walk.
@@ -51,11 +51,7 @@ async function enforcerFor(workspaceRoot: string) {
   const home = await directory("rerail-mixed-catalog-");
   const capabilitiesPath = join(home, "capabilities.json");
   await writeFile(capabilitiesPath, await readFile(join(bundledCodeRuleDslDirectory(), "capabilities.json")));
-  const databasePath = join(home, "code-rules.sqlite");
-  const store = new SqliteRuleStore(databasePath);
-  for (const codeRule of CODE_RULES) store.upsertCodeRule(codeRule);
-  store.close();
-  const catalog = bootstrapCodeRuleDslCatalog({ capabilitiesPath, databasePath });
+  const catalog = testCodeRuleCatalog(CODE_RULES, capabilitiesPath);
   const audits = new Map<string, AuditInput & { result?: AuditResult }>();
   const recorder: AuditRecorder = {
     start(input) { const auditId = `run-${audits.size + 1}`; audits.set(auditId, { ...input }); return auditId; },
@@ -78,7 +74,7 @@ async function enforcerFor(workspaceRoot: string) {
       failures: (result?.failures ?? []).map(failure => `${failure.path ?? ""} ${failure.code}`),
     };
   };
-  return { enforcer, audit, close: async () => { await enforcer.close(); catalog.close(); } };
+  return { enforcer, audit, close: async () => { await enforcer.close(); } };
 }
 
 async function mixedRepository(git: boolean): Promise<string> {

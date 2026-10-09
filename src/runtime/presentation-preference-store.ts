@@ -3,7 +3,7 @@ import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { RerailHost } from "../engine/adapter-contract.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { presentationPreferences, type PresentationPreference, type PresentationPresence } from "../engine/storage/schema.js";
-import { physicalPath } from "../engine/catalog/scoped-rule-catalog.js";
+import { physicalPath } from "../engine/catalog/checkout-control.js";
 
 /** Match project path identity even through symlinks or not-yet-created descendants. */
 function repositoryKey(repository: string): string {

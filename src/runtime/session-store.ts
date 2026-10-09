@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { deserialize, serialize } from "node:v8";
-import { and, asc, count, desc, eq, gt, gte, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, inArray, sql } from "drizzle-orm";
 import type { AdapterSession } from "../engine/adapter-contract.js";
+import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
 import { events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
-import { scopedRuleSignature } from "../engine/catalog/scoped-rule-catalog.js";
 import { stableJsonText } from "../engine/stable-json.js";
 
 export interface SessionEvent {
@@ -19,7 +20,7 @@ export interface StoredSessionSummary {
   sessionId: string;
   host: AdapterSession["host"];
   cwd: string;
-  /** Repository the session ran in; null when the recorder had no repository identity to attribute it to. */
+  /** Repository key the session ran in; null when the recorder had no repository to attribute it to. */
   repositoryId: string | null;
   startedAt: number;
   endedAt: number | null;
@@ -47,11 +48,14 @@ export interface SessionHud {
   steeringCount: number | null;
 }
 
+/** What a session's active-rule count was computed from, so the footer can tell whether it is still current. */
 export interface RuleCoverage {
   repositoryId: string;
+  /** The starting checkout and its parent checkouts, whose settings apply. */
+  ownerCheckoutPaths: readonly string[];
   activeRuleCount: number | null;
-  conversationRuleSignature: string;
-  fileRuleSignature: string;
+  /** The repository's rule configuration signature the count was loaded at. */
+  ruleSignature: string;
 }
 
 export interface WorkLink {
@@ -72,14 +76,31 @@ function isForeignKeyFailure(error: unknown): boolean {
   return typeof cause === "object" && cause !== null && "code" in cause && cause.code === "SQLITE_CONSTRAINT_FOREIGNKEY";
 }
 
-/** Limits a shared-database view to the sessions of one repository. */
+/** Limits a shared-database view to the sessions of one repository (its key and, for older rows, clone ids). */
 export interface RepositoryScope {
-  repositoryId?: string | undefined;
+  repositoryId?: string | readonly string[] | undefined;
+}
+
+/** Who a session row belongs to when a write has to (re)create it. */
+export interface SessionAttribution {
+  startedAt?: number;
+  endedAt?: number | null;
+  repositoryKey?: string | null;
+}
+
+function repositoryFilter(repositoryIds: string | readonly string[] | undefined) {
+  if (repositoryIds === undefined) return undefined;
+  const ids = typeof repositoryIds === "string" ? [repositoryIds] : [...repositoryIds];
+  return ids.length === 0 ? sql`0` : inArray(sessions.repositoryId, ids);
 }
 
 function listSessions(
   database: RerailDatabase,
-  { sessionId, startedAtOrAfter, repositoryId }: { sessionId?: string; startedAtOrAfter?: number; repositoryId?: string | undefined } = {},
+  { sessionId, startedAtOrAfter, repositoryIds }: {
+    sessionId?: string;
+    startedAtOrAfter?: number;
+    repositoryIds?: string | readonly string[] | undefined;
+  } = {},
 ): StoredSessionSummary[] {
   return database
     .select({
@@ -96,7 +117,7 @@ function listSessions(
     .where(and(
       sessionId === undefined ? undefined : eq(sessions.sessionId, sessionId),
       startedAtOrAfter === undefined ? undefined : gte(sessions.startedAt, startedAtOrAfter),
-      repositoryId === undefined ? undefined : eq(sessions.repositoryId, repositoryId),
+      repositoryFilter(repositoryIds),
     ))
     .groupBy(sessions.sessionId)
     .orderBy(asc(sessions.startedAt), asc(sessions.sessionId))
@@ -114,30 +135,34 @@ export function decodeEventPayload(payload: Uint8Array): unknown {
 
 /**
  * Append-only, process-safe session and event persistence. Raw event payloads remain local to the
- * configured database. Sessions this store opens are attributed to its `repositoryId`.
+ * configured database. Sessions are attributed to the repository key given when they open, else to the
+ * store's own `repositoryId`.
  */
 export class SqliteSessionStore {
   readonly path: string;
   readonly #database: RerailDatabase;
   readonly #repositoryId: string | null;
+  /** Each session's repository as it opened here, to restore its row after a reset. */
+  readonly #sessionRepositories = new Map<string, string | null>();
 
-  constructor(path: string, { repositoryId }: RepositoryScope = {}) {
+  constructor(path: string, { repositoryId }: { repositoryId?: string | undefined } = {}) {
     this.path = path;
     this.#repositoryId = repositoryId ?? null;
     this.#database = openRerailDatabase(path);
   }
 
-  openSession(session: AdapterSession, startedAt = Date.now()): void {
+  openSession(session: AdapterSession, startedAt = Date.now(), repositoryKey: string | null = this.#repositoryId): void {
+    this.#sessionRepositories.set(session.sessionId, repositoryKey);
     this.#database
       .insert(sessions)
-      .values({ ...session, repositoryId: this.#repositoryId, startedAt, endedAt: null })
+      .values({ ...session, repositoryId: repositoryKey, startedAt, endedAt: null })
       .onConflictDoUpdate({
         target: sessions.sessionId,
         set: {
           host: session.host,
           cwd: session.cwd,
           endedAt: null,
-          ...(this.#repositoryId === null ? {} : { repositoryId: this.#repositoryId }),
+          ...(repositoryKey === null ? {} : { repositoryId: repositoryKey }),
         },
       })
       .run();
@@ -158,14 +183,14 @@ export class SqliteSessionStore {
     session: AdapterSession,
     receiptId: string,
     ruleIds: readonly string[] = [],
-    lifecycle?: Pick<StoredSessionSummary, "startedAt" | "endedAt">,
+    attribution?: SessionAttribution,
   ): void {
     this.append({
       sessionId: session.sessionId,
       eventId: `steering-delivered:${receiptId}`,
       kind: "steering-delivered",
       payload: { ruleIds: [...ruleIds] },
-    }, session, lifecycle);
+    }, session, attribution);
   }
 
 
@@ -179,7 +204,7 @@ export class SqliteSessionStore {
     this.append({ sessionId: session.sessionId, kind: "rule-coverage", payload: coverage }, session);
   }
 
-  append(event: SessionEvent, session?: AdapterSession, lifecycle?: Pick<StoredSessionSummary, "startedAt" | "endedAt">): string {
+  append(event: SessionEvent, session?: AdapterSession, attribution?: SessionAttribution): string {
     const eventId = event.eventId ?? randomUUID();
     const row = {
       sessionId: event.sessionId,
@@ -197,9 +222,9 @@ export class SqliteSessionStore {
       if (session === undefined || !isForeignKeyFailure(error)) throw error;
       this.#database.insert(sessions).values({
         ...session,
-        repositoryId: this.#repositoryId,
-        startedAt: lifecycle?.startedAt ?? Date.now(),
-        endedAt: lifecycle?.endedAt ?? null,
+        repositoryId: attribution?.repositoryKey ?? this.#sessionRepositories.get(session.sessionId) ?? this.#repositoryId,
+        startedAt: attribution?.startedAt ?? Date.now(),
+        endedAt: attribution?.endedAt ?? null,
       }).onConflictDoNothing().run();
       this.#database.insert(events).values(row).onConflictDoNothing().run();
     }
@@ -211,7 +236,7 @@ export class SqliteSessionStore {
   }
 
   sessions(): readonly StoredSessionSummary[] {
-    return listSessions(this.#database, { repositoryId: this.#repositoryId ?? undefined });
+    return listSessions(this.#database, { repositoryIds: this.#repositoryId ?? undefined });
   }
 
   session(sessionId: string): StoredSessionSummary | undefined {
@@ -241,8 +266,9 @@ export class SqliteSessionStore {
 /**
  * Read-only view over a database written by {@link SqliteSessionStore}.
  *
- * With a `repositoryId`, listings and aggregates cover only that repository's sessions; a
- * session addressed by its id is found whichever repository recorded it.
+ * With a `repositoryId` (a key, or a key and the clone ids of its checkouts), listings and aggregates cover
+ * only that repository's sessions; a call that names `repositoryIds` uses those instead. A session addressed
+ * by its id is found whichever repository recorded it.
  *
  * The database may not exist yet when a viewer starts before any session has
  * been recorded; reads then report no sessions and the handle is opened on the
@@ -251,17 +277,17 @@ export class SqliteSessionStore {
 export class SqliteSessionReader {
   readonly path: string;
   readonly #database: LazyReadonlyRerailDatabase;
-  readonly #repositoryId: string | undefined;
+  readonly #repositoryIds: string | readonly string[] | undefined;
 
   constructor(path: string, { repositoryId }: RepositoryScope = {}) {
     this.path = path;
-    this.#repositoryId = repositoryId;
+    this.#repositoryIds = repositoryId;
     this.#database = new LazyReadonlyRerailDatabase(path);
   }
 
-  sessions(): readonly StoredSessionSummary[] {
+  sessions(repositoryIds: readonly string[] | undefined = undefined): readonly StoredSessionSummary[] {
     const database = this.#database.open();
-    return database === undefined ? [] : listSessions(database, { repositoryId: this.#repositoryId });
+    return database === undefined ? [] : listSessions(database, { repositoryIds: repositoryIds ?? this.#repositoryIds });
   }
 
   session(sessionId: string): StoredSessionSummary | undefined {
@@ -281,14 +307,16 @@ export class SqliteSessionReader {
       )).get();
       const coverage = database.select({
         repositoryId: sql<string | null>`json_extract(${events.payloadJson}, '$.repositoryId')`,
+        ownerCheckoutPaths: sql<string | null>`json_extract(${events.payloadJson}, '$.ownerCheckoutPaths')`,
         activeRuleCount: sql<number | null>`json_extract(${events.payloadJson}, '$.activeRuleCount')`,
-        conversationRuleSignature: sql<string | null>`json_extract(${events.payloadJson}, '$.conversationRuleSignature')`,
-        fileRuleSignature: sql<string | null>`json_extract(${events.payloadJson}, '$.fileRuleSignature')`,
+        ruleSignature: sql<string | null>`json_extract(${events.payloadJson}, '$.ruleSignature')`,
       }).from(events).where(and(eq(events.sessionId, sessionId), eq(events.kind, "rule-coverage")))
         .orderBy(desc(events.sequence)).limit(1).get();
-      const current = coverage?.repositoryId != null
-        && coverage.conversationRuleSignature === scopedRuleSignature(database, coverage.repositoryId, "conversation")
-        && coverage.fileRuleSignature === scopedRuleSignature(database, coverage.repositoryId, "file");
+      // Coverage written before repository configuration has no rule signature and is never current.
+      const current = coverage?.repositoryId != null && coverage.ruleSignature !== null && coverage.ownerCheckoutPaths !== null
+        && coverage.ruleSignature === ruleConfigurationSignature(
+          database, loadBundledCatalog(), coverage.repositoryId, JSON.parse(coverage.ownerCheckoutPaths) as string[],
+        );
       const steeringCount = baseline?.complete === 1
         ? database.select({ total: count() }).from(events)
           .where(and(eq(events.sessionId, sessionId), eq(events.kind, "steering-delivered"))).get()!.total
@@ -324,21 +352,24 @@ export class SqliteSessionReader {
   }
 
   /** Sessions that started at or after `since`, for a page showing one time range. */
-  sessionsSince(since: number): readonly StoredSessionSummary[] {
+  sessionsSince(since: number, repositoryIds: readonly string[] | undefined = undefined): readonly StoredSessionSummary[] {
     const database = this.#database.open();
-    return database === undefined ? [] : listSessions(database, { startedAtOrAfter: since, repositoryId: this.#repositoryId });
+    return database === undefined
+      ? []
+      : listSessions(database, { startedAtOrAfter: since, repositoryIds: repositoryIds ?? this.#repositoryIds });
   }
 
   /**
    * Steers per rule: steers in range, counted against each rule the delivery
    * named. A delivery that named no rule contributes to nothing.
    */
-  steersByRule(since: number): Map<string, number> {
+  steersByRule(since: number, repositoryIds: readonly string[] | undefined = undefined): Map<string, number> {
     const database = this.#database.open();
     if (database === undefined) return new Map();
-    const repository = this.#repositoryId === undefined
+    const scope = repositoryIds ?? this.#repositoryIds;
+    const repository = scope === undefined
       ? sql``
-      : sql`AND event.session_id IN (${sessionsOfRepository(this.#repositoryId)})`;
+      : sql`AND event.session_id IN (${sessionsOfRepository(scope)})`;
     const rows = database.all<{ ruleId: string; deliveries: number }>(sql`
       SELECT rule.value AS ruleId, count(DISTINCT event.sequence) AS deliveries
       FROM ${events} event, json_each(json_extract(event.payload_json, '$.ruleIds')) rule

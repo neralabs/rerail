@@ -3,9 +3,10 @@ import { opendir, readFile, stat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { bundledModelPath } from "../engine/package-root.js";
 import { z } from "zod";
-import { ruleUpsertSchema } from "../api/operations.js";
+import { libraryUpsertBodySchema } from "../api/repository-contracts.js";
 import { parseArguments } from "../daemon/daemon.js";
-import { defaultRerailDatabasePath } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
+import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
 import { IGNORED_DIRECTORIES, languageFor } from "../engine/code-rule/code-rule-enforcer.js";
 import {
   encodeCodeRuleWorkspaceRequest,
@@ -18,9 +19,13 @@ import { CODE_RULE_DIALECTS } from "../engine/code-rule/code-rule-languages.js";
 import type { CodeRule } from "../engine/code-rule/code-rule-schema.js";
 import { ConversationRuleRegistry } from "../engine/catalog/registry.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
+import { normalizeFolder } from "../engine/catalog/repository-model.js";
+import { recordCheckout } from "../engine/catalog/repository-registry.js";
+import { checkoutStatus } from "../engine/catalog/repository-registry.js";
+import { addAttachment, setUpRepository } from "../engine/catalog/rule-configuration.js";
+import { upsertLibraryRule } from "../engine/catalog/rule-library.js";
 import { parseConversationRule, sampleSourceSchema, SAMPLE_BOUNDARIES, type ConversationRule } from "../engine/catalog/rule-schema.js";
-import { resolveRepositoryContext, ScopedRuleCatalog } from "../engine/catalog/scoped-rule-catalog.js";
-import { dashboardOrigin } from "../presentation/session-presentation.js";
+import { readRulesDashboard } from "../presentation/session-presentation.js";
 import { stableJsonText } from "../engine/stable-json.js";
 
 /** How many repository matches the report shows; the count covers every match. */
@@ -48,9 +53,13 @@ type CodeRuleCase = z.infer<typeof codeRuleCaseSchema>;
 type ConversationCase = z.infer<typeof conversationCaseSchema>;
 type Expectation = "caught" | "passed";
 
+/** A draft rule, the folder of its repository it is added at (`""`, the whole repository, unless the draft names one), and its cases. */
 export type RuleDraft =
-  | { kind: "file"; rule: CodeRule; cases: ReadonlyArray<{ expected: Expectation; sample: CodeRuleCase }> }
-  | { kind: "conversation"; rule: ConversationRule; cases: ReadonlyArray<{ expected: Expectation; sample: ConversationCase }> };
+  | { kind: "file"; rule: CodeRule; folder: string; cases: ReadonlyArray<{ expected: Expectation; sample: CodeRuleCase }> }
+  | { kind: "conversation"; rule: ConversationRule; folder: string; cases: ReadonlyArray<{ expected: Expectation; sample: ConversationCase }> };
+
+/** A draft is added to the repository of the checkout it is added from; it never names another. */
+const TARGET_FIELDS = ["repository", "checkout", "attach"] as const;
 
 export interface RuleDraftCaseResult {
   expected: Expectation;
@@ -99,13 +108,21 @@ function parseCases<T>(schema: z.ZodType<T>, values: readonly unknown[], list: E
   });
 }
 
-/** Validate a draft exactly as `PUT /api/rules/{id}` validates its body, plus the optional `cases`. */
+/** Validate a draft exactly as `PUT /api/library-rules/{id}` validates its body, plus the optional `cases`. */
 export function parseRuleDraft(value: unknown): RuleDraft {
   const envelope = z.looseObject({ cases: z.unknown().optional() }).safeParse(value);
   if (!envelope.success) throw new RuleDraftError("the draft must be a JSON object");
   const { cases: rawCases, ...body } = envelope.data;
-  const upsert = ruleUpsertSchema.safeParse(body);
+  const target = TARGET_FIELDS.find(field => field in body);
+  if (target !== undefined) throw new RuleDraftError(`${target}: a draft is added to this checkout's repository and cannot name ${target}`);
+  const upsert = libraryUpsertBodySchema.safeParse(body);
   if (!upsert.success) throw new RuleDraftError(issuesText(upsert.error));
+  let folder: string;
+  try {
+    folder = normalizeFolder(upsert.data.folder ?? "");
+  } catch (error) {
+    throw new RuleDraftError(`folder: ${errorMessage(error)}`);
+  }
   const cases = draftCasesSchema.safeParse(rawCases ?? {});
   if (!cases.success) throw new RuleDraftError(issuesText(cases.error, ["cases"]));
   if (upsert.data.kind === "file") {
@@ -113,6 +130,7 @@ export function parseRuleDraft(value: unknown): RuleDraft {
     return {
       kind: "file",
       rule: upsert.data.rule as CodeRule,
+      folder,
       cases: [...parseCases(schema, cases.data.caught, "caught"), ...parseCases(schema, cases.data.passed, "passed")],
     };
   }
@@ -125,6 +143,7 @@ export function parseRuleDraft(value: unknown): RuleDraft {
   return {
     kind: "conversation",
     rule,
+    folder,
     cases: [...parseCases(conversationCaseSchema, cases.data.caught, "caught"), ...parseCases(conversationCaseSchema, cases.data.passed, "passed")],
   };
 }
@@ -340,33 +359,40 @@ export async function testRuleDraftFile(file: string, repo: string): Promise<Rul
 export interface AddedRule {
   ruleId: string;
   repositoryName: string;
+  /** The repository folder the rule was added at; `""` is the whole repository. */
+  folder: string;
+  /** Whether adding the rule set the repository up, with this rule as its only one. */
+  setUp: boolean;
 }
 
 /**
- * Store the draft's rule as an enabled project rule of `repo`'s repository, through the same validation as
- * `rules_upsert`. A rule Rerail put there under the same id is never overwritten.
+ * Store the draft's rule in your library, through the same validation as `library_rules_upsert`, and add it to
+ * `repo`'s repository at the draft's folder. A repository that is not set up yet is set up with this rule (an
+ * agent creating a rule may add it to the repository). A By Rerail rule is never replaced: its id is refused.
  */
 export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defaultRerailDatabasePath()): AddedRule {
-  const context = resolveRepositoryContext(repo);
-  const catalog = ScopedRuleCatalog.open(databasePath, context);
+  const database = openRerailDatabase(databasePath);
   try {
-    const existing = catalog.get(draft.rule.id);
+    const checkout = recordCheckout(database, repo);
+    const bundle = loadBundledCatalog();
     // A rule by Rerail is never overwritten by one the person drafts.
-    if (existing?.catalogOrigin === "rerail") {
+    if (bundle.documents.has(draft.rule.id)) {
       throw new RuleDraftError(`${draft.rule.id} is a rule by Rerail, so it was not replaced. Give the new rule another id.`);
     }
-    const options = { applicability: "project" as const, enabled: true };
     try {
-      if (draft.kind === "file") catalog.upsertCodeRule(draft.rule, options);
-      else catalog.upsertConversationRule(draft.rule, options);
+      upsertLibraryRule(database, bundle, draft.rule, draft.kind);
     } catch (error) {
       if (error instanceof EngineUnavailableError) throw new RuleDraftError(`the Engine is unavailable, so rule ${draft.rule.id} cannot be checked`);
       throw new RuleDraftError(errorMessage(error));
     }
+    const attachment = { sourceKind: "library_rule" as const, sourceId: draft.rule.id, folder: draft.folder };
+    const setUp = checkoutStatus(database, checkout).setUp === false;
+    if (setUp) setUpRepository(database, checkout.repositoryKey, { packs: [], rules: [attachment] });
+    else addAttachment(database, { repositoryKey: checkout.repositoryKey, ...attachment });
+    return { ruleId: draft.rule.id, repositoryName: repositoryName(checkout.checkoutPath), folder: draft.folder, setUp };
   } finally {
-    catalog.close();
+    database.$client.close();
   }
-  return { ruleId: draft.rule.id, repositoryName: repositoryName(context.workspaceRoot) };
 }
 
 function caseLine(result: RuleDraftCaseResult): string {
@@ -439,9 +465,15 @@ export async function runRuleDraftCommand(
     (io.stderr ?? process.stderr).write(`● The rule was not added: ${error.message}\n`);
     return 1;
   }
-  stdout.write(`● Added ${added.ruleId} to ${added.repositoryName}.\n`);
-  // The same dashboard the footer and steers link to: a workspace's public URL, else a loopback daemon.
-  const origin = await dashboardOrigin(repo);
-  if (origin !== undefined) stdout.write(`  ${origin}#rule/${encodeURIComponent(added.ruleId)}\n`);
+  const where = added.folder === "" ? added.repositoryName : `${added.repositoryName}/${added.folder}`;
+  stdout.write(`● Added ${added.ruleId} to ${where}.\n`);
+  if (added.setUp) stdout.write(`  ${added.repositoryName} was not set up, so it is now set up with this rule.\n`);
+  // The same dashboard the footer and steers link to, scoped to this checkout's repository when the daemon knows it.
+  const dashboard = await readRulesDashboard({ cwd: repo });
+  if (dashboard.url !== null) {
+    const link = new URL(dashboard.url);
+    link.hash = `rule/${encodeURIComponent(added.ruleId)}`;
+    stdout.write(`  ${link.href}\n`);
+  }
   return 0;
 }

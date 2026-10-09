@@ -1,4 +1,6 @@
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
+import { folderContains, type Decider, type RepositoryKey, type RuleSourceKind } from "../catalog/repository-model.js";
+import type { RuleMode } from "../catalog/rule-mode.js";
 
 export const AUDIT_SCOPES = ["repository", "touched-files", "ai-output"] as const;
 export const AUDIT_MODES = ["steer", "log"] as const;
@@ -7,13 +9,56 @@ export type AuditScope = (typeof AUDIT_SCOPES)[number];
 export type AuditMode = (typeof AUDIT_MODES)[number];
 export type AuditStatus = (typeof AUDIT_STATUSES)[number];
 
-export interface AuditRuleProvenance {
+/** Audits recorded before repository-owned rules: the rule's project-catalog applicability. */
+export interface LegacyAuditRuleProvenance {
   ruleId: string;
   revision: number;
   payloadHash: string;
   applicability: "global" | "project";
   projectId?: string;
   origin: "user" | "rerail";
+}
+
+/** How a rule ran in one folder of its checkout, and which owner decided `on` and `mode` there. */
+export interface RulePlacementDecision {
+  folder: string;
+  on: boolean;
+  mode: RuleMode;
+  onFrom: Decider;
+  modeFrom: Decider;
+}
+
+/** A rule a repository's configuration made present in the checkout the audit evaluated. */
+export interface RepositoryAuditRuleProvenance {
+  ruleId: string;
+  revision: number;
+  payloadHash: string;
+  source: { kind: RuleSourceKind; id: string; packId: string | null };
+  repositoryKey: RepositoryKey;
+  checkoutPath: string;
+  /** Every folder the rule is present in, sorted; the deepest folder containing a path decides there. */
+  placement: RulePlacementDecision[];
+}
+
+export type AuditRuleProvenance = LegacyAuditRuleProvenance | RepositoryAuditRuleProvenance;
+
+/**
+ * What decided a violation's rule at its path (relative to the audit's checkout): the deepest placement folder that
+ * contains it. Undefined for legacy provenance, a rule the audit did not record, or a violation without a path.
+ */
+export function decisionFor(
+  audit: { ruleProvenance: readonly AuditRuleProvenance[] },
+  violation: Pick<CodeRuleViolation, "ruleId" | "path">,
+): RulePlacementDecision | undefined {
+  const path = violation.path;
+  if (path === undefined) return undefined;
+  const provenance = audit.ruleProvenance.find(entry => entry.ruleId === violation.ruleId && "placement" in entry);
+  if (provenance === undefined || !("placement" in provenance)) return undefined;
+  let decision: RulePlacementDecision | undefined;
+  for (const entry of provenance.placement) {
+    if (folderContains(entry.folder, path) && (decision === undefined || entry.folder.length > decision.folder.length)) decision = entry;
+  }
+  return decision;
 }
 
 export interface AuditFailure {

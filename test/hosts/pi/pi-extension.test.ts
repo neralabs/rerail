@@ -25,16 +25,13 @@ import Database from "better-sqlite3";
 import {
   RULE_MESSAGE_TYPE,
   defaultRerailDatabasePath,
-  openRerailDatabase,
-  resetRepositoryHistory,
-  resolveRepositoryContext,
-  SqliteAuditControlStore,
   steerBlock,
+  type ConversationRule,
 } from "../../../src/engine/index.js";
 import { createPiConversationRulesExtension } from "../../../src/hosts/pi/pi-extension.js";
 import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE, SqliteSessionStore } from "../../../src/runtime/index.js";
-import type { ConversationRule } from "../../../src/engine/index.js";
 import type { RerailCommandContext } from "../../../src/harness/index.js";
+import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 
 // Every test here builds real sessions (native model, engine, rule catalog); on a loaded CI runner a
@@ -49,6 +46,7 @@ interface PiHarness {
   entries: Array<{ customType: string; data: unknown }>;
   pi: ExtensionAPI;
   context: ExtensionContext;
+  repositoryKey: string;
 }
 const temporaryDirectories: string[] = [];
 
@@ -84,7 +82,7 @@ function createHarness(branch: unknown[] = []): PiHarness {
   const cwd = mkdtempSync(join(tmpdir(), "rerail-pi-extension-"));
   process.env.RERAIL_HOME = join(cwd, "home");
   temporaryDirectories.push(cwd);
-  startTestRepository(cwd);
+  const repositoryKey = startTestRepository(cwd);
   const handlers = new Map<string, Handler>();
   const commands = new Map<string, CommandHandler>();
   const messages: Array<{ message: unknown; options: unknown }> = [];
@@ -109,7 +107,7 @@ function createHarness(branch: unknown[] = []): PiHarness {
     sessionManager: { getSessionId: () => "pi-test-session", getBranch: () => branch },
   } as unknown as ExtensionContext;
   shutdowns.push(async () => handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "quit" }, context));
-  return { handlers, commands, messages, entries, pi, context };
+  return { handlers, commands, messages, entries, pi, context, repositoryKey };
 }
 
 function receiptCount(harness: PiHarness, sessionId = "pi-test-session"): number {
@@ -132,10 +130,15 @@ const messageRule: ConversationRule = {
   repeat: { mode: "always" },
 };
 
+/** Only rules a repository adds run: add `rules` to the harness checkout's repository and set it up. */
+function addRules(harness: PiHarness, rules: readonly ConversationRule[]): void {
+  setUpTestRepository(harness.context.cwd, { library: rules.map(rule => ({ kind: "conversation" as const, rule })) });
+}
+
 function install(harness: PiHarness, rules: readonly ConversationRule[] = [messageRule]) {
+  addRules(harness, rules);
   createPiConversationRulesExtension({
     modelPath: resolve("model"),
-    rules,
     registerTool: false,
     registerCommand: false,
   })(harness.pi);
@@ -176,13 +179,16 @@ describe("Pi conversation-rules extension", () => {
 
   it("says Rerail is not on here in a stopped checkout, without asking a daemon", async () => {
     const harness = createHarness();
+    // Set-up starts the repository; stopping it afterwards leaves it set up but off here.
+    addRules(harness, [messageRule]);
     stopTestRepository(harness.context.cwd);
     const widgets: Array<string[] | undefined> = [];
     const fetchSpy = vi.fn(async () => { throw new Error("no daemon may be asked"); });
     vi.stubGlobal("fetch", fetchSpy);
     try {
       Object.assign(harness.context, { hasUI: true, ui: { setWidget: (_key: string, content: string[] | undefined) => { widgets.push(content); } } });
-      await install(harness);
+      createPiConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, harness.context);
       expect(widgets.at(-1)?.map(line => line.replace(/\u001b\[[0-9;]*m|\u001b\]8;;[^\u0007]*\u0007/gu, ""))).toEqual(["Rerail ○ not on here"]);
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
@@ -330,9 +336,9 @@ describe("Pi conversation-rules extension", () => {
       { type: "custom", customType: MATCH_ENTRY_TYPE, data: { ruleId: "checkout", turn: 3 } },
       { type: "custom", customType: TURN_ENTRY_TYPE, data: { turn: 3 } },
     ]);
+    addRules(harness, [{ ...messageRule, repeat: { mode: "once" } }]);
     createPiConversationRulesExtension({
       modelPath: resolve("model"),
-      rules: [{ ...messageRule, repeat: { mode: "once" } }],
       registerTool: false,
       registerCommand: false,
     })(harness.pi);

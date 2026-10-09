@@ -1,4 +1,4 @@
-import { sql, type SQL } from "drizzle-orm";
+import { inArray, sql, type SQL } from "drizzle-orm";
 import { blob, check, index, integer, primaryKey, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "../adapter-contract.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
@@ -13,6 +13,7 @@ import {
   type AuditRuleProvenance,
 } from "../audit/audit.js";
 import { CODE_RULE_FORMAT, type CodeRuleClause, type CodeRuleScope } from "../code-rule/code-rule-schema.js";
+import { RULE_SETTING_OWNER_KINDS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS } from "../catalog/repository-model.js";
 import { RULE_MODES } from "../catalog/rule-mode.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
 import type { RuleDocument } from "../catalog/rule-store.js";
@@ -59,9 +60,6 @@ export const presentationPreferences = sqliteTable(
     check("presentation_preferences_presence", sql`${table.presence} IN (${sql.raw(inList(PRESENTATION_PRESENCES))})`),
   ],
 );
-
-export const RULE_APPLICABILITIES = ["global", "project"] as const;
-export type RuleApplicability = (typeof RULE_APPLICABILITIES)[number];
 
 export const RULE_ORIGINS = ["user", "rerail"] as const;
 export type RuleOrigin = (typeof RULE_ORIGINS)[number];
@@ -142,107 +140,109 @@ export const rules = sqliteTable(
   ],
 );
 
-/** Machine-local projects group an explicit set of stable repository identities. */
-export const ruleProjects = sqliteTable("rule_projects", {
-  projectId: text("project_id").primaryKey(),
-  name: text("name").notNull(),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-});
-
-/** Repository ids are persisted outside checkout paths so every worktree resolves identically. */
-export const ruleRepositories = sqliteTable("rule_repositories", {
-  repositoryId: text("repository_id").primaryKey(),
-  lastKnownPath: text("last_known_path").notNull(),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-});
-
-export const REPOSITORY_START_STATES = ["started", "stopped"] as const;
-
-/**
- * Whether Rerail is on in a repository's main checkout, and so in every worktree that has no setting of
- * its own (`checkout_starts`). A repository without a row here or there was never set up.
- */
-export const repositoryStarts = sqliteTable(
-  "repository_starts",
-  {
-    repositoryId: text("repository_id").primaryKey(),
-    state: text("state", { enum: REPOSITORY_START_STATES }).notNull(),
-    startedAt: integer("started_at"),
-    stoppedAt: integer("stopped_at"),
-    updatedAt: integer("updated_at").notNull(),
-  },
-  table => [check("repository_starts_state", sql`${table.state} IN (${sql.raw(inList(REPOSITORY_START_STATES))})`)],
-);
-
-/**
- * A linked worktree's own on/off, which wins over the checkouts that contain it. Without a row a worktree
- * follows the nearest containing checkout of its repository that has one, then the main checkout
- * (`repository_starts`). Set-up and rules stay per repository.
- */
-export const checkoutStarts = sqliteTable(
-  "checkout_starts",
-  {
-    repositoryId: text("repository_id").notNull(),
-    checkoutPath: text("checkout_path").notNull(),
-    state: text("state", { enum: REPOSITORY_START_STATES }).notNull(),
-    startedAt: integer("started_at"),
-    stoppedAt: integer("stopped_at"),
-    updatedAt: integer("updated_at").notNull(),
-  },
-  table => [
-    primaryKey({ columns: [table.repositoryId, table.checkoutPath] }),
-    check("checkout_starts_state", sql`${table.state} IN (${sql.raw(inList(REPOSITORY_START_STATES))})`),
-  ],
-);
-
 /** One logical rule id has one evaluation kind across every owner. */
 export const ruleCatalogIdentities = sqliteTable("rule_catalog_identities", {
   ruleId: text("rule_id").primaryKey(),
   kind: text("kind", { enum: RULE_KINDS }).notNull(),
 });
 
-export const ruleProjectRepositories = sqliteTable(
-  "rule_project_repositories",
-  {
-    projectId: text("project_id").notNull().references(() => ruleProjects.projectId, { onDelete: "cascade" }),
-    repositoryId: text("repository_id").primaryKey().references(() => ruleRepositories.repositoryId, { onDelete: "cascade" }),
-    addedAt: integer("added_at").notNull(),
-  },
-  table => [index("rule_project_repositories_project").on(table.projectId)],
-);
-
 /**
- * Authoritative machine catalog. `owner_id` is `global` for global rules and a
- * project id otherwise. The composite key permits a project override to retain
- * the same stable rule id as its inherited global definition.
+ * A repository Rerail knows on this machine. The key is `remote:<host>/<path>` from the normalised
+ * `origin` (or sole) remote, else `clone:<clone id>`; `aliases_json` lists other keys that resolve here.
+ * `configured_at` null means Not set up, so nothing runs; `started` is the default every checkout follows, and null
+ * means nobody started or stopped the repository yet (off).
  */
-export const catalogRules = sqliteTable(
-  "catalog_rules",
+export const repositories = sqliteTable(
+  "repositories",
   {
-    ownerKind: text("owner_kind", { enum: RULE_APPLICABILITIES }).notNull(),
-    ownerId: text("owner_id").notNull(),
-    ruleId: text("rule_id").notNull(),
-    kind: text("kind", { enum: RULE_KINDS }).notNull(),
-    revision: integer("revision").notNull(),
-    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
-    document: text("document_json", { mode: "json" }).$type<RuleDocument>().notNull(),
-    payloadHash: text("payload_hash").notNull(),
-    sourceDigest: text("source_digest"),
-    origin: text("origin", { enum: RULE_ORIGINS }).notNull(),
+    repositoryKey: text("repository_key").primaryKey(),
+    displayName: text("display_name").notNull(),
+    aliases: text("aliases_json", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
+    configuredAt: integer("configured_at"),
+    started: integer("started", { mode: "boolean" }),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
+  table => [check("repositories_aliases", sql`json_type(${table.aliases}) = 'array'`)],
+);
+
+/**
+ * One working copy of a repository: a clone's main checkout or a linked worktree, keyed by its physical
+ * git top-level. `clone_id` is the id in the clone's git common dir, so worktrees of one clone stay together.
+ * `started` null follows the nearest containing checkout of the repository, then the repository.
+ */
+export const checkouts = sqliteTable(
+  "checkouts",
+  {
+    checkoutPath: text("checkout_path").primaryKey(),
+    repositoryKey: text("repository_key")
+      .notNull()
+      .references(() => repositories.repositoryKey, { onDelete: "cascade", onUpdate: "cascade" }),
+    cloneId: text("clone_id").notNull(),
+    started: integer("started", { mode: "boolean" }),
+    createdAt: integer("created_at").notNull(),
+    lastSeenAt: integer("last_seen_at").notNull(),
+  },
+  table => [index("checkouts_clone").on(table.cloneId), index("checkouts_repository").on(table.repositoryKey)],
+);
+
+/** A rule pack, By Rerail rule or library rule added to a repository; `folder` `''` is the whole repository. */
+export const ruleAttachments = sqliteTable(
+  "rule_attachments",
+  {
+    repositoryKey: text("repository_key")
+      .notNull()
+      .references(() => repositories.repositoryKey, { onDelete: "cascade", onUpdate: "cascade" }),
+    folder: text("folder").notNull().default(""),
+    sourceKind: text("source_kind", { enum: RULE_SOURCE_KINDS }).notNull(),
+    sourceId: text("source_id").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
   table => [
-    primaryKey({ columns: [table.ownerKind, table.ownerId, table.ruleId] }),
-    index("catalog_rules_kind_enabled").on(table.kind, table.enabled),
-    check("catalog_rules_owner", sql`
-      (${table.ownerKind} = 'global' AND ${table.ownerId} = 'global')
-      OR (${table.ownerKind} = 'project' AND ${table.ownerId} <> 'global')
-    `),
-    check("catalog_rules_revision", sql`${table.revision} > 0`),
+    primaryKey({ columns: [table.repositoryKey, table.folder, table.sourceKind, table.sourceId] }),
+    check("rule_attachments_source_kind", sql`${table.sourceKind} IN (${sql.raw(inList(RULE_SOURCE_KINDS))})`),
   ],
+);
+
+/**
+ * `on` / `mode` for a rule or a whole pack, owned by a repository (`owner_id` = repository key) or a checkout
+ * (`owner_id` = checkout path), optionally for one folder. A null field defers to the next owner.
+ */
+export const ruleSettings = sqliteTable(
+  "rule_settings",
+  {
+    ownerKind: text("owner_kind", { enum: RULE_SETTING_OWNER_KINDS }).notNull(),
+    ownerId: text("owner_id").notNull(),
+    folder: text("folder").notNull().default(""),
+    targetKind: text("target_kind", { enum: RULE_SETTING_TARGET_KINDS }).notNull(),
+    targetId: text("target_id").notNull(),
+    on: integer("on", { mode: "boolean" }),
+    mode: text("mode", { enum: RULE_MODES }),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  table => [
+    primaryKey({ columns: [table.ownerKind, table.ownerId, table.folder, table.targetKind, table.targetId] }),
+    check("rule_settings_owner_kind", sql`${table.ownerKind} IN (${sql.raw(inList(RULE_SETTING_OWNER_KINDS))})`),
+    check("rule_settings_target_kind", sql`${table.targetKind} IN (${sql.raw(inList(RULE_SETTING_TARGET_KINDS))})`),
+    check("rule_settings_mode", sql`${table.mode} IS NULL OR ${table.mode} IN (${sql.raw(inList(RULE_MODES))})`),
+    check("rule_settings_value", sql`${table.on} IS NOT NULL OR ${table.mode} IS NOT NULL`),
+  ],
+);
+
+/** Rules people wrote ("Created by you"), once per machine; added to repositories by `rule_attachments`. */
+export const libraryRules = sqliteTable(
+  "library_rules",
+  {
+    ruleId: text("rule_id").primaryKey(),
+    kind: text("kind", { enum: RULE_KINDS }).notNull(),
+    document: text("document_json", { mode: "json" }).$type<RuleDocument>().notNull(),
+    revision: integer("revision").notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    copiedFromRuleId: text("copied_from_rule_id"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  table => [check("library_rules_revision", sql`${table.revision} > 0`)],
 );
 
 /**
@@ -421,11 +421,14 @@ export const policySessionOwners = sqliteTable("policy_session_owners", {
 });
 
 /**
- * The ids of `repositoryId`'s sessions, as a subquery for `session_id IN (...)`; `ended` narrows it
- * to sessions that have finished.
+ * The ids of the sessions recorded under any of `repositoryIds` (a repository key, its aliases and the
+ * clone ids of its checkouts), as a subquery for `session_id IN (...)`; `ended` narrows it to sessions
+ * that have finished. An empty list matches nothing.
  */
-export function sessionsOfRepository(repositoryId: string, { ended = false }: { ended?: boolean } = {}): SQL {
-  return sql`SELECT ${sessions.sessionId} FROM ${sessions} WHERE ${sessions.repositoryId} = ${repositoryId}${
+export function sessionsOfRepository(repositoryIds: string | readonly string[], { ended = false }: { ended?: boolean } = {}): SQL {
+  const ids = typeof repositoryIds === "string" ? [repositoryIds] : [...repositoryIds];
+  const matches = ids.length === 0 ? sql`0` : inArray(sessions.repositoryId, ids);
+  return sql`SELECT ${sessions.sessionId} FROM ${sessions} WHERE ${matches}${
     ended ? sql` AND ${sessions.endedAt} IS NOT NULL` : sql``
   }`;
 }
@@ -445,10 +448,4 @@ export type WorkLinkRow = typeof workLinks.$inferSelect;
 export type AuditRow = typeof audits.$inferSelect;
 export type PresentationPreference = typeof presentationPreferences.$inferSelect;
 export type PresentationPresence = PresentationPreference["presence"];
-export type CatalogRuleRow = typeof catalogRules.$inferSelect;
-export type NewCatalogRuleRow = typeof catalogRules.$inferInsert;
-export type RuleProjectRow = typeof ruleProjects.$inferSelect;
-export type RuleRepositoryRow = typeof ruleRepositories.$inferSelect;
-export type RepositoryStartRow = typeof repositoryStarts.$inferSelect;
-export type RuleProjectRepositoryRow = typeof ruleProjectRepositories.$inferSelect;
 export type RuleCatalogIdentityRow = typeof ruleCatalogIdentities.$inferSelect;

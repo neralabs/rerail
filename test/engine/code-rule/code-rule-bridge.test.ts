@@ -1,9 +1,14 @@
 import { lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CodeRuleBridge, generatedEditPaths, isCommandTool, type SourceObservationCache } from "../../../src/engine/code-rule/code-rule-bridge.js";
+import {
+  CodeRuleBridge,
+  generatedEditPaths,
+  isCommandTool,
+  type SourceObservationCache,
+} from "../../../src/engine/code-rule/code-rule-bridge.js";
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
 
@@ -602,5 +607,45 @@ describe("CodeRuleBridge", () => {
     await writeFile(join(root, "src", "a.py"), "after\n");
     await bridge.finish("replace");
     expect(auditGeneratedEdits).toHaveBeenCalledWith("session-1", expect.objectContaining({ edits: [expect.objectContaining({ path: "src/a.py", previousReadError: expect.any(String), generatedText: "after\n" })] }));
+  });
+
+  it("audits a write outside the session folder and never reports it deleted by a later walk of the folder", async () => {
+    const base = await workspace();
+    const session = join(base, "session");
+    const sibling = join(base, "sibling");
+    await mkdir(join(session, "src"), { recursive: true });
+    await mkdir(sibling);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(session, {
+      ...auditor(auditGeneratedEdits),
+      sourceRoot: path => resolve(session, path).startsWith(`${sibling}${sep}`) ? sibling : session,
+    });
+
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.begin("call-1", "write", { path: join(sibling, "x.py") });
+    await writeFile(join(sibling, "x.py"), "after\n");
+    await bridge.finish("call-1");
+    // The walk covers the session folder only; the sibling file it never sees is not a deletion.
+    await bridge.checkpoint("turn");
+    await bridge.checkpoint("final");
+
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
+      { path: "../sibling/x.py", language: "python", generatedText: "after\n" },
+    ]);
+  });
+
+  it("does not read a file the auditor finds no owner for", async () => {
+    const root = await workspace();
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    // The owner can change between `acceptsPath` and the read; no owner must never mean "the session folder".
+    const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), sourceRoot: () => undefined });
+
+    await bridge.openWorkspace("session-1");
+    await bridge.begin("call-1", "write", { path: "src/a.py" });
+    await writeFile(join(root, "src", "a.py"), "after\n");
+    await bridge.finish("call-1");
+
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([]);
   });
 });

@@ -320,16 +320,17 @@ npx vitest run test/engine/catalog/tool-call-rules.test.ts
 the commands your own repository already sanctions (scripts, CI, docs). A rule that matches
 sanctioned commands — `rm -rf` in a cleanup script — should use `mode: "steer"`, not `"block"`, until it is narrowed.
 
-**4. Install it** with the daemon running (`rerail daemon start`):
+**4. Install it** with the daemon running (`rerail daemon start`): store it in your library and add it to
+the repository it should run in.
 
 ```sh
-curl -X PUT http://127.0.0.1:4737/api/rules/oss:no-force-push \
+curl -X PUT http://127.0.0.1:4737/api/library-rules/oss:no-force-push \
   -H 'content-type: application/json' \
-  -d "{\"kind\": \"conversation\", \"enabled\": true, \"rule\": $(cat no-force-push.json)}"
+  -d "{\"kind\": \"conversation\", \"rule\": $(cat no-force-push.json), \"checkout\": \"$PWD\", \"attach\": true}"
 ```
 
 The body is validated before it is stored, regex included; an invalid rule is rejected with
-`400 invalid-request`. (Structural rules are stored under the `conversation` kind for now.)
+`400 invalid-request`. The checkout must be one Rerail has recorded (run `rerail start` there first). (Structural rules are stored under the `conversation` kind for now.)
 
 ## Errors you will meet
 

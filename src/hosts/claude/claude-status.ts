@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { readClaudeStatusCommand, type ClaudeStatusLine } from "../../setup/claude-status-store.js";
 import { formatTerminalStatus, readPresentation } from "../../presentation/session-presentation.js";
-import type { RepositoryStartState } from "../../runtime/repository-start.js";
+import type { RepositoryStartState } from "../../engine/catalog/repository-model.js";
 
 /**
  * The checkout's start state from the database, read-only: the status line refreshes often and must never

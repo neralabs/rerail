@@ -3,4 +3,4 @@
  *
  * The public surface of this layer: what code outside `src/` imports from it (`scripts/check/check-boundaries.mjs`).
  */
-export { dashboardOrigin } from "./session-presentation.js";
+export { dashboardOrigin, presentedSessionNoteRules, steerDashboard } from "./session-presentation.js";

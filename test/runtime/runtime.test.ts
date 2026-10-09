@@ -3,10 +3,15 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AdapterDelivery, RuleSteerDelivery } from "../../src/engine/index.js";
+import {
+  type AdapterDelivery,
+  type RuleSteerDelivery,
+  openRerailDatabase,
+  setRuleSetting,
+} from "../../src/engine/index.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
-import { ScopedRuleCatalog } from "../../src/engine/index.js";
 import { SqliteSessionStore } from "../../src/runtime/session-store.js";
+import { setUpTestRepository } from "../support/repository-rules.js";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -21,7 +26,6 @@ describe("Rerail session startup", () => {
     const runtime = new RerailRuntime({
       autostart: false,
       workspaceRoot: join(root, "workspace"),
-      repositoryContext: { repositoryId: "startup-retry", workspaceRoot: join(root, "workspace") },
       storageRoot: join(root, ".rerail", "sessions"),
       databasePath,
       embedder: {
@@ -165,11 +169,10 @@ describe("Rerail session restore", () => {
     }
   });
 
-  it("layers the catalog over a hook host's conversation-rules.json: a catalog row owns its id, disabled or not", async () => {
+  it("runs only the repository's configured conversation rules: none before set-up, never one switched off, and never a rule file", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-rule-file-overlay-"));
     directories.push(root);
     const databasePath = join(root, "rerail.sqlite");
-    const repositoryContext = { repositoryId: "overlay", workspaceRoot: root };
     const rule = (id: string, content: string) => ({
       id, mode: "steer" as const, reference: "Guest checkout remains available.",
       match: { operator: "gte" as const, threshold: 0.99 },
@@ -182,14 +185,9 @@ describe("Rerail session restore", () => {
       version: 1,
       rules: [rule("shared", "From the file."), rule("switched-off", "From the file."), rule("file-only", "From the file.")],
     }));
-    const catalog = ScopedRuleCatalog.open(databasePath, repositoryContext);
-    catalog.upsertConversationRule(rule("shared", "From the database."), { now: 1_000 });
-    catalog.upsertConversationRule(rule("switched-off", "From the database."), { enabled: false, now: 1_000 });
-    catalog.close();
-    const runtime = new RerailRuntime({
+    const runtime = () => new RerailRuntime({
       autostart: false,
       workspaceRoot: root,
-      repositoryContext,
       storageRoot: join(root, "sessions"),
       modelPath: resolve("model"),
       databasePath,
@@ -202,15 +200,40 @@ describe("Rerail session restore", () => {
         close: async () => undefined,
       }),
     });
+    type Listed = { rules: Array<{ rule: { id: string; action: { content: string } } }> };
+
+    // A checkout whose repository is not set up runs no rules; a rule file in the working tree is never read.
+    const before = runtime();
     try {
-      await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "codex", sessionId: "overlay", cwd: root } });
-      const listed = await runtime.manageRules("overlay", { action: "list" }) as { rules: Array<{ rule: { id: string; action: { content: string } } }> };
+      await before.ingest({ kind: "session-start", eventId: "before", session: { host: "codex", sessionId: "before", cwd: root } });
+      expect((await before.manageRules("before", { action: "list" }) as Listed).rules).toEqual([]);
+    } finally {
+      await before.dispose();
+    }
+
+    const repositoryKey = setUpTestRepository(root, {
+      library: [
+        { kind: "conversation", rule: rule("shared", "From the library.") },
+        { kind: "conversation", rule: rule("switched-off", "From the library.") },
+      ],
+    }, databasePath);
+    const database = openRerailDatabase(databasePath);
+    try {
+      setRuleSetting(database, {
+        owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: "switched-off", on: false, mode: null,
+      });
+    } finally {
+      database.$client.close();
+    }
+    const after = runtime();
+    try {
+      await after.ingest({ kind: "session-start", eventId: "after", session: { host: "codex", sessionId: "after", cwd: root } });
+      const listed = await after.manageRules("after", { action: "list" }) as Listed;
       expect(listed.rules.map(({ rule: { id, action } }) => [id, action.content])).toEqual([
-        ["file-only", "From the file."],
-        ["shared", "From the database."],
+        ["shared", "From the library."],
       ]);
     } finally {
-      await runtime.dispose();
+      await after.dispose();
     }
   });
 });

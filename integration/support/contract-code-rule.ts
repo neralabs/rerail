@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { defaultRerailDatabasePath, openScopedRuleCatalog } from "../../src/engine/index.js";
+import { defaultRerailDatabasePath, codeRuleSchema } from "../../src/engine/index.js";
+import { setUpTestRepository } from "../../test/support/repository-rules.js";
 
 /**
  * The example code rule the engine/host contract tests exercise: an api-scoped rule that flags
@@ -26,19 +27,16 @@ export const CONTRACT_CURSOR_EXECUTE_CODE_RULE = {
 };
 
 /**
- * Seed the contract code rule into `<rerailHome>/rerail.sqlite` for `workspaceRoot`, before a runtime or host
- * seeds the bundled defaults. `seed()` keeps this id (it is not bundled), so it survives that pass.
+ * Put the contract code rule in the library of `<rerailHome>/rerail.sqlite`, add it to `workspaceRoot`'s repository, and
+ * set that repository up and start it: only rules a repository adds run.
  */
 export function seedContractCodeRule(rerailHome: string, workspaceRoot: string): void {
   mkdirSync(rerailHome, { recursive: true });
-  const catalog = openScopedRuleCatalog(workspaceRoot, defaultRerailDatabasePath({ ...process.env, RERAIL_HOME: rerailHome }));
-  try {
-    // Global applicability so the rule applies whatever repository context a runtime, daemon, or host
-    // resolves for its workspace — the contract tests use several, and a global rule sidesteps matching them.
-    catalog.upsertCodeRule(CONTRACT_CURSOR_EXECUTE_CODE_RULE, { applicability: "global", enabled: true });
-  } finally {
-    catalog.close();
-  }
+  setUpTestRepository(
+    workspaceRoot,
+    { library: [{ kind: "file", rule: codeRuleSchema.parse(CONTRACT_CURSOR_EXECUTE_CODE_RULE) }] },
+    defaultRerailDatabasePath({ ...process.env, RERAIL_HOME: rerailHome }),
+  );
 }
 
 /** Convenience for the common layout where `RERAIL_HOME` is `<root>/home` and the workspace is `<root>`. */

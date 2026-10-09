@@ -3,7 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadNativeBinding, type NativeCompiledCodeRuleDsl, type NativeCodeRuleDslWorkspace } from "../../../src/engine/native/native.js";
+import {
+  loadNativeBinding,
+  type NativeCompiledCodeRuleDsl,
+  type NativeCodeRuleDslWorkspace,
+} from "../../../src/engine/native/native.js";
 import { applyCodeRuleConfig, resolveCodeRuleOptions } from "../../../src/engine/code-rule/code-rule-options.js";
 import { contentStorePath } from "../../../src/engine/native/rerail-build.js";
 
@@ -44,7 +48,7 @@ async function workspace(compiled: NativeCompiledCodeRuleDsl, revision: number, 
 }
 /** Index the attached repository chunk by chunk, as the enforcer does; the workspace revision after it. */
 async function indexRepository(native: NativeCodeRuleDslWorkspace): Promise<number> {
-  const options = { maxFiles: 100_000, maxSourceBytes: 512 * 1024 * 1024, maxFileBytes: 1_000_000, ignoredDirectories: [], sourceLanguages: { ".py": "python" } };
+  const options = { maxFiles: 100_000, maxSourceBytes: 512 * 1024 * 1024, maxFileBytes: 1_000_000, ignoredDirectories: [], sourceLanguages: { ".py": "python" }, nestedCheckouts: [] };
   for (;;) {
     const chunk = JSON.parse(await native.indexRepositoryAsync(options)) as { done: boolean; revision: number };
     if (chunk.done) return chunk.revision;

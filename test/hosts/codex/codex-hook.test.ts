@@ -1,12 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { AdapterDelivery } from "../../../src/engine/index.js";
-import { codexHookOutput, handleCodexEvent, runCodexHook } from "../../../src/hosts/codex/codex-hook.js";
+import { type AdapterDelivery, sessionStartNote } from "../../../src/engine/index.js";
+import { codexHookOutput, handleCodexEvent } from "../../../src/hosts/codex/codex-hook-adapter.js";
+import { runCodexHook } from "../../../src/hosts/codex/codex-hook.js";
 import type { HookOptions } from "../../../src/harness/index.js";
+import { dashboardOrigin, presentedSessionNoteRules } from "../../../src/presentation/index.js";
 import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
-import { sessionStartNote } from "../../../src/engine/index.js";
-import { dashboardOrigin } from "../../../src/presentation/index.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-codex-hook-");
@@ -21,7 +21,7 @@ describe("Codex one-shot hook", () => {
     const options = hookOptions(root);
     const common = { session_id: "codex-session", cwd: root, transcript_path: null, model: "gpt-5-codex", permission_mode: "default" };
 
-    const note = sessionStartNote(await dashboardOrigin(root), "codex", "codex-session");
+    const note = sessionStartNote(await dashboardOrigin(root), "codex", "codex-session", await presentedSessionNoteRules({ host: "codex", sessionId: "codex-session", cwd: root }));
     expect(await runCodexHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, options)).toEqual({
       hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: note },
     });
@@ -102,7 +102,7 @@ describe("Codex one-shot hook", () => {
     expect(await handleCodexEvent({ ...common, hook_event_name: "SessionStart", source: "startup" }, startLoop, storageRoot)).toEqual({
       hookSpecificOutput: {
         hookEventName: "SessionStart",
-        additionalContext: `${sessionStartNote(await dashboardOrigin(root), "codex", "codex-session")}\n\nRead the conventions.`,
+        additionalContext: `${sessionStartNote(await dashboardOrigin(root), "codex", "codex-session", await presentedSessionNoteRules({ host: "codex", sessionId: "codex-session", cwd: root }))}\n\nRead the conventions.`,
       },
     });
 

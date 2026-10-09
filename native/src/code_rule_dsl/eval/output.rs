@@ -47,12 +47,16 @@ pub(crate) fn violation_from_witness(
     witness: Witness,
 ) -> Value {
     let (id, span, fallback) = violation_identity(code_rule, clause, &witness);
+    let mode = code_rule
+        .scope
+        .mode_at(&witness.path)
+        .unwrap_or(code_rule.rule_mode);
     let mut violation = json!({
         "id": id,
         "ruleId": code_rule.id,
         "clauseId": clause.id,
         "code": clause.violation.code,
-        "mode": code_rule.rule_mode.as_str(),
+        "mode": mode.as_str(),
         "message": witness.message.unwrap_or_else(|| clause.violation.message.clone()),
         "path": witness.path,
         "span": span,

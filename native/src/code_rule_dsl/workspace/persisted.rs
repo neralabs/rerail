@@ -16,6 +16,7 @@ use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::UtilLimit;
 use crate::code_rule_dsl::model::{CompiledCodeRule, FileInput};
+use crate::code_rule_dsl::placement::placement_identity;
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::profile;
 use crate::code_rule_dsl::violations::{Captures, Span, Witness};
@@ -481,6 +482,12 @@ fn hash_candidate_catalog(
         for clause in &code_rule.clauses {
             bytes.extend_from_slice(clause.id.as_bytes());
             bytes.push(0xff);
+        }
+        // Results under one placement carry its modes and folders; another placement never
+        // reuses them. An unplaced code rule keeps its earlier identity.
+        if let Some(placement) = &code_rule.scope.placement {
+            bytes.push(0xfc);
+            bytes.extend_from_slice(&placement_identity(placement));
         }
     }
     CandidateCatalogIdentity::new(

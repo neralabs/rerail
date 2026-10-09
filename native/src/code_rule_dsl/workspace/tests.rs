@@ -258,7 +258,7 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
         );
 
         assert_eq!(
-            workspace.add_code_rule(&compiled).unwrap_err().reason,
+            workspace.add_code_rule(&compiled, None).unwrap_err().reason,
             "policy workspace is evaluating"
         );
         assert!(workspace.try_apply(request.clone()).unwrap().is_none());
@@ -326,7 +326,7 @@ fn tape_workspace_matches_native_after_edit_noop_and_invalid_revision() {
     )
     .unwrap();
     let mut workspace = CodeRuleDslWorkspace::new();
-    workspace.add_code_rule(&compiled).unwrap();
+    workspace.add_code_rule(&compiled, None).unwrap();
     let file =
         |source: &str| json!({ "path": "sample.py", "language": "python", "source": source });
     let apply = |revision, files: Vec<Value>| {
@@ -545,7 +545,7 @@ fn deferred_global_flush_uses_complete_taped_evidence() {
     )
     .unwrap();
     let mut workspace = CodeRuleDslWorkspace::new();
-    workspace.add_code_rule(&compiled).unwrap();
+    workspace.add_code_rule(&compiled, None).unwrap();
     let report = json!({ "path": "report.txt", "language": "typescript", "source": "{}" });
     let evidence =
         |source: &str| json!({ "path": "evidence.py", "language": "python", "source": source });
@@ -644,7 +644,9 @@ fn binary_workspace_request_matches_json_and_rejects_malformed_lengths() {
     buffer.extend_from_slice(metadata.as_bytes());
     buffer.extend_from_slice(source.as_bytes());
     let mut workspace = CodeRuleDslWorkspace::new();
-    workspace.add_code_rule(&tape_test_code_rule()).unwrap();
+    workspace
+        .add_code_rule(&tape_test_code_rule(), None)
+        .unwrap();
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
@@ -695,7 +697,9 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
         .open_workspace("/stored-test", "repository", owner, snapshot, 1, i64::MAX)
         .unwrap();
     let mut workspace = CodeRuleDslWorkspace::new();
-    workspace.add_code_rule(&tape_test_code_rule()).unwrap();
+    workspace
+        .add_code_rule(&tape_test_code_rule(), None)
+        .unwrap();
     workspace.state.lock().unwrap().storage = Some(StorageContext {
         store: StdArc::clone(&store),
         repository: None,
@@ -959,7 +963,9 @@ fn all_result_pages(workspace: &CodeRuleDslWorkspace, maximum_bytes: u32) -> (Ve
 /// A workspace with two violations, one per one-byte result page.
 fn paging_workspace() -> CodeRuleDslWorkspace {
     let mut workspace = CodeRuleDslWorkspace::new();
-    workspace.add_code_rule(&tape_test_code_rule()).unwrap();
+    workspace
+        .add_code_rule(&tape_test_code_rule(), None)
+        .unwrap();
     let applied = tape_test_apply(
         &workspace,
         1,
@@ -1069,7 +1075,7 @@ fn close_during_live_native_tree_or_restored_doc_cancels_and_releases_source() {
     let compiled = tape_test_code_rule();
     for phase in ["native-tree", "restored-doc"] {
         let mut workspace = CodeRuleDslWorkspace::new();
-        workspace.add_code_rule(&compiled).unwrap();
+        workspace.add_code_rule(&compiled, None).unwrap();
         let file = json!({
             "path": "active.py", "language": "python", "source": "print('active')\n"
         });
@@ -1184,7 +1190,7 @@ fn cached_tape_rejects_revision_source_and_grammar_mismatch_without_stale_violat
         "source": "print('fixed')\n" });
     for mismatch in ["revision", "source", "grammar"] {
         let mut workspace = CodeRuleDslWorkspace::new();
-        workspace.add_code_rule(&compiled).unwrap();
+        workspace.add_code_rule(&compiled, None).unwrap();
         let baseline = tape_test_apply(
             &workspace,
             1,
@@ -1329,7 +1335,7 @@ fn workspace(scopes: &[&str], ast: bool) -> CodeRuleDslWorkspace {
             .to_string(),
         )
         .unwrap();
-        workspace.add_code_rule(&code_rule).unwrap();
+        workspace.add_code_rule(&code_rule, None).unwrap();
     }
     workspace
 }
@@ -1533,7 +1539,9 @@ fn apply_clauses(clauses: Vec<Value>, files: Value) -> Value {
 fn apply_revisions(clauses: Vec<Value>, revisions: Vec<Value>) -> Vec<Value> {
     let compiled = compile_clauses(clauses);
     let mut workspace = CodeRuleDslWorkspace::new();
-    workspace.add_code_rule(&compiled).expect("policy is added");
+    workspace
+        .add_code_rule(&compiled, None)
+        .expect("policy is added");
     // `compute` refuses to wait for the process-wide CPU slot; serialize the tests instead.
     let _slot = WORKSPACE_TEST_SLOT
         .lock()
@@ -2059,7 +2067,7 @@ fn regex_group_transform_limit_is_local_to_its_clause_in_native_and_workspace_ev
     .unwrap();
 
     let mut workspace = CodeRuleDslWorkspace::new();
-    workspace.add_code_rule(&compiled).unwrap();
+    workspace.add_code_rule(&compiled, None).unwrap();
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
@@ -2139,7 +2147,7 @@ fn matching_stops_after_decision_or_witness_budget_in_native_and_workspace() {
     );
 
     let mut workspace = CodeRuleDslWorkspace::new();
-    workspace.add_code_rule(&compiled).unwrap();
+    workspace.add_code_rule(&compiled, None).unwrap();
     crate::code_rule_dsl::matcher::reset_roots_matched();
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
@@ -2202,7 +2210,7 @@ fn roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace() {
     let native_roots = crate::code_rule_dsl::matcher::roots_matched();
 
     let mut workspace = CodeRuleDslWorkspace::new();
-    workspace.add_code_rule(&compiled).unwrap();
+    workspace.add_code_rule(&compiled, None).unwrap();
     crate::code_rule_dsl::matcher::reset_roots_matched();
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
@@ -2311,7 +2319,7 @@ fn select_when_exists_leaf_decides_at_first_witness_in_native_and_workspace() {
         assert_eq!(located(&native).len(), 1, "{exists}: {native}");
 
         let mut workspace = CodeRuleDslWorkspace::new();
-        workspace.add_code_rule(&compiled).unwrap();
+        workspace.add_code_rule(&compiled, None).unwrap();
         let mut task = WorkspaceApplyTask {
             state: Arc::clone(&workspace.state),
             closed: Arc::clone(&workspace.closed),
