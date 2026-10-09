@@ -2,9 +2,14 @@
 //! declares (`languageOptions`, `when`), and how its patterns are spelled and parsed.
 
 use super::{Adapter, Blade, Ecma, Php, Python, Refusal};
+use crate::code_rule_dsl::compile::config::Options;
+use crate::code_rule_dsl::compile::options;
 use crate::code_rule_dsl::language::{GrammarDialect, blade_text};
 use crate::code_rule_dsl::literal::{Grammar, LiteralHost};
+use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
+use serde_json::Value;
 use std::borrow::Cow;
+use std::sync::Arc;
 
 /// An option of a policy a family may not read.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -15,24 +20,28 @@ pub(crate) enum SyntaxFeature {
     LanguageOptions,
 }
 
-/// The options a family's `languageOptions` and `when` declare.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum OptionKeys {
-    /// Python's: `pythonVersion` and Ruff's typing settings.
-    Python,
-    /// ESLint's: `ecmaVersion`, `sourceType`, `ecmaFeatures` and globals.
-    Ecma,
-}
+/// An ast query's compiled `languageOptions`: ESLint's settings, and Ruff's.
+pub(crate) type QueryOptions = (Option<Arc<LanguageOptions>>, Option<Arc<PythonOptions>>);
 
 /// A family's syntax.
 pub(crate) trait SyntaxRules: Adapter {
-    /// The options its `languageOptions` (where `feature` reads them) and `when` declare.
-    const OPTION_KEYS: OptionKeys;
     /// Whether a pattern's `$`-prefixed leaf that is no metavariable is a name of the language
     /// (Python's `$At` an identifier, PHP's `$x` a variable), spelled back with `$`.
     const DOLLAR_NAMES: bool;
     /// Whether the family reads `feature`, or why not.
     fn feature(feature: SyntaxFeature) -> Result<(), Refusal>;
+    /// The `languageOptions` (`value`) of the ast query at `path`, where `feature` reads them:
+    /// ESLint's settings, or Ruff's.
+    fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions>;
+    /// Whether the ast query at `path` applies, by its `when` (`value`) read against its
+    /// compiled `languageOptions` (`options`, `python`) and the document's options.
+    fn compile_when(
+        value: &Value,
+        path: &str,
+        options: Option<&LanguageOptions>,
+        python: Option<&PythonOptions>,
+        document: &Options,
+    ) -> napi::Result<bool>;
     /// Whether a pattern of `text` (a pattern's source, or a contextual pattern's context) is
     /// the language the template embeds rather than the template's own: Blade's text with no
     /// Blade construct is PHP (`rule_pattern`).
@@ -58,7 +67,6 @@ fn refused(message: &'static str) -> Result<(), Refusal> {
 
 /// String literals: formats and annotations.
 impl SyntaxRules for Python {
-    const OPTION_KEYS: OptionKeys = OptionKeys::Python;
     const DOLLAR_NAMES: bool = true;
 
     fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
@@ -75,6 +83,21 @@ impl SyntaxRules for Python {
         }
     }
 
+    fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions> {
+        let python = options::compile_python_options(value, path)?;
+        Ok((None, Some(Arc::new(python))))
+    }
+
+    fn compile_when(
+        value: &Value,
+        path: &str,
+        _: Option<&LanguageOptions>,
+        python: Option<&PythonOptions>,
+        document: &Options,
+    ) -> napi::Result<bool> {
+        options::compile_python_when(value, path, python, document)
+    }
+
     fn embeds_pattern(_: &str) -> bool {
         false
     }
@@ -86,7 +109,6 @@ impl SyntaxRules for Python {
 
 /// Comments: ESLint's directives.
 impl SyntaxRules for Ecma {
-    const OPTION_KEYS: OptionKeys = OptionKeys::Ecma;
     const DOLLAR_NAMES: bool = false;
 
     fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
@@ -101,6 +123,21 @@ impl SyntaxRules for Ecma {
         }
     }
 
+    fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions> {
+        let options = options::compile_language_options(value, path)?;
+        Ok((Some(Arc::new(options)), None))
+    }
+
+    fn compile_when(
+        value: &Value,
+        path: &str,
+        options: Option<&LanguageOptions>,
+        _: Option<&PythonOptions>,
+        document: &Options,
+    ) -> napi::Result<bool> {
+        options::compile_ecma_when(value, path, options, document)
+    }
+
     fn embeds_pattern(_: &str) -> bool {
         false
     }
@@ -112,7 +149,6 @@ impl SyntaxRules for Ecma {
 
 /// Strings (printf and scanf formats) and doc comments.
 impl SyntaxRules for Php {
-    const OPTION_KEYS: OptionKeys = OptionKeys::Ecma;
     const DOLLAR_NAMES: bool = true;
 
     fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
@@ -141,6 +177,20 @@ impl SyntaxRules for Php {
         }
     }
 
+    fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions> {
+        <Ecma as SyntaxRules>::compile_language_options(value, path)
+    }
+
+    fn compile_when(
+        value: &Value,
+        path: &str,
+        options: Option<&LanguageOptions>,
+        python: Option<&PythonOptions>,
+        document: &Options,
+    ) -> napi::Result<bool> {
+        <Ecma as SyntaxRules>::compile_when(value, path, options, python, document)
+    }
+
     fn embeds_pattern(_: &str) -> bool {
         false
     }
@@ -153,7 +203,6 @@ impl SyntaxRules for Php {
 /// The literals of the PHP a template embeds (`blade::view`); a pattern with no Blade construct
 /// is that PHP's.
 impl SyntaxRules for Blade {
-    const OPTION_KEYS: OptionKeys = <Php as SyntaxRules>::OPTION_KEYS;
     const DOLLAR_NAMES: bool = false;
 
     fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
@@ -183,6 +232,20 @@ impl SyntaxRules for Blade {
         }
     }
 
+    fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions> {
+        <Php as SyntaxRules>::compile_language_options(value, path)
+    }
+
+    fn compile_when(
+        value: &Value,
+        path: &str,
+        options: Option<&LanguageOptions>,
+        python: Option<&PythonOptions>,
+        document: &Options,
+    ) -> napi::Result<bool> {
+        <Php as SyntaxRules>::compile_when(value, path, options, python, document)
+    }
+
     fn embeds_pattern(text: &str) -> bool {
         blade_text(text)
     }
@@ -195,7 +258,8 @@ impl SyntaxRules for Blade {
 /// The kit's check of a family's `SyntaxRules`.
 #[cfg(test)]
 pub(super) mod kit {
-    use super::{OptionKeys, SyntaxFeature, SyntaxRules};
+    use super::{SyntaxFeature, SyntaxRules};
+    use crate::code_rule_dsl::compile::config::Options;
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::language::adapter::Refusal;
     use crate::code_rule_dsl::literal::Grammar;
@@ -204,10 +268,15 @@ pub(super) mod kit {
 
     /// What a family's `SyntaxRules` answer.
     pub(in super::super) struct Expect {
-        pub(in super::super) option_keys: OptionKeys,
         pub(in super::super) dollar_names: bool,
         /// The refusal of `languageOptions`; `None` where read.
         pub(in super::super) language_options: Option<&'static str>,
+        /// Where read, a `languageOptions`, and the ESLint `ecmaVersion` and Python minor it
+        /// compiles to.
+        pub(in super::super) compiled_options: Option<(&'static str, Option<u16>, Option<u8>)>,
+        /// `when`s, and whether a query without `languageOptions` applies under each, or the
+        /// error compiling it.
+        pub(in super::super) when: &'static [(&'static str, Result<bool, &'static str>)],
         /// The refusals of `parse` with each grammar, in `Grammar::ALL`'s order; `None` where
         /// the family's literals host it.
         pub(in super::super) parse: [Option<&'static str>; 7],
@@ -232,7 +301,28 @@ pub(super) mod kit {
         dialect: GrammarDialect,
         tape: impl Fn(&str) -> AstGrep<TapeDoc>,
     ) {
-        assert_eq!(A::OPTION_KEYS, expect.option_keys);
+        if let Some((source, ecma_version, python_minor)) = expect.compiled_options {
+            let value = serde_json::from_str(source).expect("JSON");
+            let (options, python) =
+                A::compile_language_options(&value, "/q").expect("languageOptions compile");
+            assert_eq!(
+                (
+                    options.map(|options| options.ecma_version),
+                    python.map(|python| python.minor)
+                ),
+                (ecma_version, python_minor),
+                "{source}"
+            );
+        }
+        for (source, applies) in expect.when {
+            let value = serde_json::from_str(source).expect("JSON");
+            assert_eq!(
+                A::compile_when(&value, "/q", None, None, &Options::default())
+                    .map_err(|error| error.reason),
+                applies.map_err(str::to_owned),
+                "{source}"
+            );
+        }
         assert_eq!(A::DOLLAR_NAMES, expect.dollar_names);
         assert_eq!(
             refusal(A::feature(SyntaxFeature::LanguageOptions)),

@@ -2,15 +2,13 @@ use super::binds::{FILTER_KEYS, compile_filter, validate_filter};
 use super::utils::UtilScope;
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
 use crate::code_rule_dsl::language::adapter::{
-    Adapter, Globals, Refusal, ScopeFeature, ScopeRules, gate, with_adapter,
+    Adapter, Refusal, ScopeFeature, ScopeRules, gate, with_adapter,
 };
+use crate::code_rule_dsl::language::kind_ids;
 use crate::code_rule_dsl::language::{Family, GrammarDialect, language_not_supported};
-use crate::code_rule_dsl::language::{SourceType, kind_ids};
 use crate::code_rule_dsl::matcher::Semantic;
 use crate::code_rule_dsl::matcher::{AstMatcher, BindingTest, Resolves, Unresolved};
-use crate::code_rule_dsl::scope::options::{
-    DEFAULT_PYTHON_MINOR, EsGlobals, LanguageOptions, PythonOptions,
-};
+use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::{Lookup, php_names};
 use napi::Result;
 use serde_json::Value;
@@ -498,20 +496,12 @@ fn compile_lexical_resolves<S: ScopeRules>(
             S::feature(ScopeFeature::StarImports),
         )?;
     }
-    // Asking about every name needs the declared set: the query's options or their defaults.
+    // Asking about every name needs the declared set: the query's settings or their defaults.
     let defaults = global_any || unresolved.is_some();
-    let default_python = (defaults && S::GLOBALS == Globals::Ruff && python.is_none())
-        .then(|| Arc::new(PythonOptions::new(DEFAULT_PYTHON_MINOR)));
-    let python = python.or(default_python.as_ref());
-    let default_options =
-        (defaults && S::GLOBALS == Globals::Eslint && options.is_none()).then(|| {
-            Arc::new(LanguageOptions::new(
-                EsGlobals::get().latest,
-                SourceType::Module,
-                [],
-            ))
-        });
-    let options = options.or(default_options.as_ref());
+    let declared_python = defaults.then(|| S::ruff_options(python)).flatten();
+    let python = declared_python.as_ref().or(python);
+    let declared_options = defaults.then(|| S::eslint_options(options)).flatten();
+    let options = declared_options.as_ref().or(options);
     if this_global {
         gate(&format!("{path}/this"), S::feature(ScopeFeature::This))?;
     }

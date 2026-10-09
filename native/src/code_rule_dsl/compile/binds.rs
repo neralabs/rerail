@@ -2,20 +2,17 @@ use super::ast_rule::{compile_ast_rule, validate_ast_rule};
 use super::resolve::{BINDING_KEYS, OCCURRENCE_KEY};
 use super::utils::{UtilIds, UtilScope};
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
-use crate::code_rule_dsl::language::SourceType;
 use crate::code_rule_dsl::language::adapter::{
-    Adapter, Ecma, Globals, Php, Python, ScopeFeature, ScopeRules, gate, with_adapter,
+    Adapter, ScopeFeature, ScopeRules, gate, with_adapter,
 };
 use crate::code_rule_dsl::language::kind_ids;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::matcher::Semantic;
 use crate::code_rule_dsl::matcher::{AstMatcher, BindingCount, BindingFilter, Binds, Redefines};
 use crate::code_rule_dsl::model::Limits;
-use crate::code_rule_dsl::scope::options::{EsGlobals, LanguageOptions};
 use napi::Result;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
 /// Filters over a binding, in `binds` and `resolves.binding`.
 pub(super) const FILTER_KEYS: &[&str] = &[
@@ -87,30 +84,34 @@ fn boolean(object: &Map<String, Value>, key: &str, path: &str) -> Result<Option<
         .transpose()
 }
 
+/// The names every family's `names` (its forms or its scopes) hold, in the registry's family
+/// order, each once.
+fn every_family<T: 'static>(
+    names: impl Fn(Family) -> &'static [(&'static str, T)],
+) -> Vec<(&'static str, ())> {
+    let mut seen = BTreeSet::new();
+    Family::ALL
+        .into_iter()
+        .flat_map(names)
+        .filter(|(name, _)| seen.insert(*name))
+        .map(|(name, _)| (*name, ()))
+        .collect()
+}
+
 /// The grammar-independent checks of a filter's keys.
 pub(super) fn validate_filter(object: &Map<String, Value>, path: &str) -> Result<()> {
     // Every family's names, in the order its errors list them; each family's compile narrows
-    // them to its own (Blade's are PHP's).
+    // them to its own.
     if let Some(form) = object.get("form") {
-        let mut known = <Python as ScopeRules>::FORMS
-            .iter()
-            .chain(<Ecma as ScopeRules>::FORMS)
-            .chain(<Php as ScopeRules>::FORMS)
-            .map(|(name, _)| (*name, ()))
-            .collect::<Vec<_>>();
-        let mut seen = BTreeSet::new();
-        known.retain(|(name, _)| seen.insert(*name));
+        let known = every_family(
+            |family| with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::FORMS),
+        );
         names(form, &format!("{path}/form"), &known, "binding form")?;
     }
     if let Some(scope) = object.get("scope") {
-        let mut known = <Python as ScopeRules>::SCOPES
-            .iter()
-            .chain(<Ecma as ScopeRules>::SCOPES)
-            .chain(<Php as ScopeRules>::SCOPES)
-            .map(|(name, _)| (*name, ()))
-            .collect::<Vec<_>>();
-        let mut seen = BTreeSet::new();
-        known.retain(|(name, _)| seen.insert(*name));
+        let known = every_family(
+            |family| with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::SCOPES),
+        );
         names(scope, &format!("{path}/scope"), &known, "scope kind")?;
     }
     for key in BOOLEAN_FILTER_KEYS {
@@ -212,17 +213,7 @@ pub(super) fn compile_filter<S: ScopeRules>(
         builtin: boolean(object, "builtin", path)?,
         directives: object.contains_key("directives"),
         language: Some(language),
-        options: (S::GLOBALS == Globals::Eslint)
-            .then(|| {
-                utils.options.clone().or_else(|| {
-                    Some(Arc::new(LanguageOptions::new(
-                        EsGlobals::get().latest,
-                        SourceType::Module,
-                        [],
-                    )))
-                })
-            })
-            .flatten(),
+        options: S::eslint_options(utils.options.as_ref()),
     })
 }
 

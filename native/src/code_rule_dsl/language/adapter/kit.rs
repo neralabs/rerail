@@ -6,7 +6,9 @@ use super::{
     Adapter, ArgumentRules, Blade, CallRules, Ecma, FormatArgRules, Php, Python, ScopeRules,
     ValueRules, with_adapter,
 };
-use crate::code_rule_dsl::language::{CodeRuleLanguage, Family, GrammarDialect, Semantic, Support};
+use crate::code_rule_dsl::language::{
+    CodeRuleLanguage, Family, GrammarDialect, Semantic, SourceType, Support,
+};
 use crate::code_rule_dsl::lines::Terminators;
 use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
 use crate::code_rule_dsl::value::{Lang, Value};
@@ -170,9 +172,17 @@ fn python() {
             ],
         },
         syntax: super::syntax::kit::Expect {
-            option_keys: super::OptionKeys::Python,
             dollar_names: true,
             language_options: None,
+            compiled_options: Some((r#"{"pythonVersion": "3.12"}"#, None, Some(12))),
+            when: &[
+                (r#"{"pythonVersion": {"min": "3.10"}}"#, Ok(true)),
+                (r#"{"pythonVersion": {"max": "3.9"}}"#, Ok(false)),
+                (
+                    r#"{"ecmaVersion": {"min": 2015}}"#,
+                    Err("unknown field `ecmaVersion` at /q/when"),
+                ),
+            ],
             parse: [
                 None,
                 None,
@@ -189,7 +199,11 @@ fn python() {
         },
         scope: super::scope::kit::Expect {
             flow: false,
-            globals: super::Globals::Ruff,
+            declared: (None, Some(10)),
+            unresolved: &[
+                ("print(undefined)\n", "undefined", true),
+                ("x = print\n", "print", false),
+            ],
             stubs: true,
             redefines_shadowed: true,
             reference_kinds: &["identifier"],
@@ -276,9 +290,21 @@ fn ecma() {
             styles: [Some("formatArgs reads Python and PHP format calls"); 4],
         },
         syntax: super::syntax::kit::Expect {
-            option_keys: super::OptionKeys::Ecma,
             dollar_names: false,
             language_options: None,
+            compiled_options: Some((
+                r#"{"ecmaVersion": 6, "sourceType": "script"}"#,
+                Some(2015),
+                None,
+            )),
+            when: &[
+                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok(true)),
+                (r#"{"sourceType": "script"}"#, Ok(false)),
+                (
+                    r#"{"pythonVersion": {"min": "3.10"}}"#,
+                    Err("unknown field `pythonVersion` at /q/when"),
+                ),
+            ],
             parse: [
                 Some("`percentFormat` parses Python literals"),
                 Some("`braceFormat` parses Python literals"),
@@ -293,7 +319,11 @@ fn ecma() {
         },
         scope: super::scope::kit::Expect {
             flow: false,
-            globals: super::Globals::Eslint,
+            declared: (Some((2026, SourceType::Module)), None),
+            unresolved: &[
+                ("undefinedName;\n", "undefinedName", true),
+                ("Math;\n", "Math", false),
+            ],
             stubs: false,
             redefines_shadowed: false,
             reference_kinds: &[
@@ -418,9 +448,17 @@ fn php() {
             ],
         },
         syntax: super::syntax::kit::Expect {
-            option_keys: super::OptionKeys::Ecma,
             dollar_names: true,
             language_options: Some("`languageOptions` is not available for php policies"),
+            compiled_options: None,
+            when: &[
+                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok(true)),
+                (r#"{"sourceType": "script"}"#, Ok(false)),
+                (
+                    r#"{"pythonVersion": {"min": "3.10"}}"#,
+                    Err("unknown field `pythonVersion` at /q/when"),
+                ),
+            ],
             parse: [
                 Some(
                     "`percentFormat` parses Python literals; PHP's printf formats are `printfFormat`",
@@ -441,7 +479,8 @@ fn php() {
         },
         scope: super::scope::kit::Expect {
             flow: true,
-            globals: super::Globals::Superglobals,
+            declared: (None, None),
+            unresolved: &[],
             stubs: false,
             redefines_shadowed: false,
             reference_kinds: &["variable_name"],
@@ -558,9 +597,17 @@ fn blade() {
             ],
         },
         syntax: super::syntax::kit::Expect {
-            option_keys: super::OptionKeys::Ecma,
             dollar_names: false,
             language_options: Some("`languageOptions` is not available for blade policies"),
+            compiled_options: None,
+            when: &[
+                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok(true)),
+                (r#"{"sourceType": "script"}"#, Ok(false)),
+                (
+                    r#"{"pythonVersion": {"min": "3.10"}}"#,
+                    Err("unknown field `pythonVersion` at /q/when"),
+                ),
+            ],
             parse: [
                 Some(
                     "`percentFormat` parses Python literals; blade embeds PHP, whose printf formats are `printfFormat`",
@@ -581,7 +628,8 @@ fn blade() {
         },
         scope: super::scope::kit::Expect {
             flow: true,
-            globals: super::Globals::Superglobals,
+            declared: (None, None),
+            unresolved: &[],
             stubs: false,
             redefines_shadowed: false,
             reference_kinds: &["variable_name"],
