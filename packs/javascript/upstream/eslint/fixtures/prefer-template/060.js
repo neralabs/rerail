@@ -1,0 +1,1 @@
+foo + ('a' + bar + 'b') + 'c' + test

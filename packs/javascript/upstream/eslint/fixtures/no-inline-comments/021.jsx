@@ -1,0 +1,1 @@
+var a = 3; //A comment inline with code

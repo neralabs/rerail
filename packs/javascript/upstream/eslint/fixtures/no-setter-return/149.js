@@ -1,0 +1,1 @@
+Object.defineProperties(foo, { baz: { set: val => a + b } })

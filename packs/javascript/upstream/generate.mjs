@@ -15,8 +15,9 @@
 // script), and typescript-eslint's parser where the case names it. The case's globals and settings are left out, as
 // a repository without them would lint the code. So the recording is the linter's answer, not the case's own
 // expectation. A case's extension is its parser's: .ts (.tsx with JSX) for typescript-eslint's parser, .js (.jsx) for
-// espree, or the TypeScript-family extension of its filename. Code that does not parse is left out. Each kept file
-// is one analysis unit. Columns are ESLint's, converted from UTF-16 code units to code points, 1-based.
+// espree, or the TypeScript-family extension of its filename. Code that does not parse is left out, and so is code
+// over MAX_CASE_BYTES: ESLint's performance stress cases (prefer-template's 1 MB string literal), which exhaust the
+// engine's per-file AST work budget once every pack rule runs on the file. Each kept file is one analysis unit. Columns are ESLint's, converted from UTF-16 code units to code points, 1-based.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire, registerHooks } from "node:module";
@@ -30,6 +31,8 @@ const VERSIONS = { eslint: "10.11.0", "@typescript-eslint/parser": "8.70.1", typ
 const CHECKOUT = { repository: "https://github.com/eslint/eslint", commit: "3c0b7c6e1fe2dec778b97a996018126f22d437ae" };
 const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 const TYPESCRIPT_EXTENSIONS = [".d.ts", ".ts", ".tsx", ".mts", ".cts"];
+/** Larger cases are performance stress tests, not rule behaviour; see the header. */
+const MAX_CASE_BYTES = 64 * 1024;
 
 function parseArguments(argv) {
   const options = {};
@@ -237,6 +240,10 @@ function extractFixtures() {
             continue;
           }
           if (Array.isArray(test.options) && test.options.length > 0) count.withOptions += 1;
+          if (Buffer.byteLength(test.code) > MAX_CASE_BYTES) {
+            count.skipped["stress case"] = (count.skipped["stress case"] ?? 0) + 1;
+            continue;
+          }
           const languageOptions = merge(run.config.languageOptions, test.languageOptions);
           const chosen = extensionOf(test, languageOptions);
           if (chosen.skip !== undefined) {

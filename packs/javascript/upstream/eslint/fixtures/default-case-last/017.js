@@ -1,0 +1,1 @@
+switch (foo) { case 1: baz(); break; case 2: quux(); break; default: quuux(); break; }

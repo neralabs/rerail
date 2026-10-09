@@ -1,0 +1,1 @@
+x = { foo: { set(val) { return 1; } } }

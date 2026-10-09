@@ -1,0 +1,1 @@
+foo ? doBar() : doBaz();
