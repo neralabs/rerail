@@ -1,7 +1,7 @@
 # Rule pack structure and validation contract
 
 Status: the layout and the validation contract (checks 1 to 6) are implemented. `test/engine/catalog/packs.test.ts` validates every
-`packs/*` directory: `python`, `php`, `blade`, `typescript`, `react`, `node`, `next` and `complexity`. Core does not load
+`packs/*` directory: `python`, `php`, `blade`, `typescript`, `javascript`, `react`, `node`, `next` and `complexity`. Core does not load
 installed packs yet: it ships the complexity pack inside its own package (`packs/complexity/pack.json` and
 `packs/complexity/rules/` in its `files`, read from `CORE_RULE_PACKS` in `src/engine/catalog/bundled-rule-documents.ts`; see [rule packs](rule-packs.md)), and no pack
 is published. A pack introduces no new file format: it combines the two schemas the repository already has. To start
