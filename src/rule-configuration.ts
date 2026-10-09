@@ -70,12 +70,12 @@ function writeSetting(db: Queries, setting: RuleSetting, now: number): void {
 }
 
 /** Add a pack, By Rerail rule or library rule to a repository folder; adding it twice changes nothing. */
-export function addAttachment(db: RerailDatabase, attachment: RuleAttachment, now: number = Date.now()): void {
+export function addAttachment(db: Queries, attachment: RuleAttachment, now: number = Date.now()): void {
   insertAttachment(db, attachment, now);
 }
 
 /** Remove one attachment; false when it was not there. */
-export function removeAttachment(db: RerailDatabase, attachment: RuleAttachment): boolean {
+export function removeAttachment(db: Queries, attachment: RuleAttachment): boolean {
   return db.delete(ruleAttachments).where(and(
     eq(ruleAttachments.repositoryKey, attachment.repositoryKey),
     eq(ruleAttachments.folder, normalizeFolder(attachment.folder)),
@@ -85,7 +85,7 @@ export function removeAttachment(db: RerailDatabase, attachment: RuleAttachment)
 }
 
 /** Store a setting; with both `on` and `mode` null the setting is removed. */
-export function setRuleSetting(db: RerailDatabase, setting: RuleSetting, now: number = Date.now()): void {
+export function setRuleSetting(db: Queries, setting: RuleSetting, now: number = Date.now()): void {
   writeSetting(db, setting, now);
 }
 
@@ -97,19 +97,22 @@ export interface SetUpChoice {
 
 /** Records the set-up choice in one transaction and marks the repository set up, even when nothing is added. */
 export function setUpRepository(db: RerailDatabase, repositoryKey: RepositoryKey, choice: SetUpChoice, now: number = Date.now()): void {
-  db.transaction(tx => {
-    const row = tx.select({ key: repositories.repositoryKey }).from(repositories).where(eq(repositories.repositoryKey, repositoryKey)).get();
-    if (row === undefined) throw new Error(`Unknown repository: ${repositoryKey}`);
-    for (const pack of choice.packs) insertAttachment(tx, { repositoryKey, folder: pack.folder, sourceKind: "pack", sourceId: pack.packId }, now);
-    for (const rule of choice.rules ?? []) insertAttachment(tx, { repositoryKey, ...rule }, now);
-    for (const setting of choice.settings ?? []) {
-      if (setting.owner.kind !== "repository" || setting.owner.repositoryKey !== repositoryKey) {
-        throw new Error(`Set-up settings must belong to repository ${repositoryKey}`);
-      }
-      writeSetting(tx, setting, now);
+  db.transaction(tx => recordSetUp(tx, repositoryKey, choice, now), { behavior: "immediate" });
+}
+
+/** {@link setUpRepository} inside a transaction the caller owns. */
+export function recordSetUp(tx: Queries, repositoryKey: RepositoryKey, choice: SetUpChoice, now: number = Date.now()): void {
+  const row = tx.select({ key: repositories.repositoryKey }).from(repositories).where(eq(repositories.repositoryKey, repositoryKey)).get();
+  if (row === undefined) throw new Error(`Unknown repository: ${repositoryKey}`);
+  for (const pack of choice.packs) insertAttachment(tx, { repositoryKey, folder: pack.folder, sourceKind: "pack", sourceId: pack.packId }, now);
+  for (const rule of choice.rules ?? []) insertAttachment(tx, { repositoryKey, ...rule }, now);
+  for (const setting of choice.settings ?? []) {
+    if (setting.owner.kind !== "repository" || setting.owner.repositoryKey !== repositoryKey) {
+      throw new Error(`Set-up settings must belong to repository ${repositoryKey}`);
     }
-    tx.update(repositories).set({ configuredAt: now, updatedAt: now }).where(eq(repositories.repositoryKey, repositoryKey)).run();
-  }, { behavior: "immediate" });
+    writeSetting(tx, setting, now);
+  }
+  tx.update(repositories).set({ configuredAt: now, updatedAt: now }).where(eq(repositories.repositoryKey, repositoryKey)).run();
 }
 
 /** Everything one load needs, read once. */

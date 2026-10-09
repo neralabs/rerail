@@ -27,18 +27,19 @@ import {
 import { repositoryIdentityLocation } from "../repository-identity.js";
 import { linkAlias, listRepositories, parentCheckouts, type RepositoryListing } from "../repository-registry.js";
 import { checkoutStatus, setCheckoutStarted, setRepositoryStarted } from "../repository-start.js";
-import { addAttachment, listRepositoryRules, removeAttachment, setRuleSetting, setUpRepository } from "../rule-configuration.js";
+import { addAttachment, listRepositoryRules, recordSetUp, removeAttachment, setRuleSetting } from "../rule-configuration.js";
 import {
   copyRerailRuleToLibrary,
   getLibraryRule,
   listLibraryRules,
   quarantinedLibraryRules,
   removeLibraryRule,
-  upsertLibraryRule,
+  validateLibraryDocument,
+  writeLibraryRule,
 } from "../rule-library.js";
 import type { RuleMode } from "../rule-mode.js";
 import { cachedRecommendRulePacks } from "../rule-packs.js";
-import { checkouts, libraryRules, ruleAttachments, ruleSettings, RULE_KINDS } from "../schema.js";
+import { checkouts, libraryRules, repositories, ruleAttachments, ruleSettings, RULE_KINDS } from "../schema.js";
 import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
 import {
   attachmentRecordSchema,
@@ -239,8 +240,34 @@ interface SettingChange {
   readonly mode?: RuleMode | null | undefined;
 }
 
+/**
+ * One change per (folder, target): a later entry's fields override an earlier one's, and a field it omits keeps the
+ * earlier value, so `{ on: false }` then `{ mode: "log" }` asks for both.
+ */
+function foldedChanges(changes: readonly SettingChange[]): SettingChange[] {
+  const folded = new Map<string, SettingChange>();
+  for (const change of changes) {
+    const key = `${change.folder}\0${change.targetKind}\0${change.targetId}`;
+    const earlier = folded.get(key);
+    folded.set(key, {
+      folder: change.folder,
+      targetKind: change.targetKind,
+      targetId: change.targetId,
+      on: change.on === undefined ? earlier?.on : change.on,
+      mode: change.mode === undefined ? earlier?.mode : change.mode,
+    });
+  }
+  return [...folded.values()];
+}
+
+/** Whether the repository is not set up yet, read inside the caller's transaction. */
+function notSetUp(db: Pick<RerailDatabase, "select">, repositoryKey: string): boolean {
+  return db.select({ configuredAt: repositories.configuredAt }).from(repositories)
+    .where(eq(repositories.repositoryKey, repositoryKey)).get()?.configuredAt === null;
+}
+
 /** The setting `change` asks for: an omitted field keeps the stored value. */
-function mergedSetting(db: RerailDatabase, owner: RuleSetting["owner"], change: SettingChange): RuleSetting {
+function mergedSetting(db: Pick<RerailDatabase, "select">, owner: RuleSetting["owner"], change: SettingChange): RuleSetting {
   const stored = db.select({ on: ruleSettings.on, mode: ruleSettings.mode }).from(ruleSettings).where(and(
     eq(ruleSettings.ownerKind, owner.kind),
     eq(ruleSettings.ownerId, owner.kind === "repository" ? owner.repositoryKey : owner.checkoutPath),
@@ -417,18 +444,22 @@ export const repositoryOperations: readonly Operation[] = [
       const missing = add.find(entry => !ruleSourceExists(stores, entry.sourceKind, entry.sourceId));
       if (missing !== undefined) throw new ApiError(404, "rule-source-not-found", `${missing.sourceKind} ${missing.sourceId} does not exist`);
       const owner = { kind: "repository" as const, repositoryKey };
-      const settings = (input.settings ?? []).map(change => mergedSetting(db, owner, { ...change, folder: folderOf(change.folder ?? "") }));
-      if (target.repository.configuredAt === null && (add.length > 0 || input.configure === true)) {
-        setUpRepository(db, repositoryKey, {
-          packs: add.filter(entry => entry.sourceKind === "pack").map(entry => ({ packId: entry.sourceId, folder: entry.folder })),
-          rules: add.filter(entry => entry.sourceKind !== "pack"),
-          settings,
-        });
-      } else {
-        for (const entry of add) addAttachment(db, { repositoryKey, ...entry });
-        for (const setting of settings) setRuleSetting(db, setting);
-      }
-      for (const entry of remove) removeAttachment(db, { repositoryKey, ...entry });
+      const changes = foldedChanges((input.settings ?? []).map(change => ({ ...change, folder: folderOf(change.folder ?? "") })));
+      // The attachments and the settings that go with them are one change: nobody sees a pack before its settings.
+      db.transaction(tx => {
+        const settings = changes.map(change => mergedSetting(tx, owner, change));
+        if (notSetUp(tx, repositoryKey) && (add.length > 0 || input.configure === true)) {
+          recordSetUp(tx, repositoryKey, {
+            packs: add.filter(entry => entry.sourceKind === "pack").map(entry => ({ packId: entry.sourceId, folder: entry.folder })),
+            rules: add.filter(entry => entry.sourceKind !== "pack"),
+            settings,
+          });
+        } else {
+          for (const entry of add) addAttachment(tx, { repositoryKey, ...entry });
+          for (const setting of settings) setRuleSetting(tx, setting);
+        }
+        for (const entry of remove) removeAttachment(tx, { repositoryKey, ...entry });
+      }, { behavior: "immediate" });
       return { repository: repositorySummary(requireRepository(db, repositoryKey)), attachments: attachmentsOf(db, repositoryKey) };
     },
   }),
@@ -535,7 +566,7 @@ export const repositoryOperations: readonly Operation[] = [
     id: "library_rules_upsert",
     method: "PUT",
     path: "/api/library-rules/{id}",
-    summary: "Create or replace a rule created by you; a file rule is compiled in the kernel first. With attach: true it is also added to the target repository in folder. Writing a By Rerail rule's id stores an edited copy instead, added wherever the original is in the target repository, with the original switched off there.",
+    summary: "Create or replace a rule created by you; a file rule is compiled in the kernel first. With attach: true it is also added to the target repository in folder, setting the repository up if it is not yet. Writing the id of a By Rerail rule that is not also in your library stores an edited copy instead, added wherever the original is in the target repository, with the original switched off there.",
     params: libraryRuleId,
     body: libraryUpsertBodySchema,
     output: libraryUpsertResultSchema,
@@ -543,7 +574,9 @@ export const repositoryOperations: readonly Operation[] = [
       if (input.rule.id !== input.id) throw new ApiError(400, "rule-id-mismatch", `path id ${input.id} does not match rule.id ${input.rule.id}`);
       const db = stores.database();
       const bundle = stores.bundle();
-      if (bundle.documents.has(input.id)) {
+      const existing = db.select({ copiedFrom: libraryRules.copiedFromRuleId }).from(libraryRules).where(eq(libraryRules.ruleId, input.id)).get();
+      // A library rule a later release bundled the id of wins over the By Rerail rule, so writing it edits it.
+      if (existing === undefined && bundle.documents.has(input.id)) {
         // Copy-on-edit: an agent may add the copy to a set-up repository, as people may.
         const target = resolveTarget(stores, input, caller, true);
         const copied = libraryWrite(() => copyRerailRuleToLibrary(db, bundle, target.repository.repositoryKey, input.id, input.rule));
@@ -553,16 +586,25 @@ export const repositoryOperations: readonly Operation[] = [
           attached: { repositoryKey: target.repository.repositoryKey, folders: [...copied.folders] },
         };
       }
-      const existing = db.select({ copiedFrom: libraryRules.copiedFromRuleId }).from(libraryRules).where(eq(libraryRules.ruleId, input.id)).get();
       // An agent editing an existing rule changes it in every repository that runs it, so each set-up one must allow
       // it. Edits to a copy of a By Rerail rule are allowed as making the copy was; a rule the agent creates in
       // this call may be added where it likes.
       if (caller.kind === "agent" && existing !== undefined && existing.copiedFrom === null) guardRepositoriesUsing(stores, caller, input.id);
       const target = input.attach === true ? resolveTarget(stores, input, caller, true) : undefined;
       if (target !== undefined) guardAgent(stores, caller, target, existing === undefined || existing.copiedFrom !== null);
-      const rule = libraryWrite(() => upsertLibraryRule(db, bundle, input.rule, input.kind, input.revision === undefined ? {} : { revision: input.revision }));
+      const document = libraryWrite(() => validateLibraryDocument(input.rule, input.kind));
+      // The rule, its attachment and a first set-up are one change.
+      libraryWrite(() => db.transaction(tx => {
+        writeLibraryRule(tx, bundle, document, input.revision === undefined ? {} : { revision: input.revision });
+        if (target === undefined) return;
+        const repositoryKey = target.repository.repositoryKey;
+        const attachment = { folder: target.folder, sourceKind: "library_rule" as const, sourceId: input.id };
+        if (notSetUp(tx, repositoryKey)) recordSetUp(tx, repositoryKey, { packs: [], rules: [attachment] });
+        else addAttachment(tx, { repositoryKey, ...attachment });
+      }, { behavior: "immediate" }));
+      const rule = getLibraryRule(db, input.id);
+      if (rule === undefined) throw new ApiError(500, "internal", `library rule ${input.id} was not stored`);
       if (target === undefined) return { rule: libraryRecord(rule), copiedFromRuleId: null, attached: null };
-      addAttachment(db, { repositoryKey: target.repository.repositoryKey, folder: target.folder, sourceKind: "library_rule", sourceId: input.id });
       return { rule: libraryRecord(rule), copiedFromRuleId: null, attached: { repositoryKey: target.repository.repositoryKey, folders: [target.folder] } };
     },
   }),

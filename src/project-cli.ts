@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { loadBundledCatalog } from "./bundled-rules.js";
 import { parseArguments } from "./daemon.js";
@@ -60,6 +60,7 @@ export function runRulesCommand(args: readonly string[], usage: () => string): n
       db.$client.close();
     }
     const staging = `${output}.${process.pid}.tmp`;
+    mkdirSync(dirname(output), { recursive: true, mode: 0o700 });
     try {
       writeFileSync(staging, `${JSON.stringify(dump, null, 2)}\n`, { mode: 0o600 });
       renameSync(staging, output);

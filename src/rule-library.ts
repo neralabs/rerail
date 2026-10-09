@@ -32,6 +32,11 @@ export interface LibraryRuleWriteOptions {
   readonly copiedFromRuleId?: string | null;
   readonly createdAt?: number;
   readonly now?: number;
+  /**
+   * Store the rule even when it takes a By Rerail rule's id: a rules dump's library rule was written before a release
+   * bundled its id, and the library rule wins. Without it only a rule already in the library may keep such an id.
+   */
+  readonly shadowBundled?: boolean;
 }
 
 export interface LibraryRuleQuery {
@@ -59,13 +64,16 @@ export function validateLibraryDocument(document: unknown, kind: RuleKind): Rule
 /** Write an already validated document; the caller owns the transaction. */
 export function writeLibraryRule(db: Queries, bundle: BundledCatalog, document: RuleDocument, options: LibraryRuleWriteOptions = {}): void {
   const id = document.rule.id;
-  if (bundle.documents.has(id)) throw new Error(`rule ${id} is a By Rerail rule id; give your rule another id`);
+  const existing = db.select().from(libraryRules).where(eq(libraryRules.ruleId, id)).get();
+  // A library rule written before a release bundled its id wins over that By Rerail rule, so it stays editable.
+  if (bundle.documents.has(id) && existing === undefined && options.shadowBundled !== true) {
+    throw new Error(`rule ${id} is a By Rerail rule id; give your rule another id`);
+  }
   db.insert(ruleCatalogIdentities).values({ ruleId: id, kind: document.kind }).onConflictDoNothing().run();
   const identity = db.select().from(ruleCatalogIdentities).where(eq(ruleCatalogIdentities.ruleId, id)).get();
   if (identity?.kind !== document.kind) {
     throw new Error(`rule ${id} exists with kind ${identity?.kind}; remove it before storing ${document.kind}`);
   }
-  const existing = db.select().from(libraryRules).where(eq(libraryRules.ruleId, id)).get();
   const now = options.now ?? Date.now();
   let revision: number;
   if (document.kind === "file") revision = document.rule.revision;

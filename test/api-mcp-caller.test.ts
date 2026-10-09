@@ -13,7 +13,8 @@ import type { CodeRule } from "../src/code-rule-schema.js";
 import { CALLER_CWD_HEADER } from "../src/repository-model.js";
 import { listRepositories, recordCheckout } from "../src/repository-registry.js";
 import { addAttachment, setUpRepository } from "../src/rule-configuration.js";
-import { upsertLibraryRule } from "../src/rule-library.js";
+import { upsertLibraryRule, writeLibraryRule } from "../src/rule-library.js";
+import { ruleSettings } from "../src/schema.js";
 import { MOCK_CODE_RULES } from "../src/seed.js";
 
 function git(cwd: string, ...args: string[]): void {
@@ -102,6 +103,20 @@ describe("MCP callers and the agent guard", () => {
     expect(await call("repository_context_get", { repository: nestedKey })).toMatchObject({ result: { checkout: null } });
   });
 
+  it("resolves a caller folder to a nested checkout recorded after the folder was first seen", async () => {
+    const tools = join(parent, "tools");
+    mkdirSync(tools, { recursive: true });
+    expect(await call("repository_context_get", {}, from(tools))).toMatchObject({
+      result: { repository: { repositoryKey: parentKey }, checkout: { checkoutPath: parent, folder: "tools" } },
+    });
+    // `tools/` becomes a repository of its own, and Rerail records it.
+    const toolsRoot = gitRepository(tools, "https://github.com/acme/tools.git");
+    const toolsKey = recordCheckout(stores.database(), toolsRoot).repositoryKey;
+    expect(await call("repository_context_get", {}, from(tools))).toMatchObject({
+      result: { repository: { repositoryKey: toolsKey }, checkout: { checkoutPath: toolsRoot, folder: "" } },
+    });
+  });
+
   it("lets an agent change only a set-up repository's checkout settings, rules it just created, and copies it edits", async () => {
     const caller = from(join(parent, "web"));
     const repositoryOff = { owner: "repository", targets: [{ kind: "rule", id: "mock-no-console-log" }], on: false };
@@ -141,6 +156,52 @@ describe("MCP callers and the agent guard", () => {
     const copy = (copied.result as { rule: { rule: CodeRule } }).rule.rule;
     expect((await call("library_rules_upsert", { id: copy.id, kind: "file", rule: { ...copy, revision: copy.revision + 1 } }, caller)).result)
       .toMatchObject({ rule: { revision: copy.revision + 1 } });
+  });
+
+  it("folds attachment settings for one target and folder before writing them, and writes them with the attachments", async () => {
+    const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
+    const response = await app.request("/api/repository/attachments", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        repository: parentKey,
+        add: [{ sourceKind: "pack", sourceId: "tslint", folder: "web" }],
+        settings: [
+          { folder: "web", targetKind: "pack", targetId: "tslint", on: false },
+          { folder: "web", targetKind: "pack", targetId: "tslint", mode: "log" },
+        ],
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(stores.database().select({ on: ruleSettings.on, mode: ruleSettings.mode }).from(ruleSettings).all()).toEqual([{ on: false, mode: "log" }]);
+  });
+
+  it("sets a repository up when a library write adds its first rule", async () => {
+    const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
+    const rule = MOCK_CODE_RULES[1]!;
+    const response = await app.request(`/api/library-rules/${rule.id}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "file", rule, repository: parentKey, folder: "web", attach: true }),
+    });
+    expect(response.status).toBe(200);
+    const repository = listRepositories(stores.database()).find(candidate => candidate.repositoryKey === parentKey)!;
+    expect(repository.configuredAt).not.toBeNull();
+  });
+
+  it("edits a library rule whose id a later release bundles, rather than copying the By Rerail rule", async () => {
+    const bundle = loadBundledCatalog();
+    const [bundledId, document] = [...bundle.documents].find(([, candidate]) => candidate.kind === "file")!;
+    // The library rule came first; this release then bundled the same id, and the library rule wins.
+    writeLibraryRule(stores.database(), { ...bundle, documents: new Map() }, { kind: "file", rule: { ...(document.rule as CodeRule), mode: "log" } });
+    const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
+    const response = await app.request(`/api/library-rules/${bundledId}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "file", rule: { ...(document.rule as CodeRule), mode: "steer" } }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ copiedFromRuleId: null, rule: { rule: { id: bundledId, mode: "steer" } } });
   });
 
   it("lets a person through /api make the same changes an agent is refused", async () => {

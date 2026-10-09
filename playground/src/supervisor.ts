@@ -154,20 +154,22 @@ async function daemonRuleList(path: string, failure: string): Promise<unknown[]>
 }
 /**
  * The rule picker reads through the supervisor so the browser stays on one origin: every By Rerail rule, then every
- * rule created by you, each parsed by the daemon's own schema. A By Rerail rule changes only with the bundle.
+ * rule created by you, each parsed by the daemon's own schema. A By Rerail rule changes only with the bundle. A rule
+ * created by you wins over a By Rerail rule with its id, as it does in a repository, so each id names one rule.
  */
 async function readRules(): Promise<PlaygroundRuleList> {
   const [rerail, library] = await Promise.all([
     daemonRuleList("/api/rerail-rules", "By Rerail rules unavailable; check the development daemon"),
     daemonRuleList("/api/library-rules", "Rules created by you unavailable; check the development daemon"),
   ]);
+  const libraryRules = library.map(value => libraryRuleRecordSchema.parse(value));
+  const libraryIds = new Set(libraryRules.map(record => record.rule.id));
   return {
     rules: [
-      ...rerail.map(value => toSnapshot(rerailRuleSchema.parse(value), "bundled", "rerail")),
-      ...library.map(value => {
-        const record = libraryRuleRecordSchema.parse(value);
-        return toSnapshot(record, String(record.updatedAt), "library");
-      }),
+      ...rerail.map(value => rerailRuleSchema.parse(value))
+        .filter(document => !libraryIds.has(document.rule.id))
+        .map(document => toSnapshot(document, "bundled", "rerail")),
+      ...libraryRules.map(record => toSnapshot(record, String(record.updatedAt), "library")),
     ],
   };
 }
