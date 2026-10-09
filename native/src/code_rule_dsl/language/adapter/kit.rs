@@ -38,6 +38,7 @@ struct Expect {
     arguments: super::arguments::kit::Expect,
     format_args: super::format_args::kit::Expect,
     syntax: super::syntax::kit::Expect,
+    scope: super::scope::kit::Expect,
 }
 
 /// A tape of `source` in `dialect`, as files are read.
@@ -108,6 +109,7 @@ fn kit<A: Adapter>(expect: &Expect) {
     });
     super::format_args::kit::check::<A>(&expect.format_args);
     with_adapter!(expect.family, B => super::syntax::kit::check::<B>(&expect.syntax, expect.dialect, |s| tape(s, expect.dialect)));
+    super::scope::kit::kit::<A>(expect.dialect, expect.module.0, &expect.scope);
 }
 
 #[test]
@@ -182,6 +184,34 @@ fn python() {
             ],
             embeds: &[("sprintf($F, $$$A)", false)],
             php_comments: ("# c\nx = 1\n", 1),
+        },
+        scope: super::scope::kit::Expect {
+            flow: false,
+            globals: super::Globals::Ruff,
+            stubs: true,
+            redefines_shadowed: true,
+            reference_kinds: &["identifier"],
+            name_kinds: &["identifier", "dotted_name"],
+            resolves: (
+                "x = 1\nprint(x)\n",
+                "x",
+                Some(crate::code_rule_dsl::scope::Form::Assignment),
+            ),
+            refuses: &[
+                (
+                    super::ScopeFeature::This,
+                    "`this` is TypeScript's; Python has none",
+                ),
+                (
+                    super::ScopeFeature::Every,
+                    "Python's redefines reads the one binding shadowed; `every` is TypeScript's",
+                ),
+            ],
+            reads: &[
+                super::ScopeFeature::Imports,
+                super::ScopeFeature::StopAtGlobal,
+            ],
+            unpackaged: Some("mod"),
         },
     });
 }
@@ -258,6 +288,43 @@ fn ecma() {
             ],
             embeds: &[("sprintf($F, $$$A)", false)],
             php_comments: ("// c\nlet x = 1;\n", 1),
+        },
+        scope: super::scope::kit::Expect {
+            flow: false,
+            globals: super::Globals::Eslint,
+            stubs: false,
+            redefines_shadowed: false,
+            reference_kinds: &[
+                "identifier",
+                "type_identifier",
+                "shorthand_property_identifier",
+                "shorthand_property_identifier_pattern",
+                "undefined",
+            ],
+            name_kinds: &[
+                "identifier",
+                "type_identifier",
+                "property_identifier",
+                "shorthand_property_identifier_pattern",
+                "undefined",
+            ],
+            resolves: (
+                "let x = 1;\nx;\n",
+                "x",
+                Some(crate::code_rule_dsl::scope::Form::Assignment),
+            ),
+            refuses: &[
+                (
+                    super::ScopeFeature::Imports,
+                    "import resolution is Python-only for now; TypeScript rules can use `global`",
+                ),
+                (
+                    super::ScopeFeature::Filter("latest"),
+                    "`latest` reads Python's binding order and declarations; TypeScript has none",
+                ),
+            ],
+            reads: &[super::ScopeFeature::This, super::ScopeFeature::LastWrite],
+            unpackaged: None,
         },
     });
 }
@@ -369,6 +436,31 @@ fn php() {
             ],
             embeds: &[("sprintf($F, $$$A)", false)],
             php_comments: ("<?php /** d */ // c\n", 2),
+        },
+        scope: super::scope::kit::Expect {
+            flow: true,
+            globals: super::Globals::Superglobals,
+            stubs: false,
+            redefines_shadowed: false,
+            reference_kinds: &["variable_name"],
+            name_kinds: &["variable_name"],
+            resolves: (
+                "<?php $x = 1;\necho $x;\n",
+                "$x",
+                Some(crate::code_rule_dsl::scope::Form::Assignment),
+            ),
+            refuses: &[
+                (
+                    super::ScopeFeature::StarImports,
+                    "php policies ask `unresolved: true`",
+                ),
+                (
+                    super::ScopeFeature::SameImport,
+                    "qualified import names are Python's; a PHP variable is never bound by an import",
+                ),
+            ],
+            reads: &[super::ScopeFeature::Imports, super::ScopeFeature::Every],
+            unpackaged: None,
         },
     });
 }
@@ -484,6 +576,31 @@ fn blade() {
             ],
             embeds: &[("sprintf($F, $$$A)", true), ("<p>{{ $x }}</p>", false)],
             php_comments: ("{{-- a --}}\n@php /** b */ @endphp\n", 1),
+        },
+        scope: super::scope::kit::Expect {
+            flow: true,
+            globals: super::Globals::Superglobals,
+            stubs: false,
+            redefines_shadowed: false,
+            reference_kinds: &["variable_name"],
+            name_kinds: &["variable_name"],
+            resolves: (
+                "@php\n    $x = 1;\n@endphp\n{{ $x }}\n",
+                "$x",
+                Some(crate::code_rule_dsl::scope::Form::Assignment),
+            ),
+            refuses: &[
+                (
+                    super::ScopeFeature::StarImports,
+                    "blade policies ask `unresolved: true`",
+                ),
+                (
+                    super::ScopeFeature::SameImport,
+                    "qualified import names are Python's; a blade variable is never bound by an import",
+                ),
+            ],
+            reads: &[super::ScopeFeature::Imports, super::ScopeFeature::Every],
+            unpackaged: None,
         },
     });
 }
