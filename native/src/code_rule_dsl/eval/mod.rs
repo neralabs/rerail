@@ -337,39 +337,34 @@ fn stateless_calls(
         }
         let path: Arc<str> = Arc::from(file.path.as_str());
         let module = file.module.as_deref();
-        let (summary, _) = match crate::code_rule_dsl::language::Family::of(language) {
-            // A Blade file's calls are its tape's embedded program's (`blade::view`).
-            crate::code_rule_dsl::language::Family::Blade => {
-                let (doc, _) = query::file_tape(language, file)?;
-                let has_errors = !doc.syntax_error_ranges().is_empty();
-                let root = ast_grep_core::AstGrep::doc(doc);
-                let bytes = file.source.len();
-                calls::summarize(
-                    root.root(),
-                    language,
-                    &file.path,
-                    module,
-                    has_errors,
-                    bytes,
-                    None,
-                )
-            }
-            crate::code_rule_dsl::language::Family::Python
-            | crate::code_rule_dsl::language::Family::Php
-            | crate::code_rule_dsl::language::Family::Ecma => {
-                let root = language.ast_grep(file.source.as_str());
-                let has_errors = root.root().get_doc().tree.root_node().has_error();
-                let bytes = file.source.len();
-                calls::summarize(
-                    root.root(),
-                    language,
-                    &file.path,
-                    module,
-                    has_errors,
-                    bytes,
-                    None,
-                )
-            }
+        // A Blade file's calls are its tape's embedded program's (`calls::taped`).
+        let (summary, _) = if calls::taped(language) {
+            let (doc, _) = query::file_tape(language, file)?;
+            let has_errors = !doc.syntax_error_ranges().is_empty();
+            let root = ast_grep_core::AstGrep::doc(doc);
+            let bytes = file.source.len();
+            calls::summarize(
+                root.root(),
+                language,
+                &file.path,
+                module,
+                has_errors,
+                bytes,
+                None,
+            )
+        } else {
+            let root = language.ast_grep(file.source.as_str());
+            let has_errors = root.root().get_doc().tree.root_node().has_error();
+            let bytes = file.source.len();
+            calls::summarize(
+                root.root(),
+                language,
+                &file.path,
+                module,
+                has_errors,
+                bytes,
+                None,
+            )
         };
         let summary = Arc::new(summary);
         summaries.push((Arc::clone(&path), Arc::clone(&summary)));

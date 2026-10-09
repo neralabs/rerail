@@ -14,7 +14,8 @@ use crate::code_rule_dsl::calls::summary::Summary;
 use crate::code_rule_dsl::calls::{self, CallsView, FileSeeds, TermId};
 use crate::code_rule_dsl::eval::{file_language, grammar_matcher};
 use crate::code_rule_dsl::json::invalid;
-use crate::code_rule_dsl::language::{Family, GrammarDialect};
+use crate::code_rule_dsl::language::Family;
+use crate::code_rule_dsl::language::adapter::{Adapter, CallRules, with_adapter};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, FileInput, Metrics, Query, Terms};
 use crate::code_rule_dsl::tape;
@@ -22,7 +23,6 @@ use crate::content_store::{
     CandidateClause, HashKey, LocalResultPublication, StoredLocalResult, compress,
 };
 use ast_grep_core::AstGrep as Root;
-use ast_grep_language::LanguageExt;
 use napi::Result;
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -670,16 +670,10 @@ pub(super) fn summarize_file(
     let opaque = |file: &FileState| Summary {
         open: true,
         bytes: u32::try_from(file.input.source.len()).unwrap_or(u32::MAX),
-        // Python names the module, whose members may hide in it; a PHP file names nothing.
-        ..match Family::of(language) {
-            Family::Python => Summary::extract(
-                &GrammarDialect::Python.ast_grep("").root(),
-                None,
-                file.input.module.as_deref(),
-                true,
-            ),
-            Family::Php | Family::Ecma | Family::Blade => Summary::default(),
-        }
+        // What the file names regardless (`CallRules::unread`).
+        ..with_adapter!(Family::of(language), A => <<A as Adapter>::Calls as CallRules>::unread(
+            file.input.module.as_deref(),
+        ))
     };
     // An opaque summary may be a transient failure's: it is this workspace's alone.
     let (summary, shared) = match file.tape.as_ref().filter(|_| taped) {
