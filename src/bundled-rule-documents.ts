@@ -10,9 +10,23 @@ import { codeRuleSchema, CODE_RULE_FORMAT } from "./code-rule-schema.js";
 import { conversationRuleSchema } from "./rule-schema.js";
 import type { RuleDocument } from "./rule-store.js";
 
-/** `<package>/code-rule-dsl/rules`: the documents that ship with Rerail. */
+const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/** `<package>/code-rule-dsl/rules`: core's own rule documents, outside any pack. None ship today, so it may be absent. */
 export function bundledRulesDirectory(): string {
-  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "code-rule-dsl", "rules");
+  return join(PACKAGE_ROOT, "code-rule-dsl", "rules");
+}
+
+/**
+ * The rule packs core ships inside its own package (`package.json` `files`) until it loads installed packs: TSLint and
+ * complexity. Each is a `packs/<id>/` directory in the pack layout (`docs/pack-format.md`): its `rules/` documents are
+ * By Rerail rules, and its `pack.json` is read by `src/rule-packs.ts`.
+ */
+export const CORE_RULE_PACKS = ["tslint", "complexity"] as const;
+
+/** `<package>/packs/<id>` for each pack core ships. */
+export function corePackDirectories(): string[] {
+  return CORE_RULE_PACKS.map(id => join(PACKAGE_ROOT, "packs", id));
 }
 
 /** A file rule (`format` is the code rule format) or a conversation rule; `label` names the source in errors. */
@@ -24,48 +38,28 @@ export function parseRuleDocument(value: unknown, label: string): RuleDocument {
   throw new Error(`${label} is neither a ${CODE_RULE_FORMAT} document nor a conversation rule: ${conversationRule.error.issues[0]?.message ?? "invalid"}`);
 }
 
-/**
- * Subdirectory of the bundled rules holding opt-in packs, one folder per pack (`opt-in/<pack>/*.json`, e.g. the TSLint
- * ports in `opt-in/tslint/`). Their documents are ordinary bundled rules; only the pack files decide where they apply.
- */
-export const OPT_IN_RULES_DIRECTORY = "opt-in";
+/** The rule document at `path`: a code rule or a conversation rule, JSON without duplicate keys. */
+export function readRuleDocument(path: string): RuleDocument {
+  return parseRuleDocument(parseJsonWithoutDuplicateKeys(readFileSync(path, "utf8"), path), path);
+}
 
+/** Every `*.json` rule document directly in `directory`, sorted by file name; none when it does not exist. */
 function readRuleDirectory(directory: string): { path: string; document: RuleDocument }[] {
+  if (!existsSync(directory)) return [];
   return readdirSync(directory, { withFileTypes: true })
     .filter(entry => entry.isFile() && entry.name.endsWith(".json"))
     .map(entry => entry.name)
     .sort()
-    .map(name => {
-      const path = join(directory, name);
-      return { path, document: parseRuleDocument(parseJsonWithoutDuplicateKeys(readFileSync(path, "utf8"), path), path) };
-    });
+    .map(name => ({ path: join(directory, name), document: readRuleDocument(join(directory, name)) }));
 }
 
 /**
- * Every opt-in pack's documents, by pack name then file name. Hidden entries (`.DS_Store`, `.hidden-pack/`) and non-JSON
- * files directly in `opt-in/` (a README) are ignored; a `*.json` file there belongs to no pack and is an error.
- */
-function readOptInPacks(directory: string): { path: string; document: RuleDocument }[] {
-  if (!existsSync(directory)) return [];
-  const entries = readdirSync(directory, { withFileTypes: true }).filter(entry => !entry.name.startsWith("."));
-  const loose = entries
-    .filter(entry => !entry.isDirectory() && entry.name.endsWith(".json"))
-    .map(entry => join(directory, entry.name));
-  if (loose.length > 0) throw new Error(`Opt-in rules must live in a pack folder (${OPT_IN_RULES_DIRECTORY}/<pack>/*.json): ${loose.join(", ")}`);
-  return entries
-    .filter(entry => entry.isDirectory())
-    .map(entry => entry.name)
-    .sort()
-    .flatMap(pack => readRuleDirectory(join(directory, pack)));
-}
-
-/**
- * Every `*.json` rule document in a directory, sorted by file name, then those in each `opt-in/<pack>/` folder
- * (by pack, then file name); ids must be unique across all of them. Reads the files on every call;
+ * Core's own rule documents in `directory`, sorted by file name, then each pack's `rules/*.json` (in `packs` order,
+ * then by file name); ids must be unique across all of them. Reads the files on every call;
  * {@link shippedBundledRules} is the cached shipped set.
  */
-export function loadBundledRules(directory = bundledRulesDirectory()): RuleDocument[] {
-  const entries = [...readRuleDirectory(directory), ...readOptInPacks(join(directory, OPT_IN_RULES_DIRECTORY))];
+export function loadBundledRules(directory = bundledRulesDirectory(), packs: readonly string[] = corePackDirectories()): RuleDocument[] {
+  const entries = [...readRuleDirectory(directory), ...packs.flatMap(pack => readRuleDirectory(join(pack, "rules")))];
   const seen = new Set<string>();
   return entries.map(({ path, document }) => {
     if (seen.has(document.rule.id)) throw new Error(`Duplicate bundled rule id: ${document.rule.id} (${path})`);

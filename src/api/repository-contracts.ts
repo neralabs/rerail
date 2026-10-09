@@ -4,6 +4,7 @@
  */
 import { isAbsolute } from "node:path";
 import { z } from "zod";
+import { LANGUAGE_NOT_SUPPORTED, codeRuleLanguageNotSupported, type CodeRuleLanguageNotSupported } from "../code-rule-language-support.js";
 import { codeRuleSchema } from "../code-rule-schema.js";
 import { RULE_SETTING_OWNER_KINDS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS } from "../repository-model.js";
 import { RULE_MODES } from "../rule-mode.js";
@@ -67,6 +68,20 @@ export const deciderSchema = z.discriminatedUnion("by", [
   z.object({ by: z.literal("rule-default") }).strict(),
 ]);
 
+export const inactiveField = {
+  inactive: z
+    .object({ code: z.literal(LANGUAGE_NOT_SUPPORTED), reason: z.string() })
+    .strict()
+    .optional()
+    .describe("Present when the rule is stored but never evaluated: its language, or a capability it reads, is not supported yet."),
+};
+
+/** The `inactive` field for a file rule whose language, or a capability it reads, the engine does not read yet. */
+export function inactiveOf(kind: string, rule: unknown): { inactive?: CodeRuleLanguageNotSupported } {
+  const unsupported = kind === "file" ? codeRuleLanguageNotSupported(rule as Parameters<typeof codeRuleLanguageNotSupported>[0]) : undefined;
+  return unsupported === undefined ? {} : { inactive: unsupported };
+}
+
 const ruleSourceSchema = z.object({
   kind: z.enum(RULE_SOURCE_KINDS),
   id: z.string(),
@@ -84,7 +99,7 @@ const effectiveRuleBase = {
   payloadHash: z.string(),
 };
 export const effectiveRuleSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("file"), rule: codeRuleSchema, ...effectiveRuleBase }).strict(),
+  z.object({ kind: z.literal("file"), rule: codeRuleSchema, ...effectiveRuleBase, ...inactiveField }).strict(),
   z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, ...effectiveRuleBase }).strict(),
 ]);
 
@@ -157,7 +172,7 @@ const libraryRuleBase = {
   updatedAt: z.number().int(),
 };
 export const libraryRuleRecordSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("file"), rule: codeRuleSchema, ...libraryRuleBase }).strict(),
+  z.object({ kind: z.literal("file"), rule: codeRuleSchema, ...libraryRuleBase, ...inactiveField }).strict(),
   z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, ...libraryRuleBase }).strict(),
 ]);
 
@@ -166,6 +181,7 @@ export const quarantinedRuleSchema = z.object({
   kind: z.enum(RULE_KINDS),
   owner: z.string(),
   reason: z.string(),
+  code: z.literal(LANGUAGE_NOT_SUPPORTED).optional(),
 }).strict();
 
 export const libraryUpsertBodySchema = z.object({
@@ -197,7 +213,7 @@ export const libraryUpsertResultSchema = z.object({
 }).strict();
 
 export const rerailRuleSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("file"), rule: codeRuleSchema, packId: z.string().nullable() }).strict(),
+  z.object({ kind: z.literal("file"), rule: codeRuleSchema, packId: z.string().nullable(), ...inactiveField }).strict(),
   z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, packId: z.string().nullable() }).strict(),
 ]);
 

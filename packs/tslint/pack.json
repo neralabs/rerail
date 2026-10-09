@@ -1,0 +1,480 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "tslint",
+  "name": "TSLint",
+  "category": "language",
+  "covers": "The 74 TSLint core rules ported to Rerail that pass TSLint's own test suite, with TSLint's default options.",
+  "reason": "matches TypeScript",
+  "match": {
+    "any": [
+      {
+        "npmDependencies": [
+          "typescript"
+        ]
+      },
+      {
+        "files": [
+          "**/*.ts",
+          "**/*.mts",
+          "**/*.cts"
+        ],
+        "exclude": [
+          "**/*.d.ts"
+        ],
+        "label": "*.ts files"
+      },
+      {
+        "files": [
+          "**/*.tsx"
+        ],
+        "label": "*.tsx files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "tslint:adjacent-overload-signatures",
+      "document": "rules/adjacent-overload-signatures.json",
+      "title": "Enforces function overloads to be consecutive",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:arrow-return-shorthand",
+      "document": "rules/arrow-return-shorthand.json",
+      "title": "Arrow bodies whose only statement is `return <expr>` should use the expression form",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:ban-comma-operator",
+      "document": "rules/ban-comma-operator.json",
+      "title": "Disallows the comma operator, except as a for-loop incrementor",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:ban-ts-ignore",
+      "document": "rules/ban-ts-ignore.json",
+      "title": "Bans `// @ts-ignore` comments",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:callable-types",
+      "document": "rules/callable-types.json",
+      "title": "An interface or type literal with only a call signature should be a function type",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:class-name",
+      "document": "rules/class-name.json",
+      "title": "Enforces PascalCased class and interface names",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:cyclomatic-complexity",
+      "document": "rules/cyclomatic-complexity.json",
+      "title": "Cyclomatic complexity threshold 20",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:function-constructor",
+      "document": "rules/function-constructor.json",
+      "title": "Prevents using the built-in Function constructor (Function or new Function)",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:increment-decrement",
+      "document": "rules/increment-decrement.json",
+      "title": "Bans ++ and --",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:interface-name",
+      "document": "rules/interface-name.json",
+      "title": "Interface names must start with a capitalized I",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:interface-over-type-literal",
+      "document": "rules/interface-over-type-literal.json",
+      "title": "Prefer an interface over a type alias of an object type literal",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:invalid-void",
+      "document": "rules/invalid-void.json",
+      "title": "Disallows void outside of return types and generic type arguments",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:label-position",
+      "document": "rules/label-position.json",
+      "title": "Only allows labels on do/for/while/switch statements",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:linebreak-style",
+      "document": "rules/linebreak-style.json",
+      "title": "Enforces LF line endings",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:member-access",
+      "document": "rules/member-access.json",
+      "title": "Requires explicit visibility on class methods and properties",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:new-parens",
+      "document": "rules/new-parens.json",
+      "title": "Requires parentheses when invoking a constructor via the new keyword",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-angle-bracket-type-assertion",
+      "document": "rules/no-angle-bracket-type-assertion.json",
+      "title": "Disallows <T>x type assertions",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-any",
+      "document": "rules/no-any.json",
+      "title": "Disallows usages of `any` as a type declaration",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-arg",
+      "document": "rules/no-arg.json",
+      "title": "Disallows use of arguments.callee",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-async-without-await",
+      "document": "rules/no-async-without-await.json",
+      "title": "Flags async functions whose block body has no await or return, searching the body to any depth",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-bitwise",
+      "document": "rules/no-bitwise.json",
+      "title": "Disallows bitwise operators",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-conditional-assignment",
+      "document": "rules/no-conditional-assignment.json",
+      "title": "Disallows assignments in if/while/do/for conditions and ternary conditions",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-console",
+      "document": "rules/no-console.json",
+      "title": "Bans all console methods",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-construct",
+      "document": "rules/no-construct.json",
+      "title": "Disallows access to the constructors of String, Number, and Boolean",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-debugger",
+      "document": "rules/no-debugger.json",
+      "title": "Disallows debugger statements",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-default-export",
+      "document": "rules/no-default-export.json",
+      "title": "Disallows default exports in ES6-style modules",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-duplicate-imports",
+      "document": "rules/no-duplicate-imports.json",
+      "title": "Disallows multiple imports from the same module",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-duplicate-switch-case",
+      "document": "rules/no-duplicate-switch-case.json",
+      "title": "Prevents duplicate cases in switch statements",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-empty-interface",
+      "document": "rules/no-empty-interface.json",
+      "title": "Forbids empty interfaces",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-empty",
+      "document": "rules/no-empty.json",
+      "title": "Disallows empty blocks",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-eval",
+      "document": "rules/no-eval.json",
+      "title": "Disallows eval function invocations",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-for-in",
+      "document": "rules/no-for-in.json",
+      "title": "Disallows iterating over an object with a for-in loop",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-import-side-effect",
+      "document": "rules/no-import-side-effect.json",
+      "title": "Avoid import statements with side-effect",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-inferrable-types",
+      "document": "rules/no-inferrable-types.json",
+      "title": "Disallows explicit number/boolean/string annotations on variables, parameters and properties initialized to a literal of that type",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-internal-module",
+      "document": "rules/no-internal-module.json",
+      "title": "Disallows internal `module`",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-invalid-this",
+      "document": "rules/no-invalid-this.json",
+      "title": "Disallows using the `this` keyword outside of classes",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-irregular-whitespace",
+      "document": "rules/no-irregular-whitespace.json",
+      "title": "Disallows irregular whitespace within a file, including strings and comments",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-magic-numbers",
+      "document": "rules/no-magic-numbers.json",
+      "title": "Disallows magic numbers outside declarations/initializers",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-mergeable-namespace",
+      "document": "rules/no-mergeable-namespace.json",
+      "title": "Disallows mergeable namespaces in the same file",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-misused-new",
+      "document": "rules/no-misused-new.json",
+      "title": "Warns on `constructor` signatures in interfaces/type literals, on `new",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-namespace",
+      "document": "rules/no-namespace.json",
+      "title": "Disallows top-level `namespace`/`module` declarations",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-non-null-assertion",
+      "document": "rules/no-non-null-assertion.json",
+      "title": "Disallows non-null assertions using the `!` postfix operator",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-null-keyword",
+      "document": "rules/no-null-keyword.json",
+      "title": "Disallows the null keyword outside type positions",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-parameter-properties",
+      "document": "rules/no-parameter-properties.json",
+      "title": "Disallows parameter properties in class constructors",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-require-imports",
+      "document": "rules/no-require-imports.json",
+      "title": "Disallows invocation of require",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-return-await",
+      "document": "rules/no-return-await.json",
+      "title": "Disallows unnecessary `return await`, including awaits in arrow expression bodies and in tail positions of parens, ||, &&, comma and ?",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-string-throw",
+      "document": "rules/no-string-throw.json",
+      "title": "Flags throwing plain strings",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-submodule-imports",
+      "document": "rules/no-submodule-imports.json",
+      "title": "Disallows importing any submodule of a non-relative package",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-switch-case-fall-through",
+      "document": "rules/no-switch-case-fall-through.json",
+      "title": "Flags a case/default clause reached by fall-through from a non-empty previous clause that does not end control flow and has no trailing `falls through` comment",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-tautology-expression",
+      "document": "rules/no-tautology-expression.json",
+      "title": "Flags relational/equality/logical comparisons whose two sides are the same literal, identifier or property access",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-this-assignment",
+      "document": "rules/no-this-assignment.json",
+      "title": "Disallows assigning `this` into a local variable",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-unnecessary-class",
+      "document": "rules/no-unnecessary-class.json",
+      "title": "Flags non-extending class declarations that are empty, constructor-only, or static-only, at the `class` keyword",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-unnecessary-initializer",
+      "document": "rules/no-unnecessary-initializer.json",
+      "title": "Forbids initializing variables, binding elements, and function/method parameters to `undefined`",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-unsafe-finally",
+      "document": "rules/no-unsafe-finally.json",
+      "title": "Disallows return, throw, break and continue that escape a finally block",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-unused-expression",
+      "document": "rules/no-unused-expression.json",
+      "title": "Disallows expression statements whose value is discarded unless they are calls, assignments, increments, delete, await or yield",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:no-var-keyword",
+      "document": "rules/no-var-keyword.json",
+      "title": "Disallows usage of the var keyword",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:number-literal-format",
+      "document": "rules/number-literal-format.json",
+      "title": "Checks that decimal literals begin with '0.' not just '.', have no trailing zeros, no leading zeros, and uppercase hex",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:one-variable-per-declaration",
+      "document": "rules/one-variable-per-declaration.json",
+      "title": "Disallows multiple variable definitions in the same declaration statement, including for-loop initializers",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:only-arrow-functions",
+      "document": "rules/only-arrow-functions.json",
+      "title": "Disallows traditional function expressions and declarations",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:prefer-conditional-expression",
+      "document": "rules/prefer-conditional-expression.json",
+      "title": "Flags an if/else whose two branches, through single-statement blocks, are each one `$X = <one-line value>` to the same $X",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:prefer-function-over-method",
+      "document": "rules/prefer-function-over-method.json",
+      "title": "Flags class methods with a body, not static, that never use `this` or `super` outside nested functions, object/class methods and nested classes",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:prefer-method-signature",
+      "document": "rules/prefer-method-signature.json",
+      "title": "Prefer `foo(): void` over `foo: () => void` in interfaces and types",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:prefer-switch",
+      "document": "rules/prefer-switch.json",
+      "title": "Flags an if/else-if chain with an else, whose conditions are `||` trees of `$X === <simple>` with one simple $X, comparing at least 3 values in total",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:prefer-template",
+      "document": "rules/prefer-template.json",
+      "title": "Prefer template literals over string concatenation",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:quotemark",
+      "document": "rules/quotemark.json",
+      "title": "Enforces double-quoted string literals",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:radix",
+      "document": "rules/radix.json",
+      "title": "Requires the radix parameter for parseInt",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:static-this",
+      "document": "rules/static-this.json",
+      "title": "Disallows `this` whose nearest enclosing class member is static",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:switch-default",
+      "document": "rules/switch-default.json",
+      "title": "Requires a default case in all switch statements",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:triple-equals",
+      "document": "rules/triple-equals.json",
+      "title": "Requires === and !== in place of == and !=",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:type-literal-delimiter",
+      "document": "rules/type-literal-delimiter.json",
+      "title": "Type literal members must be separated by ';'",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:typeof-compare",
+      "document": "rules/typeof-compare.json",
+      "title": "Ensures typeof expressions are only compared to valid typeof result literals",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:unnecessary-else",
+      "document": "rules/unnecessary-else.json",
+      "title": "Flags the `else` of an if whose then-branch is, or ends with, a return/throw/break/continue, unless an if up the direct else-if chain does not end with one",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:use-isnan",
+      "document": "rules/use-isnan.json",
+      "title": "Enforces use of isNaN instead of comparing to NaN",
+      "group": "TSLint"
+    },
+    {
+      "id": "tslint:variable-name",
+      "document": "rules/variable-name.json",
+      "title": "Checks variable/parameter/property names for lowerCamelCase or UPPER_CASE",
+      "group": "TSLint"
+    }
+  ]
+}

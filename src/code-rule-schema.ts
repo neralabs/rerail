@@ -45,14 +45,21 @@ import {
 import { isCodeRuleOptionName, CodeRuleOptionError, codeRuleOptionConditionHolds, codeRuleOptionValues, resolveCodeRuleOptions } from "./code-rule-options.js";
 import {
   CODE_RULE_AST_LANGUAGES,
-  CODE_RULE_LANGUAGE_FAMILIES,
+  CODE_RULE_LANGUAGE_IDS,
+  codeRuleLanguageCapability,
   codeRuleLanguageFamily,
-  codeRuleLanguageImplements,
   codeRuleLanguageSuppressions,
+  isCodeRuleAstLanguage,
 } from "./code-rule-languages.js";
-import type { CodeRuleAstLanguage, CodeRuleLanguageFamily, CodeRuleSemanticCapability, CodeRuleSuppression } from "./code-rule-languages.js";
+import type { CodeRuleAstLanguage, CodeRuleLanguageFamily, CodeRuleSuppression } from "./code-rule-languages.js";
+import { CODE_RULE_PREDICATE_CAPABILITIES } from "./code-rule-language-support.js";
 
-const [PYTHON_FAMILY, ECMA_FAMILY, PHP_FAMILY, BLADE_FAMILY] = CODE_RULE_LANGUAGE_FAMILIES;
+// The families whose restrictions this schema mirrors from the engine; they move into each language's adapter in
+// the adapter refactor (docs/language-packs.md).
+const PYTHON_FAMILY = "python" satisfies CodeRuleLanguageFamily;
+const ECMA_FAMILY = "ecma" satisfies CodeRuleLanguageFamily;
+const PHP_FAMILY = "php" satisfies CodeRuleLanguageFamily;
+const BLADE_FAMILY = "blade" satisfies CodeRuleLanguageFamily;
 
 /** Whether a family's values, arguments and variables are PHP's: PHP's, and those of the PHP a Blade template embeds (the engine's `Family::reads_php`). */
 const readsPhp = (family: CodeRuleLanguageFamily): boolean => family === PHP_FAMILY || family === BLADE_FAMILY;
@@ -992,17 +999,6 @@ type AstLanguageOptions = CodeRuleDslLanguageOptions | undefined | "shared";
 /** A rule's language checks, as the engine reads them. */
 type AstRuleVisit = (rule: CodeRuleDslAstRule, path: RulePath, parsed?: ParseGrammar, fields?: boolean) => void;
 
-/** The predicates a language implements only with a capability. */
-const RULE_CAPABILITIES: readonly [keyof CodeRuleDslAstRule, CodeRuleSemanticCapability][] = [
-  ["resolves", "scope"],
-  ["binds", "scope"],
-  ["value", "value"],
-  ["compare", "value"],
-  ["arguments", "arguments"],
-  ["calls", "calls"],
-  ["formatArgs", "formatArgs"],
-];
-
 /** A family as the engine's refusals name it. */
 const FAMILY_NAMES: Record<CodeRuleLanguageFamily, string> = { python: "Python", ecma: "TypeScript", php: "php", blade: "blade" };
 
@@ -1502,8 +1498,9 @@ function astRuleVisitor(context: z.RefinementCtx, language: CodeRuleAstLanguage,
   const family = codeRuleLanguageFamily(language);
   const issue: RuleIssue = (path, message) => context.addIssue({ code: "custom", path, message });
   const visit: AstRuleVisit = (rule, path, parsed, fields = true) => {
-    for (const [predicate, capability] of RULE_CAPABILITIES) {
-      if (rule[predicate] === undefined || codeRuleLanguageImplements(language, capability)) continue;
+    // A `not-supported-yet` capability is no schema error: compiling refuses it as language-not-supported.
+    for (const [predicate, capability] of Object.entries(CODE_RULE_PREDICATE_CAPABILITIES)) {
+      if (rule[predicate as keyof CodeRuleDslAstRule] === undefined || codeRuleLanguageCapability(language, capability) !== "refused") continue;
       const at = [...path, predicate];
       issue(at, `${at.join(".")}: \`${predicate}\` is not available for ${language} policies`);
     }
@@ -1616,7 +1613,7 @@ export const codeRuleQuerySchema: z.ZodType<CodeRuleDslQuery> = z.lazy(() =>
         .optional(),
       ast: z
         .object({
-          language: z.enum(CODE_RULE_AST_LANGUAGES),
+          language: z.enum(CODE_RULE_LANGUAGE_IDS),
           rule: codeRuleAstRuleSchema,
           utils: z.record(utilityId, codeRuleUtilitySchema).optional(),
           constraints: z.record(nonEmptyString, codeRuleAstRuleSchema).optional(),
@@ -1630,6 +1627,8 @@ export const codeRuleQuerySchema: z.ZodType<CodeRuleDslQuery> = z.lazy(() =>
           // The engine is the authority; these are the cross-references a schema can see.
           const utils = ast.utils ?? {};
           checkTransforms(ast.transform ?? {}, context);
+          // A planned language has no checks of its own yet: compiling refuses it as language-not-supported.
+          if (!isCodeRuleAstLanguage(ast.language)) return;
           checkLanguageOptions(ast.language, ast.languageOptions, context);
           checkFileCondition(ast.language, ast.file, context);
           checkWhenGates(ast.language, ast.when, context);
@@ -1741,6 +1740,7 @@ function checkViolationCaptures(query: CodeRuleDslQuery | undefined, violation: 
 function checkViolationSuppress(ast: CodeRuleDslAstQuery["ast"] | undefined, violation: CodeRuleDslReportingClause["violation"], issue: ViolationIssue): void {
   if (violation.suppress === undefined) return;
   if (ast === undefined) return issue("suppress", "suppress removes an ast query's violations.");
+  if (!isCodeRuleAstLanguage(ast.language)) return;
   const suppressions = codeRuleLanguageSuppressions(ast.language);
   const refusals: ReadonlyArray<readonly [CodeRuleSuppression, string]> = [
     ["eslint", "eslint-disable comments are ESLint's"],
@@ -1775,7 +1775,7 @@ function checkViolationAgainstQuery(clause: CodeRuleDslReportingClause, context:
 
 export const codeRuleDefineSchema = z
   .object({
-    language: z.enum(CODE_RULE_AST_LANGUAGES).optional(),
+    language: z.enum(CODE_RULE_LANGUAGE_IDS).optional(),
     utils: z.record(utilityId, codeRuleUtilitySchema).optional(),
     options: z.record(optionName, codeRuleOptionDeclarationSchema).optional(),
     config: z.record(optionName, codeRuleValueSchema).optional(),
@@ -1787,7 +1787,7 @@ export const codeRuleDefineSchema = z
     path: ["language"],
   })
   .superRefine((define, context) => {
-    if (define.language === undefined) return;
+    if (define.language === undefined || !isCodeRuleAstLanguage(define.language)) return;
     const visit = astRuleVisitor(context, define.language, "shared");
     for (const [id, util] of Object.entries(define.utils ?? {})) visit(utilityParts(util).rule, ["utils", id, ...utilityParts(util).path]);
   }) as unknown as z.ZodType<CodeRuleDslDefine>;

@@ -2,7 +2,7 @@ import { dirname, join, resolve } from "node:path";
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { parseRuleDocument } from "./bundled-rule-documents.js";
-import { assertCodeRuleCompiles, CodeRuleCompileError } from "./code-rule-compile.js";
+import { assertCodeRuleStorable, CodeRuleCompileError } from "./code-rule-compile.js";
 import {
   repositories,
   RULE_KINDS,
@@ -24,14 +24,15 @@ export function defaultRulesDumpPath(databasePath: string): string {
 
 /**
  * Compile every code rule of a dump in the engine before anything is written, so an import is all or nothing:
- * the error lists each rule the engine rejects, by dump index and id.
+ * the error lists each rule the engine rejects, by dump index and id. A rule whose language is not supported yet
+ * imports, inactive.
  */
 function assertDumpCompiles(path: string, documents: readonly RuleDocument[]): void {
   const problems: string[] = [];
   for (const [index, document] of documents.entries()) {
     if (document.kind !== "file") continue;
     try {
-      assertCodeRuleCompiles(document.rule);
+      assertCodeRuleStorable(document.rule);
     } catch (error) {
       if (!(error instanceof CodeRuleCompileError)) throw error;
       problems.push(`  rules[${index}] (${document.rule.id}): ${error.reason}`);

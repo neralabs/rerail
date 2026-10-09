@@ -20,6 +20,7 @@ import { rulePackListSchema } from "./rule-pack-contracts.js";
 import { SESSION_EVENT_PAGE_LIMIT } from "../session-store.js";
 import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
 import { activityRules, historyRepositoryIds, repositoryOperations } from "./repository-operations.js";
+import { inactiveField, inactiveOf } from "./repository-contracts.js";
 import { presentationDaemonSchema, presentationResponseSchema, sessionResponseSchema, sessionSummarySchema } from "./session-contracts.js";
 
 /** Query strings arrive as text; MCP arguments arrive typed. Accept both. */
@@ -198,7 +199,8 @@ const sinceParameter = countParameter.describe("Epoch milliseconds; only activit
 /**
  * What the catalog knows about one rule's effect over a time range. Conversation rules never write an
  * audit, so they carry no evidence either way: `measured: false` says so rather than
- * reporting a zero that reads as "never triggered".
+ * reporting a zero that reads as "never triggered". A file rule kept
+ * inactive (`inactive`) is not measured either: it is never evaluated.
  */
 const ruleActivitySchema = z.object({
   measured: z.boolean(),
@@ -207,6 +209,7 @@ const ruleActivitySchema = z.object({
   lastSeenAt: z.number().int().nullable(),
   audits: z.number().int().nonnegative().describe("Distinct audits in range that compiled this rule, so a zero violation count over a positive number of audits is evidence rather than silence."),
   rerails: z.number().int().nonnegative(),
+  ...inactiveField,
 }).strict();
 
 const violationRecordSchema = z.object({
@@ -302,16 +305,18 @@ export const operations: readonly Operation[] = [
       const activity = stores.audits.ruleActivity(input.since, ids);
       const rerails = stores.reader.steersByRule(input.since, ids);
       const rules: Record<string, z.infer<typeof ruleActivitySchema>> = {};
-      for (const { id, kind } of activityRules(stores, input.repository)) {
+      for (const { id, kind, rule } of activityRules(stores, input.repository)) {
         // Every rule is reported, so a caller never has to infer absence from a missing key.
+        const { inactive } = inactiveOf(kind, rule);
         const totals = kind === "conversation" ? undefined : activity.get(id);
         rules[id] = {
-          measured: kind !== "conversation",
+          measured: kind !== "conversation" && inactive === undefined,
           distinctViolations: totals?.distinctViolations ?? 0,
           sessions: totals?.sessions ?? 0,
           lastSeenAt: totals?.lastSeenAt ?? null,
           audits: totals?.audits ?? 0,
           rerails: kind === "conversation" ? 0 : rerails.get(id) ?? 0,
+          ...(inactive === undefined ? {} : { inactive }),
         };
       }
       return { since: input.since, rules };

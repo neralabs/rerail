@@ -21,7 +21,7 @@ Run from the repository root as \`node --import tsx conformance/tslint/cli.ts <a
 
   fetch                                 fetch TSLint fixtures at the pinned SHA (idempotent)
   --rule <name> [--ends]                detailed diff for one rule (porting inner loop)
-  golden                                golden gate: every rule in the opt-in pack meets its golden.json entry;
+  golden                                golden gate: every rule in the TSLint pack meets its conformance.json entry;
                                         exit 1 with a line per regression
   [--label <l>] [--no-corpus]           full run; writes report-<date>-<label>.md and summary-<date>-<label>.json
                                         to conformance/tslint/history/, full detail JSON to tmp/rerail-conformance/;
@@ -239,7 +239,7 @@ async function main(): Promise<void> {
 
 function reportGolden(failures: readonly string[], rules: number): void {
   if (failures.length === 0) {
-    console.log(`golden gate: all ${rules} golden rules meet golden.json`);
+    console.log(`golden gate: all ${rules} golden rules meet conformance.json`);
     return;
   }
   console.error(`golden gate: ${failures.length} failure(s)`);

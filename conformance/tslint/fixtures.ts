@@ -12,6 +12,11 @@ export const TSLINT_SHA = "285fc1db18d1fd24680d6a2282c6445abf1566ee";
 
 export const HARNESS_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 export const RERAIL_ROOT = resolve(HARNESS_DIRECTORY, "..", "..");
+/**
+ * The TSLint pack: the shipped ports (`rules/`), the ports and option variants still scored (`candidates/`), the golden
+ * manifest (`conformance.json`) and the PASS audit (`divergences.json`).
+ */
+export const TSLINT_PACK = join(RERAIL_ROOT, "packs", "tslint");
 export const FIXTURE_CHECKOUT = join(RERAIL_ROOT, "tmp", "tslint-fixtures");
 
 /** `path` resolved absolute; throws unless it lies inside the repository checkout. */

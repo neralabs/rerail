@@ -1,5 +1,5 @@
 /**
- * The golden gate: every golden rule (`golden.ts`) must meet its golden.json entry on every full run and on
+ * The golden gate: every golden rule (`golden.ts`) must meet its conformance.json entry on every full run and on
  * `node --import tsx conformance/tslint/cli.ts golden`.
  */
 import { goldenRules, loadGoldenManifest, membershipProblems, type GoldenEntry } from "./golden.js";

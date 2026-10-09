@@ -7,7 +7,7 @@ export type { EffectiveVerdict };
 
 export interface RuleSummary {
   rule: string;
-  /** In the opt-in pack (`golden.ts`). */
+  /** In the TSLint pack (`golden.ts`). */
   golden: boolean;
   typeInfo: boolean;
   fixer: boolean;

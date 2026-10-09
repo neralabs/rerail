@@ -1,6 +1,6 @@
 /** Size of a port: bytes plus the shape of its ast-grep rule trees, summed over the default doc and every override. */
 export interface PortSize {
-  /** Bytes of `rules/<rule>.json` (0 when the port has overrides only). */
+  /** Bytes of the default doc, `packs/tslint/rules/<rule>.json` or `candidates/<rule>.json` (0 when the port has overrides only). */
   defaultBytes: number;
   /** Bytes of the default doc plus every override doc. */
   totalBytes: number;

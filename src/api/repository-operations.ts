@@ -43,6 +43,7 @@ import { ApiError, defineOperation, type Operation, type RerailApiStores } from 
 import {
   attachmentRecordSchema,
   attachmentsSetBodySchema,
+  inactiveOf,
   libraryRuleRecordSchema,
   libraryUpsertBodySchema,
   libraryUpsertResultSchema,
@@ -213,7 +214,7 @@ function effectiveRuleRecord(rule: EffectiveRule): z.infer<typeof repositoryRule
     payloadHash: rule.payloadHash,
   };
   return rule.document.kind === "file"
-    ? { kind: "file", rule: rule.document.rule, ...shared }
+    ? { kind: "file", rule: rule.document.rule, ...shared, ...inactiveOf("file", rule.document.rule) }
     : { kind: "conversation", rule: rule.document.rule, ...shared };
 }
 
@@ -226,7 +227,7 @@ function libraryRecord(rule: LibraryRule): z.infer<typeof libraryRuleRecordSchem
     updatedAt: rule.updatedAt,
   };
   return rule.document.kind === "file"
-    ? { kind: "file", rule: rule.document.rule, ...shared }
+    ? { kind: "file", rule: rule.document.rule, ...shared, ...inactiveOf("file", rule.document.rule) }
     : { kind: "conversation", rule: rule.document.rule, ...shared };
 }
 
@@ -497,7 +498,7 @@ export const repositoryOperations: readonly Operation[] = [
         rules: [...bundle.documents.values()]
           .filter(document => input.kind === undefined || document.kind === input.kind)
           .map(document => document.kind === "file"
-            ? { kind: "file" as const, rule: document.rule, packId: bundle.packOf.get(document.rule.id) ?? null }
+            ? { kind: "file" as const, rule: document.rule, packId: bundle.packOf.get(document.rule.id) ?? null, ...inactiveOf("file", document.rule) }
             : { kind: "conversation" as const, rule: document.rule, packId: bundle.packOf.get(document.rule.id) ?? null }),
       };
     },
@@ -593,20 +594,20 @@ function guardRepositoriesUsing(stores: RerailApiStores, caller: ApiCaller, rule
  * The rules `rules_activity` reports: those present in the repository, or without one every By Rerail rule and
  * every rule created by you. An unknown repository has none.
  */
-export function activityRules(stores: RerailApiStores, key: string | undefined): { id: string; kind: "file" | "conversation" }[] {
+export function activityRules(stores: RerailApiStores, key: string | undefined): { id: string; kind: "file" | "conversation"; rule: unknown }[] {
   const db = stores.database();
   const bundle = stores.bundle();
   if (key === undefined) {
     return [
-      ...[...bundle.documents.values()].map(document => ({ id: document.rule.id, kind: document.kind })),
-      ...listLibraryRules(db).map(rule => ({ id: rule.document.rule.id, kind: rule.document.kind })),
+      ...[...bundle.documents.values()].map(document => ({ id: document.rule.id, kind: document.kind, rule: document.rule as unknown })),
+      ...listLibraryRules(db).map(rule => ({ id: rule.document.rule.id, kind: rule.document.kind, rule: rule.document.rule as unknown })),
     ];
   }
   const repository = findRepository(db, key);
   if (repository === undefined) return [];
   const present = new Map(listRepositoryRules(db, bundle, repository.repositoryKey).rules
-    .map(rule => [rule.document.rule.id, rule.document.kind] as const));
-  return [...present].map(([id, kind]) => ({ id, kind }));
+    .map(rule => [rule.document.rule.id, { kind: rule.document.kind, rule: rule.document.rule as unknown }] as const));
+  return [...present].map(([id, { kind, rule }]) => ({ id, kind, rule }));
 }
 
 function startOrStop(

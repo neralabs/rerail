@@ -12,6 +12,7 @@ import { physicalPath, withinCheckout } from "./checkout-control.js";
 import { CheckoutOwners, type CheckoutOwner } from "./checkout-owner.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "./database.js";
 import { reportQuarantinedRule, type QuarantinedRule } from "./rule-quarantine.js";
+import { languageNotSupportedOf } from "./code-rule-language-support.js";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "./native.js";
 import type { RepositoryAuditRuleProvenance, AuditRuleProvenance, RulePlacementDecision } from "./audit.js";
 import { bundledCodeRuleDslDirectory } from "./code-rule-compile.js";
@@ -237,7 +238,13 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
       const sourceDigest = digest(sourceText);
       const outcome = compiledRules.compile(this.#capabilities, id, sourceText, sourceDigest);
       if (!outcome.ok) {
-        quarantined.push({ ruleId: id, kind: "file", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER, reason: outcome.reason });
+        // A rule naming a language the engine does not read yet is inactive by design: quarantined with that code, not reported.
+        const unsupported = languageNotSupportedOf(outcome.reason);
+        quarantined.push({
+          ruleId: id, kind: "file", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER,
+          reason: unsupported?.reason ?? outcome.reason,
+          ...(unsupported === undefined ? {} : { code: unsupported.code }),
+        });
         continue;
       }
       codeRules.push({ id, executable: outcome.executable, placement });
@@ -252,7 +259,7 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
       });
       versioned.push({ id, sourceDigest, placement, source: rule.source });
     }
-    for (const entry of quarantined) reportQuarantinedRule(this.#source.label, entry);
+    for (const entry of quarantined) if (entry.code === undefined) reportQuarantinedRule(this.#source.label, entry);
     const canonical = stableJsonText({ capabilitiesDigest: this.#capabilities.digest, format: "rerail.policy-dsl-catalog/v3", policies: versioned });
     if (canonical === undefined) throw new Error("Policy catalog version is not JSON representable");
     return {

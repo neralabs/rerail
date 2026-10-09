@@ -738,7 +738,7 @@ def suppression(name: str, catalogue: dict[str, str]) -> dict:
 
 def header() -> dict:
     return {
-        "generator": "rerail-fixtures/rust/feasibility/generate.py",
+        "generator": "fixtures/rust/feasibility/generate.py",
         "tools": {**VERSIONS, "scanner": SCANNER, "rust-clippy": CLIPPY_COMMIT, "rust-analyzer-config": RA_CONFIG},
         "corpora": {n: {"repository": c["repository"], "commit": c["commit"]} for n, c in CORPORA.items()},
     }

@@ -1,0 +1,393 @@
+/**
+ * The pack validation contract (docs/pack-format.md, "The validation contract"): checks 1 to 6 over one
+ * `packs/<id>/` directory. Test support, not runtime: test/packs.test.ts calls it for every pack, and it reuses the
+ * conformance runner for ported rules, so it lives beside that runner and stays out of the published core.
+ */
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { basename, join, matchesGlob, relative, sep } from "node:path";
+import { z } from "zod";
+import { languageFor } from "../src/code-rule-enforcer.js";
+import { languageNotSupportedOf } from "../src/code-rule-language-support.js";
+import { codeRuleSchema } from "../src/code-rule-schema.js";
+import { parseJsonWithoutDuplicateKeys } from "../src/json-duplicate-keys.js";
+import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../src/native.js";
+import { rulePackFileSchema, rulePackPackageName, rulePackPackageSchema, type RulePackFile } from "../src/rule-packs.js";
+import { compareDeterministicStrings } from "../src/stable-json.js";
+import { CONFORMANCE_FILE, defaultCorpusRoot, loadPack, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
+import { reportFailures, runPack } from "./languages/runner.js";
+import { GOLDEN_FORMAT, goldenRules, membershipProblems, parseGoldenManifest, type GoldenManifest } from "./tslint/golden.js";
+import { capabilitiesJson } from "./engine.js";
+
+export const PACK_CHECKS = [
+  { number: 1, name: "rules" },
+  { number: 2, name: "proof" },
+  { number: 3, name: "examples" },
+  { number: 4, name: "ports" },
+  { number: 5, name: "package" },
+  { number: 6, name: "licences" },
+] as const;
+export type PackCheckName = (typeof PACK_CHECKS)[number]["name"];
+
+/** `not-supported-yet`: the rule compiles to `language-not-supported`; check 1 passes it and checks 3 and 4 skip it. */
+export type PackRuleStatus = "ok" | "failed" | "not-supported-yet";
+
+export interface PackRuleResult {
+  /** The rule id, as pack.json lists it. */
+  id: string;
+  document: string;
+  status: PackRuleStatus;
+  /** For `failed`, the first failure; for `not-supported-yet`, the engine's reason. */
+  reason?: string;
+}
+
+export interface PackValidation {
+  id: string;
+  directory: string;
+  /** Each check's failures, in a stable order; an empty list passes. */
+  checks: Record<PackCheckName, string[]>;
+  rules: PackRuleResult[];
+  pass: boolean;
+}
+
+export interface ValidatePackOptions {
+  /**
+   * Check 4 always scores the ported rules on the tools' fixtures. Corpora: `true` scores every pinned corpus (a
+   * missing checkout fails), `false` none, and by default those checked out under `corpusRoot`.
+   */
+  corpora?: boolean;
+  /** Corpus checkouts, `<corpusRoot>/<corpus name>`; default the nearest `.rerail/corpora/<pack>`. */
+  corpusRoot?: string;
+}
+
+/** Validation material: kept in the repository, never published. */
+const VALIDATION_MATERIAL = [CONFORMANCE_FILE, "divergences.json", "upstream", "candidates"] as const;
+/** Rerail's own licence for its material in a pack. */
+const RERAIL_LICENSE = "Apache-2.0";
+const UPSTREAM_LICENSE = /\bLicense: ([A-Za-z0-9][A-Za-z0-9.+-]*)/u;
+const UPSTREAM_ROW = /^\|\s*`([^`]+)`/u;
+
+let allowlist: ReadonlySet<string> | undefined;
+/** The repository's licence allowlist, the one `scripts/check-licenses.mjs` enforces. */
+function allowedLicenses(): ReadonlySet<string> {
+  allowlist ??= new Set(z.array(z.string()).parse(JSON.parse(readFileSync(join(RERAIL_ROOT, "scripts", "licence-allowlist.json"), "utf8"))));
+  return allowlist;
+}
+
+const evaluationSchema = z.object({ violations: z.array(z.object({ code: z.string() })).default([]), failures: z.array(z.unknown()).default([]) });
+
+/** A code rule's violation codes and failures on one file, evaluated as a one-file repository snapshot. */
+export function evaluateExample(compiled: NativeCompiledCodeRuleDsl, path: string, source: string): { codes: string[]; failures: unknown[] } {
+  const language = languageFor(path) ?? "text";
+  const input = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files: [{ language, path, source }] });
+  const result = evaluationSchema.parse(JSON.parse(compiled.evaluate(input, "report")));
+  return { codes: result.violations.map(violation => violation.code), failures: result.failures };
+}
+
+const documentSchema = z.object({
+  id: z.string(),
+  clauses: z.array(z.looseObject({ violation: z.object({ code: z.string() }).optional() })),
+});
+
+type Compiled =
+  | { kind: "compiled"; compiled: NativeCompiledCodeRuleDsl; codes: ReadonlySet<string> }
+  | { kind: "not-supported-yet"; reason: string }
+  | { kind: "failed"; message: string };
+
+const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/** The `id` a code-rule document's text carries, if it is JSON with one. */
+function documentIdOf(text: string): string | undefined {
+  try {
+    const parsed = z.object({ id: z.string() }).safeParse(JSON.parse(text));
+    return parsed.success ? parsed.data.id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A code-rule document compiled as the catalog would take it: valid `rerail.policy/v1`, then compiled by the engine
+ * against core's capabilities. `language-not-supported` is not a failure: the rule is stored inactive until core reads
+ * its language.
+ */
+function compileCodeRule(text: string): Compiled {
+  let document: unknown;
+  try {
+    document = JSON.parse(text);
+  } catch (error) {
+    return { kind: "failed", message: `is not JSON: ${message(error)}` };
+  }
+  const valid = codeRuleSchema.safeParse(document);
+  if (!valid.success) return { kind: "failed", message: `is not a valid code rule (rerail.policy/v1): ${z.prettifyError(valid.error)}` };
+  try {
+    const compiled = loadNativeBinding().CodeRuleDslRuntime.compile(text, "json", capabilitiesJson());
+    const codes = new Set(documentSchema.parse(document).clauses.flatMap(clause => (clause.violation === undefined ? [] : [clause.violation.code])));
+    return { kind: "compiled", compiled, codes };
+  } catch (error) {
+    const notSupported = languageNotSupportedOf(message(error));
+    return notSupported === undefined ? { kind: "failed", message: `does not compile: ${message(error)}` } : { kind: "not-supported-yet", reason: notSupported.reason };
+  }
+}
+
+/** Every file under `directory`, as posix paths relative to `root`, sorted. */
+function filesUnder(root: string, directory: string): string[] {
+  if (!existsSync(directory)) return [];
+  const files: string[] = [];
+  const walk = (current: string): void => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.isFile()) files.push(relative(root, path).split(sep).join("/"));
+    }
+  };
+  walk(directory);
+  return files.sort(compareDeterministicStrings);
+}
+
+/** Whether a `files` entry of package.json publishes `path` (npm publishes a listed directory whole). */
+function publishes(entry: string, path: string): boolean {
+  const pattern = entry.replace(/^\.\//u, "").replace(/\/+$/u, "");
+  return pattern === path || path.startsWith(`${pattern}/`) || matchesGlob(path, pattern) || matchesGlob(`${path}/x`, pattern);
+}
+
+/** The SPDX ids an SPDX expression names. */
+const spdxIds = (expression: string): string[] =>
+  expression
+    .split(/\s+(?:AND|OR|WITH)\s+|[()]/u)
+    .map(part => part.trim())
+    .filter(part => part.length > 0);
+
+interface Licences {
+  /** The licence each `licenses/<project>/UPSTREAM.md` records. */
+  recorded: Map<string, string>;
+  /** Pack-relative paths the UPSTREAM.md tables list. */
+  listed: Map<string, string>;
+  failures: string[];
+}
+
+function readLicences(directory: string): Licences {
+  const recorded = new Map<string, string>();
+  const listed = new Map<string, string>();
+  const failures: string[] = [];
+  const licenses = join(directory, "licenses");
+  if (!existsSync(licenses)) return { recorded, listed, failures };
+  for (const project of readdirSync(licenses, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort(compareDeterministicStrings)) {
+    const record = `licenses/${project}/UPSTREAM.md`;
+    const path = join(directory, record);
+    if (!existsSync(path)) {
+      failures.push(`licenses/${project}/: no UPSTREAM.md`);
+      continue;
+    }
+    if (!readdirSync(join(licenses, project)).some(name => name !== "UPSTREAM.md")) failures.push(`licenses/${project}/: no upstream licence text beside UPSTREAM.md`);
+    const text = readFileSync(path, "utf8");
+    const licence = UPSTREAM_LICENSE.exec(text)?.[1];
+    if (licence === undefined) failures.push(`${record}: no "License: <SPDX id>" line`);
+    else recorded.set(project, licence);
+    for (const line of text.split("\n")) {
+      const file = UPSTREAM_ROW.exec(line)?.[1];
+      if (file !== undefined && !listed.has(file)) listed.set(file, record);
+    }
+  }
+  return { recorded, listed, failures };
+}
+
+/**
+ * Validates `packs/<id>/` against the contract. Check 4 runs the conformance runner (the engine's production workspace
+ * path), so a pack that ports rules takes as long as its fixture tier.
+ */
+export async function validatePack(directory: string, options: ValidatePackOptions = {}): Promise<PackValidation> {
+  const id = basename(directory);
+  const checks: Record<PackCheckName, string[]> = { rules: [], proof: [], examples: [], ports: [], package: [], licences: [] };
+  /** Failures per pack.json rule id, for the rule's status. */
+  const ruleFailures = new Map<string, string[]>();
+  const fail = (check: PackCheckName, text: string, rule?: string): void => {
+    checks[check].push(text);
+    if (rule !== undefined) ruleFailures.set(rule, [...(ruleFailures.get(rule) ?? []), text]);
+  };
+
+  // Check 1: rules. pack.json parses, every rules/*.json is listed, every listed document exists, carries the listed
+  // id and compiles against core's capabilities.
+  let pack: RulePackFile | undefined;
+  const packPath = join(directory, "pack.json");
+  if (!existsSync(packPath)) fail("rules", "pack.json is missing");
+  else {
+    try {
+      const parsed = rulePackFileSchema.safeParse(parseJsonWithoutDuplicateKeys(readFileSync(packPath, "utf8"), "pack.json"));
+      if (parsed.success) pack = parsed.data;
+      else fail("rules", `pack.json: ${z.prettifyError(parsed.error)}`);
+    } catch (error) {
+      fail("rules", `pack.json: ${message(error)}`);
+    }
+  }
+  const compiled = new Map<string, Compiled>();
+  if (pack !== undefined) {
+    if (pack.id !== id) fail("rules", `pack.json: id is ${pack.id}; the directory is ${id}`);
+    const byDocument = new Map<string, string>();
+    const seen = new Set<string>();
+    for (const rule of pack.rules) {
+      if (seen.has(rule.id)) fail("rules", `${rule.id}: listed twice`, rule.id);
+      seen.add(rule.id);
+      const other = byDocument.get(rule.document);
+      if (other !== undefined) fail("rules", `${rule.id}: ${rule.document} is also ${other}'s document`, rule.id);
+      byDocument.set(rule.document, rule.id);
+    }
+    for (const file of filesUnder(directory, join(directory, "rules"))) {
+      if (!byDocument.has(file)) fail("rules", `${file} is not listed in pack.json`);
+    }
+    for (const rule of pack.rules) {
+      const path = join(directory, rule.document);
+      if (!existsSync(path)) {
+        fail("rules", `${rule.id}: ${rule.document} does not exist`, rule.id);
+        continue;
+      }
+      const text = readFileSync(path, "utf8");
+      const documentId = documentIdOf(text);
+      if (documentId !== undefined && documentId !== rule.id) fail("rules", `${rule.id}: ${rule.document} has id ${documentId}`, rule.id);
+      const result = compileCodeRule(text);
+      compiled.set(rule.id, result);
+      if (result.kind === "failed") fail("rules", `${rule.id}: ${rule.document} ${result.message}`, rule.id);
+    }
+  }
+
+  // The ported rules, by the document they port. A pack's conformance.json is the conformance runner's pack
+  // (conformance/languages/pack.ts), or, for TSLint, the golden manifest of the TSLint harness (conformance/tslint/golden.ts),
+  // whose upstream tests are fetched at a pinned commit rather than recorded.
+  const conformancePath = join(directory, CONFORMANCE_FILE);
+  let loaded: LoadedPack | undefined;
+  let golden: GoldenManifest | undefined;
+  if (existsSync(conformancePath)) {
+    try {
+      const text = readFileSync(conformancePath, "utf8");
+      if (z.looseObject({ format: z.literal(GOLDEN_FORMAT) }).safeParse(JSON.parse(text)).success) golden = parseGoldenManifest(text);
+      else loaded = loadPack(directory);
+    } catch (error) {
+      fail("ports", `${CONFORMANCE_FILE}: ${message(error).replace(`${directory}${sep}`, "")}`);
+    }
+  }
+  const portByDocument = new Map((loaded?.pack.rules ?? []).map(port => [port.policy.replace(/^\.\//u, ""), port]));
+  const goldenDocuments = new Set(Object.keys(golden?.rules ?? {}).map(rule => `rules/${rule}.json`));
+
+  // Check 2: proof. Every rule has examples or a port entry.
+  // Check 3: examples. A caught example produces a violation of the rule, a passes example none.
+  if (pack === undefined) {
+    fail("proof", "pack.json does not parse; see check 1");
+    fail("examples", "pack.json does not parse; see check 1");
+  } else {
+    for (const rule of pack.rules) {
+      if (rule.examples === undefined && !portByDocument.has(rule.document) && !goldenDocuments.has(rule.document)) fail("proof", `${rule.id}: no examples and no port entry in ${CONFORMANCE_FILE}`, rule.id);
+      const result = compiled.get(rule.id);
+      if (rule.examples === undefined || result?.kind !== "compiled") continue;
+      for (const side of ["caught", "passes"] as const) {
+        const example = rule.examples[side];
+        if (example.path === undefined) {
+          fail("examples", `${rule.id}: the ${side} example has no path`, rule.id);
+          continue;
+        }
+        if (!result.compiled.inScope(example.path)) {
+          fail("examples", `${rule.id}: the ${side} example's path ${example.path} is outside the rule's scope`, rule.id);
+          continue;
+        }
+        const evaluation = evaluateExample(result.compiled, example.path, example.text);
+        if (evaluation.failures.length > 0) fail("examples", `${rule.id}: the ${side} example (${example.path}) fails in the engine: ${JSON.stringify(evaluation.failures)}`, rule.id);
+        const hits = evaluation.codes.filter(code => result.codes.has(code));
+        if (side === "caught" && hits.length === 0) fail("examples", `${rule.id}: the caught example (${example.path}) produces no ${[...result.codes].join("/")} violation`, rule.id);
+        if (side === "passes" && hits.length > 0) fail("examples", `${rule.id}: the passes example (${example.path}) produces ${hits.join(", ")}`, rule.id);
+      }
+    }
+  }
+
+  // Check 4: ports. The fixture tier (and corpora) of the conformance runner, with rules not supported yet skipped,
+  // plus capability coverage.
+  const notSupported = new Map<string, string>();
+  if (loaded !== undefined) {
+    const ruleOfPort = new Map<string, string>();
+    for (const port of loaded.pack.rules) {
+      const listed = pack?.rules.find(rule => rule.document === port.policy.replace(/^\.\//u, ""));
+      if (listed !== undefined) ruleOfPort.set(port.id, listed.id);
+      const result = listed === undefined ? undefined : compiled.get(listed.id);
+      if (result?.kind === "not-supported-yet") notSupported.set(port.id, result.reason);
+      else if (result === undefined && existsSync(join(directory, port.policy))) {
+        const candidate = compileCodeRule(readFileSync(join(directory, port.policy), "utf8"));
+        if (candidate.kind === "not-supported-yet") notSupported.set(port.id, candidate.reason);
+      }
+    }
+    const corpusRoot = options.corpusRoot ?? defaultCorpusRoot(loaded.pack.pack);
+    const corpora = loaded.pack.corpora
+      .filter(corpus => (options.corpora === undefined ? existsSync(join(corpusRoot, corpus.name)) : options.corpora))
+      .map(corpus => corpus.name);
+    const report = await runPack(loaded, {
+      rules: loaded.pack.rules.filter(port => !notSupported.has(port.id)).map(port => port.id),
+      fixtures: true,
+      corpora,
+      corpusRoot,
+      date: new Date().toISOString().slice(0, 10),
+    });
+    for (const failure of reportFailures(report)) {
+      const port = loaded.pack.rules.find(entry => failure.startsWith(`${entry.id}:`) || failure.startsWith(`${entry.id} (`));
+      fail("ports", failure, port === undefined ? undefined : ruleOfPort.get(port.id));
+    }
+    for (const capability of report.coverage.uncovered) fail("ports", `capability ${capability}: no ported rule exercises it and it has no exemption`);
+  }
+  // TSLint: the golden manifest lists exactly the pack's rules. Its scoring against TSLint's fetched tests is the
+  // golden gate, conformance/tslint/golden-gate.test.ts.
+  if (golden !== undefined) for (const problem of membershipProblems(golden, goldenRules(join(directory, "rules")))) fail("ports", problem);
+
+  // Check 5: package. Named for the pack, no dependencies, no validation material published, licence agreeing with
+  // what licenses/ records.
+  const licences = readLicences(directory);
+  const packagePath = join(directory, "package.json");
+  if (!existsSync(packagePath)) fail("package", "package.json is missing");
+  else {
+    let raw: unknown;
+    try {
+      raw = parseJsonWithoutDuplicateKeys(readFileSync(packagePath, "utf8"), "package.json");
+    } catch (error) {
+      fail("package", `package.json: ${message(error)}`);
+    }
+    const dependencies = z.looseObject({ dependencies: z.record(z.string(), z.unknown()).optional() }).safeParse(raw);
+    const named = dependencies.success ? Object.keys(dependencies.data.dependencies ?? {}) : [];
+    if (named.length > 0) fail("package", `package.json: has dependencies (${named.join(", ")}); a pack has none`);
+    const parsed = raw === undefined ? undefined : rulePackPackageSchema.safeParse(raw);
+    if (parsed !== undefined && !parsed.success) fail("package", `package.json: ${z.prettifyError(parsed.error)}`);
+    if (parsed?.success === true) {
+      const manifest = parsed.data;
+      if (manifest.name !== rulePackPackageName(id)) fail("package", `package.json: name is ${manifest.name}, not ${rulePackPackageName(id)}`);
+      for (const material of VALIDATION_MATERIAL) {
+        const entry = manifest.files.find(file => publishes(file, material));
+        if (entry !== undefined) fail("package", `package.json: files entry ${entry} publishes ${material}, which is validation material`);
+      }
+      const required = ["pack.json", "rules", "LICENSE", ...(existsSync(join(directory, "licenses")) ? ["licenses"] : [])];
+      for (const path of required) {
+        if (!manifest.files.some(file => publishes(file, path))) fail("package", `package.json: files does not publish ${path}`);
+      }
+      const named = [...new Set(spdxIds(manifest.license))].sort(compareDeterministicStrings);
+      const carried = [...new Set([RERAIL_LICENSE, ...licences.recorded.values()])].sort(compareDeterministicStrings);
+      if (named.join(",") !== carried.join(","))
+        fail("package", `package.json: license ${JSON.stringify(manifest.license)} names ${named.join(", ")}; the pack carries ${carried.join(", ")} (${RERAIL_LICENSE} and what licenses/*/UPSTREAM.md records)`);
+    }
+  }
+
+  // Check 6: licences. Every copied file is listed in an UPSTREAM.md, every listed file exists, and every recorded
+  // licence is on the repository allowlist. Under upstream/<tool>/, the recordings and the recorder (files directly in
+  // it) are Rerail's; everything in its subdirectories (fixtures/, tests/) is copied from the tool.
+  for (const failure of licences.failures) fail("licences", failure);
+  if (!existsSync(join(directory, "LICENSE"))) fail("licences", "LICENSE is missing");
+  for (const [project, licence] of licences.recorded) {
+    if (!allowedLicenses().has(licence)) fail("licences", `licenses/${project}/UPSTREAM.md: ${licence} is not on the repository licence allowlist`);
+  }
+  for (const file of filesUnder(directory, join(directory, "upstream"))) {
+    if (file.split("/").length > 3 && !licences.listed.has(file)) fail("licences", `${file} is copied but no licenses/*/UPSTREAM.md lists it`);
+  }
+  for (const [file, record] of licences.listed) {
+    if (!existsSync(join(directory, file))) fail("licences", `${record} lists ${file}, which does not exist`);
+  }
+
+  const rules = (pack?.rules ?? []).map((rule): PackRuleResult => {
+    const failures = ruleFailures.get(rule.id) ?? [];
+    const result = compiled.get(rule.id);
+    if (failures.length > 0) return { id: rule.id, document: rule.document, status: "failed", reason: failures[0]! };
+    if (result?.kind === "not-supported-yet") return { id: rule.id, document: rule.document, status: "not-supported-yet", reason: result.reason };
+    return { id: rule.id, document: rule.document, status: "ok" };
+  });
+  return { id, directory, checks, rules, pass: Object.values(checks).every(failures => failures.length === 0) };
+}

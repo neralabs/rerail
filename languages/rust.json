@@ -1,0 +1,20 @@
+{
+  "format": "rerail.language/v1",
+  "id": "rust",
+  "status": "planned",
+  "family": "rust",
+  "dialects": [
+    {
+      "label": "rust",
+      "suffixes": [".rs"]
+    }
+  ],
+  "capabilities": {
+    "scope": "not-supported-yet",
+    "value": "not-supported-yet",
+    "arguments": "not-supported-yet",
+    "calls": "not-supported-yet",
+    "formatArgs": "not-supported-yet"
+  },
+  "suppressions": []
+}

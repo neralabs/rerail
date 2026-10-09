@@ -5,7 +5,7 @@
 import { and, asc, eq, or } from "drizzle-orm";
 import type { RerailDatabase } from "./database.js";
 import { readStoredCodeRule, type QuarantinedRule } from "./rule-quarantine.js";
-import { assertCodeRuleCompiles } from "./code-rule-compile.js";
+import { assertCodeRuleStorable } from "./code-rule-compile.js";
 import { codeRuleSchema } from "./code-rule-schema.js";
 import type { BundledCatalog, LibraryRule, RepositoryKey } from "./repository-model.js";
 import { assertEngineRegexes } from "./rule-regexes.js";
@@ -44,11 +44,11 @@ export interface CopiedRule {
   readonly folders: readonly string[];
 }
 
-/** Validate a rule body of `kind`; file rules must compile in the engine, conversation regexes must be accepted. */
+/** Validate a rule body of `kind`: file rules must compile in the engine (or name a language it does not read yet), conversation regexes must be accepted. */
 export function validateLibraryDocument(document: unknown, kind: RuleKind): RuleDocument {
   if (kind === "file") {
     const rule = codeRuleSchema.parse(document);
-    assertCodeRuleCompiles(rule);
+    assertCodeRuleStorable(rule);
     return { kind, rule };
   }
   const rule = parseConversationRule(document);

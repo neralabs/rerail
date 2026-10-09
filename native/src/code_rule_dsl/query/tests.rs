@@ -29,7 +29,7 @@ fn regex_matches_stop_at_the_deadline() {
 /// A Python pack code rule, as the conformance runner registers it.
 fn python_pack_code_rule(rule: &str) -> CompiledCodeRuleDsl {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../conformance/languages/python/rules")
+        .join("../packs/python/rules")
         .join(rule);
     CodeRuleDslRuntime::compile(
         std::fs::read_to_string(&path).expect("pack policy"),
@@ -55,8 +55,8 @@ fn agreeing(compile: &dyn Fn() -> CompiledCodeRuleDsl, path: &str, source: &str)
 /// `with` targets, redefinitions and dotted imports.
 #[test]
 fn python_shortcuts_change_no_pack_result() {
-    let fixtures = std::path::Path::new(crate::code_rule_dsl::fixtures_dir!())
-        .join("python/rules/ruff/fixtures");
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../packs/python/upstream/ruff/fixtures");
     let mut files = Vec::new();
     let mut pending = vec![fixtures];
     while let Some(directory) = pending.pop() {

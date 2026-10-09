@@ -1,0 +1,28 @@
+{
+  "pack": "valid",
+  "family": "python",
+  "capabilities": [
+    "syntax"
+  ],
+  "corpora": [],
+  "tools": [
+    {
+      "name": "examplelint",
+      "version": "1.0.0"
+    }
+  ],
+  "rules": [
+    {
+      "id": "assert-used",
+      "upstream": {
+        "tool": "examplelint",
+        "rule": "EX101"
+      },
+      "policy": "rules/assert-used.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    }
+  ]
+}
