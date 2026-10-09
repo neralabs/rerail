@@ -7,7 +7,7 @@ import { codeRuleSchema } from "../src/code-rule-schema.js";
 // depth would miss. A golden rule's default doc is its TSLint pack doc (packs/tslint/rules/); option-variant overrides
 // stay in packs/tslint/candidates/<rule>/.
 const binding = loadNativeBinding();
-const capabilities = readFileSync(new URL("../code-rule-dsl/capabilities.json", import.meta.url), "utf8");
+const capabilities = readFileSync(new URL("../native/src/code_rule_dsl/capabilities.json", import.meta.url), "utf8");
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 const port = (name: string) =>
   read(name.includes("/") ? `../packs/tslint/candidates/${name}.json` : `../packs/tslint/rules/${name}.json`);

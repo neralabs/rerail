@@ -112,30 +112,27 @@ describe("bundled rules", () => {
     expect(documents.map(document => document.rule.id)).not.toContain("tslint:file-header");
   });
 
-  it("reads core's rules, then each pack's rules/ in pack order and by file name, ignoring non-JSON files, and rejects a duplicate id", async () => {
+  it("reads each pack's rules/ in pack order and by file name, ignoring non-JSON files and a pack without rules/, and rejects a duplicate id", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-bundled-"));
     temporaryDirectories.push(root);
     const write = async (path: string, id: string): Promise<void> => {
       await mkdir(dirname(join(root, path)), { recursive: true });
       await writeFile(join(root, path), JSON.stringify(codeRule(id)));
     };
-    await write("core/default.json", "example:default");
     await write("packs/zeta/rules/a.json", "zeta:a");
     await write("packs/alpha/rules/b.json", "alpha:b");
     await write("packs/alpha/rules/a.json", "alpha:a");
     await writeFile(join(root, "packs", "alpha", "rules", "README.md"), "# alpha pack\n");
     await writeFile(join(root, "packs", "alpha", "rules", ".DS_Store"), "\u0000\u0001binary");
-    const packs = [join(root, "packs", "alpha"), join(root, "packs", "zeta")];
-    expect(loadBundledRules(join(root, "core"), packs).map(document => [document.rule.id, document.enabledByDefault])).toEqual([
-      ["example:default", undefined],
+    const packs = [join(root, "packs", "alpha"), join(root, "packs", "absent"), join(root, "packs", "zeta")];
+    expect(loadBundledRules(packs).map(document => [document.rule.id, document.enabledByDefault])).toEqual([
       ["alpha:a", false],
       ["alpha:b", false],
       ["zeta:a", false],
     ]);
-    expect(loadBundledRules(join(root, "absent"), packs).map(document => document.rule.id)).toEqual(["alpha:a", "alpha:b", "zeta:a"]);
 
     await write("packs/zeta/rules/b.json", "alpha:a");
-    expect(() => loadBundledRules(join(root, "core"), packs)).toThrow(/Duplicate bundled rule id: alpha:a/u);
+    expect(() => loadBundledRules(packs)).toThrow(/Duplicate bundled rule id: alpha:a/u);
   });
 });
 

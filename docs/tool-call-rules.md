@@ -68,7 +68,7 @@ A missing argument, or one that is not a string, never matches. A rule that read
 ## The regex dialect
 
 Patterns use the **Rust `regex` crate** — the same dialect, and the same 16,384-byte
-`maxRegexPatternBytes` limit, as the [code-rule DSL](../code-rule-dsl/capabilities.json).
+`maxRegexPatternBytes` limit, as the [code-rule DSL](../native/src/code_rule_dsl/capabilities.json).
 It runs in linear time, so no command an agent writes can make a rule hang.
 
 | You may use | You may not use |

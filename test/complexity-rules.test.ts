@@ -15,7 +15,7 @@ import { languageFor } from "../src/code-rule-enforcer.js";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../src/native.js";
 import { loadBundledRules } from "../src/rule-bootstrap.js";
 
-const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../code-rule-dsl/", import.meta.url));
+const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../native/src/code_rule_dsl/", import.meta.url));
 const CORPUS = fileURLToPath(new URL("./fixtures/complexity/", import.meta.url));
 const capabilities = readFileSync(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;

@@ -47,7 +47,7 @@ import { fileURLToPath } from "node:url";
 
 const RERAIL = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REFERENCE = join(RERAIL, "docs/code-rule-dsl-reference.html");
-const CAPABILITIES = join(RERAIL, "code-rule-dsl/capabilities.json");
+const CAPABILITIES = join(RERAIL, "native/src/code_rule_dsl/capabilities.json");
 // The rule document format.
 const FORMAT = "rerail.policy/v1";
 const CLAUSE_KINDS = ["forbid", "require_each", "budget", "llm", "define"];

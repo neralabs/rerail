@@ -61,7 +61,7 @@ export interface CreateRuleInstructionsInput {
  */
 export function createRuleInstructions({ cli, packageRoot, request }: CreateRuleInstructionsInput): string {
   const examples = `${packageRoot}/packs/complexity/rules and ${packageRoot}/packs/tslint/rules`;
-  const grammar = `${packageRoot}/code-rule-dsl/capabilities.json`;
+  const grammar = `${packageRoot}/native/src/code_rule_dsl/capabilities.json`;
   return [
     `Create a Rerail rule for this repo from the person's own words: ${request}`,
     "",

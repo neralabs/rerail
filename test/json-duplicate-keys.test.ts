@@ -126,9 +126,9 @@ describe("rule documents with repeated keys are rejected on write", () => {
   });
 
   it("refuses a bundled rule file with a repeated key", () => {
-    const directory = join(root, "rules");
-    mkdirSync(directory);
+    const directory = join(root, "pack", "rules");
+    mkdirSync(directory, { recursive: true });
     writeFileSync(join(directory, "a.json"), JSON.stringify(codeRule).replace('"format":', '"format":"rerail.policy/v1","format":'));
-    expect(() => loadBundledRules(directory)).toThrow(`${join(directory, "a.json")}: duplicate key \`format\` at /`);
+    expect(() => loadBundledRules([join(root, "pack")])).toThrow(`${join(directory, "a.json")}: duplicate key \`format\` at /`);
   });
 });
