@@ -176,3 +176,75 @@ Node kinds and field names are unchanged. A generic call's `function` field and 
 `new_expression`. A call without type arguments keeps any `expression` as its callee. Each
 generated parser has 5,331 states instead of 5,878, and parsing vscode takes 6.2 s of CPU instead
 of 6.4 s.
+
+## Patch 3: a bare `&` in a JSX attribute string is text
+
+Upstream issues: tree-sitter/tree-sitter-typescript#279 (closed by tree-sitter/tree-sitter-javascript#305, which
+admits an `&` followed by neither `#` nor a letter, and so fixes `class="a & b"` only) and
+tree-sitter/tree-sitter-javascript#304 (closed with it). Present at tag `v0.23.2` and at tree-sitter-javascript HEAD
+`58404d8`. The open tree-sitter-javascript#388 and tree-sitter-typescript#371 make a bare `&` text in JSX children
+(`<p>Shipping & Handling</p>`, tree-sitter-javascript#366), through the external scanner; neither touches attribute
+strings, and Rerail does not carry them.
+
+Why: a JSX attribute string may hold `&` as text. TypeScript and Babel decode a complete character reference (`&amp;`,
+`&#38;`, `&#x26;`) and read any other `&` literally. Upstream's string fragment stops at an `&` before `#` or a letter,
+and the only other token there is `html_character_reference`, which needs the closing `;`. So `src="/a?w=8&h=8"` or
+`href="…?family=Inter&display=swap"` is a parse error, and the element around it is lost: on shadcn-ui@0e3abd6,
+`@next/next/no-img-element`'s port found 30 of the plugin's 123 findings (all 93 misses held such an `&`), and 21
+of its 3,421 files had syntax errors from it.
+The fragment's escape for any other `&` also admitted the closing quote, so `title="Q&"` ran on past its end.
+
+```diff
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -261,6 +261,37 @@ module.exports = function defineGrammar(dialect) {
+         ),
+       ),
+ 
++      // A bare `&` in a JSX string is text, as TypeScript and Babel read it: `src="/a?w=8&h=8"`, `title="Q&"`.
++      // Only a complete character reference, such as `&amp;`, is an html_character_reference.
++      _jsx_string: $ => choice(
++        seq(
++          '"',
++          repeat(choice(
++            alias($.unescaped_double_jsx_string_fragment, $.string_fragment),
++            $.html_character_reference,
++            alias($._jsx_string_ampersand, $.string_fragment),
++          )),
++          '"',
++        ),
++        seq(
++          '\'',
++          repeat(choice(
++            alias($.unescaped_single_jsx_string_fragment, $.string_fragment),
++            $.html_character_reference,
++            alias($._jsx_string_ampersand, $.string_fragment),
++          )),
++          '\'',
++        ),
++      ),
++
++      unescaped_double_jsx_string_fragment: _ => token.immediate(prec(1, /([^"&]|&[^"#A-Za-z])+/)),
++
++      unescaped_single_jsx_string_fragment: _ => token.immediate(prec(1, /([^'&]|&[^'#A-Za-z])+/)),
++
++      // An `&` that no character reference completes: the lexer reads `&amp;` whole and falls back
++      // to this `&` when the reference breaks off, as at `&h=8`.
++      _jsx_string_ampersand: _ => token.immediate(/&/),
++
+       // This rule is only referenced by expression when the dialect is 'tsx'
+       jsx_opening_element: $ => prec.dynamic(-1, seq(
+         $._jsx_start_opening_element,
+```
+
+The added `&` token is read only where the lexer cannot complete a character reference: it reads on from `&` while a
+reference can still match (both have precedence 0), accepts `&amp;` whole, and falls back to the lone `&` when the
+reference breaks off, as at `&h=8` or `&#;`. The fragment keeps its precedence of 1, so `a & b` stays one fragment.
+The other two rules are tree-sitter-javascript 0.23.1's, unchanged but for the closing quote excluded after `&`.
+
+Node kinds and field names are unchanged. A bare `&` is its own `string_fragment`, so `"/a?w=8&h=8"` is a `string`
+of three fragments, `/a?w=8`, `&` and `h=8`, as `"a&amp;b"` was already three children. The TypeScript dialect's
+parser is byte-identical (it has no JSX); the TSX parser has the same 5,580 states and one more token. Upstream's
+corpus parses as before (111 of 112, the one failure patch 1's `foo++!`), and so does tree-sitter-javascript 0.23.1's
+under TSX. A bare `&` in JSX children (`<p>Terms & Conditions</p>`) is still a parse error: the other 82 of
+shadcn-ui's syntax-error files.

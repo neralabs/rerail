@@ -1042,4 +1042,43 @@ mod tests {
             assert_eq!(generic, expected, "{dialect:?}");
         }
     }
+
+    /// A bare `&` in a JSX attribute string is text, as TypeScript reads it; only a complete
+    /// character reference such as `&amp;` is an `html_character_reference` (Patch 3 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`). JSX parses only in the TSX dialect.
+    #[test]
+    fn a_bare_ampersand_in_a_jsx_string_is_text() {
+        let source = "<img src=\"/a?w=8&h=8\" />;\n\
+                      <script src=\"https://example.com/a.js?a=1&b=2\" />;\n\
+                      <a href=\"https://fonts.googleapis.com/css2?family=Inter&display=swap\" />;\n\
+                      <a title='Q&' alt=\"x&#;y\" />;\n\
+                      <img src=\"a&amp;b&#38;c&#x26;\" />;\n";
+        let root = GrammarDialect::Tsx.ast_grep(source);
+        assert!(!root.root().get_inner_node().has_error());
+        let strings = root
+            .root()
+            .dfs()
+            .filter(|node| node.kind() == "string")
+            .map(|node| {
+                node.children()
+                    .filter(|child| child.is_named())
+                    .map(|child| format!("{}:{}", child.kind(), child.text()))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            strings,
+            [
+                "string_fragment:/a?w=8 string_fragment:& string_fragment:h=8",
+                "string_fragment:https://example.com/a.js?a=1 string_fragment:& string_fragment:b=2",
+                "string_fragment:https://fonts.googleapis.com/css2?family=Inter \
+                 string_fragment:& string_fragment:display=swap",
+                "string_fragment:Q string_fragment:&",
+                "string_fragment:x string_fragment:& string_fragment:#;y",
+                "string_fragment:a html_character_reference:&amp; string_fragment:b \
+                 html_character_reference:&#38; string_fragment:c html_character_reference:&#x26;",
+            ]
+        );
+    }
 }

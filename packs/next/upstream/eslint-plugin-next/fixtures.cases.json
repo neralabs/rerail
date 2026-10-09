@@ -1487,6 +1487,22 @@
    "path": "no-unwanted-polyfillio/invalid-003.js",
    "errors": 1,
    "dropped": false
+  },
+  {
+   "rule": "no-img-element",
+   "kind": "authored",
+   "index": 0,
+   "path": "no-img-element/rerail-bare-ampersand.tsx",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-sync-scripts",
+   "kind": "authored",
+   "index": 1,
+   "path": "no-sync-scripts/rerail-bare-ampersand.tsx",
+   "errors": 1,
+   "dropped": false
   }
  ],
  "mismatches": [

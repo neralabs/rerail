@@ -113,6 +113,7 @@
    "no-img-element/invalid-000.js",
    "no-img-element/invalid-001.js",
    "no-img-element/invalid-002/some/non-metadata-route-image.tsx",
+   "no-img-element/rerail-bare-ampersand.tsx",
    "no-img-element/valid-000.js",
    "no-img-element/valid-001.js",
    "no-img-element/valid-002.js",
@@ -190,6 +191,7 @@
    "no-styled-jsx-in-document/valid-002/pages/index.js",
    "no-sync-scripts/invalid-000.js",
    "no-sync-scripts/invalid-001.js",
+   "no-sync-scripts/rerail-bare-ampersand.tsx",
    "no-sync-scripts/valid-000.js",
    "no-sync-scripts/valid-001.js",
    "no-title-in-document-head/invalid-000.js",
@@ -602,6 +604,12 @@
   },
   {
    "rule": "@next/next/no-img-element",
+   "path": "no-img-element/rerail-bare-ampersand.tsx",
+   "line": 2,
+   "column": 10
+  },
+  {
+   "rule": "@next/next/no-img-element",
    "path": "no-img-element/valid-003/src/app/icon.js",
    "line": 6,
    "column": 7
@@ -875,6 +883,12 @@
    "path": "no-sync-scripts/invalid-001.js",
    "line": 9,
    "column": 17
+  },
+  {
+   "rule": "@next/next/no-sync-scripts",
+   "path": "no-sync-scripts/rerail-bare-ampersand.tsx",
+   "line": 2,
+   "column": 10
   },
   {
    "rule": "@next/next/no-sync-scripts",
