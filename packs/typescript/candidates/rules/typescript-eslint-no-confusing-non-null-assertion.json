@@ -1,0 +1,190 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "typescript-eslint:no-confusing-non-null-assertion",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of typescript-eslint's `no-confusing-non-null-assertion` rule (https://typescript-eslint.io/rules/no-confusing-non-null-assertion). Flags `=`, `==`, `===`, `in` and `instanceof` expressions whose left operand ends in a non-null assertion `!` (outside parentheses).",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "confusing-assign",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "rule": {
+      "any": [
+       {
+        "kind": "binary_expression"
+       },
+       {
+        "kind": "assignment_expression"
+       }
+      ],
+      "has": {
+       "stopBy": "neighbor",
+       "matches": "ends-with-bang",
+       "precedes": {
+        "regex": "^=$",
+        "stopBy": "neighbor"
+       }
+      }
+     },
+     "utils": {
+      "ends-with-bang": {
+       "any": [
+        {
+         "kind": "non_null_expression"
+        },
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "all": [
+           {
+            "matches": "ends-with-bang"
+           },
+           {
+            "not": {
+             "precedes": {
+              "regex": "^",
+              "stopBy": "neighbor"
+             }
+            }
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "NO_CONFUSING_NON_NULL_ASSERTION",
+    "message": "Confusing combination of non-null assertion and assignment like `a! = b`, which looks very similar to `a != b`."
+   }
+  },
+  {
+   "id": "confusing-equal",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "rule": {
+      "any": [
+       {
+        "kind": "binary_expression"
+       },
+       {
+        "kind": "assignment_expression"
+       }
+      ],
+      "has": {
+       "stopBy": "neighbor",
+       "matches": "ends-with-bang",
+       "precedes": {
+        "regex": "^===?$",
+        "stopBy": "neighbor"
+       }
+      }
+     },
+     "utils": {
+      "ends-with-bang": {
+       "any": [
+        {
+         "kind": "non_null_expression"
+        },
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "all": [
+           {
+            "matches": "ends-with-bang"
+           },
+           {
+            "not": {
+             "precedes": {
+              "regex": "^",
+              "stopBy": "neighbor"
+             }
+            }
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "NO_CONFUSING_NON_NULL_ASSERTION",
+    "message": "Confusing combination of non-null assertion and equality test like `a! == b`, which looks very similar to `a !== b`."
+   }
+  },
+  {
+   "id": "confusing-operator",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "rule": {
+      "any": [
+       {
+        "kind": "binary_expression"
+       },
+       {
+        "kind": "assignment_expression"
+       }
+      ],
+      "has": {
+       "stopBy": "neighbor",
+       "matches": "ends-with-bang",
+       "precedes": {
+        "regex": "^(in|instanceof)$",
+        "stopBy": "neighbor",
+        "pattern": "$$OP"
+       }
+      }
+     },
+     "utils": {
+      "ends-with-bang": {
+       "any": [
+        {
+         "kind": "non_null_expression"
+        },
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "all": [
+           {
+            "matches": "ends-with-bang"
+           },
+           {
+            "not": {
+             "precedes": {
+              "regex": "^",
+              "stopBy": "neighbor"
+             }
+            }
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "NO_CONFUSING_NON_NULL_ASSERTION",
+    "message": "Confusing combination of non-null assertion and `$OP` operator like `a! $OP b`, which might be misinterpreted as `!(a $OP b)`."
+   }
+  }
+ ]
+}

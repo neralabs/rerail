@@ -703,13 +703,21 @@ SPDX-License-Identifier = "MIT"
 
 # packs/typescript
 
-# Rule documents: Rerail's re-implementations of ESLint's and typescript-eslint's rules, annotated with the licence the
-# pack publishes them under (its package.json); whether adapted rule documents need the upstream licence is an open
-# legal question (docs/pack-format.md#licensing).
+# Rule documents and candidate rule documents: Rerail's re-implementations of ESLint's and typescript-eslint's rules,
+# annotated with the licence the pack publishes them under (its package.json); whether adapted rule documents need the
+# upstream licence is an open legal question (docs/pack-format.md#licensing).
 [[annotations]]
-path = "packs/typescript/rules/**"
+path = ["packs/typescript/rules/**", "packs/typescript/candidates/rules/typescript-eslint-*.json"]
 precedence = "override"
 SPDX-FileCopyrightText = ["OpenJS Foundation and other contributors, <www.openjsf.org>", "2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
+# Candidate rule documents: Rerail's re-implementations of @vitest/eslint-plugin 1.6.27's rules (MIT), annotated with
+# the pack's licence expression like the documents above.
+[[annotations]]
+path = "packs/typescript/candidates/rules/vitest-*.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["2022 - PRESENT Verité Mugabo Makuza", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
 # ESLint 10.11.0 (packs/typescript/licenses/eslint/UPSTREAM.md): derived or excerpted

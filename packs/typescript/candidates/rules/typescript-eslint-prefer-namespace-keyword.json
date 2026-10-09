@@ -1,0 +1,98 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint:prefer-namespace-keyword",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of typescript-eslint's `prefer-namespace-keyword` rule (https://typescript-eslint.io/rules/prefer-namespace-keyword). Flags `module Name {}` declarations with an identifier name; reports the whole declaration (from `declare` when present) and fixes the keyword.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "declared-module-keyword",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "regex": "^module$",
+                "precedes": {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "nested_identifier"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "kind": "module",
+                  "pattern": "$M",
+                  "inside": {
+                    "kind": "ambient_declaration",
+                    "pattern": "$D"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.D",
+        "code": "PREFER_NAMESPACE_KEYWORD",
+        "message": "Use 'namespace' instead of 'module' to declare custom TypeScript modules.",
+        "fix": "namespace"
+      }
+    },
+    {
+      "id": "module-keyword",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "regex": "^module$",
+                "precedes": {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "nested_identifier"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "kind": "module",
+                  "pattern": "$M",
+                  "not": {
+                    "inside": {
+                      "kind": "ambient_declaration"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.M",
+        "code": "PREFER_NAMESPACE_KEYWORD",
+        "message": "Use 'namespace' instead of 'module' to declare custom TypeScript modules.",
+        "fix": "namespace"
+      }
+    }
+  ]
+}

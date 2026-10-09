@@ -1,0 +1,38 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint:no-useless-empty-export",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of typescript-eslint's `no-useless-empty-export` rule (https://typescript-eslint.io/rules/no-useless-empty-export). Flags `export {}` when a sibling statement of the same module body is already an import or export; declaration files are excluded by scope.",
+  "scope": { "include": ["**/*"], "exclude": ["**/*.d.ts", "**/*.d.mts", "**/*.d.cts"] },
+  "clauses": [
+    {
+      "id": "useless-empty-export",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "utils": {
+            "empty-export": {
+              "kind": "export_statement",
+              "has": { "kind": "export_clause", "not": { "has": { "kind": "export_specifier" } } }
+            },
+            "module-marker": {
+              "any": [
+                { "kind": "import_statement" },
+                { "kind": "export_statement", "not": { "any": [ { "matches": "empty-export" }, { "regex": "^export\\s+as\\s+namespace\\b" } ] } }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "empty-export",
+            "any": [
+              { "precedes": { "matches": "module-marker", "stopBy": "end" } },
+              { "follows": { "matches": "module-marker", "stopBy": "end" } }
+            ]
+          }
+        }
+      },
+      "violation": { "anchor": "witness.span", "code": "NO_USELESS_EMPTY_EXPORT", "message": "Empty export does nothing and can be removed.", "fix": "" }
+    }
+  ]
+}

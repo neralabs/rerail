@@ -3,8 +3,9 @@
 Upstream: [typescript-eslint 8.70.1](https://github.com/typescript-eslint/typescript-eslint/tree/v8.70.1) (commit `23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7`). License: MIT (Copyright (c) 2019 typescript-eslint and other contributors); [`LICENSE`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
 The files listed below contain material copied from typescript-eslint and remain under its license. Every other file in this
-pack is Rerail's. The rule documents in `rules/` are Rerail's re-implementations of ESLint's and typescript-eslint's
-rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest
+pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of ESLint's
+and typescript-eslint's rules (and, in `candidates/rules/vitest-*.json`, of three @vitest/eslint-plugin 1.6.27 rules,
+which are MIT too), under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest
 is under the Apache License 2.0 (the pack's `LICENSE`): the recorder `upstream/generate.mjs`, and the `*.expected.json`
 recordings it writes by running ESLint.
 
@@ -63,39 +64,6 @@ Paths are relative to the pack directory, `packs/typescript/`.
 | `upstream/typescript-eslint/fixtures/no-namespace/005.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/no-namespace/006.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/no-namespace/007.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/001.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/002.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/003.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/004.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/005.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/006.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/007.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/008.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/009.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/010.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/011.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/012.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/013.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/014.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/015.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/016.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/017.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/018.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/019.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/020.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/021.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/022.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/023.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/024.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/025.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/026.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/027.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-non-null-assertion/028.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-this-alias/001.ts` | `packages/eslint-plugin/tests/rules/no-this-alias.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-this-alias/002.ts` | `packages/eslint-plugin/tests/rules/no-this-alias.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-this-alias/003.ts` | `packages/eslint-plugin/tests/rules/no-this-alias.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-this-alias/004.ts` | `packages/eslint-plugin/tests/rules/no-this-alias.test.ts` | derived |
-| `upstream/typescript-eslint/fixtures/no-this-alias/005.ts` | `packages/eslint-plugin/tests/rules/no-this-alias.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/no-unsafe-function-type/001.ts` | `packages/eslint-plugin/tests/rules/no-unsafe-function-type.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/no-unsafe-function-type/002.ts` | `packages/eslint-plugin/tests/rules/no-unsafe-function-type.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/no-unsafe-function-type/003.ts` | `packages/eslint-plugin/tests/rules/no-unsafe-function-type.test.ts` | derived |

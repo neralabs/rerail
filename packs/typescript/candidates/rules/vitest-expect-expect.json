@@ -1,0 +1,93 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "vitest:expect-expect",
+  "revision": 1,
+  "mode": "steer",
+  "description": "A test whose function never calls `expect` or `assert`.",
+  "scope": {
+    "include": [
+      "**/*.test.ts",
+      "**/*.test.tsx",
+      "**/*.spec.ts",
+      "**/*.spec.tsx",
+      "**/*.test.mts",
+      "**/*.spec.mts",
+      "**/__tests__/**/*.ts",
+      "**/__tests__/**/*.tsx"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "no-assertion",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "regex": "^(?:it|test)(?:\\.(?:only|concurrent|sequential|fails|each\\([^)]*\\)))*$"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "function_expression"
+                      }
+                    ],
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "call_expression",
+                        "has": {
+                          "field": "function",
+                          "regex": "^(?:expect|assert)\\b"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "EXPECT_EXPECT",
+        "message": "This test asserts nothing, so it passes whatever the code does. Add an expect.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vitest/expect-expect"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

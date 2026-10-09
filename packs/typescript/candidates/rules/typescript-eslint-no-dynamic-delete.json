@@ -1,0 +1,42 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint:no-dynamic-delete",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of typescript-eslint's `no-dynamic-delete` rule (https://typescript-eslint.io/rules/no-dynamic-delete). Flags the key of a computed member deleted with `delete`, unless the key is a string or number literal or a negated number literal.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "dynamic-delete",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              { "follows": { "regex": "^\\[$", "stopBy": "neighbor" } },
+              { "inside": { "kind": "subscript_expression", "stopBy": "neighbor", "matches": "delete-operand" } },
+              {
+                "not": {
+                  "any": [
+                    { "kind": "string" },
+                    { "kind": "number" },
+                    { "kind": "unary_expression", "has": { "regex": "^-$", "stopBy": "neighbor" }, "all": [{ "has": { "kind": "number", "stopBy": "neighbor" } }] }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": {
+            "delete-operand": {
+              "any": [
+                { "inside": { "kind": "unary_expression", "stopBy": "neighbor", "has": { "regex": "^delete$", "stopBy": "neighbor" } } },
+                { "inside": { "kind": "parenthesized_expression", "stopBy": "neighbor", "matches": "delete-operand" } }
+              ]
+            }
+          }
+        }
+      },
+      "violation": { "anchor": "witness.span", "code": "NO_DYNAMIC_DELETE", "message": "Do not delete dynamically computed property keys." }
+    }
+  ]
+}

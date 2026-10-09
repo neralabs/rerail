@@ -1,0 +1,1694 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint:prefer-function-type",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of typescript-eslint's `prefer-function-type` (https://typescript-eslint.io/rules/prefer-function-type). Flags a type literal, or an interface with no supertype other than `Function`, whose only member is a call or construct signature with a return type; in such an interface the first `this` type (outside nested literals) is reported instead. Fixes cover call signatures without comments; the checks are split by fix shape.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "type-literal",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "object_type",
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "kind": "comment",
+                    "stopBy": "neighbor"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "union_type"
+                      },
+                      {
+                        "kind": "intersection_type"
+                      },
+                      {
+                        "kind": "array_type"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "matches": "sole-callable"
+                    },
+                    {
+                      "pattern": "$MEMBER"
+                    },
+                    {
+                      "matches": "fixable-call"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": {
+            "member": {
+              "any": [
+                {
+                  "kind": "property_signature"
+                },
+                {
+                  "kind": "method_signature"
+                },
+                {
+                  "kind": "call_signature"
+                },
+                {
+                  "kind": "construct_signature"
+                },
+                {
+                  "kind": "index_signature"
+                }
+              ]
+            },
+            "callable": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "call_signature"
+                    },
+                    {
+                      "kind": "construct_signature"
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "type_annotation"
+                      },
+                      {
+                        "kind": "asserts_annotation"
+                      },
+                      {
+                        "kind": "type_predicate_annotation"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "sole-callable": {
+              "all": [
+                {
+                  "matches": "callable"
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "matches": "member",
+                      "stopBy": "end"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "precedes": {
+                      "matches": "member",
+                      "stopBy": "end"
+                    }
+                  }
+                }
+              ]
+            },
+            "fixable-call": {
+              "all": [
+                {
+                  "kind": "call_signature"
+                },
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "all": [
+                          {
+                            "kind": "type_parameters"
+                          },
+                          {
+                            "pattern": "$TP"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type_parameters"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "kind": "formal_parameters"
+                      },
+                      {
+                        "pattern": "$PARAMS"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "type_annotation",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "not": {
+                            "regex": "^:$"
+                          }
+                        },
+                        {
+                          "pattern": "$RET"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.MEMBER",
+        "code": "PREFER_FUNCTION_TYPE",
+        "message": "Type literal only has a call signature, you should use a function type instead.",
+        "fix": "$TP$PARAMS => $RET"
+      }
+    },
+    {
+      "id": "type-literal-wrapped",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "object_type",
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "kind": "comment",
+                    "stopBy": "neighbor"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "union_type"
+                    },
+                    {
+                      "kind": "intersection_type"
+                    },
+                    {
+                      "kind": "array_type"
+                    }
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "matches": "sole-callable"
+                    },
+                    {
+                      "pattern": "$MEMBER"
+                    },
+                    {
+                      "matches": "fixable-call"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": {
+            "member": {
+              "any": [
+                {
+                  "kind": "property_signature"
+                },
+                {
+                  "kind": "method_signature"
+                },
+                {
+                  "kind": "call_signature"
+                },
+                {
+                  "kind": "construct_signature"
+                },
+                {
+                  "kind": "index_signature"
+                }
+              ]
+            },
+            "callable": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "call_signature"
+                    },
+                    {
+                      "kind": "construct_signature"
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "type_annotation"
+                      },
+                      {
+                        "kind": "asserts_annotation"
+                      },
+                      {
+                        "kind": "type_predicate_annotation"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "sole-callable": {
+              "all": [
+                {
+                  "matches": "callable"
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "matches": "member",
+                      "stopBy": "end"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "precedes": {
+                      "matches": "member",
+                      "stopBy": "end"
+                    }
+                  }
+                }
+              ]
+            },
+            "fixable-call": {
+              "all": [
+                {
+                  "kind": "call_signature"
+                },
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "all": [
+                          {
+                            "kind": "type_parameters"
+                          },
+                          {
+                            "pattern": "$TP"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type_parameters"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "kind": "formal_parameters"
+                      },
+                      {
+                        "pattern": "$PARAMS"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "type_annotation",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "not": {
+                            "regex": "^:$"
+                          }
+                        },
+                        {
+                          "pattern": "$RET"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.MEMBER",
+        "code": "PREFER_FUNCTION_TYPE",
+        "message": "Type literal only has a call signature, you should use a function type instead.",
+        "fix": "($TP$PARAMS => $RET)"
+      }
+    },
+    {
+      "id": "type-literal-nofix",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "object_type",
+            "all": [
+              {
+                "not": {
+                  "all": [
+                    {
+                      "not": {
+                        "has": {
+                          "kind": "comment",
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "all": [
+                          {
+                            "matches": "sole-callable"
+                          },
+                          {
+                            "matches": "fixable-call"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "matches": "sole-callable"
+                    },
+                    {
+                      "pattern": "$MEMBER"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": {
+            "member": {
+              "any": [
+                {
+                  "kind": "property_signature"
+                },
+                {
+                  "kind": "method_signature"
+                },
+                {
+                  "kind": "call_signature"
+                },
+                {
+                  "kind": "construct_signature"
+                },
+                {
+                  "kind": "index_signature"
+                }
+              ]
+            },
+            "callable": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "call_signature"
+                    },
+                    {
+                      "kind": "construct_signature"
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "type_annotation"
+                      },
+                      {
+                        "kind": "asserts_annotation"
+                      },
+                      {
+                        "kind": "type_predicate_annotation"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "sole-callable": {
+              "all": [
+                {
+                  "matches": "callable"
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "matches": "member",
+                      "stopBy": "end"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "precedes": {
+                      "matches": "member",
+                      "stopBy": "end"
+                    }
+                  }
+                }
+              ]
+            },
+            "fixable-call": {
+              "all": [
+                {
+                  "kind": "call_signature"
+                },
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "all": [
+                          {
+                            "kind": "type_parameters"
+                          },
+                          {
+                            "pattern": "$TP"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type_parameters"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "kind": "formal_parameters"
+                      },
+                      {
+                        "pattern": "$PARAMS"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "type_annotation",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "not": {
+                            "regex": "^:$"
+                          }
+                        },
+                        {
+                          "pattern": "$RET"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.MEMBER",
+        "code": "PREFER_FUNCTION_TYPE",
+        "message": "Type literal only has a call signature, you should use a function type instead."
+      }
+    },
+    {
+      "id": "interface-semi",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "callable-interface"
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "this_type",
+                    "stopBy": {
+                      "kind": "object_type"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "export_statement",
+                    "stopBy": "neighbor",
+                    "has": {
+                      "regex": "^default$",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "kind": "type_identifier"
+                    },
+                    {
+                      "pattern": "$NAME"
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "kind": "type_parameters"
+                        },
+                        {
+                          "pattern": "$ITP"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "type_parameters"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "kind": "interface_body",
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "not": {
+                        "has": {
+                          "kind": "comment",
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "all": [
+                          {
+                            "matches": "sole-callable"
+                          },
+                          {
+                            "pattern": "$MEMBER"
+                          },
+                          {
+                            "matches": "fixable-call"
+                          },
+                          {
+                            "precedes": {
+                              "regex": "^;$",
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": {
+            "member": {
+              "any": [
+                {
+                  "kind": "property_signature"
+                },
+                {
+                  "kind": "method_signature"
+                },
+                {
+                  "kind": "call_signature"
+                },
+                {
+                  "kind": "construct_signature"
+                },
+                {
+                  "kind": "index_signature"
+                }
+              ]
+            },
+            "callable": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "call_signature"
+                    },
+                    {
+                      "kind": "construct_signature"
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "type_annotation"
+                      },
+                      {
+                        "kind": "asserts_annotation"
+                      },
+                      {
+                        "kind": "type_predicate_annotation"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "sole-callable": {
+              "all": [
+                {
+                  "matches": "callable"
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "matches": "member",
+                      "stopBy": "end"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "precedes": {
+                      "matches": "member",
+                      "stopBy": "end"
+                    }
+                  }
+                }
+              ]
+            },
+            "callable-interface": {
+              "all": [
+                {
+                  "kind": "interface_declaration"
+                },
+                {
+                  "not": {
+                    "has": {
+                      "kind": "extends_type_clause",
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "has": {
+                            "regex": "^,$",
+                            "stopBy": "neighbor"
+                          }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "type_identifier",
+                              "regex": "^Function$"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "kind": "interface_body",
+                    "stopBy": "neighbor",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "sole-callable"
+                    }
+                  }
+                }
+              ]
+            },
+            "fixable-call": {
+              "all": [
+                {
+                  "kind": "call_signature"
+                },
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "all": [
+                          {
+                            "kind": "type_parameters"
+                          },
+                          {
+                            "pattern": "$TP"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type_parameters"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "kind": "formal_parameters"
+                      },
+                      {
+                        "pattern": "$PARAMS"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "type_annotation",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "not": {
+                            "regex": "^:$"
+                          }
+                        },
+                        {
+                          "pattern": "$RET"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.MEMBER",
+        "code": "PREFER_FUNCTION_TYPE",
+        "message": "Interface only has a call signature, you should use a function type instead.",
+        "fix": "type $NAME$ITP = $TP$PARAMS => $RET;"
+      }
+    },
+    {
+      "id": "interface",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "callable-interface"
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "this_type",
+                    "stopBy": {
+                      "kind": "object_type"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "export_statement",
+                    "stopBy": "neighbor",
+                    "has": {
+                      "regex": "^default$",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "kind": "type_identifier"
+                    },
+                    {
+                      "pattern": "$NAME"
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "kind": "type_parameters"
+                        },
+                        {
+                          "pattern": "$ITP"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "type_parameters"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "kind": "interface_body",
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "not": {
+                        "has": {
+                          "kind": "comment",
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "all": [
+                          {
+                            "matches": "sole-callable"
+                          },
+                          {
+                            "pattern": "$MEMBER"
+                          },
+                          {
+                            "matches": "fixable-call"
+                          },
+                          {
+                            "not": {
+                              "precedes": {
+                                "regex": "^;$",
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": {
+            "member": {
+              "any": [
+                {
+                  "kind": "property_signature"
+                },
+                {
+                  "kind": "method_signature"
+                },
+                {
+                  "kind": "call_signature"
+                },
+                {
+                  "kind": "construct_signature"
+                },
+                {
+                  "kind": "index_signature"
+                }
+              ]
+            },
+            "callable": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "call_signature"
+                    },
+                    {
+                      "kind": "construct_signature"
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "type_annotation"
+                      },
+                      {
+                        "kind": "asserts_annotation"
+                      },
+                      {
+                        "kind": "type_predicate_annotation"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "sole-callable": {
+              "all": [
+                {
+                  "matches": "callable"
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "matches": "member",
+                      "stopBy": "end"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "precedes": {
+                      "matches": "member",
+                      "stopBy": "end"
+                    }
+                  }
+                }
+              ]
+            },
+            "callable-interface": {
+              "all": [
+                {
+                  "kind": "interface_declaration"
+                },
+                {
+                  "not": {
+                    "has": {
+                      "kind": "extends_type_clause",
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "has": {
+                            "regex": "^,$",
+                            "stopBy": "neighbor"
+                          }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "type_identifier",
+                              "regex": "^Function$"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "kind": "interface_body",
+                    "stopBy": "neighbor",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "sole-callable"
+                    }
+                  }
+                }
+              ]
+            },
+            "fixable-call": {
+              "all": [
+                {
+                  "kind": "call_signature"
+                },
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "all": [
+                          {
+                            "kind": "type_parameters"
+                          },
+                          {
+                            "pattern": "$TP"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type_parameters"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "kind": "formal_parameters"
+                      },
+                      {
+                        "pattern": "$PARAMS"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "type_annotation",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "not": {
+                            "regex": "^:$"
+                          }
+                        },
+                        {
+                          "pattern": "$RET"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.MEMBER",
+        "code": "PREFER_FUNCTION_TYPE",
+        "message": "Interface only has a call signature, you should use a function type instead.",
+        "fix": "type $NAME$ITP = $TP$PARAMS => $RET"
+      }
+    },
+    {
+      "id": "interface-nofix",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "callable-interface"
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "this_type",
+                    "stopBy": {
+                      "kind": "object_type"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "all": [
+                    {
+                      "not": {
+                        "inside": {
+                          "kind": "export_statement",
+                          "stopBy": "neighbor",
+                          "has": {
+                            "regex": "^default$",
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "kind": "interface_body",
+                        "stopBy": "neighbor",
+                        "all": [
+                          {
+                            "not": {
+                              "has": {
+                                "kind": "comment",
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "all": [
+                                {
+                                  "matches": "sole-callable"
+                                },
+                                {
+                                  "matches": "fixable-call"
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "kind": "interface_body",
+                  "stopBy": "neighbor",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "matches": "sole-callable"
+                      },
+                      {
+                        "pattern": "$MEMBER"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "utils": {
+            "member": {
+              "any": [
+                {
+                  "kind": "property_signature"
+                },
+                {
+                  "kind": "method_signature"
+                },
+                {
+                  "kind": "call_signature"
+                },
+                {
+                  "kind": "construct_signature"
+                },
+                {
+                  "kind": "index_signature"
+                }
+              ]
+            },
+            "callable": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "call_signature"
+                    },
+                    {
+                      "kind": "construct_signature"
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "type_annotation"
+                      },
+                      {
+                        "kind": "asserts_annotation"
+                      },
+                      {
+                        "kind": "type_predicate_annotation"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "sole-callable": {
+              "all": [
+                {
+                  "matches": "callable"
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "matches": "member",
+                      "stopBy": "end"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "precedes": {
+                      "matches": "member",
+                      "stopBy": "end"
+                    }
+                  }
+                }
+              ]
+            },
+            "callable-interface": {
+              "all": [
+                {
+                  "kind": "interface_declaration"
+                },
+                {
+                  "not": {
+                    "has": {
+                      "kind": "extends_type_clause",
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "has": {
+                            "regex": "^,$",
+                            "stopBy": "neighbor"
+                          }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "type_identifier",
+                              "regex": "^Function$"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "kind": "interface_body",
+                    "stopBy": "neighbor",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "sole-callable"
+                    }
+                  }
+                }
+              ]
+            },
+            "fixable-call": {
+              "all": [
+                {
+                  "kind": "call_signature"
+                },
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "all": [
+                          {
+                            "kind": "type_parameters"
+                          },
+                          {
+                            "pattern": "$TP"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type_parameters"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "kind": "formal_parameters"
+                      },
+                      {
+                        "pattern": "$PARAMS"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "type_annotation",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "not": {
+                            "regex": "^:$"
+                          }
+                        },
+                        {
+                          "pattern": "$RET"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.MEMBER",
+        "code": "PREFER_FUNCTION_TYPE",
+        "message": "Interface only has a call signature, you should use a function type instead."
+      }
+    },
+    {
+      "id": "this-in-interface",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "this_type",
+            "all": [
+              {
+                "not": {
+                  "any": [
+                    {
+                      "follows": {
+                        "matches": "this-bearing",
+                        "stopBy": "end"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": {
+                          "kind": "interface_declaration"
+                        },
+                        "follows": {
+                          "matches": "this-bearing",
+                          "stopBy": "end"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "object_type"
+                      },
+                      {
+                        "kind": "interface_declaration"
+                      }
+                    ]
+                  },
+                  "all": [
+                    {
+                      "matches": "callable-interface"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "all": [
+                          {
+                            "kind": "type_identifier"
+                          },
+                          {
+                            "pattern": "$IFACE"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": {
+            "member": {
+              "any": [
+                {
+                  "kind": "property_signature"
+                },
+                {
+                  "kind": "method_signature"
+                },
+                {
+                  "kind": "call_signature"
+                },
+                {
+                  "kind": "construct_signature"
+                },
+                {
+                  "kind": "index_signature"
+                }
+              ]
+            },
+            "callable": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "call_signature"
+                    },
+                    {
+                      "kind": "construct_signature"
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "type_annotation"
+                      },
+                      {
+                        "kind": "asserts_annotation"
+                      },
+                      {
+                        "kind": "type_predicate_annotation"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "sole-callable": {
+              "all": [
+                {
+                  "matches": "callable"
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "matches": "member",
+                      "stopBy": "end"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "precedes": {
+                      "matches": "member",
+                      "stopBy": "end"
+                    }
+                  }
+                }
+              ]
+            },
+            "callable-interface": {
+              "all": [
+                {
+                  "kind": "interface_declaration"
+                },
+                {
+                  "not": {
+                    "has": {
+                      "kind": "extends_type_clause",
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "has": {
+                            "regex": "^,$",
+                            "stopBy": "neighbor"
+                          }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "type_identifier",
+                              "regex": "^Function$"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "kind": "interface_body",
+                    "stopBy": "neighbor",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "sole-callable"
+                    }
+                  }
+                }
+              ]
+            },
+            "this-bearing": {
+              "all": [
+                {
+                  "not": {
+                    "kind": "object_type"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "this_type"
+                    },
+                    {
+                      "has": {
+                        "kind": "this_type",
+                        "stopBy": {
+                          "kind": "object_type"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PREFER_FUNCTION_TYPE",
+        "message": "`this` refers to the function type '$IFACE', did you intend to use a generic `this` parameter like `<Self>(this: Self, ...) => Self` instead?"
+      }
+    }
+  ]
+}

@@ -229,19 +229,6 @@
       "match": "line+column"
     },
     {
-      "id": "typescript-eslint-no-non-null-assertion",
-      "upstream": {
-        "tool": "typescript-eslint",
-        "rule": "@typescript-eslint/no-non-null-assertion"
-      },
-      "policy": "rules/typescript-eslint-no-non-null-assertion.json",
-      "capabilities": [
-        "syntax",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
       "id": "typescript-eslint-no-namespace",
       "upstream": {
         "tool": "typescript-eslint",
@@ -279,19 +266,6 @@
       "capabilities": [
         "syntax",
         "compare",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "typescript-eslint-no-this-alias",
-      "upstream": {
-        "tool": "typescript-eslint",
-        "rule": "@typescript-eslint/no-this-alias"
-      },
-      "policy": "rules/typescript-eslint-no-this-alias.json",
-      "capabilities": [
-        "syntax",
         "suppression"
       ],
       "match": "line+column"

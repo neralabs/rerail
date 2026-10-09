@@ -1,0 +1,336 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint:no-import-type-side-effects",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of typescript-eslint's `no-import-type-side-effects` rule (https://typescript-eslint.io/rules/no-import-type-side-effects). Flags an import whose specifiers are all inline `type` specifiers.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "inline-type-only-import-multi",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "import_statement",
+                "not": {
+                  "has": {
+                    "regex": "^type$",
+                    "stopBy": "neighbor"
+                  }
+                },
+                "has": {
+                  "kind": "import_clause",
+                  "stopBy": "neighbor",
+                  "not": {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "namespace_import"
+                        }
+                      ],
+                      "stopBy": "neighbor"
+                    }
+                  },
+                  "has": {
+                    "kind": "named_imports",
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "has": {
+                          "kind": "import_specifier",
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "kind": "import_specifier",
+                            "stopBy": "neighbor",
+                            "not": {
+                              "has": {
+                                "regex": "^type$",
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "has": {
+                      "kind": "import_clause",
+                      "stopBy": "neighbor",
+                      "has": {
+                        "kind": "named_imports",
+                        "stopBy": "neighbor",
+                        "count": {
+                          "has": {
+                            "kind": "import_specifier",
+                            "stopBy": "neighbor"
+                          },
+                          "min": 2
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "regex": ";$"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_IMPORT_TYPE_SIDE_EFFECTS",
+        "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime. Convert this to a top-level type qualifier to properly remove the entire import."
+      }
+    },
+    {
+      "id": "inline-type-only-import-single",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "import_statement",
+                "not": {
+                  "has": {
+                    "regex": "^type$",
+                    "stopBy": "neighbor"
+                  }
+                },
+                "has": {
+                  "kind": "import_clause",
+                  "stopBy": "neighbor",
+                  "not": {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "namespace_import"
+                        }
+                      ],
+                      "stopBy": "neighbor"
+                    }
+                  },
+                  "has": {
+                    "kind": "named_imports",
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "has": {
+                          "kind": "import_specifier",
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "kind": "import_specifier",
+                            "stopBy": "neighbor",
+                            "not": {
+                              "has": {
+                                "regex": "^type$",
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "regex": ";$"
+              },
+              {
+                "has": {
+                  "kind": "import_clause",
+                  "stopBy": "neighbor",
+                  "has": {
+                    "kind": "named_imports",
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "count": {
+                          "has": {
+                            "kind": "import_specifier",
+                            "stopBy": "neighbor"
+                          },
+                          "max": 1
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "pattern": {
+                            "context": "import { type $A } from 'x';",
+                            "selector": "import_specifier"
+                          },
+                          "not": {
+                            "has": {
+                              "regex": "^as$",
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "has": {
+                  "kind": "string",
+                  "stopBy": "neighbor",
+                  "pattern": "$S"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_IMPORT_TYPE_SIDE_EFFECTS",
+        "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime. Convert this to a top-level type qualifier to properly remove the entire import.",
+        "fix": "import type { $A } from $S;"
+      }
+    },
+    {
+      "id": "inline-type-only-import-alias",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "import_statement",
+                "not": {
+                  "has": {
+                    "regex": "^type$",
+                    "stopBy": "neighbor"
+                  }
+                },
+                "has": {
+                  "kind": "import_clause",
+                  "stopBy": "neighbor",
+                  "not": {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "namespace_import"
+                        }
+                      ],
+                      "stopBy": "neighbor"
+                    }
+                  },
+                  "has": {
+                    "kind": "named_imports",
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "has": {
+                          "kind": "import_specifier",
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "kind": "import_specifier",
+                            "stopBy": "neighbor",
+                            "not": {
+                              "has": {
+                                "regex": "^type$",
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "regex": ";$"
+              },
+              {
+                "has": {
+                  "kind": "import_clause",
+                  "stopBy": "neighbor",
+                  "has": {
+                    "kind": "named_imports",
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "count": {
+                          "has": {
+                            "kind": "import_specifier",
+                            "stopBy": "neighbor"
+                          },
+                          "max": 1
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "pattern": {
+                            "context": "import { type $A as $B } from 'x';",
+                            "selector": "import_specifier"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "has": {
+                  "kind": "string",
+                  "stopBy": "neighbor",
+                  "pattern": "$S"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_IMPORT_TYPE_SIDE_EFFECTS",
+        "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime. Convert this to a top-level type qualifier to properly remove the entire import.",
+        "fix": "import type { $A as $B } from $S;"
+      }
+    }
+  ]
+}

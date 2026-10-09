@@ -1,0 +1,1102 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint:prefer-optional-chain",
+  "revision": 1,
+  "mode": "log",
+  "description": "An && chain that checks a value and then reads through it, which `?.` says in one step.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.d.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "and-chain",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "binary_expression",
+            "all": [
+              {
+                "has": {
+                  "regex": "^&&$"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "has": {
+                      "field": "left",
+                      "pattern": "$A",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "binary_expression",
+                            "has": {
+                              "regex": "^&&$"
+                            }
+                          },
+                          {
+                            "kind": "binary_expression",
+                            "has": {
+                              "regex": "^!=$"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "left",
+                      "kind": "binary_expression",
+                      "has": {
+                        "regex": "^!=$"
+                      },
+                      "all": [
+                        {
+                          "has": {
+                            "field": "left",
+                            "pattern": "$A"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "right",
+                            "regex": "^(?:null|undefined)$"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "left",
+                      "kind": "binary_expression",
+                      "has": {
+                        "field": "right",
+                        "pattern": "$A",
+                        "not": {
+                          "kind": "binary_expression"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "right",
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "member_expression"
+                        },
+                        {
+                          "kind": "subscript_expression"
+                        },
+                        {
+                          "kind": "call_expression"
+                        }
+                      ]
+                    },
+                    {
+                      "any": [
+                        {
+                          "has": {
+                            "field": "object",
+                            "pattern": "$A"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "object",
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "member_expression"
+                                  },
+                                  {
+                                    "kind": "subscript_expression"
+                                  },
+                                  {
+                                    "kind": "call_expression"
+                                  }
+                                ]
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "has": {
+                                      "field": "object",
+                                      "pattern": "$A"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "object",
+                                      "all": [
+                                        {
+                                          "any": [
+                                            {
+                                              "kind": "member_expression"
+                                            },
+                                            {
+                                              "kind": "subscript_expression"
+                                            },
+                                            {
+                                              "kind": "call_expression"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "any": [
+                                            {
+                                              "has": {
+                                                "field": "object",
+                                                "pattern": "$A"
+                                              }
+                                            },
+                                            {
+                                              "has": {
+                                                "field": "object",
+                                                "all": [
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "kind": "member_expression"
+                                                      },
+                                                      {
+                                                        "kind": "subscript_expression"
+                                                      },
+                                                      {
+                                                        "kind": "call_expression"
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "has": {
+                                                          "field": "object",
+                                                          "pattern": "$A"
+                                                        }
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            {
+                                              "has": {
+                                                "field": "function",
+                                                "all": [
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "kind": "member_expression"
+                                                      },
+                                                      {
+                                                        "kind": "subscript_expression"
+                                                      },
+                                                      {
+                                                        "kind": "call_expression"
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "has": {
+                                                          "field": "object",
+                                                          "pattern": "$A"
+                                                        }
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "function",
+                                      "all": [
+                                        {
+                                          "any": [
+                                            {
+                                              "kind": "member_expression"
+                                            },
+                                            {
+                                              "kind": "subscript_expression"
+                                            },
+                                            {
+                                              "kind": "call_expression"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "any": [
+                                            {
+                                              "has": {
+                                                "field": "object",
+                                                "pattern": "$A"
+                                              }
+                                            },
+                                            {
+                                              "has": {
+                                                "field": "object",
+                                                "all": [
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "kind": "member_expression"
+                                                      },
+                                                      {
+                                                        "kind": "subscript_expression"
+                                                      },
+                                                      {
+                                                        "kind": "call_expression"
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "has": {
+                                                          "field": "object",
+                                                          "pattern": "$A"
+                                                        }
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            {
+                                              "has": {
+                                                "field": "function",
+                                                "all": [
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "kind": "member_expression"
+                                                      },
+                                                      {
+                                                        "kind": "subscript_expression"
+                                                      },
+                                                      {
+                                                        "kind": "call_expression"
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "has": {
+                                                          "field": "object",
+                                                          "pattern": "$A"
+                                                        }
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "function",
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "member_expression"
+                                  },
+                                  {
+                                    "kind": "subscript_expression"
+                                  },
+                                  {
+                                    "kind": "call_expression"
+                                  }
+                                ]
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "has": {
+                                      "field": "object",
+                                      "pattern": "$A"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "object",
+                                      "all": [
+                                        {
+                                          "any": [
+                                            {
+                                              "kind": "member_expression"
+                                            },
+                                            {
+                                              "kind": "subscript_expression"
+                                            },
+                                            {
+                                              "kind": "call_expression"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "any": [
+                                            {
+                                              "has": {
+                                                "field": "object",
+                                                "pattern": "$A"
+                                              }
+                                            },
+                                            {
+                                              "has": {
+                                                "field": "object",
+                                                "all": [
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "kind": "member_expression"
+                                                      },
+                                                      {
+                                                        "kind": "subscript_expression"
+                                                      },
+                                                      {
+                                                        "kind": "call_expression"
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "has": {
+                                                          "field": "object",
+                                                          "pattern": "$A"
+                                                        }
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            {
+                                              "has": {
+                                                "field": "function",
+                                                "all": [
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "kind": "member_expression"
+                                                      },
+                                                      {
+                                                        "kind": "subscript_expression"
+                                                      },
+                                                      {
+                                                        "kind": "call_expression"
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "has": {
+                                                          "field": "object",
+                                                          "pattern": "$A"
+                                                        }
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "function",
+                                      "all": [
+                                        {
+                                          "any": [
+                                            {
+                                              "kind": "member_expression"
+                                            },
+                                            {
+                                              "kind": "subscript_expression"
+                                            },
+                                            {
+                                              "kind": "call_expression"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "any": [
+                                            {
+                                              "has": {
+                                                "field": "object",
+                                                "pattern": "$A"
+                                              }
+                                            },
+                                            {
+                                              "has": {
+                                                "field": "object",
+                                                "all": [
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "kind": "member_expression"
+                                                      },
+                                                      {
+                                                        "kind": "subscript_expression"
+                                                      },
+                                                      {
+                                                        "kind": "call_expression"
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "has": {
+                                                          "field": "object",
+                                                          "pattern": "$A"
+                                                        }
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            {
+                                              "has": {
+                                                "field": "function",
+                                                "all": [
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "kind": "member_expression"
+                                                      },
+                                                      {
+                                                        "kind": "subscript_expression"
+                                                      },
+                                                      {
+                                                        "kind": "call_expression"
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "has": {
+                                                          "field": "object",
+                                                          "pattern": "$A"
+                                                        }
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ],
+            "not": {
+              "inside": {
+                "kind": "binary_expression",
+                "all": [
+                  {
+                    "has": {
+                      "regex": "^&&$"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "field": "left",
+                          "pattern": "$B",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "binary_expression",
+                                "has": {
+                                  "regex": "^&&$"
+                                }
+                              },
+                              {
+                                "kind": "binary_expression",
+                                "has": {
+                                  "regex": "^!=$"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "left",
+                          "kind": "binary_expression",
+                          "has": {
+                            "regex": "^!=$"
+                          },
+                          "all": [
+                            {
+                              "has": {
+                                "field": "left",
+                                "pattern": "$B"
+                              }
+                            },
+                            {
+                              "has": {
+                                "field": "right",
+                                "regex": "^(?:null|undefined)$"
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "left",
+                          "kind": "binary_expression",
+                          "has": {
+                            "field": "right",
+                            "pattern": "$B",
+                            "not": {
+                              "kind": "binary_expression"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "field": "right",
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "member_expression"
+                            },
+                            {
+                              "kind": "subscript_expression"
+                            },
+                            {
+                              "kind": "call_expression"
+                            }
+                          ]
+                        },
+                        {
+                          "any": [
+                            {
+                              "has": {
+                                "field": "object",
+                                "pattern": "$B"
+                              }
+                            },
+                            {
+                              "has": {
+                                "field": "object",
+                                "all": [
+                                  {
+                                    "any": [
+                                      {
+                                        "kind": "member_expression"
+                                      },
+                                      {
+                                        "kind": "subscript_expression"
+                                      },
+                                      {
+                                        "kind": "call_expression"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "any": [
+                                      {
+                                        "has": {
+                                          "field": "object",
+                                          "pattern": "$B"
+                                        }
+                                      },
+                                      {
+                                        "has": {
+                                          "field": "object",
+                                          "all": [
+                                            {
+                                              "any": [
+                                                {
+                                                  "kind": "member_expression"
+                                                },
+                                                {
+                                                  "kind": "subscript_expression"
+                                                },
+                                                {
+                                                  "kind": "call_expression"
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "any": [
+                                                {
+                                                  "has": {
+                                                    "field": "object",
+                                                    "pattern": "$B"
+                                                  }
+                                                },
+                                                {
+                                                  "has": {
+                                                    "field": "object",
+                                                    "all": [
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "kind": "member_expression"
+                                                          },
+                                                          {
+                                                            "kind": "subscript_expression"
+                                                          },
+                                                          {
+                                                            "kind": "call_expression"
+                                                          }
+                                                        ]
+                                                      },
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "has": {
+                                                              "field": "object",
+                                                              "pattern": "$B"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    ]
+                                                  }
+                                                },
+                                                {
+                                                  "has": {
+                                                    "field": "function",
+                                                    "all": [
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "kind": "member_expression"
+                                                          },
+                                                          {
+                                                            "kind": "subscript_expression"
+                                                          },
+                                                          {
+                                                            "kind": "call_expression"
+                                                          }
+                                                        ]
+                                                      },
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "has": {
+                                                              "field": "object",
+                                                              "pattern": "$B"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    ]
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "has": {
+                                          "field": "function",
+                                          "all": [
+                                            {
+                                              "any": [
+                                                {
+                                                  "kind": "member_expression"
+                                                },
+                                                {
+                                                  "kind": "subscript_expression"
+                                                },
+                                                {
+                                                  "kind": "call_expression"
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "any": [
+                                                {
+                                                  "has": {
+                                                    "field": "object",
+                                                    "pattern": "$B"
+                                                  }
+                                                },
+                                                {
+                                                  "has": {
+                                                    "field": "object",
+                                                    "all": [
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "kind": "member_expression"
+                                                          },
+                                                          {
+                                                            "kind": "subscript_expression"
+                                                          },
+                                                          {
+                                                            "kind": "call_expression"
+                                                          }
+                                                        ]
+                                                      },
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "has": {
+                                                              "field": "object",
+                                                              "pattern": "$B"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    ]
+                                                  }
+                                                },
+                                                {
+                                                  "has": {
+                                                    "field": "function",
+                                                    "all": [
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "kind": "member_expression"
+                                                          },
+                                                          {
+                                                            "kind": "subscript_expression"
+                                                          },
+                                                          {
+                                                            "kind": "call_expression"
+                                                          }
+                                                        ]
+                                                      },
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "has": {
+                                                              "field": "object",
+                                                              "pattern": "$B"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    ]
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "has": {
+                                "field": "function",
+                                "all": [
+                                  {
+                                    "any": [
+                                      {
+                                        "kind": "member_expression"
+                                      },
+                                      {
+                                        "kind": "subscript_expression"
+                                      },
+                                      {
+                                        "kind": "call_expression"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "any": [
+                                      {
+                                        "has": {
+                                          "field": "object",
+                                          "pattern": "$B"
+                                        }
+                                      },
+                                      {
+                                        "has": {
+                                          "field": "object",
+                                          "all": [
+                                            {
+                                              "any": [
+                                                {
+                                                  "kind": "member_expression"
+                                                },
+                                                {
+                                                  "kind": "subscript_expression"
+                                                },
+                                                {
+                                                  "kind": "call_expression"
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "any": [
+                                                {
+                                                  "has": {
+                                                    "field": "object",
+                                                    "pattern": "$B"
+                                                  }
+                                                },
+                                                {
+                                                  "has": {
+                                                    "field": "object",
+                                                    "all": [
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "kind": "member_expression"
+                                                          },
+                                                          {
+                                                            "kind": "subscript_expression"
+                                                          },
+                                                          {
+                                                            "kind": "call_expression"
+                                                          }
+                                                        ]
+                                                      },
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "has": {
+                                                              "field": "object",
+                                                              "pattern": "$B"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    ]
+                                                  }
+                                                },
+                                                {
+                                                  "has": {
+                                                    "field": "function",
+                                                    "all": [
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "kind": "member_expression"
+                                                          },
+                                                          {
+                                                            "kind": "subscript_expression"
+                                                          },
+                                                          {
+                                                            "kind": "call_expression"
+                                                          }
+                                                        ]
+                                                      },
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "has": {
+                                                              "field": "object",
+                                                              "pattern": "$B"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    ]
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "has": {
+                                          "field": "function",
+                                          "all": [
+                                            {
+                                              "any": [
+                                                {
+                                                  "kind": "member_expression"
+                                                },
+                                                {
+                                                  "kind": "subscript_expression"
+                                                },
+                                                {
+                                                  "kind": "call_expression"
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "any": [
+                                                {
+                                                  "has": {
+                                                    "field": "object",
+                                                    "pattern": "$B"
+                                                  }
+                                                },
+                                                {
+                                                  "has": {
+                                                    "field": "object",
+                                                    "all": [
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "kind": "member_expression"
+                                                          },
+                                                          {
+                                                            "kind": "subscript_expression"
+                                                          },
+                                                          {
+                                                            "kind": "call_expression"
+                                                          }
+                                                        ]
+                                                      },
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "has": {
+                                                              "field": "object",
+                                                              "pattern": "$B"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    ]
+                                                  }
+                                                },
+                                                {
+                                                  "has": {
+                                                    "field": "function",
+                                                    "all": [
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "kind": "member_expression"
+                                                          },
+                                                          {
+                                                            "kind": "subscript_expression"
+                                                          },
+                                                          {
+                                                            "kind": "call_expression"
+                                                          }
+                                                        ]
+                                                      },
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "has": {
+                                                              "field": "object",
+                                                              "pattern": "$B"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    ]
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "stopBy": "neighbor",
+                "field": "left"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PREFER_OPTIONAL_CHAIN",
+        "message": "Prefer using an optional chain expression instead, as it's more concise and easier to read.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/prefer-optional-chain"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

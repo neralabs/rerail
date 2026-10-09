@@ -1,0 +1,238 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "typescript-eslint:no-array-constructor",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of typescript-eslint's `no-array-constructor` rule (https://typescript-eslint.io/rules/no-array-constructor). Flags `Array(...)` / `new Array(...)` unless called with exactly one argument or type arguments (no scope check: typescript-eslint's version does not resolve `Array`), and fixes to an array literal. Comments inside the argument list are not carried by the `$$$A` capture, so those calls get no fix.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "array-constructor-fix",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "rule": {
+      "all": [
+       {
+        "all": [
+         {
+          "any": [
+           {
+            "kind": "call_expression"
+           },
+           {
+            "kind": "new_expression"
+           }
+          ]
+         },
+         {
+          "has": {
+           "matches": "array-callee"
+          }
+         },
+         {
+          "not": {
+           "has": {
+            "kind": "type_arguments"
+           }
+          }
+         },
+         {
+          "not": {
+           "has": {
+            "kind": "template_string"
+           }
+          }
+         },
+         {
+          "not": {
+           "has": {
+            "kind": "arguments",
+            "count": {
+             "has": {
+              "matches": "arg"
+             },
+             "min": 1,
+             "max": 1
+            }
+           }
+          }
+         }
+        ]
+       },
+       {
+        "any": [
+         {
+          "has": {
+           "kind": "arguments",
+           "pattern": {
+            "context": "f($$$A)",
+            "selector": "arguments"
+           }
+          }
+         },
+         {
+          "not": {
+           "has": {
+            "kind": "arguments"
+           }
+          }
+         }
+        ]
+       },
+       {
+        "not": {
+         "has": {
+          "kind": "arguments",
+          "has": {
+           "kind": "comment"
+          }
+         }
+        }
+       }
+      ]
+     },
+     "utils": {
+      "array-callee": {
+       "any": [
+        {
+         "kind": "identifier",
+         "regex": "^Array$"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "array-callee"
+         }
+        }
+       ]
+      },
+      "arg": {
+       "not": {
+        "any": [
+         {
+          "regex": "^[(),]$"
+         },
+         {
+          "kind": "comment"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "NO_ARRAY_CONSTRUCTOR",
+    "message": "The array literal notation [] is preferable.",
+    "fix": "[$$$A]"
+   }
+  },
+  {
+   "id": "array-constructor",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "rule": {
+      "all": [
+       {
+        "all": [
+         {
+          "any": [
+           {
+            "kind": "call_expression"
+           },
+           {
+            "kind": "new_expression"
+           }
+          ]
+         },
+         {
+          "has": {
+           "matches": "array-callee"
+          }
+         },
+         {
+          "not": {
+           "has": {
+            "kind": "type_arguments"
+           }
+          }
+         },
+         {
+          "not": {
+           "has": {
+            "kind": "template_string"
+           }
+          }
+         },
+         {
+          "not": {
+           "has": {
+            "kind": "arguments",
+            "count": {
+             "has": {
+              "matches": "arg"
+             },
+             "min": 1,
+             "max": 1
+            }
+           }
+          }
+         }
+        ]
+       },
+       {
+        "has": {
+         "kind": "arguments",
+         "has": {
+          "kind": "comment"
+         }
+        }
+       }
+      ]
+     },
+     "utils": {
+      "array-callee": {
+       "any": [
+        {
+         "kind": "identifier",
+         "regex": "^Array$"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "array-callee"
+         }
+        }
+       ]
+      },
+      "arg": {
+       "not": {
+        "any": [
+         {
+          "regex": "^[(),]$"
+         },
+         {
+          "kind": "comment"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "NO_ARRAY_CONSTRUCTOR",
+    "message": "The array literal notation [] is preferable."
+   }
+  }
+ ]
+}
