@@ -204,17 +204,14 @@ fn compile_calls(
     path: &str,
     utils: &UtilScope,
 ) -> Result<AstMatcher> {
-    let family = Family::of(language);
-    let kinds: &[&str] = match family {
-        Family::Python => &["call"],
-        // Blade's calls are those of the PHP its template embeds (`blade::view`).
-        Family::Php | Family::Blade => &crate::code_rule_dsl::calls::php::CALL_KINDS,
-        Family::Ecma => {
-            return Err(invalid(format!(
-                "{path}: calls follows Python and PHP calls only"
-            )));
-        }
+    use crate::code_rule_dsl::language::adapter::{
+        Adapter, CallFeature, CallRules, gate, with_adapter,
     };
+    let (verdict, kinds) = with_adapter!(Family::of(language), A => (
+        <<A as Adapter>::Calls as CallRules>::feature(CallFeature::Calls),
+        <<A as Adapter>::Calls as CallRules>::CALL_KINDS,
+    ));
+    gate(path, verdict)?;
     let collector = utils.calls.ok_or_else(|| {
         invalid(format!(
             "{path}: calls is only supported in a forbid query's rule and its utils"
@@ -223,6 +220,6 @@ fn compile_calls(
     // Blade numbers PHP's kinds after its own (`GrammarDialect::kind_id`).
     let call_kinds = kinds.iter().map(|kind| language.kind_id(kind)).collect();
     Ok(AstMatcher::Semantic(Semantic::Calls(Box::new(
-        collector.term(calls, path, family, call_kinds)?,
+        collector.term(calls, path, language, call_kinds)?,
     ))))
 }
