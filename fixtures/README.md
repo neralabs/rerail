@@ -1,46 +1,82 @@
 # Rerail fixtures
 
-Language conformance test data: inputs, the reports and values upstream tools record for them (`*.expected.json`),
-and the `generate_*` scripts that record each, grouped by language family. Nothing here is published as a package
-or shipped to users: no package's `files` includes this directory.
+Every test input and oracle the repository's tests read, in one place: language conformance data (inputs, the
+reports and values upstream tools record for them, `*.expected.json`, and the `generate_*` scripts that record each),
+the host tests' data and the pack validator's inputs. Nothing here is published as a package or shipped to users: no
+package's `files` includes this directory. A rule pack's own tool recordings live with the pack, in
+`packs/<id>/upstream/<tool>/` ([pack format](../docs/pack-format.md)); everything else is here.
 
-Rerail's code-rule DSL engine tests compare against these oracles. They read this directory, or `RERAIL_FIXTURES_DIR`
-when it is set (for Rust through `native/build.rs`, for TypeScript through `test/oracles.ts`).
+Tests resolve this directory in one place per language: Rust through `native/build.rs` (the `fixtures_dir!` and
+`oracle!` macros of `native/src/code_rule_dsl/mod.rs` read what it found), TypeScript through `fixturesPath()` in
+`test/oracles.ts`. Both read `RERAIL_FIXTURES_DIR` (relative to the repository root) when it is set, else this
+directory.
 
 Maintainers run the generators by hand against the pinned upstream versions their headers name; CI and the product
 never do.
 
 ## Layout
 
-`<family>/<feature>/`: one directory per language family, then the engine feature or tier the oracle pins, as in
-Rerail's `native/src/code_rule_dsl/` and `conformance/languages/`.
+`<family>/<feature>/`: one directory per language family, then the engine module the data tests, named exactly as
+the module under `native/src/code_rule_dsl/` (`scope/`, `value/`, `compile/`, …). Below the feature, directories are
+kebab-case and name the part of the module that reads them (`php/compile/format-args/` is the oracle of
+`compile/format_args/php.rs`). Three groups are not engine modules:
 
-| Family | Upstream tools | Features |
+- `<family>/licenses/<project>/`: third-party records (below).
+- `<family>/upstream/<tool>/`: a language's upstream linter recordings, recorded ahead of its pack (below).
+- `host/<area>/` and `packs/<pack>/`: not language families. `host/` holds the TypeScript host tests' data, one
+  directory per area; `packs/` holds pack-shaped test inputs: the pack validator's and the conformance runner's
+  ([README](packs/README.md)).
+
+`node scripts/check-structure/fixtures.mjs` prints the table below from the tree and fails on a feature directory that
+names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/upstream/`.
+
+| Feature directory | Engine module | What reads it |
 |---|---|---|
-| `python/` | Ruff 0.16.9, Pyflakes 3.4.0, Bandit 1.8.6, CPython 3.13, Jedi 0.19.2 | `calls`, `identifier`, `literal`, `scope`, `suppress`, `value` |
-| `ecma/` | ESLint 10.11.0, typescript-eslint 8.70.1, eslint-utils 4.10.1, natural-compare 1.4.0 | `lines`, `scope`, `suppress`, `value` |
-| `php/` | PHP 8.5.11, PHPStan 2.2.16, Psalm 6.19.1, PHP_CodeSniffer 4.0.4 and 3.13.6, nikic/php-parser 5.9.0, phpstan/phpdoc-parser 2.3.5 | `arguments`, `calls`, `compare`, `format_args`, `literal`, `scope`, `suppress`, `value` |
-| `blade/` | illuminate/view 13.34.0, PHP 8.5.11, PHPStan 2.2.16 | `view` |
-| `vue/` | @vue/compiler-sfc 3.5.43, vue-eslint-parser 10.4.1, eslint-plugin-vue 10.11.1, ESLint 10.11.0 | `grammar`, `upstream`, `view` |
-| `rust/` | rustc, clippy and rust-analyzer 1.99.0, tree-sitter-rust 0.24.2, syn 2 | `feasibility`, `grammar`, `literal`, `suppress`, `upstream` |
-| `sql/` | SQLFluff 4.4.0, PostgreSQL 18 parser (pglast 8.5), SQLite 3.50.4, MySQL 8.4.11 | `names`, `suppress`, `t1`, `t3`, `upstream`, `value` |
+| `blade/blade/` | `blade` | the compiled view, against illuminate/view and PHPStan (`blade/oracle_tests.rs`) |
+| `{ecma,python}/compile/examples/` | `compile` | the worked examples (`compile/examples_tests.rs`, the DSL reference's coverage) |
+| `php/compile/format-args/` | `compile` | `formatArgs` with style `printf`, against PHPStan (`compile/format_args/php.rs`) |
+| `{ecma,python,php,sql}/scope/` | `scope` | name resolution and usedness; `sql/scope/` is PostgreSQL's reading of names (T2) and the corpus input (T3) |
+| `{ecma,python,php,sql}/value/` | `value` | constant values; `php/value/compare/` is `compare`'s PHP keys, names and structures (`value/php_compare`, `value/php_structure`) |
+| `{python,php}/calls/` | `calls` | call graphs |
+| `python/identifier/` | `identifier` | identifier normalisation |
+| `ecma/lines/` | `lines` | line and comment positions |
+| `{python,php,rust}/literal/` | `literal` | format strings, doc comments and literals |
+| `{ecma,python,php,rust,sql}/suppress/` | `suppress` | suppression comments |
+| `{ecma,python}/matcher/ast-grep/` | `matcher` | relational rules, `field`, `nthChild`, `stopBy`, `utils` against ast-grep (`test/code-rule-dsl-upstream-differential.test.ts`) |
+| `php/matcher/arguments/` | `matcher` | argument slots (`matcher/arguments.rs`) |
+| `{rust,sql,vue}/language/` | `language` | measurements that choose a planned language's registry entry: candidate grammars (`grammar/`, T1), Rust's capability census (`feasibility/`), Vue's embedded view (`view/`) |
+| `host/benchmark/` | — | the query-parity benchmark's semantic catalogs (`benchmark/query-parity.ts`) |
+| `host/code-rule-dsl/` | — | engine-contract rule documents (`test/native-code-rule-dsl-runtime.test.ts`) |
+| `host/constraint-code-rules/` | — | constraint examples (`test/code-rule-dsl-utils-ports.test.ts`) |
+| `host/mixed-repository/` | — | a repository mixing four languages (`test/mixed-repository.test.ts`) |
+| `host/tool-call-rules/` | — | tool-call rules (`test/tool-call-rules.test.ts`, the rule store and catalog tests) |
+| `packs/` | — | pack validator and conformance runner inputs (`test/packs.test.ts`, `test/language-conformance.test.ts`) |
 
-The rule packs (python, php, blade, typescript, react, node, next) live in `packs/<id>/`
-([pack format](../docs/pack-format.md#moving-to-this-layout)): their upstream tools' copied tests and recordings, their
-candidates and their licence records moved there. What stays here is engine oracles, and the material `vue/`, `rust/`
-and `sql/` recorded ahead of their packs. Those languages have upstream recordings but no rules yet, so they have no
-pack directory: `<id>/upstream/` holds the upstream linters' recorders, their copied tests (`<tool>/fixtures/`) and
-recordings on those tests and on pinned public corpora (`<tool>/corpus-<name>.expected.json`), laid out as a pack's
-`upstream/`, beside the planned rule list (`rust/upstream/conformance.draft.json`,
-`sql/upstream/conformance.draft.json`, `vue/upstream/rules.json`); `grammar/`, `t1/`, `t3/` and `feasibility/` hold
-the measurement tools. When a language's pack gains its first rules, its draft becomes `packs/<id>/conformance.json`
-and `<id>/upstream/` moves to `packs/<id>/upstream/`. `../conformance/recorders/eslint-record.mjs` is the recorder the
-ESLint-based generators share.
+| Family | Upstream tools |
+|---|---|
+| `python/` | Ruff 0.16.9, Pyflakes 3.4.0, Bandit 1.8.6, CPython 3.13, Jedi 0.19.2 |
+| `ecma/` | ESLint 10.11.0, typescript-eslint 8.70.1, eslint-utils 4.10.1, natural-compare 1.4.0, ast-grep 0.45.3 |
+| `php/` | PHP 8.5.11, PHPStan 2.2.16, Psalm 6.19.1, PHP_CodeSniffer 4.0.4 and 3.13.6, nikic/php-parser 5.9.0, phpstan/phpdoc-parser 2.3.5 |
+| `blade/` | illuminate/view 13.34.0, PHP 8.5.11, PHPStan 2.2.16 |
+| `vue/` | @vue/compiler-sfc 3.5.43, vue-eslint-parser 10.4.1, eslint-plugin-vue 10.11.1, ESLint 10.11.0 |
+| `rust/` | rustc, clippy and rust-analyzer 1.99.0, tree-sitter-rust 0.24.2, syn 2 |
+| `sql/` | SQLFluff 4.4.0, PostgreSQL 18 parser (pglast 8.5), SQLite 3.50.4, MySQL 8.4.11 |
+
+`ecma` is shared by JavaScript and TypeScript. The rule packs (python, php, blade, typescript, react, node, next,
+complexity) live in `packs/<id>/` ([pack format](../docs/pack-format.md#moving-to-this-layout)): their upstream tools'
+copied tests and recordings, their candidates and their licence records. `vue/`, `rust/` and `sql/` have upstream
+recordings but no rules yet, so they have no pack directory: `<id>/upstream/` holds the upstream linters' recorders,
+their copied tests (`<tool>/fixtures/`) and recordings on those tests and on pinned public corpora
+(`<tool>/corpus-<name>.expected.json`), laid out as a pack's `upstream/`, beside the planned rule list
+(`rust/upstream/conformance.draft.json`, `sql/upstream/conformance.draft.json`, `vue/upstream/rules.json`). When a
+language's pack gains its first rules, its draft becomes `packs/<id>/conformance.json` and `<id>/upstream/` moves to
+`packs/<id>/upstream/`. `../conformance/recorders/eslint-record.mjs` is the recorder the ESLint-based generators share.
 
 Each oracle stays whole inside its feature directory (generator, inputs and recorded output together), so every
-generator reads and writes relative to its own directory. A generator that needs pinned tools or corpus checkouts
-takes them as arguments or finds them under `.rerail/tools/<pack>` and `.rerail/corpora/<pack>` in the nearest
-ancestor checkout (gitignored there); its header says which.
+generator reads and writes relative to its own directory; a family's shared generator modules sit at the family's
+top (`sql/common.py`, `vue/tools.mjs`). A generator that needs pinned tools or corpus checkouts takes them as
+arguments or finds them under `.rerail/tools/<pack>` and `.rerail/corpora/<pack>` in the nearest ancestor checkout
+(gitignored there); its header says which.
 
 ## Third-party material
 
@@ -58,7 +94,7 @@ upstream path and whether the copy is verbatim, derived or an excerpt. Those fil
 | `ecma/licenses/eslint-utils/` | eslint-utils 4.10.1 | MIT |
 | `php/licenses/laravel/` | laravel/framework e5f3d6265f | MIT |
 | `php/licenses/symfony/` | symfony/symfony 2c4011aa7e | MIT |
-| `blade/licenses/bagisto/`, `bookstack/`, `filament/`, `livewire/` | directive closures excerpted into `blade/view/directives.php` | MIT |
+| `blade/licenses/bagisto/`, `bookstack/`, `filament/`, `livewire/` | directive closures excerpted into `blade/blade/directives.php` | MIT |
 | `vue/licenses/eslint-plugin-vue/` | eslint-plugin-vue 10.11.1 | MIT |
 | `rust/licenses/clippy/` | rust-clippy (Rust 1.99.0) | MIT OR Apache-2.0 |
 | `sql/licenses/sqlfluff/` | SQLFluff 4.4.0 | MIT |

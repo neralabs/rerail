@@ -13,7 +13,7 @@ The pack follows the [pack structure and validation contract](../../docs/pack-fo
 | `rules/` | The code-rule documents (`rerail.policy/v1`) |
 | `conformance.json` | Each ported rule's upstream rule, how findings compare, and the capabilities it exercises; the pinned plugin and the pinned corpora (shadcn-ui, next-examples, commerce) |
 | `upstream/eslint-plugin-next/` | The plugin's copied rule tests (`tests/`) and the cases extracted from them (`fixtures/`), its recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`, `fixtures.cases.json`) and the recorder (`generate.mjs`) |
-| `candidates/` | Ports that cannot pass their fixtures yet (`pack.json`, `rules/`), the Next fact model's probes (`probes/`), and the generators that write them and `rules/` (`build-policies.mjs`, `build-probes.mjs`) |
+| `candidates/` | Ports that cannot pass their fixtures yet (`conformance.json`, `rules/`), the Next fact model's probes (`probes/`), and the generators that write them and `rules/` (`build-policies.mjs`, `build-probes.mjs`) |
 | `licenses/next.js/` | Next.js's licence and `UPSTREAM.md`, listing every copied file |
 
 The rule documents, `conformance.json`'s and `pack.json`'s rule lists and the candidates are generated, offline:

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { loadNativeBinding } from "../src/native.js";
 import { codeRuleSchema } from "../src/code-rule-schema.js";
+import { fixturesPath } from "./oracles.js";
 
 // TSLint ports that recurse through `utils`, and constraint examples. Each deep case is one a port unrolled to a fixed
 // depth would miss. A golden rule's default doc is its TSLint pack doc (packs/tslint/rules/); option-variant overrides
@@ -11,7 +12,7 @@ const capabilities = readFileSync(new URL("../native/src/code_rule_dsl/capabilit
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 const port = (name: string) =>
   read(name.includes("/") ? `../packs/tslint/candidates/${name}.json` : `../packs/tslint/rules/${name}.json`);
-const example = (name: string) => read(`./fixtures/constraint-code-rules/${name}.json`);
+const example = (name: string) => readFileSync(fixturesPath("host", "constraint-code-rules", `${name}.json`), "utf8");
 
 /** The source text of every violation, in order. */
 function violations(document: string, source: string, path = "case.ts"): string[] {

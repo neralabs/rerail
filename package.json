@@ -71,7 +71,7 @@
     "build:native": "node scripts/require-cargo.mjs && napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
     "build:ts": "tsc -p tsconfig.build.json && esbuild src/session-presentation.ts --bundle --platform=node --format=esm --outfile=dist/session-presentation.js",
     "build:omp": "esbuild src/default-extension.ts --bundle --platform=node --target=node24 --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/default-extension.js",
-    "build:test-host": "esbuild integration/fixtures/omp-host.ts --bundle --packages=external --platform=node --target=node24 --format=esm --outfile=node_modules/.cache/rerail/omp-host.mjs",
+    "build:test-host": "esbuild integration/support/omp-host-extension.ts --bundle --packages=external --platform=node --target=node24 --format=esm --outfile=node_modules/.cache/rerail/omp-host.mjs",
     "build:events": "esbuild src/event-stream.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/event-stream.js",
     "build:cursor": "esbuild src/cursor-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/cursor-hook.js",
     "build:claude": "esbuild src/claude-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/claude-hook.js",

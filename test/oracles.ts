@@ -1,14 +1,19 @@
 import { readdirSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 
+/** A path in the repository, from its root: test data outside `fixtures/` (packs' upstream recordings, rules). */
+export function repositoryPath(...segments: string[]): string {
+  return join(repositoryRoot, ...segments);
+}
+
 /**
- * The conformance fixtures directory: `RERAIL_FIXTURES_DIR` if set (relative to the repository root),
- * else the repository's `fixtures/`.
+ * A path in the fixtures directory, the one place TypeScript resolves it (Rust's is `native/build.rs`):
+ * `RERAIL_FIXTURES_DIR` if set (relative to the repository root), else the repository's `fixtures/`.
  */
-export function rerailOraclesDirectory(): URL {
+export function fixturesPath(...segments: string[]): string {
   const configured = process.env.RERAIL_FIXTURES_DIR;
   const directory = resolve(repositoryRoot, configured || "fixtures");
   if (!isCheckout(directory)) {
@@ -18,7 +23,7 @@ export function rerailOraclesDirectory(): URL {
         : `Rerail fixtures not found in ${directory}: check out the repository's fixtures/ directory, or set RERAIL_FIXTURES_DIR`,
     );
   }
-  return pathToFileURL(`${directory}/`);
+  return join(directory, ...segments);
 }
 
 /** A directory with something in it: a sparse checkout can leave `fixtures/` empty. */

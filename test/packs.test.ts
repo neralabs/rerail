@@ -4,7 +4,7 @@
  * ported rules on the tools' fixtures, and on the pinned corpora that are checked out (RERAIL_PACK_CORPORA=1: every
  * corpus, a missing checkout failing; 0: none).
  *
- * The validator's own tests run it over the fixture packs in test/fixtures/packs/: `valid` passes, each negative
+ * The validator's own tests run it over the fixture packs in fixtures/packs/: `valid` passes, each negative
  * breaks one check of a copy of it, and `vue`, for a language core plans, passes with its rule not supported yet.
  */
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -15,9 +15,10 @@ import { afterEach, describe, expect, it, test } from "vitest";
 import { z } from "zod";
 import { PACK_CHECKS, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../conformance/pack-validation.js";
 import { compareDeterministicStrings } from "../src/stable-json.js";
+import { fixturesPath } from "./oracles.js";
 
 const PACKS = fileURLToPath(new URL("../packs/", import.meta.url));
-const FIXTURES = fileURLToPath(new URL("./fixtures/packs/", import.meta.url));
+const FIXTURES = fixturesPath("packs");
 const TIMEOUT = 600_000;
 
 const CORPORA: ValidatePackOptions = process.env.RERAIL_PACK_CORPORA === "1" ? { corpora: true } : process.env.RERAIL_PACK_CORPORA === "0" ? { corpora: false } : {};
@@ -175,7 +176,12 @@ describe("validatePack", () => {
     [
       "a copied file no UPSTREAM.md lists",
       directory => writeFileSync(join(directory, "upstream", "examplelint", "fixtures", "more.py"), "assert d\n"),
-      { licences: ["upstream/examplelint/fixtures/more.py is copied but no licenses/*/UPSTREAM.md lists it"] },
+      { licences: ["upstream/examplelint/fixtures/more.py is under upstream/<tool>/ but neither licenses/*/UPSTREAM.md (copied) nor its tool's UPSTREAM.md (Rerail's) lists it"] },
+    ],
+    [
+      "an authored file the tool's UPSTREAM.md does not list",
+      directory => writeFileSync(join(directory, "upstream", "examplelint", "UPSTREAM.md"), "# examplelint: files Rerail wrote\n"),
+      { licences: ["upstream/examplelint/fixtures/clean.py is under upstream/<tool>/ but neither licenses/*/UPSTREAM.md (copied) nor its tool's UPSTREAM.md (Rerail's) lists it"] },
     ],
   ];
 

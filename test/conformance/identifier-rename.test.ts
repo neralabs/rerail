@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { globalProtectedNames, renamedPack, renamedTools, renameFixtures, renameIdentifiers, syntaxDiagnostics, type Protection } from "../../conformance/languages/identifier-rename.js";
-import { listPortedPacks, loadPack, packDirectory } from "../../conformance/languages/pack.js";
+import { listPortedPacks, loadPack, PACKS_ROOT } from "../../conformance/languages/pack.js";
 import type { RuleRow } from "../../conformance/languages/report.js";
 import { runPack } from "../../conformance/languages/runner.js";
 
@@ -107,7 +107,7 @@ const shippedScores = (rows: readonly RuleRow[]): unknown[] =>
     }));
 
 const gated = listPortedPacks()
-  .map(name => loadPack(packDirectory(name)))
+  .map(name => loadPack(join(PACKS_ROOT, name)))
   .filter(loaded => loaded.pack.family === "ecma" && renamedTools(loaded).length > 0);
 
 describe.each(gated.map(loaded => [loaded.pack.pack, loaded] as const))("pack %s on renamed fixtures", (_, loaded) => {

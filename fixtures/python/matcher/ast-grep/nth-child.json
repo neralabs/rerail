@@ -1,0 +1,29 @@
+{
+  "upstream": "ast-grep 0.45.3",
+  "about": "Cases that pin `nthChild` to upstream ast-grep 0.45.3 (`rule/nth_child.rs`): the 1-based position among the parent's named children (comments count), as a number or `An+B`; `ofRule` counts only the siblings it matches and keeps the node's own bindings; `reverse` counts from the last. Each case runs through the CLI and both Rerail paths.",
+  "cases": [
+    {
+      "id": "nth-child-python",
+      "language": "python",
+      "source": "f(a, b=1, *c)\n[x, y, z]\n",
+      "rule": {
+        "kind": "identifier",
+        "nthChild": {
+          "position": 3
+        }
+      }
+    },
+    {
+      "id": "nth-child-python-statements",
+      "language": "python",
+      "source": "a = 1\nb = 2\nc = 3\n",
+      "rule": {
+        "kind": "expression_statement",
+        "nthChild": {
+          "position": "2n",
+          "reverse": true
+        }
+      }
+    }
+  ]
+}

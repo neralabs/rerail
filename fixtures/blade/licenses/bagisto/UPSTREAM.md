@@ -9,4 +9,4 @@ Paths are relative to `blade/`.
 
 | File | Upstream path | Copy |
 |---|---|---|
-| `view/directives.php` | packages/Webkul/Theme/src/Providers/ThemeServiceProvider.php | excerpt: the compile closures of the directives named there, the running application's values (keys, view paths) written as fixed values. |
+| `blade/directives.php` | packages/Webkul/Theme/src/Providers/ThemeServiceProvider.php | excerpt: the compile closures of the directives named there, the running application's values (keys, view paths) written as fixed values. |

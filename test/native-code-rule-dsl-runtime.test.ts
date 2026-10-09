@@ -9,6 +9,7 @@ import {
   type CodeRuleDslEvaluationMode as EvaluationMode,
 } from "../src/native.js";
 import { RULE_MODES } from "../src/rule-mode.js";
+import { fixturesPath } from "./oracles.js";
 
 const sourceSpanSchema = z.strictObject({
   startByte: z.number().int().nonnegative(),
@@ -154,7 +155,7 @@ function compileJson(clauses: unknown[], capabilityJson = capabilities()): Nativ
 
 /** Code-rule documents kept as engine-contract fixtures (formerly bundled defaults; every shipped rule is in a pack). */
 function compileCodeRuleFile(name: string): NativeCompiledCodeRule {
-  const source = readFileSync(new URL(`./fixtures/code-rule-dsl/${name}.json`, import.meta.url), "utf8");
+  const source = readFileSync(fixturesPath("host", "code-rule-dsl", `${name}.json`), "utf8");
   return nativeRuntime().compile(source, "json", capabilities());
 }
 

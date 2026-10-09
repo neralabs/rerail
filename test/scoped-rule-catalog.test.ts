@@ -3,7 +3,7 @@ import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../src/database.js";
@@ -16,6 +16,7 @@ import { exportScopedRules, importScopedRules } from "../src/rule-bootstrap.js";
 import { parseConversationRuleDocument } from "../src/rule-schema.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../src/seed.js";
 import { ruleDocumentDigest } from "../src/stable-json.js";
+import { fixturesPath } from "./oracles.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -194,7 +195,7 @@ describe("ScopedRuleCatalog", () => {
   });
 
   it("stores, exports, and resolves structural tool-call rules", async () => {
-    const tools = parseConversationRuleDocument(JSON.parse(readFileSync(resolve("test/fixtures/tool-call-rules.json"), "utf8")))
+    const tools = parseConversationRuleDocument(JSON.parse(readFileSync(fixturesPath("host", "tool-call-rules", "rules.json"), "utf8")))
       .sort((left, right) => left.id.localeCompare(right.id));
     const sourcePath = await catalogPath();
     const output = join(temporaryDirectories.at(-1)!, "rules.json");

@@ -1,15 +1,42 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { afterAll, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { loadNativeBinding } from "../src/native.js";
-import { UPSTREAM_FIELD_CASES } from "./fixtures/upstream-field-cases.js";
-import { UPSTREAM_NTH_CHILD_CASES } from "./fixtures/upstream-nth-child-cases.js";
-import { UPSTREAM_RELATIONAL_CASES, type UpstreamCase } from "./fixtures/upstream-relational-cases.js";
-import { UPSTREAM_STOP_BY_CASES } from "./fixtures/upstream-stop-by-cases.js";
-import { UPSTREAM_UTILS_CASES } from "./fixtures/upstream-utils-cases.js";
+import { fixturesPath } from "./oracles.js";
+
+const ruleObject = z.record(z.string(), z.unknown());
+/** A rule × source case pinned to upstream ast-grep: `fixtures/{ecma,python}/matcher/ast-grep/<feature>.json`. */
+const upstreamCaseSchema = z.strictObject({
+  id: z.string(),
+  language: z.enum(["typescript", "python"]),
+  source: z.string(),
+  rule: ruleObject,
+  /** Local utility rules `rule` and `constraints` may reference with `matches`. */
+  utils: z.record(z.string(), ruleObject).optional(),
+  constraints: z.record(z.string(), ruleObject).optional(),
+  /** Rerail's ast `languageOptions`; upstream ignores the field beside `rule` in a rule config. */
+  languageOptions: ruleObject.optional(),
+});
+type UpstreamCase = z.infer<typeof upstreamCaseSchema>;
+const upstreamCasesSchema = z.strictObject({ upstream: z.string(), about: z.string(), cases: z.array(upstreamCaseSchema) });
+
+/** One feature's cases, every family's (each file's `about` says what they pin). */
+function upstreamCases(feature: string): UpstreamCase[] {
+  return ["ecma", "python"].flatMap(family => {
+    const path = fixturesPath(family, "matcher", "ast-grep", `${feature}.json`);
+    return existsSync(path) ? upstreamCasesSchema.parse(JSON.parse(readFileSync(path, "utf8"))).cases : [];
+  });
+}
+
+const UPSTREAM_RELATIONAL_CASES = upstreamCases("relational");
+const UPSTREAM_FIELD_CASES = upstreamCases("field");
+const UPSTREAM_NTH_CHILD_CASES = upstreamCases("nth-child");
+const UPSTREAM_STOP_BY_CASES = upstreamCases("stop-by");
+const UPSTREAM_UTILS_CASES = upstreamCases("utils");
 
 // The pinned devDependency is the oracle; ast-grep-core in native/Cargo.toml is pinned to the same version.
 const UPSTREAM_VERSION = "0.45.3";

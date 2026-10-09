@@ -1,0 +1,32 @@
+{
+  "upstream": "ast-grep 0.45.3",
+  "about": "Cases that pin Rerail's `utils`/`matches` and `constraints` to upstream ast-grep 0.45.3: local utilities share the caller's metavariable environment and may recurse through relations; constraints filter single-node captures after the rule matches, with the same environment. Each runs through the CLI and both Rerail paths like the relational cases.",
+  "cases": [
+    {
+      "id": "python-util-recursion",
+      "language": "python",
+      "source": "def f():\n    return (((await_it(x))))\n\ndef g():\n    return x\n",
+      "rule": {
+        "kind": "return_statement",
+        "has": {
+          "matches": "wrapped-call"
+        }
+      },
+      "utils": {
+        "wrapped-call": {
+          "any": [
+            {
+              "kind": "call"
+            },
+            {
+              "kind": "parenthesized_expression",
+              "has": {
+                "matches": "wrapped-call"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

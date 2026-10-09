@@ -98,8 +98,8 @@ or names `runsOn`; when entries name different capabilities; when `runsOn` names
 
 A pack is a directory `packs/<id>/` that passes the [validation contract](pack-format.md#the-validation-contract).
 The models to copy: `packs/python/`, `packs/php/` or `packs/typescript/` (ported language packs), `packs/react/`, `packs/node/` or
-`packs/next/` (framework packs over a supported language), `test/fixtures/packs/valid/` (the smallest pack, with an
-example-proven rule and a ported one) and `test/fixtures/packs/vue/` (a pack for a planned language).
+`packs/next/` (framework packs over a supported language), `fixtures/packs/valid/` (the smallest pack, with an
+example-proven rule and a ported one) and `fixtures/packs/vue/` (a pack for a planned language).
 
 ### A pack for a supported language
 
@@ -196,7 +196,7 @@ The same files, with rules whose `language` the registry lists as `planned` (`vu
 capability their language has `not-supported-yet`. The pack lands: its checks pass, and each such rule's test is
 skipped as `not supported yet` with the engine's reason, for example
 ``/clauses/0/forbid/ast/language: `vue` is not supported yet``. Write its `examples` now; checks 3 and 4 run them
-once core reads the language, and any other compile error fails check 1 today. `test/fixtures/packs/vue/` is a
+once core reads the language, and any other compile error fails check 1 today. `fixtures/packs/vue/` is a
 complete example.
 
 ### A ported pack

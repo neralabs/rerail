@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { readFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderRerailSchemaModule, SCHEMA_SQL_PATH } from "../scripts/generate/schema/schema-sql.js";
@@ -9,8 +9,9 @@ import { parseConversationRuleDocument } from "../src/rule-schema.js";
 import { SqliteRuleStore } from "../src/rule-store.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, MOCK_SESSION_ID, mockSessionId, seedRerailDatabase } from "../src/seed.js";
 import { SqliteSessionReader, SqliteSessionStore } from "../src/session-store.js";
+import { fixturesPath } from "./oracles.js";
 
-const TOOL_CALL_RULES = parseConversationRuleDocument(JSON.parse(readFileSync(resolve("test/fixtures/tool-call-rules.json"), "utf8")));
+const TOOL_CALL_RULES = parseConversationRuleDocument(JSON.parse(readFileSync(fixturesPath("host", "tool-call-rules", "rules.json"), "utf8")));
 
 
 const temporaryDirectories: string[] = [];
