@@ -9,6 +9,7 @@ import ast
 import fnmatch
 import json
 import pathlib
+import re
 import subprocess
 import sys
 import warnings
@@ -95,7 +96,24 @@ def corpus_source(name: str, rules: list[str], skipped: list[str]) -> dict:
             "rules": sorted(rules), "skipped": sorted(skipped)}
 
 
+def source_lines(path: pathlib.Path) -> list[str]:
+    """The file's lines as CPython's tokenizer breaks them (`\\r\\n`, `\\r`, `\\n`), a leading byte-order mark dropped: the
+    lines Python's `ast` positions count."""
+    text = path.read_bytes().decode("utf-8")
+    return re.split(r"\r\n|\r|\n", text.removeprefix("﻿"))
+
+
+def code_point_column(lines: list[str], line: int, byte_offset: int) -> int:
+    """The 1-based code-point column of a 0-based UTF-8 byte offset on a 1-based line (Python's `ast` `col_offset` and
+    `end_col_offset`). Refused when the offset falls inside a character or past the line's end."""
+    encoded = lines[line - 1].encode("utf-8")
+    if byte_offset > len(encoded):
+        raise SystemExit(f"byte offset {byte_offset} is past the end of line {line}")
+    return len(encoded[:byte_offset].decode("utf-8")) + 1
+
+
 def write(path: pathlib.Path, tool: str, version: str, source: dict, findings: list[dict]) -> None:
-    findings = sorted(findings, key=lambda f: (f["rule"], f["path"], f["line"], f.get("column", 0)))
+    findings = sorted(findings, key=lambda f: (f["rule"], f["path"], f["line"], f.get("column", 0), f.get("endLine", 0),
+                                               f.get("endColumn", 0)))
     path.write_text(json.dumps({"tool": tool, "version": version, "source": source, "findings": findings},
                                indent=1, ensure_ascii=False) + "\n")

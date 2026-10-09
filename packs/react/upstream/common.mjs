@@ -1,11 +1,12 @@
 // Shared by the React pack's recorders (eslint-plugin-react/generate.mjs, eslint-plugin-react-hooks/generate.mjs):
 // the pins, the one ESLint configuration every recording is made with, fixture extraction from the upstream rule
-// tests (a stub RuleTester captures `run(name, rule, { valid, invalid })`), and the recording runs.
-// Run offline by a maintainer, never in CI.
+// tests (a stub RuleTester captures `run(name, rule, { valid, invalid })`), the recording runs, and each tool's
+// source facts (`source.json`, conformance/recorders/eslint-source.mjs). Run offline by a maintainer, never in CI.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertCommit, corpusFiles, lint, pack, pinnedRequire, REPOSITORY, writeRecording } from "../../../conformance/recorders/eslint-record.mjs";
+import { assertUpstream, sourceFacts, writeSource } from "../../../conformance/recorders/eslint-source.mjs";
 
 export const UPSTREAM_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 
@@ -44,7 +45,11 @@ export const RULES = {
 };
 export const ALL_RULES = Object.values(RULES).flat();
 
-/** The upstream checkouts the fixtures are extracted from, at the pinned commits. */
+/**
+ * The upstream checkouts the fixtures are extracted from, at the pinned commits, and how the tool's source facts read
+ * them: the release tag (fetched into the checkout) and the source tree the package is published from, the rules'
+ * modules, the upstream rule test files and the helper libraries the rules are written with.
+ */
 export const UPSTREAM = {
   "eslint-plugin-react": {
     title: "eslint-plugin-react 7.37.5",
@@ -54,6 +59,12 @@ export const UPSTREAM = {
     checkout: "upstream-eslint-plugin-react",
     project: "eslint-plugin-react",
     license: "MIT (Copyright (c) 2014 Yannick Croissant)",
+    tag: "v7.37.5",
+    plugin: { package: "eslint-plugin-react", namespace: "react" },
+    release: { path: "lib" },
+    implementation: "lib/rules/{rule}.js",
+    tests: ["tests/lib/rules/*.js"],
+    helpers: ["jsx-ast-utils"],
   },
   "eslint-plugin-react-hooks": {
     title: "eslint-plugin-react-hooks 7.1.1",
@@ -63,6 +74,14 @@ export const UPSTREAM = {
     checkout: "upstream-react",
     project: "react",
     license: "MIT (Copyright (c) Meta Platforms, Inc. and affiliates.)",
+    // The release tag is the commit before the published gitHead; both hold the same plugin sources. React stamps the
+    // version in ReactVersions.js when it builds.
+    tag: "eslint-plugin-react-hooks@7.1.1",
+    plugin: { package: "eslint-plugin-react-hooks", namespace: "react-hooks" },
+    release: { path: "packages/eslint-plugin-react-hooks/src", versionFile: "ReactVersions.js" },
+    implementation: "packages/eslint-plugin-react-hooks/src/rules/{Rule}.ts",
+    tests: ["packages/eslint-plugin-react-hooks/__tests__/ESLint*-test.js"],
+    helpers: [],
   },
 };
 
@@ -143,10 +162,12 @@ export function resetDirectory(path) {
 }
 
 /**
- * Writes the extracted cases (`{ rule, directory, kind, index, code, errors, origin, filename?, extension?, drop? }`)
- * under `<directory>/fixtures/`, records the pack configuration over them (every chosen rule on every file; the
- * recording holds `tool`'s rules, over the files ESLint parses) and checks each case: the rule's own finding count
- * under the pack configuration against the test's `errors`. The check's report goes to `<tools>/scratch/`.
+ * Writes the extracted cases (`{ rule, directory, kind, index, code, errors, origin, upstreamTest, label, filename?,
+ * extension?, drop? }`) under `<directory>/fixtures/`, records the pack configuration over them (every chosen rule on
+ * every file; the recording holds `tool`'s rules, over the files ESLint parses) and checks each case: the rule's own
+ * finding count under the pack configuration against the test's `errors`. The check's report goes to
+ * `<tools>/scratch/`. Returns the kept cases, the report, and the cases left out as source.json's `unscored` records
+ * them (`upstreamTest` is the case's upstream test file, `label` the case within it).
  */
 export async function finishFixtures(require, tool, directory, cases, tools) {
   const { ESLint } = require("eslint");
@@ -167,6 +188,10 @@ export async function finishFixtures(require, tool, directory, cases, tools) {
   const unparsable = new Map(skipped.map(entry => [entry.path, entry.reason]));
   for (const path of unparsable.keys()) rmSync(join(fixtures, path));
   const kept = written.filter(entry => !unparsable.has(entry.path));
+  const unscored = [
+    ...cases.filter(entry => entry.drop !== undefined).map(entry => ({ rule: entry.rule, test: entry.upstreamTest, case: entry.label, reason: "syntax" })),
+    ...written.filter(entry => unparsable.has(entry.path)).map(entry => ({ rule: entry.rule, test: entry.upstreamTest, case: entry.label, reason: "unparsable" })),
+  ];
   const upstream = UPSTREAM[tool];
   writeRecording(
     join(directory, "fixtures.expected.json"),
@@ -192,7 +217,7 @@ export async function finishFixtures(require, tool, directory, cases, tools) {
   mkdirSync(join(tools, "scratch"), { recursive: true });
   writeFileSync(join(tools, "scratch", `${tool}-fixtures-report.json`), `${JSON.stringify(report, null, 1)}\n`);
   console.log(`${tool}: ${cases.length} cases, ${dropped.length} dropped (syntax), ${report.unparsable.length} unparsable, ${kept.length} kept, ${mismatches.length} count mismatches`);
-  return { kept, report };
+  return { kept, report, unscored };
 }
 
 /** `licenses/<project>/LICENSE` (verbatim) and `UPSTREAM.md`: every copied file and every extracted fixture. */
@@ -202,14 +227,18 @@ export function writeLicense(tool, upstream, copied, kept) {
   mkdirSync(directory, { recursive: true });
   copyFileSync(join(upstream, "LICENSE"), join(directory, "LICENSE"));
   const rows = [
+    `| \`upstream/${tool}/source.json\` | the rules' implementations and tests, and the helpers they delegate to, at the revision above | extracted: the names, words and regexes \`source.json\` records |`,
     ...copied.map(entry => `| \`upstream/${tool}/${entry.file}\` | \`${entry.upstream}\` | verbatim |`),
     ...kept.map(entry => `| \`upstream/${tool}/fixtures/${entry.path}\` | \`${entry.origin}\` | extracted (its \`code\`, verbatim) |`),
   ];
   const text = `# ${meta.title}
 
+Revision: ${meta.commit}
+Source: ${meta.repository}
+
 Upstream: [${meta.repository.replace("https://github.com/", "")}](${meta.repository}/tree/${meta.commit}) at ${meta.reference} (commit \`${meta.commit}\`). License: ${meta.license}; [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at that commit.
 
-The files listed below are the upstream tests of the rules the React pack records (\`conformance.json\`, \`upstream/common.mjs\` \`RULES\`), and the test cases extracted from them, one case per file, and remain under ${meta.project}'s license. Every other file under \`upstream/${tool}/\` is Rerail's, under the Apache License 2.0 (the pack's \`LICENSE\`): \`generate.mjs\` (with its stub RuleTester), \`../common.mjs\` and the recordings they write by running the pinned plugin, as are the rule documents in \`rules/\`.
+The files listed below are the upstream tests of the rules the React pack records (\`conformance.json\`, \`upstream/common.mjs\` \`RULES\`), and the test cases extracted from them, one case per file, and remain under ${meta.project}'s license. Every other file under \`upstream/${tool}/\` is Rerail's, under the Apache License 2.0 (the pack's \`LICENSE\`): \`generate.mjs\` (with its stub RuleTester), \`../common.mjs\`, and the recordings they write by running the pinned plugin. \`source.json\`, the facts they record from the upstream source and tests at the revision above, holds names, words and regexes extracted from them: it is ${meta.project}'s material and Rerail's, under \`MIT AND Apache-2.0\`, as \`REUSE.toml\` annotates it, and the table lists it. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of eslint-plugin-react's and eslint-plugin-react-hooks' rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them.
 
 Paths are relative to the pack directory, \`packs/react/\`. \`<file> valid[i]\` / \`invalid[i]\` is the i-th case of the \`valid\` / \`invalid\` list the test file passes to \`RuleTester.run\`.
 
@@ -218,6 +247,37 @@ Paths are relative to the pack directory, \`packs/react/\`. \`<file> valid[i]\` 
 ${rows.join("\n")}
 `;
   writeFileSync(join(directory, "UPSTREAM.md"), text);
+}
+
+/**
+ * `<directory>/source.json`: `tool`'s source facts, under the approved configurations conformance.json declares for
+ * it, from the upstream checkout and every RuleTester run of its rule test files (`{ testFile, rule, tests }`), with
+ * the cases `finishFixtures` left out.
+ */
+export function recordSource(tool, directory, tools, upstream, runs, unscored) {
+  const meta = UPSTREAM[tool];
+  const pinned = pack("react").tools.find(entry => entry.name === tool);
+  if (pinned?.recommended === undefined) throw new Error(`conformance.json declares no recommended configurations for ${tool}`);
+  assertUpstream({ checkout: upstream, commit: meta.commit, tag: meta.tag, version: PINS[tool], tools, plugin: meta.plugin, release: meta.release });
+  const ported = pack("react").rules.filter(rule => rule.upstream.tool === tool).map(rule => rule.upstream.rule);
+  const facts = sourceFacts({
+    tool,
+    version: PINS[tool],
+    repository: meta.repository,
+    commit: meta.commit,
+    tag: meta.tag,
+    tools,
+    checkout: upstream,
+    plugin: meta.plugin,
+    configurations: pinned.recommended,
+    rules: ported,
+    implementation: meta.implementation,
+    helpers: meta.helpers,
+    runs,
+    unscored: unscored.filter(entry => ported.includes(entry.rule)),
+  });
+  writeSource(join(directory, "source.json"), facts);
+  console.log(`${tool} source: ${Object.keys(facts.rules).length} rules, ${facts.testWords.length} test words`);
 }
 
 /** Records the pack configuration over each pinned corpus (`corpus-<name>.expected.json`). */

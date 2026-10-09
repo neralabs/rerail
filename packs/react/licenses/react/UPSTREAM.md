@@ -1,13 +1,17 @@
 # eslint-plugin-react-hooks 7.1.1
 
+Revision: 1ddff43c41147b880c22eb363e07aade5a71c5d9
+Source: https://github.com/facebook/react
+
 Upstream: [facebook/react](https://github.com/facebook/react/tree/1ddff43c41147b880c22eb363e07aade5a71c5d9) at the `gitHead` of the published eslint-plugin-react-hooks 7.1.1 (commit `1ddff43c41147b880c22eb363e07aade5a71c5d9`). License: MIT (Copyright (c) Meta Platforms, Inc. and affiliates.); [`LICENSE`](LICENSE) is the upstream license file, copied verbatim at that commit.
 
-The files listed below are the upstream tests of the rules the React pack records (`conformance.json`, `upstream/common.mjs` `RULES`), and the test cases extracted from them, one case per file, and remain under react's license. Every other file under `upstream/eslint-plugin-react-hooks/` is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): `generate.mjs` (with its stub RuleTester), `../common.mjs` and the recordings they write by running the pinned plugin. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of eslint-plugin-react's and eslint-plugin-react-hooks' rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them.
+The files listed below are the upstream tests of the rules the React pack records (`conformance.json`, `upstream/common.mjs` `RULES`), and the test cases extracted from them, one case per file, and remain under react's license. Every other file under `upstream/eslint-plugin-react-hooks/` is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): `generate.mjs` (with its stub RuleTester), `../common.mjs`, and the recordings they write by running the pinned plugin. `source.json`, the facts they record from the upstream source and tests at the revision above, holds names, words and regexes extracted from them: it is react's material and Rerail's, under `MIT AND Apache-2.0`, as `REUSE.toml` annotates it, and the table lists it. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of eslint-plugin-react's and eslint-plugin-react-hooks' rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them.
 
 Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `invalid[i]` is the i-th case of the `valid` / `invalid` list the test file passes to `RuleTester.run`.
 
 | File | Upstream path | Copy |
 |---|---|---|
+| `upstream/eslint-plugin-react-hooks/source.json` | the rules' implementations and tests, and the helpers they delegate to, at the revision above | extracted: the names, words and regexes `source.json` records |
 | `upstream/eslint-plugin-react-hooks/tests/__tests__/ESLintRulesOfHooks-test.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | verbatim |
 | `upstream/eslint-plugin-react-hooks/tests/__tests__/ESLintRuleExhaustiveDeps-test.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRuleExhaustiveDeps-test.js` | verbatim |
 | `upstream/eslint-plugin-react-hooks/fixtures/rules-of-hooks/valid-000.jsx` | `tests/__tests__/ESLintRulesOfHooks-test.js run "eslint: v7, parser: babel-eslint" valid[0]` | extracted (its `code`, verbatim) |

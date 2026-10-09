@@ -20,259 +20,302 @@
    "rule": "B101",
    "path": "django/contrib/auth/hashers.py",
    "line": 339,
-   "column": 9
+   "column": 9,
+   "endColumn": 43
   },
   {
    "rule": "B101",
    "path": "django/contrib/auth/hashers.py",
    "line": 418,
-   "column": 9
+   "column": 9,
+   "endColumn": 43
   },
   {
    "rule": "B101",
    "path": "django/contrib/auth/hashers.py",
    "line": 439,
-   "column": 9
+   "column": 9,
+   "endColumn": 43
   },
   {
    "rule": "B101",
    "path": "django/contrib/auth/hashers.py",
    "line": 521,
-   "column": 9
+   "column": 9,
+   "endColumn": 43
   },
   {
    "rule": "B101",
    "path": "django/contrib/auth/hashers.py",
    "line": 532,
-   "column": 9
+   "column": 9,
+   "endColumn": 43
   },
   {
    "rule": "B101",
    "path": "django/contrib/auth/hashers.py",
    "line": 610,
-   "column": 9
+   "column": 9,
+   "endColumn": 43
   },
   {
    "rule": "B101",
    "path": "django/contrib/auth/hashers.py",
    "line": 670,
-   "column": 9
+   "column": 9,
+   "endColumn": 43
   },
   {
    "rule": "B101",
    "path": "django/contrib/staticfiles/storage.py",
    "line": 307,
-   "column": 17
+   "column": 17,
+   "endColumn": 64
   },
   {
    "rule": "B101",
    "path": "django/core/handlers/asgi.py",
    "line": 226,
-   "column": 9
+   "column": 9,
+   "endColumn": 86
   },
   {
    "rule": "B101",
    "path": "django/core/mail/handler.py",
    "line": 50,
-   "column": 13
+   "column": 13,
+   "endColumn": 46
   },
   {
    "rule": "B101",
    "path": "django/core/mail/handler.py",
    "line": 67,
-   "column": 13
+   "column": 13,
+   "endColumn": 49
   },
   {
    "rule": "B101",
    "path": "django/db/migrations/autodetector.py",
    "line": 864,
-   "column": 13
+   "column": 13,
+   "endColumn": 52
   },
   {
    "rule": "B101",
    "path": "django/db/migrations/autodetector.py",
    "line": 1020,
-   "column": 13
+   "column": 13,
+   "endColumn": 52
   },
   {
    "rule": "B101",
    "path": "django/db/migrations/graph.py",
    "line": 92,
-   "column": 9
+   "column": 9,
+   "endColumn": 40
   },
   {
    "rule": "B101",
    "path": "django/db/migrations/state.py",
    "line": 108,
-   "column": 13
+   "column": 13,
+   "endColumn": 46
   },
   {
    "rule": "B101",
    "path": "django/db/migrations/state.py",
    "line": 479,
-   "column": 13
+   "column": 13,
+   "endColumn": 74
   },
   {
    "rule": "B101",
    "path": "django/db/models/base.py",
    "line": 974,
-   "column": 9
+   "column": 9,
+   "endColumn": 70
   },
   {
    "rule": "B101",
    "path": "django/db/models/base.py",
    "line": 975,
-   "column": 9
+   "column": 9,
+   "endColumn": 54
   },
   {
    "rule": "B101",
    "path": "django/db/models/expressions.py",
    "line": 213,
-   "column": 9
+   "column": 9,
+   "endColumn": 25
   },
   {
    "rule": "B101",
    "path": "django/db/models/expressions.py",
    "line": 1419,
-   "column": 9
+   "column": 9,
+   "endColumn": 89
   },
   {
    "rule": "B101",
    "path": "django/db/models/fields/__init__.py",
    "line": 1445,
-   "column": 13
+   "column": 13,
+   "endColumn": 52
   },
   {
    "rule": "B101",
    "path": "django/db/models/fields/related.py",
    "line": 1625,
-   "column": 13
+   "column": 13,
+   "endColumn": 14
   },
   {
    "rule": "B101",
    "path": "django/db/models/fields/related.py",
    "line": 1776,
-   "column": 17
+   "column": 17,
+   "endColumn": 18
   },
   {
    "rule": "B101",
    "path": "django/db/models/functions/datetime.py",
    "line": 102,
-   "column": 13
+   "column": 13,
+   "endColumn": 67
   },
   {
    "rule": "B101",
    "path": "django/db/models/query.py",
    "line": 958,
-   "column": 21
+   "column": 21,
+   "endColumn": 73
   },
   {
    "rule": "B101",
    "path": "django/db/models/sql/compiler.py",
    "line": 262,
-   "column": 9
+   "column": 9,
+   "endColumn": 67
   },
   {
    "rule": "B101",
    "path": "django/db/models/sql/compiler.py",
    "line": 1950,
-   "column": 9
+   "column": 9,
+   "endColumn": 10
   },
   {
    "rule": "B101",
    "path": "django/db/models/sql/query.py",
    "line": 956,
-   "column": 13
+   "column": 13,
+   "endColumn": 63
   },
   {
    "rule": "B101",
    "path": "django/db/models/sql/query.py",
    "line": 1012,
-   "column": 9
+   "column": 9,
+   "endColumn": 63
   },
   {
    "rule": "B101",
    "path": "django/db/models/sql/where.py",
    "line": 200,
-   "column": 9
+   "column": 9,
+   "endColumn": 51
   },
   {
    "rule": "B101",
    "path": "django/db/models/utils.py",
    "line": 19,
-   "column": 9
+   "column": 9,
+   "endColumn": 37
   },
   {
    "rule": "B101",
    "path": "django/http/multipartparser.py",
    "line": 461,
-   "column": 17
+   "column": 17,
+   "endColumn": 89
   },
   {
    "rule": "B101",
    "path": "django/middleware/csrf.py",
    "line": 156,
-   "column": 5
+   "column": 5,
+   "endColumn": 57
   },
   {
    "rule": "B101",
    "path": "django/template/base.py",
    "line": 463,
-   "column": 17
+   "column": 17,
+   "endColumn": 56
   },
   {
    "rule": "B101",
    "path": "django/test/client.py",
    "line": 93,
-   "column": 9
+   "column": 9,
+   "endColumn": 84
   },
   {
    "rule": "B101",
    "path": "django/test/client.py",
    "line": 106,
-   "column": 9
+   "column": 9,
+   "endColumn": 84
   },
   {
    "rule": "B101",
    "path": "django/test/runner.py",
    "line": 998,
-   "column": 17
+   "column": 17,
+   "endColumn": 37
   },
   {
    "rule": "B101",
    "path": "django/test/utils.py",
    "line": 577,
-   "column": 13
+   "column": 13,
+   "endColumn": 30
   },
   {
    "rule": "B101",
    "path": "django/test/utils.py",
    "line": 580,
-   "column": 13
+   "column": 13,
+   "endColumn": 28
   },
   {
    "rule": "B101",
    "path": "django/utils/regex_helper.py",
    "line": 351,
-   "column": 13
+   "column": 13,
+   "endColumn": 84
   },
   {
    "rule": "B101",
    "path": "django/utils/version.py",
    "line": 29,
-   "column": 5
+   "column": 5,
+   "endColumn": 34
   },
   {
    "rule": "B101",
    "path": "django/utils/version.py",
    "line": 30,
-   "column": 5
+   "column": 5,
+   "endColumn": 59
   },
   {
    "rule": "B610",
    "path": "django/db/models/fields/related_descriptors.py",
    "line": 1231,
-   "column": 24
+   "column": 24,
+   "endColumn": 14
   }
  ]
 }

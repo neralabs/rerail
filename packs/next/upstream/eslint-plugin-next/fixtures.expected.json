@@ -220,751 +220,1001 @@
    "rule": "@next/next/google-font-display",
    "path": "google-font-display/invalid-000.js",
    "line": 6,
-   "column": 12
+   "column": 12,
+   "endLine": 9,
+   "endColumn": 14
   },
   {
    "rule": "@next/next/google-font-display",
    "path": "google-font-display/invalid-001.js",
    "line": 6,
-   "column": 12
+   "column": 12,
+   "endLine": 9,
+   "endColumn": 14
   },
   {
    "rule": "@next/next/google-font-display",
    "path": "google-font-display/invalid-002.js",
    "line": 6,
-   "column": 12
+   "column": 12,
+   "endLine": 9,
+   "endColumn": 14
   },
   {
    "rule": "@next/next/google-font-display",
    "path": "google-font-display/invalid-003.js",
    "line": 6,
-   "column": 12
+   "column": 12,
+   "endLine": 9,
+   "endColumn": 14
   },
   {
    "rule": "@next/next/google-font-display",
    "path": "no-page-custom-font/invalid-000/pages/index.tsx",
    "line": 7,
-   "column": 15
+   "column": 15,
+   "endLine": 10,
+   "endColumn": 17
   },
   {
    "rule": "@next/next/google-font-display",
    "path": "no-page-custom-font/invalid-001/pages/_document.js",
    "line": 8,
-   "column": 13
+   "column": 13,
+   "endLine": 11,
+   "endColumn": 15
   },
   {
    "rule": "@next/next/google-font-display",
    "path": "no-page-custom-font/invalid-001/pages/_document.js",
    "line": 12,
-   "column": 13
+   "column": 13,
+   "endLine": 15,
+   "endColumn": 17
   },
   {
    "rule": "@next/next/google-font-preconnect",
    "path": "google-font-preconnect/invalid-000.js",
    "line": 4,
-   "column": 11
+   "column": 11,
+   "endLine": 4,
+   "endColumn": 51
   },
   {
    "rule": "@next/next/google-font-preconnect",
    "path": "google-font-preconnect/invalid-001.js",
    "line": 4,
-   "column": 11
+   "column": 11,
+   "endLine": 4,
+   "endColumn": 65
   },
   {
    "rule": "@next/next/inline-script-id",
    "path": "inline-script-id/invalid-000.js",
    "line": 5,
-   "column": 13
+   "column": 13,
+   "endLine": 7,
+   "endColumn": 22
   },
   {
    "rule": "@next/next/inline-script-id",
    "path": "inline-script-id/invalid-001.js",
    "line": 5,
-   "column": 13
+   "column": 13,
+   "endLine": 9,
+   "endColumn": 15
   },
   {
    "rule": "@next/next/inline-script-id",
    "path": "inline-script-id/invalid-002.js",
    "line": 5,
-   "column": 13
+   "column": 13,
+   "endLine": 7,
+   "endColumn": 24
   },
   {
    "rule": "@next/next/inline-script-id",
    "path": "inline-script-id/invalid-003.js",
    "line": 5,
-   "column": 13
+   "column": 13,
+   "endLine": 9,
+   "endColumn": 15
   },
   {
    "rule": "@next/next/next-script-for-ga",
    "path": "next-script-for-ga/invalid-000.js",
    "line": 7,
-   "column": 17
+   "column": 17,
+   "endLine": 7,
+   "endColumn": 101
   },
   {
    "rule": "@next/next/next-script-for-ga",
    "path": "next-script-for-ga/invalid-001.js",
    "line": 7,
-   "column": 17
+   "column": 17,
+   "endLine": 17,
+   "endColumn": 23
   },
   {
    "rule": "@next/next/next-script-for-ga",
    "path": "next-script-for-ga/invalid-002.js",
    "line": 14,
-   "column": 17
+   "column": 17,
+   "endLine": 14,
+   "endColumn": 83
   },
   {
    "rule": "@next/next/next-script-for-ga",
    "path": "next-script-for-ga/invalid-003.js",
    "line": 18,
-   "column": 17
+   "column": 17,
+   "endLine": 18,
+   "endColumn": 83
   },
   {
    "rule": "@next/next/no-assign-module-variable",
    "path": "no-assign-module-variable/invalid-000.js",
    "line": 2,
-   "column": 7
+   "column": 7,
+   "endLine": 2,
+   "endColumn": 23
   },
   {
    "rule": "@next/next/no-async-client-component",
    "path": "no-async-client-component/invalid-000.js",
    "line": 5,
-   "column": 7
+   "column": 7,
+   "endLine": 7,
+   "endColumn": 8
   },
   {
    "rule": "@next/next/no-async-client-component",
    "path": "no-async-client-component/invalid-001.js",
    "line": 5,
-   "column": 7
+   "column": 7,
+   "endLine": 7,
+   "endColumn": 8
   },
   {
    "rule": "@next/next/no-async-client-component",
    "path": "no-async-client-component/invalid-002.js",
    "line": 5,
-   "column": 7
+   "column": 7,
+   "endLine": 7,
+   "endColumn": 8
   },
   {
    "rule": "@next/next/no-async-client-component",
    "path": "no-async-client-component/invalid-003.js",
    "line": 5,
-   "column": 7
+   "column": 7,
+   "endLine": 7,
+   "endColumn": 8
   },
   {
    "rule": "@next/next/no-async-client-component",
    "path": "no-async-client-component/invalid-004.js",
    "line": 5,
-   "column": 7
+   "column": 7,
+   "endLine": 7,
+   "endColumn": 8
   },
   {
    "rule": "@next/next/no-before-interactive-script-outside-document",
    "path": "no-before-interactive-script-outside-document/invalid-000/pages/index.js",
    "line": 7,
-   "column": 11
+   "column": 11,
+   "endLine": 11,
+   "endColumn": 12
   },
   {
    "rule": "@next/next/no-before-interactive-script-outside-document",
    "path": "no-before-interactive-script-outside-document/invalid-001/components/outside-known-dirs.js",
    "line": 7,
-   "column": 11
+   "column": 11,
+   "endLine": 11,
+   "endColumn": 12
   },
   {
    "rule": "@next/next/no-before-interactive-script-outside-document",
    "path": "no-before-interactive-script-outside-document/invalid-002/Users/user_name/projects/project-name/pages/layout.tsx",
    "line": 8,
-   "column": 13
+   "column": 13,
+   "endLine": 11,
+   "endColumn": 15
   },
   {
    "rule": "@next/next/no-before-interactive-script-outside-document",
    "path": "no-before-interactive-script-outside-document/invalid-003/C/Users/username/projects/project-name/pages/layout.tsx",
    "line": 8,
-   "column": 13
+   "column": 13,
+   "endLine": 11,
+   "endColumn": 15
   },
   {
    "rule": "@next/next/no-before-interactive-script-outside-document",
    "path": "no-before-interactive-script-outside-document/invalid-004/Users/user_name/projects/project-name/src/pages/layout.tsx",
    "line": 8,
-   "column": 13
+   "column": 13,
+   "endLine": 11,
+   "endColumn": 15
   },
   {
    "rule": "@next/next/no-before-interactive-script-outside-document",
    "path": "no-before-interactive-script-outside-document/invalid-005/C/Users/username/projects/project-name/src/pages/layout.tsx",
    "line": 8,
-   "column": 13
+   "column": 13,
+   "endLine": 11,
+   "endColumn": 15
   },
   {
    "rule": "@next/next/no-css-tags",
    "path": "no-css-tags/invalid-000.js",
    "line": 9,
-   "column": 17
+   "column": 17,
+   "endLine": 9,
+   "endColumn": 78
   },
   {
    "rule": "@next/next/no-css-tags",
    "path": "no-css-tags/invalid-001.js",
    "line": 3,
-   "column": 9
+   "column": 9,
+   "endLine": 3,
+   "endColumn": 70
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "google-font-display/valid-001.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 54
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "google-font-display/valid-002.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 54
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "no-css-tags/invalid-000.js",
    "line": 2,
-   "column": 7
+   "column": 7,
+   "endLine": 2,
+   "endColumn": 42
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "no-css-tags/valid-000.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "no-css-tags/valid-001.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "no-css-tags/valid-002.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "no-css-tags/valid-003.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "no-document-import-in-page/invalid-000/components/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "no-document-import-in-page/invalid-001/pages/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "no-sync-scripts/invalid-000.js",
    "line": 2,
-   "column": 7
+   "column": 7,
+   "endLine": 2,
+   "endColumn": 42
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "no-sync-scripts/invalid-001.js",
    "line": 2,
-   "column": 7
+   "column": 7,
+   "endLine": 2,
+   "endColumn": 42
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "no-sync-scripts/valid-000.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "no-sync-scripts/valid-001.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "no-title-in-document-head/invalid-000.js",
    "line": 2,
-   "column": 7
+   "column": 7,
+   "endLine": 2,
+   "endColumn": 44
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "no-title-in-document-head/valid-001.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 54
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "no-unwanted-polyfillio/invalid-000.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "no-unwanted-polyfillio/invalid-003.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "no-unwanted-polyfillio/valid-000.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "@next/next/no-document-import-in-page",
    "path": "no-unwanted-polyfillio/valid-001.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "@next/next/no-duplicate-head",
    "path": "no-duplicate-head/invalid-000/pages/_document.js",
    "line": 10,
-   "column": 15
+   "column": 15,
+   "endLine": 10,
+   "endColumn": 23
   },
   {
    "rule": "@next/next/no-duplicate-head",
    "path": "no-duplicate-head/invalid-000/pages/_document.js",
    "line": 11,
-   "column": 15
+   "column": 15,
+   "endLine": 11,
+   "endColumn": 23
   },
   {
    "rule": "@next/next/no-duplicate-head",
    "path": "no-duplicate-head/invalid-001/pages/_document.page.tsx",
    "line": 20,
-   "column": 15
+   "column": 15,
+   "endLine": 26,
+   "endColumn": 22
   },
   {
    "rule": "@next/next/no-head-element",
    "path": "no-head-element/invalid-000/pages/index.js",
    "line": 6,
-   "column": 15
+   "column": 15,
+   "endLine": 6,
+   "endColumn": 21
   },
   {
    "rule": "@next/next/no-head-import-in-document",
    "path": "no-duplicate-head/invalid-000/pages/_document.js",
    "line": 3,
-   "column": 7
+   "column": 7,
+   "endLine": 3,
+   "endColumn": 35
   },
   {
    "rule": "@next/next/no-head-import-in-document",
    "path": "no-duplicate-head/invalid-001/pages/_document.page.tsx",
    "line": 3,
-   "column": 7
+   "column": 7,
+   "endLine": 3,
+   "endColumn": 35
   },
   {
    "rule": "@next/next/no-head-import-in-document",
    "path": "no-head-import-in-document/invalid-000/pages/_document.js",
    "line": 3,
-   "column": 7
+   "column": 7,
+   "endLine": 3,
+   "endColumn": 35
   },
   {
    "rule": "@next/next/no-head-import-in-document",
    "path": "no-head-import-in-document/invalid-001/pages/_document.page.tsx",
    "line": 3,
-   "column": 7
+   "column": 7,
+   "endLine": 3,
+   "endColumn": 35
   },
   {
    "rule": "@next/next/no-head-import-in-document",
    "path": "no-head-import-in-document/invalid-002/pages/_document/index.js",
    "line": 3,
-   "column": 7
+   "column": 7,
+   "endLine": 3,
+   "endColumn": 35
   },
   {
    "rule": "@next/next/no-head-import-in-document",
    "path": "no-head-import-in-document/invalid-003/pages/_document/index.tsx",
    "line": 3,
-   "column": 7
+   "column": 7,
+   "endLine": 3,
+   "endColumn": 35
   },
   {
    "rule": "@next/next/no-head-import-in-document",
    "path": "no-page-custom-font/invalid-001/pages/_document.js",
    "line": 2,
-   "column": 7
+   "column": 7,
+   "endLine": 2,
+   "endColumn": 35
   },
   {
    "rule": "@next/next/no-img-element",
    "path": "no-img-element/invalid-000.js",
    "line": 6,
-   "column": 15
+   "column": 15,
+   "endLine": 11,
+   "endColumn": 17
   },
   {
    "rule": "@next/next/no-img-element",
    "path": "no-img-element/invalid-001.js",
    "line": 5,
-   "column": 13
+   "column": 13,
+   "endLine": 10,
+   "endColumn": 15
   },
   {
    "rule": "@next/next/no-img-element",
    "path": "no-img-element/invalid-002/some/non-metadata-route-image.tsx",
    "line": 6,
-   "column": 5
+   "column": 5,
+   "endLine": 12,
+   "endColumn": 7
   },
   {
    "rule": "@next/next/no-img-element",
    "path": "no-img-element/valid-003/src/app/icon.js",
    "line": 6,
-   "column": 7
+   "column": 7,
+   "endLine": 12,
+   "endColumn": 9
   },
   {
    "rule": "@next/next/no-img-element",
    "path": "no-img-element/valid-004/app/opengraph-image.tsx",
    "line": 6,
-   "column": 7
+   "column": 7,
+   "endLine": 12,
+   "endColumn": 9
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-000.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 23
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-001.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-002.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 31
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-003.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 30
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-004.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-005.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-006.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-007.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-008.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 40
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-009.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-010.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 30
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-011.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 27
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-012.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-013.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 40
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-014.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 31
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-015.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-016.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-017.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 35
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-018.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 41
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-019.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-020.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-021.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-022.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-023.js",
    "line": 3,
-   "column": 11
+   "column": 11,
+   "endLine": 3,
+   "endColumn": 30
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-024.js",
    "line": 3,
-   "column": 11
+   "column": 11,
+   "endLine": 3,
+   "endColumn": 30
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-025.js",
    "line": 3,
-   "column": 11
+   "column": 11,
+   "endLine": 3,
+   "endColumn": 30
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-026.js",
    "line": 4,
-   "column": 11
+   "column": 11,
+   "endLine": 4,
+   "endColumn": 30
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-027.js",
    "line": 3,
-   "column": 13
+   "column": 13,
+   "endLine": 3,
+   "endColumn": 48
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
    "path": "no-location-assign-relative-destination/invalid-028.js",
    "line": 3,
-   "column": 13
+   "column": 13,
+   "endLine": 3,
+   "endColumn": 42
   },
   {
    "rule": "@next/next/no-page-custom-font",
    "path": "google-font-display/invalid-000.js",
    "line": 6,
-   "column": 12
+   "column": 12,
+   "endLine": 9,
+   "endColumn": 14
   },
   {
    "rule": "@next/next/no-page-custom-font",
    "path": "google-font-display/invalid-001.js",
    "line": 6,
-   "column": 12
+   "column": 12,
+   "endLine": 9,
+   "endColumn": 14
   },
   {
    "rule": "@next/next/no-page-custom-font",
    "path": "google-font-display/invalid-002.js",
    "line": 6,
-   "column": 12
+   "column": 12,
+   "endLine": 9,
+   "endColumn": 14
   },
   {
    "rule": "@next/next/no-page-custom-font",
    "path": "google-font-display/invalid-003.js",
    "line": 6,
-   "column": 12
+   "column": 12,
+   "endLine": 9,
+   "endColumn": 14
   },
   {
    "rule": "@next/next/no-page-custom-font",
    "path": "google-font-display/valid-000.js",
    "line": 15,
-   "column": 11
+   "column": 11,
+   "endLine": 18,
+   "endColumn": 13
   },
   {
    "rule": "@next/next/no-page-custom-font",
    "path": "google-font-display/valid-001.js",
    "line": 8,
-   "column": 15
+   "column": 15,
+   "endLine": 11,
+   "endColumn": 17
   },
   {
    "rule": "@next/next/no-page-custom-font",
    "path": "google-font-display/valid-002.js",
    "line": 8,
-   "column": 15
+   "column": 15,
+   "endLine": 12,
+   "endColumn": 17
   },
   {
    "rule": "@next/next/no-page-custom-font",
    "path": "no-css-tags/valid-001.js",
    "line": 7,
-   "column": 15
+   "column": 15,
+   "endLine": 7,
+   "endColumn": 110
   },
   {
    "rule": "@next/next/no-page-custom-font",
    "path": "no-page-custom-font/invalid-000/pages/index.tsx",
    "line": 7,
-   "column": 15
+   "column": 15,
+   "endLine": 10,
+   "endColumn": 17
   },
   {
    "rule": "@next/next/no-page-custom-font",
    "path": "no-page-custom-font/invalid-001/pages/_document.js",
    "line": 8,
-   "column": 13
+   "column": 13,
+   "endLine": 11,
+   "endColumn": 15
   },
   {
    "rule": "@next/next/no-page-custom-font",
    "path": "no-page-custom-font/invalid-001/pages/_document.js",
    "line": 12,
-   "column": 13
+   "column": 13,
+   "endLine": 15,
+   "endColumn": 17
   },
   {
    "rule": "@next/next/no-script-component-in-head",
    "path": "no-script-component-in-head/invalid-000/pages/index.js",
    "line": 7,
-   "column": 13
+   "column": 13,
+   "endLine": 9,
+   "endColumn": 20
   },
   {
    "rule": "@next/next/no-styled-jsx-in-document",
    "path": "no-styled-jsx-in-document/invalid-000/pages/_document.js",
    "line": 14,
-   "column": 21
+   "column": 21,
+   "endLine": 14,
+   "endColumn": 32
   },
   {
    "rule": "@next/next/no-sync-scripts",
    "path": "no-sync-scripts/invalid-000.js",
    "line": 9,
-   "column": 17
+   "column": 17,
+   "endLine": 9,
+   "endColumn": 48
   },
   {
    "rule": "@next/next/no-sync-scripts",
    "path": "no-sync-scripts/invalid-001.js",
    "line": 9,
-   "column": 17
+   "column": 17,
+   "endLine": 9,
+   "endColumn": 41
   },
   {
    "rule": "@next/next/no-sync-scripts",
    "path": "no-unwanted-polyfillio/invalid-000.js",
    "line": 8,
-   "column": 15
+   "column": 15,
+   "endLine": 8,
+   "endColumn": 144
   },
   {
    "rule": "@next/next/no-sync-scripts",
    "path": "no-unwanted-polyfillio/invalid-001.js",
    "line": 7,
-   "column": 15
+   "column": 15,
+   "endLine": 7,
+   "endColumn": 104
   },
   {
    "rule": "@next/next/no-sync-scripts",
    "path": "no-unwanted-polyfillio/invalid-003.js",
    "line": 8,
-   "column": 17
+   "column": 17,
+   "endLine": 8,
+   "endColumn": 98
   },
   {
    "rule": "@next/next/no-sync-scripts",
    "path": "no-unwanted-polyfillio/valid-000.js",
    "line": 8,
-   "column": 15
+   "column": 15,
+   "endLine": 8,
+   "endColumn": 93
   },
   {
    "rule": "@next/next/no-sync-scripts",
    "path": "no-unwanted-polyfillio/valid-001.js",
    "line": 8,
-   "column": 15
+   "column": 15,
+   "endLine": 8,
+   "endColumn": 98
   },
   {
    "rule": "@next/next/no-title-in-document-head",
    "path": "no-title-in-document-head/invalid-000.js",
    "line": 8,
-   "column": 15
+   "column": 15,
+   "endLine": 8,
+   "endColumn": 43
   },
   {
    "rule": "@next/next/no-typos",
    "path": "no-typos/invalid-000/pages/index.js",
    "line": 5,
-   "column": 9
+   "column": 9,
+   "endLine": 5,
+   "endColumn": 54
   },
   {
    "rule": "@next/next/no-typos",
    "path": "no-typos/invalid-001/pages/index.js",
    "line": 5,
-   "column": 9
+   "column": 9,
+   "endLine": 5,
+   "endColumn": 50
   },
   {
    "rule": "@next/next/no-typos",
    "path": "no-typos/invalid-001/pages/index.js",
    "line": 6,
-   "column": 9
+   "column": 9,
+   "endLine": 6,
+   "endColumn": 50
   },
   {
    "rule": "@next/next/no-typos",
    "path": "no-typos/invalid-002/pages/index.js",
    "line": 5,
-   "column": 9
+   "column": 9,
+   "endLine": 5,
+   "endColumn": 53
   },
   {
    "rule": "@next/next/no-typos",
    "path": "no-typos/invalid-003/pages/index.js",
    "line": 5,
-   "column": 9
+   "column": 9,
+   "endLine": 5,
+   "endColumn": 52
   },
   {
    "rule": "@next/next/no-unwanted-polyfillio",
    "path": "no-unwanted-polyfillio/invalid-000.js",
    "line": 8,
-   "column": 15
+   "column": 15,
+   "endLine": 8,
+   "endColumn": 144
   },
   {
    "rule": "@next/next/no-unwanted-polyfillio",
    "path": "no-unwanted-polyfillio/invalid-001.js",
    "line": 7,
-   "column": 15
+   "column": 15,
+   "endLine": 7,
+   "endColumn": 104
   },
   {
    "rule": "@next/next/no-unwanted-polyfillio",
    "path": "no-unwanted-polyfillio/invalid-002.js",
    "line": 7,
-   "column": 15
+   "column": 15,
+   "endLine": 7,
+   "endColumn": 110
   },
   {
    "rule": "@next/next/no-unwanted-polyfillio",
    "path": "no-unwanted-polyfillio/invalid-003.js",
    "line": 8,
-   "column": 17
+   "column": 17,
+   "endLine": 8,
+   "endColumn": 98
   }
  ]
 }

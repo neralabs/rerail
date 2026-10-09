@@ -2,11 +2,14 @@
 
 Upstream: [Ruff 0.16.9](https://github.com/astral-sh/ruff/tree/0.16.9). License: MIT (Copyright (c) 2022 Charles Marsh); [`LICENSE`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
+Source: https://github.com/astral-sh/ruff
+Revision: 0be08a206f9c3180afd3e93bcc792ed5cb1f4db1
+
 The files listed below contain material copied from Ruff and remain under its license. Every other file in this
 pack is Rerail's. The rule documents in `rules/` are Rerail's re-implementations of Bandit's and Ruff's rules,
 published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest is under
-the Apache License 2.0 (the pack's `LICENSE`): the recorders `upstream/common.py` and `upstream/ruff/generate.py`, and
-the `*.expected.json` outputs recorded by running Ruff.
+the Apache License 2.0 (the pack's `LICENSE`): the recorders `upstream/common.py` and `upstream/ruff/generate.py`,
+and the `*.expected.json` outputs recorded by running Ruff. `upstream/ruff/source.json`, the facts `conformance/recorders/python-source.ts` records from the upstream source and tests at the revision above, holds names, words and regexes extracted from them: it is Ruff's material and Rerail's, under `MIT AND Apache-2.0`, as `REUSE.toml` annotates it, and the table lists it.
 
 Ruff's `LICENSE` also carries the notices of the projects Ruff derives from, Pyflakes among them. Ruff's pyflakes fixtures come with that notice.
 
@@ -14,6 +17,7 @@ Paths are relative to the pack directory, `packs/python/`.
 
 | File | Upstream path | Copy |
 |---|---|---|
+| `upstream/ruff/source.json` | the rules' implementations and tests, and the helpers they delegate to, at the revision above | extracted: the names, words and regexes `source.json` records |
 | `upstream/ruff/fixtures/flake8_bugbear/B011.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B011.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B028.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B028.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B905.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B905.py` | verbatim |
@@ -22,6 +26,7 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/flake8_simplify/SIM222.py` | `crates/ruff_linter/resources/test/fixtures/flake8_simplify/SIM222.py` | verbatim |
 | `upstream/ruff/fixtures/pycodestyle/E711.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E711.py` | verbatim |
 | `upstream/ruff/fixtures/pycodestyle/E722.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E722.py` | verbatim |
+| `upstream/ruff/fixtures/pycodestyle/constant_literals.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/constant_literals.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F50x.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F50x.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F523.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F523.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F524.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F524.py` | verbatim |
@@ -108,3 +113,14 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/pyflakes/F841_1.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F841_1.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F841_2.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F841_2.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F841_3.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F841_3.py` | verbatim |
+| `upstream/ruff/fixtures/pyflakes/__init__.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/__init__.py` | verbatim |
+| `upstream/ruff/fixtures/pyflakes/builtins.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/builtins.py` | verbatim |
+| `upstream/ruff/fixtures/pyflakes/future_annotations.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/future_annotations.py` | verbatim |
+| `upstream/ruff/fixtures/pyflakes/typing_modules.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/typing_modules.py` | verbatim |
+| `upstream/ruff/fixtures/ruff/RUF100_3.py` | `crates/ruff_linter/resources/test/fixtures/ruff/RUF100_3.py` | verbatim |
+| `upstream/ruff/fixtures/ruff/RUF100_7.py` | `crates/ruff_linter/resources/test/fixtures/ruff/RUF100_7.py` | verbatim |
+| `upstream/ruff/fixtures/ruff/flake8_noqa.py` | `crates/ruff_linter/resources/test/fixtures/ruff/flake8_noqa.py` | verbatim |
+| `upstream/ruff/fixtures/ruff/noqa.py` | `crates/ruff_linter/resources/test/fixtures/ruff/noqa.py` | verbatim |
+| `upstream/ruff/fixtures/ruff/ruff_noqa_all.py` | `crates/ruff_linter/resources/test/fixtures/ruff/ruff_noqa_all.py` | verbatim |
+| `upstream/ruff/fixtures/ruff/ruff_noqa_codes.py` | `crates/ruff_linter/resources/test/fixtures/ruff/ruff_noqa_codes.py` | verbatim |
+| `upstream/ruff/fixtures/ruff/ruff_noqa_invalid.py` | `crates/ruff_linter/resources/test/fixtures/ruff/ruff_noqa_invalid.py` | verbatim |

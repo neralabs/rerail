@@ -1,13 +1,17 @@
 # Next.js 16.3.8 (@next/eslint-plugin-next)
 
+Revision: b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6
+Source: https://github.com/vercel/next.js
+
 Upstream: [vercel/next.js](https://github.com/vercel/next.js/tree/b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6) at tag `v16.3.8` (commit `b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6`), the source of `@next/eslint-plugin-next` 16.3.8. License: MIT (Copyright (c) 2025 Vercel, Inc.); [`LICENSE`](LICENSE) is the upstream `license.md`, copied verbatim at that tag.
 
-The files listed below are the plugin's rule tests and the test cases extracted from them, and remain under Next.js's license. Every other file in this pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of @next/eslint-plugin-next's rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the recorder `upstream/eslint-plugin-next/generate.mjs` (with its stub `RuleTester` and stub plugin module), `upstream/eslint-plugin-next/fixtures.cases.json`, and the `*.expected.json` outputs recorded by running the pinned plugin.
+The files listed below are the plugin's rule tests and the test cases extracted from them, and remain under Next.js's license. Every other file in this pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of @next/eslint-plugin-next's rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the recorder `upstream/eslint-plugin-next/generate.mjs` (with its stub `RuleTester` and stub plugin module), `upstream/eslint-plugin-next/fixtures.cases.json`, and the `*.expected.json` outputs recorded by running the pinned plugin. `upstream/eslint-plugin-next/source.json`, the facts the recorder records from the upstream source and tests at the revision above, holds names, words and regexes extracted from them: it is Next.js's material and Rerail's, under `MIT AND Apache-2.0`, as `REUSE.toml` annotates it, and the table lists it.
 
 Paths are relative to the pack directory, `packs/next/`.
 
 | File | Upstream path | Copy |
 |---|---|---|
+| `upstream/eslint-plugin-next/source.json` | the rules' implementations and tests, and the helpers they delegate to, at the revision above | extracted: the names, words and regexes `source.json` records |
 | `upstream/eslint-plugin-next/tests/google-font-display.test.ts` | `test/unit/eslint-plugin-next/google-font-display.test.ts` | verbatim |
 | `upstream/eslint-plugin-next/tests/google-font-preconnect.test.ts` | `test/unit/eslint-plugin-next/google-font-preconnect.test.ts` | verbatim |
 | `upstream/eslint-plugin-next/tests/inline-script-id.test.ts` | `test/unit/eslint-plugin-next/inline-script-id.test.ts` | verbatim |

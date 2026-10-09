@@ -1,13 +1,17 @@
 # eslint-plugin-react 7.37.5
 
+Revision: 2c98b83c451a4297edf1787d9a616e50687e27e8
+Source: https://github.com/jsx-eslint/eslint-plugin-react
+
 Upstream: [jsx-eslint/eslint-plugin-react](https://github.com/jsx-eslint/eslint-plugin-react/tree/2c98b83c451a4297edf1787d9a616e50687e27e8) at tag `v7.37.5` (commit `2c98b83c451a4297edf1787d9a616e50687e27e8`). License: MIT (Copyright (c) 2014 Yannick Croissant); [`LICENSE`](LICENSE) is the upstream license file, copied verbatim at that commit.
 
-The files listed below are the upstream tests of the rules the React pack records (`conformance.json`, `upstream/common.mjs` `RULES`), and the test cases extracted from them, one case per file, and remain under eslint-plugin-react's license. Every other file under `upstream/eslint-plugin-react/` is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): `generate.mjs` (with its stub RuleTester), `../common.mjs` and the recordings they write by running the pinned plugin. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of eslint-plugin-react's and eslint-plugin-react-hooks' rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them.
+The files listed below are the upstream tests of the rules the React pack records (`conformance.json`, `upstream/common.mjs` `RULES`), and the test cases extracted from them, one case per file, and remain under eslint-plugin-react's license. Every other file under `upstream/eslint-plugin-react/` is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): `generate.mjs` (with its stub RuleTester), `../common.mjs`, and the recordings they write by running the pinned plugin. `source.json`, the facts they record from the upstream source and tests at the revision above, holds names, words and regexes extracted from them: it is eslint-plugin-react's material and Rerail's, under `MIT AND Apache-2.0`, as `REUSE.toml` annotates it, and the table lists it. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of eslint-plugin-react's and eslint-plugin-react-hooks' rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them.
 
 Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `invalid[i]` is the i-th case of the `valid` / `invalid` list the test file passes to `RuleTester.run`.
 
 | File | Upstream path | Copy |
 |---|---|---|
+| `upstream/eslint-plugin-react/source.json` | the rules' implementations and tests, and the helpers they delegate to, at the revision above | extracted: the names, words and regexes `source.json` records |
 | `upstream/eslint-plugin-react/tests/lib/rules/button-has-type.js` | `tests/lib/rules/button-has-type.js` | verbatim |
 | `upstream/eslint-plugin-react/tests/lib/rules/jsx-key.js` | `tests/lib/rules/jsx-key.js` | verbatim |
 | `upstream/eslint-plugin-react/tests/lib/rules/jsx-no-comment-textnodes.js` | `tests/lib/rules/jsx-no-comment-textnodes.js` | verbatim |

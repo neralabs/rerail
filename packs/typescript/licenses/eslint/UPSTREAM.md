@@ -1,21 +1,26 @@
 # ESLint 10.11.0
 
+Revision: 3c0b7c6e1fe2dec778b97a996018126f22d437ae
+Source: https://github.com/eslint/eslint
+
 Upstream: [ESLint 10.11.0](https://github.com/eslint/eslint/tree/v10.11.0) (commit `3c0b7c6e1fe2dec778b97a996018126f22d437ae`). License: MIT (Copyright OpenJS Foundation and other contributors, <www.openjsf.org>); [`LICENSE`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
 The files listed below contain material copied from ESLint and remain under its license. Every other file in this
 pack is Rerail's. The rule documents in `rules/` are Rerail's re-implementations of ESLint's and typescript-eslint's
 rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest
-is under the Apache License 2.0 (the pack's `LICENSE`): the recorder `upstream/generate.mjs`, and the `*.expected.json`
-recordings it writes by running ESLint.
+is under the Apache License 2.0 (the pack's `LICENSE`): the recorder `upstream/generate.mjs` and the `*.expected.json`
+recordings it writes by running ESLint. `upstream/eslint/source.json`, the facts `upstream/generate.mjs` records from the upstream source and tests at the revision above, holds names, words and regexes extracted from them: it is ESLint's material and Rerail's, under `MIT AND Apache-2.0`, as `REUSE.toml` annotates it, and the table lists it.
 
 Each copied file is the `code` of one of the rule's own `valid` or `invalid` RuleTester cases, verbatim, written
-by `upstream/generate.mjs`: cases with rule options, a custom parser or type information are left out, and identical
-code is written once.
+by `upstream/generate.mjs` and linted under the pack's configuration, without the case's own rule options. Cases with a
+custom parser or type information, and code that configuration cannot parse, are left out (`source.json`'s `unscored`
+lists them), and identical code is written once.
 
 Paths are relative to the pack directory, `packs/typescript/`.
 
 | File | Upstream path | Copy |
 |---|---|---|
+| `upstream/eslint/source.json` | the rules' implementations and tests, and the helpers they delegate to, at the revision above | extracted: the names, words and regexes `source.json` records |
 | `upstream/eslint/fixtures/eqeqeq/001.js` | `tests/lib/rules/eqeqeq.js` | derived |
 | `upstream/eslint/fixtures/eqeqeq/002.js` | `tests/lib/rules/eqeqeq.js` | derived |
 | `upstream/eslint/fixtures/eqeqeq/003.js` | `tests/lib/rules/eqeqeq.js` | derived |
@@ -43,6 +48,30 @@ Paths are relative to the pack directory, `packs/typescript/`.
 | `upstream/eslint/fixtures/eqeqeq/025.js` | `tests/lib/rules/eqeqeq.js` | derived |
 | `upstream/eslint/fixtures/eqeqeq/026.js` | `tests/lib/rules/eqeqeq.js` | derived |
 | `upstream/eslint/fixtures/eqeqeq/027.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/028.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/029.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/030.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/031.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/032.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/033.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/034.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/035.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/036.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/037.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/038.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/039.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/040.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/041.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/042.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/043.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/044.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/045.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/046.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/047.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/048.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/049.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/050.js` | `tests/lib/rules/eqeqeq.js` | derived |
+| `upstream/eslint/fixtures/eqeqeq/051.js` | `tests/lib/rules/eqeqeq.js` | derived |
 | `upstream/eslint/fixtures/no-compare-neg-zero/001.js` | `tests/lib/rules/no-compare-neg-zero.js` | derived |
 | `upstream/eslint/fixtures/no-compare-neg-zero/002.js` | `tests/lib/rules/no-compare-neg-zero.js` | derived |
 | `upstream/eslint/fixtures/no-compare-neg-zero/003.js` | `tests/lib/rules/no-compare-neg-zero.js` | derived |
@@ -608,6 +637,9 @@ Paths are relative to the pack directory, `packs/typescript/`.
 | `upstream/eslint/fixtures/no-useless-rename/148.js` | `tests/lib/rules/no-useless-rename.js` | derived |
 | `upstream/eslint/fixtures/no-useless-rename/149.js` | `tests/lib/rules/no-useless-rename.js` | derived |
 | `upstream/eslint/fixtures/no-useless-rename/150.js` | `tests/lib/rules/no-useless-rename.js` | derived |
+| `upstream/eslint/fixtures/no-useless-rename/151.js` | `tests/lib/rules/no-useless-rename.js` | derived |
+| `upstream/eslint/fixtures/no-useless-rename/152.js` | `tests/lib/rules/no-useless-rename.js` | derived |
+| `upstream/eslint/fixtures/no-useless-rename/153.js` | `tests/lib/rules/no-useless-rename.js` | derived |
 | `upstream/eslint/fixtures/radix/001.js` | `tests/lib/rules/radix.js` | derived |
 | `upstream/eslint/fixtures/radix/002.js` | `tests/lib/rules/radix.js` | derived |
 | `upstream/eslint/fixtures/radix/003.js` | `tests/lib/rules/radix.js` | derived |
@@ -685,6 +717,7 @@ Paths are relative to the pack directory, `packs/typescript/`.
 | `upstream/eslint/fixtures/radix/075.js` | `tests/lib/rules/radix.js` | derived |
 | `upstream/eslint/fixtures/radix/076.js` | `tests/lib/rules/radix.js` | derived |
 | `upstream/eslint/fixtures/radix/077.js` | `tests/lib/rules/radix.js` | derived |
+| `upstream/eslint/fixtures/radix/078.js` | `tests/lib/rules/radix.js` | derived |
 | `upstream/eslint/fixtures/use-isnan/001.js` | `tests/lib/rules/use-isnan.js` | derived |
 | `upstream/eslint/fixtures/use-isnan/002.js` | `tests/lib/rules/use-isnan.js` | derived |
 | `upstream/eslint/fixtures/use-isnan/003.js` | `tests/lib/rules/use-isnan.js` | derived |
@@ -772,3 +805,123 @@ Paths are relative to the pack directory, `packs/typescript/`.
 | `upstream/eslint/fixtures/use-isnan/085.js` | `tests/lib/rules/use-isnan.js` | derived |
 | `upstream/eslint/fixtures/use-isnan/086.js` | `tests/lib/rules/use-isnan.js` | derived |
 | `upstream/eslint/fixtures/use-isnan/087.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/088.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/089.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/090.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/091.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/092.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/093.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/094.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/095.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/096.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/097.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/098.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/099.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/100.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/101.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/102.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/103.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/104.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/105.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/106.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/107.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/108.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/109.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/110.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/111.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/112.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/113.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/114.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/115.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/116.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/117.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/118.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/119.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/120.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/121.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/122.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/123.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/124.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/125.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/126.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/127.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/128.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/129.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/130.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/131.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/132.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/133.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/134.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/135.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/136.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/137.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/138.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/139.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/140.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/141.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/142.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/143.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/144.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/145.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/146.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/147.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/148.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/149.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/150.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/151.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/152.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/153.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/154.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/155.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/156.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/157.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/158.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/159.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/160.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/161.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/162.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/163.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/164.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/165.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/166.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/167.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/168.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/169.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/170.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/171.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/172.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/173.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/174.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/175.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/176.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/177.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/178.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/179.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/180.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/181.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/182.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/183.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/184.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/185.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/186.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/187.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/188.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/189.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/190.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/191.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/192.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/193.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/194.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/195.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/196.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/197.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/198.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/199.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/200.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/201.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/202.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/203.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/204.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/205.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/206.js` | `tests/lib/rules/use-isnan.js` | derived |
+| `upstream/eslint/fixtures/use-isnan/207.js` | `tests/lib/rules/use-isnan.js` | derived |

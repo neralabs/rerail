@@ -1,13 +1,17 @@
 # eslint-plugin-n 18.4.1
 
+Revision: f1d47aff402b9e009578f4b3155b84f7d8beef9b
+Source: https://github.com/eslint-community/eslint-plugin-n
+
 Upstream: [eslint-community/eslint-plugin-n](https://github.com/eslint-community/eslint-plugin-n/tree/f1d47aff402b9e009578f4b3155b84f7d8beef9b) at tag `v18.4.1` (commit `f1d47aff402b9e009578f4b3155b84f7d8beef9b`). License: MIT (Copyright (c) 2015 Toru Nagashima); [`LICENSE`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the upstream rule tests of the rules the Node pack records (`conformance.json`, `upstream/eslint-plugin-n/generate.mjs`), the upstream test data they read, and one file per test case holding that case's `code` verbatim; they remain under eslint-plugin-n's license. One listed file is Rerail's and says so in its row: `upstream/eslint-plugin-n/fixtures/package.json` (the fixtures' source type and engines), listed because it sits among the copied fixtures. Every other file in this pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of eslint-plugin-n's rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the recorder `upstream/eslint-plugin-n/generate.mjs`, `upstream/eslint-plugin-n/stub-test-helpers.js` (stands in for upstream's `tests/test-helpers.js` and only captures cases), and the `*.expected.json` recordings written by running eslint-plugin-n.
+The files listed below are the upstream rule tests of the rules the Node pack records (`conformance.json`, `upstream/eslint-plugin-n/generate.mjs`), the upstream test data they read, and one file per test case holding that case's `code` verbatim; they remain under eslint-plugin-n's license. One listed file is Rerail's and says so in its row: `upstream/eslint-plugin-n/fixtures/package.json` (the fixtures' source type and engines), listed because it sits among the copied fixtures. Every other file in this pack is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): the rule documents in `rules/` and `candidates/`, the recorder `upstream/eslint-plugin-n/generate.mjs`, `upstream/eslint-plugin-n/stub-test-helpers.js` (stands in for upstream's `tests/test-helpers.js` and only captures cases), and the `*.expected.json` recordings written by running eslint-plugin-n. `upstream/eslint-plugin-n/source.json`, the facts the recorder records from the upstream source and tests at the revision above, holds names, words and regexes extracted from them: it is eslint-plugin-n's material and Rerail's, under `MIT AND Apache-2.0`, as `REUSE.toml` annotates it, and the table lists it.
 
 Paths are relative to the pack directory, `packs/node/`.
 
 |File|Upstream path|Copy|
 |---|---|---|
+|`upstream/eslint-plugin-n/source.json`|the rules' implementations and tests, and the helpers they delegate to, at the revision above|extracted: the names, words and regexes `source.json` records|
 |`upstream/eslint-plugin-n/tests/lib/rules/callback-return.js`|`tests/lib/rules/callback-return.js`|verbatim|
 |`upstream/eslint-plugin-n/tests/lib/rules/exports-style.js`|`tests/lib/rules/exports-style.js`|verbatim|
 |`upstream/eslint-plugin-n/tests/lib/rules/global-require.js`|`tests/lib/rules/global-require.js`|verbatim|

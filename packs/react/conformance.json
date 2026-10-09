@@ -15,8 +15,8 @@
     }
   ],
   "tools": [
-    { "name": "eslint-plugin-react", "version": "7.37.5" },
-    { "name": "eslint-plugin-react-hooks", "version": "7.1.1" }
+    { "name": "eslint-plugin-react", "version": "7.37.5", "recommended": ["flat.recommended"] },
+    { "name": "eslint-plugin-react-hooks", "version": "7.1.1", "recommended": ["flat.recommended"] }
   ],
   "rules": [
     {"id":"react-no-danger","upstream":{"tool":"eslint-plugin-react","rule":"react/no-danger"},"policy":"rules/react-no-danger.json","capabilities":["syntax","suppression"],"match":"line+column"},

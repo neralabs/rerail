@@ -1,6 +1,7 @@
 // Shared by the ESLint-based packs' recorders (packs/<id>/upstream/<tool>/generate.mjs once a pack has moved,
 // fixtures/<id>/rules/<tool>/generate.mjs before): pins, the corpus file set the conformance runner scores, and
-// ESLint's findings in the recording format `rerail/conformance/languages/pack.ts` reads (`recordingSchema`).
+// ESLint's findings in the recording format `rerail/conformance/languages/pack.ts` reads (`recordingSchema`): a start,
+// and the exclusive end for every rule ESLint reports ends for. The tool's source facts are eslint-source.mjs's.
 // Run offline by a maintainer, never in CI.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -80,23 +81,53 @@ export function codePointColumn(text, line, column) {
 }
 
 /**
+ * One ESLint message as a finding: its start, and its end when ESLint reports one (`endLine`, `endColumn`: 1-based and
+ * exclusive, so only the column converts from UTF-16 code units to code points).
+ */
+export function findingOf(message, text, path) {
+  const finding = { rule: message.ruleId, path, line: message.line, column: codePointColumn(text, message.line, message.column) };
+  if (typeof message.endLine === "number" && typeof message.endColumn === "number") {
+    finding.endLine = message.endLine;
+    finding.endColumn = codePointColumn(text, message.endLine, message.endColumn);
+  }
+  return finding;
+}
+
+/**
  * One file's ESLint messages → findings of the listed rules, and whether ESLint could not parse it (a fatal
  * message: such a file is skipped, never scored).
  */
 export function findingsOf(result, text, path, rules) {
   const fatal = result.messages.find(message => message.fatal);
   if (fatal !== undefined) return { fatal: `${fatal.line}:${fatal.column} ${fatal.message}`, findings: [] };
-  const findings = result.messages
-    .filter(message => rules.includes(message.ruleId))
-    .map(message => ({ rule: message.ruleId, path, line: message.line, column: codePointColumn(text, message.line, message.column) }));
+  const findings = result.messages.filter(message => rules.includes(message.ruleId)).map(message => findingOf(message, text, path));
   return { fatal: undefined, findings };
+}
+
+/**
+ * The findings with ends only for the rules upstream reports ends for: a rule some of whose findings have no end
+ * (it reports a start `loc`) is compared at its starts, so none of its findings keeps an end. A recording's findings
+ * of one rule carry one set of parts (`recordingSchema`).
+ */
+export function withReportedEnds(findings) {
+  const startsOnly = new Set(findings.filter(finding => finding.endLine === undefined).map(finding => finding.rule));
+  return findings.map(finding => {
+    if (!startsOnly.has(finding.rule) || finding.endLine === undefined) return finding;
+    const { endLine: _endLine, endColumn: _endColumn, ...start } = finding;
+    return start;
+  });
+}
+
+const order = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
+
+/** Findings in recording order: rule, path, then position (start, then end). */
+export function compareFindings(a, b) {
+  return order(a.rule, b.rule) || order(a.path, b.path) || a.line - b.line || (a.column ?? 0) - (b.column ?? 0) || (a.endLine ?? 0) - (b.endLine ?? 0) || (a.endColumn ?? 0) - (b.endColumn ?? 0);
 }
 
 /** Writes a recording as packs/php/upstream/common.py does: findings sorted, one-space indent. */
 export function writeRecording(path, tool, version, source, findings) {
-  const sorted = [...findings].sort(
-    (a, b) => (a.rule < b.rule ? -1 : a.rule > b.rule ? 1 : 0) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) || a.line - b.line || (a.column ?? 0) - (b.column ?? 0),
-  );
+  const sorted = withReportedEnds(findings).sort(compareFindings);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify({ tool, version, source, findings: sorted }, null, 1)}\n`);
 }

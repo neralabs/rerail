@@ -1,21 +1,26 @@
 # typescript-eslint 8.70.1
 
+Revision: 23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7
+Source: https://github.com/typescript-eslint/typescript-eslint
+
 Upstream: [typescript-eslint 8.70.1](https://github.com/typescript-eslint/typescript-eslint/tree/v8.70.1) (commit `23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7`). License: MIT (Copyright (c) 2019 typescript-eslint and other contributors); [`LICENSE`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
 The files listed below contain material copied from typescript-eslint and remain under its license. Every other file in this
 pack is Rerail's. The rule documents in `rules/` are Rerail's re-implementations of ESLint's and typescript-eslint's
 rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest
-is under the Apache License 2.0 (the pack's `LICENSE`): the recorder `upstream/generate.mjs`, and the `*.expected.json`
-recordings it writes by running ESLint.
+is under the Apache License 2.0 (the pack's `LICENSE`): the recorder `upstream/generate.mjs` and the `*.expected.json`
+recordings it writes by running ESLint. `upstream/typescript-eslint/source.json`, the facts `upstream/generate.mjs` records from the upstream source and tests at the revision above, holds names, words and regexes extracted from them: it is typescript-eslint's material and Rerail's, under `MIT AND Apache-2.0`, as `REUSE.toml` annotates it, and the table lists it.
 
 Each copied file is the `code` of one of the rule's own `valid` or `invalid` RuleTester cases, verbatim, written
-by `upstream/generate.mjs`: cases with rule options, a custom parser or type information are left out, and identical
-code is written once.
+by `upstream/generate.mjs` and linted under the pack's configuration, without the case's own rule options. Cases with a
+custom parser or type information, and code that configuration cannot parse, are left out (`source.json`'s `unscored`
+lists them), and identical code is written once.
 
 Paths are relative to the pack directory, `packs/typescript/`.
 
 | File | Upstream path | Copy |
 |---|---|---|
+| `upstream/typescript-eslint/source.json` | the rules' implementations and tests, and the helpers they delegate to, at the revision above | extracted: the names, words and regexes `source.json` records |
 | `upstream/typescript-eslint/fixtures/no-duplicate-enum-values/001.ts` | `packages/eslint-plugin/tests/rules/no-duplicate-enum-values.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/no-duplicate-enum-values/002.ts` | `packages/eslint-plugin/tests/rules/no-duplicate-enum-values.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/no-duplicate-enum-values/003.ts` | `packages/eslint-plugin/tests/rules/no-duplicate-enum-values.test.ts` | derived |
@@ -63,6 +68,32 @@ Paths are relative to the pack directory, `packs/typescript/`.
 | `upstream/typescript-eslint/fixtures/no-namespace/005.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/no-namespace/006.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/no-namespace/007.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/008.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/009.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/010.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/011.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/012.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/013.d.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/014.d.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/015.d.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/016.d.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/017.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/018.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/019.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/020.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/021.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/022.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/023.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/024.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/025.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/026.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/027.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/028.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/029.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/030.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/031.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/032.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-namespace/033.ts` | `packages/eslint-plugin/tests/rules/no-namespace.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/no-non-null-assertion/001.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/no-non-null-assertion/002.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/no-non-null-assertion/003.ts` | `packages/eslint-plugin/tests/rules/no-non-null-assertion.test.ts` | derived |
@@ -96,6 +127,9 @@ Paths are relative to the pack directory, `packs/typescript/`.
 | `upstream/typescript-eslint/fixtures/no-this-alias/003.ts` | `packages/eslint-plugin/tests/rules/no-this-alias.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/no-this-alias/004.ts` | `packages/eslint-plugin/tests/rules/no-this-alias.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/no-this-alias/005.ts` | `packages/eslint-plugin/tests/rules/no-this-alias.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-this-alias/006.ts` | `packages/eslint-plugin/tests/rules/no-this-alias.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-this-alias/007.ts` | `packages/eslint-plugin/tests/rules/no-this-alias.test.ts` | derived |
+| `upstream/typescript-eslint/fixtures/no-this-alias/008.ts` | `packages/eslint-plugin/tests/rules/no-this-alias.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/no-unsafe-function-type/001.ts` | `packages/eslint-plugin/tests/rules/no-unsafe-function-type.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/no-unsafe-function-type/002.ts` | `packages/eslint-plugin/tests/rules/no-unsafe-function-type.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/no-unsafe-function-type/003.ts` | `packages/eslint-plugin/tests/rules/no-unsafe-function-type.test.ts` | derived |

@@ -16,11 +16,14 @@
 //    and hook syntax) is dropped.
 // 3. Runs the pinned plugins (common.mjs `config`) over every fixture file and each corpus.
 // 4. Writes ../../licenses/react/UPSTREAM.md and LICENSE.
+// 5. Writes source.json, the plugin's source facts (common.mjs `recordSource`), from every run of the two test files,
+//    which are all of upstream's ESLint rule tests (`__tests__/ESLint*-test.js`).
 import { copyFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertCommit } from "../../../../conformance/recorders/eslint-record.mjs";
-import { execute, finishFixtures, options, recordCorpora, toolsRequire, UPSTREAM, writeLicense } from "../common.mjs";
+import { checkoutFiles } from "../../../../conformance/recorders/eslint-source.mjs";
+import { execute, finishFixtures, options, recordCorpora, recordSource, toolsRequire, UPSTREAM, writeLicense } from "../common.mjs";
 
 const TOOL = "eslint-plugin-react-hooks";
 const DIRECTORY = dirname(fileURLToPath(import.meta.url));
@@ -53,6 +56,7 @@ function stubs(captured) {
 
 const copied = [];
 const cases = [];
+const runs = [];
 for (const { rule, file } of TESTS) {
   const relativeTest = `tests/__tests__/${file}`;
   const target = join(DIRECTORY, relativeTest);
@@ -66,13 +70,14 @@ for (const { rule, file } of TESTS) {
   execute(target, stubs(captured), { describe: (_name, body) => body() });
   if (previous === undefined) delete process.env.CI;
   else process.env.CI = previous;
+  for (const { tests } of captured) runs.push({ testFile: `${TEST_DIRECTORY}/${file}`, rule: rule.slice("react-hooks/".length), tests });
   const seen = new Map();
   for (const { name, tests } of captured) {
     for (const kind of ["valid", "invalid"]) {
       tests[kind].forEach((test, index) => {
         let entry = seen.get(test);
         if (entry === undefined) {
-          entry = { kind, test, runs: [], origin: `${relativeTest} run "${name}" ${kind}[${index}]` };
+          entry = { kind, test, runs: [], origin: `${relativeTest} run "${name}" ${kind}[${index}]`, label: `run "${name}" ${kind}[${index}]` };
           seen.set(test, entry);
         }
         entry.runs.push(name);
@@ -94,6 +99,8 @@ for (const { rule, file } of TESTS) {
       code: entry.test.code,
       errors,
       origin: entry.origin,
+      upstreamTest: `${TEST_DIRECTORY}/${file}`,
+      label: entry.label,
       filename: entry.test.filename,
       ...(babel ? { extension: "jsx" } : typescript ? { extension: "tsx" } : { drop: "Flow syntax (hermes-eslint runs only)" }),
     });
@@ -102,6 +109,10 @@ for (const { rule, file } of TESTS) {
 
 const result = await finishFixtures(require, TOOL, DIRECTORY, cases, tools);
 writeLicense(TOOL, upstream, copied, result.kept);
+const testFiles = checkoutFiles(upstream, UPSTREAM[TOOL].tests);
+const read = TESTS.map(({ file }) => `${TEST_DIRECTORY}/${file}`).sort();
+if (testFiles.join() !== read.join()) throw new Error(`upstream's ESLint rule tests are ${testFiles.join(", ")}; this recorder reads ${read.join(", ")}`);
+recordSource(TOOL, DIRECTORY, tools, upstream, runs, result.unscored);
 if (!argv.includes("--no-corpora")) {
   const summary = await recordCorpora(require, TOOL, DIRECTORY, corpora);
   for (const entry of summary) console.log(`corpus ${entry.corpus}: ${entry.files} files, ${entry.skipped} skipped, ${entry.findings} findings`);

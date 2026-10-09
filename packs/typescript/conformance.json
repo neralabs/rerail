@@ -23,11 +23,18 @@
   "tools": [
     {
       "name": "eslint",
-      "version": "10.11.0"
+      "version": "10.11.0",
+      "recommended": [
+        "recommended"
+      ]
     },
     {
       "name": "typescript-eslint",
-      "version": "8.70.1"
+      "version": "8.70.1",
+      "recommended": [
+        "flat/recommended",
+        "flat/recommended-type-checked"
+      ]
     }
   ],
   "rules": [

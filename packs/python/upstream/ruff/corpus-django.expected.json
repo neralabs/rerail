@@ -32,613 +32,817 @@
    "rule": "B011",
    "path": "django/core/handlers/asgi.py",
    "line": 226,
-   "column": 16
+   "column": 16,
+   "endLine": 226,
+   "endColumn": 21
   },
   {
    "rule": "B011",
    "path": "django/db/models/functions/datetime.py",
    "line": 102,
-   "column": 20
+   "column": 20,
+   "endLine": 102,
+   "endColumn": 25
   },
   {
    "rule": "B028",
    "path": "django/contrib/auth/hashers.py",
    "line": 311,
-   "column": 9
+   "column": 9,
+   "endLine": 311,
+   "endColumn": 22
   },
   {
    "rule": "B028",
    "path": "django/contrib/contenttypes/management/__init__.py",
    "line": 35,
-   "column": 17
+   "column": 17,
+   "endLine": 35,
+   "endColumn": 30
   },
   {
    "rule": "B028",
    "path": "django/core/cache/backends/base.py",
    "line": 119,
-   "column": 13
+   "column": 13,
+   "endLine": 119,
+   "endColumn": 26
   },
   {
    "rule": "B028",
    "path": "django/core/mail/__init__.py",
    "line": 401,
-   "column": 9
+   "column": 9,
+   "endLine": 401,
+   "endColumn": 22
   },
   {
    "rule": "B028",
    "path": "django/core/mail/message.py",
    "line": 78,
-   "column": 5
+   "column": 5,
+   "endLine": 78,
+   "endColumn": 18
   },
   {
    "rule": "B028",
    "path": "django/core/mail/message.py",
    "line": 111,
-   "column": 5
+   "column": 5,
+   "endLine": 111,
+   "endColumn": 18
   },
   {
    "rule": "B028",
    "path": "django/core/mail/message.py",
    "line": 447,
-   "column": 13
+   "column": 13,
+   "endLine": 447,
+   "endColumn": 26
   },
   {
    "rule": "B028",
    "path": "django/core/management/commands/dumpdata.py",
    "line": 206,
-   "column": 21
+   "column": 21,
+   "endLine": 206,
+   "endColumn": 34
   },
   {
    "rule": "B028",
    "path": "django/core/management/commands/dumpdata.py",
    "line": 261,
-   "column": 21
+   "column": 21,
+   "endLine": 261,
+   "endColumn": 34
   },
   {
    "rule": "B028",
    "path": "django/core/management/commands/loaddata.py",
    "line": 276,
-   "column": 17
+   "column": 17,
+   "endLine": 276,
+   "endColumn": 30
   },
   {
    "rule": "B028",
    "path": "django/core/management/commands/makemigrations.py",
    "line": 162,
-   "column": 21
+   "column": 21,
+   "endLine": 162,
+   "endColumn": 34
   },
   {
    "rule": "B028",
    "path": "django/db/backends/postgresql/base.py",
    "line": 525,
-   "column": 13
+   "column": 13,
+   "endLine": 525,
+   "endColumn": 26
   },
   {
    "rule": "B028",
    "path": "django/db/backends/sqlite3/base.py",
    "line": 174,
-   "column": 13
+   "column": 13,
+   "endLine": 174,
+   "endColumn": 26
   },
   {
    "rule": "B028",
    "path": "django/db/backends/utils.py",
    "line": 67,
-   "column": 13
+   "column": 13,
+   "endLine": 67,
+   "endColumn": 26
   },
   {
    "rule": "B028",
    "path": "django/db/backends/utils.py",
    "line": 98,
-   "column": 13
+   "column": 13,
+   "endLine": 98,
+   "endColumn": 26
   },
   {
    "rule": "B028",
    "path": "django/db/backends/utils.py",
    "line": 111,
-   "column": 13
+   "column": 13,
+   "endLine": 111,
+   "endColumn": 26
   },
   {
    "rule": "B028",
    "path": "django/db/models/fields/__init__.py",
    "line": 1654,
-   "column": 17
+   "column": 17,
+   "endLine": 1654,
+   "endColumn": 30
   },
   {
    "rule": "B028",
    "path": "django/db/models/fields/__init__.py",
    "line": 1713,
-   "column": 13
+   "column": 13,
+   "endLine": 1713,
+   "endColumn": 26
   },
   {
    "rule": "B028",
    "path": "django/db/models/query.py",
    "line": 1610,
-   "column": 17
+   "column": 17,
+   "endLine": 1610,
+   "endColumn": 30
   },
   {
    "rule": "B028",
    "path": "django/forms/widgets.py",
    "line": 256,
-   "column": 13
+   "column": 13,
+   "endLine": 256,
+   "endColumn": 26
   },
   {
    "rule": "B028",
    "path": "django/template/defaulttags.py",
    "line": 90,
-   "column": 17
+   "column": 17,
+   "endLine": 90,
+   "endColumn": 30
   },
   {
    "rule": "B028",
    "path": "django/utils/translation/template.py",
    "line": 172,
-   "column": 29
+   "column": 29,
+   "endLine": 172,
+   "endColumn": 42
   },
   {
    "rule": "B028",
    "path": "django/utils/translation/trans_real.py",
    "line": 161,
-   "column": 17
+   "column": 17,
+   "endLine": 161,
+   "endColumn": 30
   },
   {
    "rule": "B028",
    "path": "django/views/debug.py",
    "line": 507,
-   "column": 17
+   "column": 17,
+   "endLine": 507,
+   "endColumn": 30
   },
   {
    "rule": "B905",
    "path": "django/contrib/admin/helpers.py",
    "line": 346,
-   "column": 31
+   "column": 31,
+   "endLine": 348,
+   "endColumn": 10
   },
   {
    "rule": "B905",
    "path": "django/contrib/admin/options.py",
    "line": 2002,
-   "column": 32
+   "column": 32,
+   "endLine": 2002,
+   "endColumn": 63
   },
   {
    "rule": "B905",
    "path": "django/contrib/admin/templatetags/admin_list.py",
    "line": 335,
-   "column": 26
+   "column": 26,
+   "endLine": 335,
+   "endColumn": 63
   },
   {
    "rule": "B905",
    "path": "django/contrib/admin/templatetags/admin_list.py",
    "line": 344,
-   "column": 26
+   "column": 26,
+   "endLine": 344,
+   "endColumn": 63
   },
   {
    "rule": "B905",
    "path": "django/contrib/contenttypes/fields.py",
    "line": 439,
-   "column": 39
+   "column": 39,
+   "endLine": 442,
+   "endColumn": 14
   },
   {
    "rule": "B905",
    "path": "django/contrib/gis/geos/mutable_list.py",
    "line": 276,
-   "column": 24
+   "column": 24,
+   "endLine": 276,
+   "endColumn": 49
   },
   {
    "rule": "B905",
    "path": "django/contrib/gis/geos/mutable_list.py",
    "line": 297,
-   "column": 23
+   "column": 23,
+   "endLine": 297,
+   "endColumn": 48
   },
   {
    "rule": "B905",
    "path": "django/contrib/gis/utils/ogrinspect.py",
    "line": 198,
-   "column": 53
+   "column": 53,
+   "endLine": 200,
+   "endColumn": 6
   },
   {
    "rule": "B905",
    "path": "django/contrib/postgres/signals.py",
    "line": 41,
-   "column": 31
+   "column": 31,
+   "endLine": 41,
+   "endColumn": 52
   },
   {
    "rule": "B905",
    "path": "django/core/cache/backends/redis.py",
    "line": 139,
-   "column": 54
+   "column": 54,
+   "endLine": 139,
+   "endColumn": 68
   },
   {
    "rule": "B905",
    "path": "django/core/management/commands/makemigrations.py",
    "line": 435,
-   "column": 44
+   "column": 44,
+   "endLine": 435,
+   "endColumn": 88
   },
   {
    "rule": "B905",
    "path": "django/db/backends/base/schema.py",
    "line": 61,
-   "column": 22
+   "column": 22,
+   "endLine": 72,
+   "endColumn": 6
   },
   {
    "rule": "B905",
    "path": "django/db/backends/base/schema.py",
    "line": 1225,
-   "column": 37
+   "column": 37,
+   "endLine": 1225,
+   "endColumn": 50
   },
   {
    "rule": "B905",
    "path": "django/db/backends/oracle/operations.py",
    "line": 312,
-   "column": 21
+   "column": 21,
+   "endLine": 312,
+   "endColumn": 76
   },
   {
    "rule": "B905",
    "path": "django/db/backends/postgresql/compiler.py",
    "line": 60,
-   "column": 28
+   "column": 28,
+   "endLine": 60,
+   "endColumn": 44
   },
   {
    "rule": "B905",
    "path": "django/db/backends/sqlite3/operations.py",
    "line": 166,
-   "column": 31
+   "column": 31,
+   "endLine": 166,
+   "endColumn": 50
   },
   {
    "rule": "B905",
    "path": "django/db/migrations/autodetector.py",
    "line": 430,
-   "column": 27
+   "column": 27,
+   "endLine": 430,
+   "endColumn": 58
   },
   {
    "rule": "B905",
    "path": "django/db/migrations/operations/base.py",
    "line": 59,
-   "column": 32
+   "column": 32,
+   "endLine": 62,
+   "endColumn": 14
   },
   {
    "rule": "B905",
    "path": "django/db/migrations/operations/models.py",
    "line": 477,
-   "column": 22
+   "column": 22,
+   "endLine": 479,
+   "endColumn": 14
   },
   {
    "rule": "B905",
    "path": "django/db/migrations/operations/models.py",
    "line": 574,
-   "column": 41
+   "column": 41,
+   "endLine": 576,
+   "endColumn": 14
   },
   {
    "rule": "B905",
    "path": "django/db/migrations/state.py",
    "line": 1013,
-   "column": 43
+   "column": 43,
+   "endLine": 1016,
+   "endColumn": 18
   },
   {
    "rule": "B905",
    "path": "django/db/models/base.py",
    "line": 537,
-   "column": 31
+   "column": 31,
+   "endLine": 537,
+   "endColumn": 53
   },
   {
    "rule": "B905",
    "path": "django/db/models/base.py",
    "line": 544,
-   "column": 31
+   "column": 31,
+   "endLine": 544,
+   "endColumn": 53
   },
   {
    "rule": "B905",
    "path": "django/db/models/base.py",
    "line": 1269,
-   "column": 29
+   "column": 29,
+   "endLine": 1269,
+   "endColumn": 72
   },
   {
    "rule": "B905",
    "path": "django/db/models/enums.py",
    "line": 31,
-   "column": 30
+   "column": 30,
+   "endLine": 31,
+   "endColumn": 67
   },
   {
    "rule": "B905",
    "path": "django/db/models/expressions.py",
    "line": 1412,
-   "column": 35
+   "column": 35,
+   "endLine": 1412,
+   "endColumn": 66
   },
   {
    "rule": "B905",
    "path": "django/db/models/fields/composite.py",
    "line": 46,
-   "column": 31
+   "column": 31,
+   "endLine": 46,
+   "endColumn": 52
   },
   {
    "rule": "B905",
    "path": "django/db/models/fields/composite.py",
    "line": 143,
-   "column": 29
+   "column": 29,
+   "endLine": 143,
+   "endColumn": 51
   },
   {
    "rule": "B905",
    "path": "django/db/models/fields/related.py",
    "line": 792,
-   "column": 47
+   "column": 47,
+   "endLine": 792,
+   "endColumn": 84
   },
   {
    "rule": "B905",
    "path": "django/db/models/fields/tuple_lookups.py",
    "line": 115,
-   "column": 33
+   "column": 33,
+   "endLine": 115,
+   "endColumn": 56
   },
   {
    "rule": "B905",
    "path": "django/db/models/fields/tuple_lookups.py",
    "line": 163,
-   "column": 52
+   "column": 52,
+   "endLine": 163,
+   "endColumn": 75
   },
   {
    "rule": "B905",
    "path": "django/db/models/fields/tuple_lookups.py",
    "line": 209,
-   "column": 25
+   "column": 25,
+   "endLine": 209,
+   "endColumn": 50
   },
   {
    "rule": "B905",
    "path": "django/db/models/fields/tuple_lookups.py",
    "line": 237,
-   "column": 25
+   "column": 25,
+   "endLine": 237,
+   "endColumn": 50
   },
   {
    "rule": "B905",
    "path": "django/db/models/fields/tuple_lookups.py",
    "line": 265,
-   "column": 25
+   "column": 25,
+   "endLine": 265,
+   "endColumn": 50
   },
   {
    "rule": "B905",
    "path": "django/db/models/fields/tuple_lookups.py",
    "line": 293,
-   "column": 25
+   "column": 25,
+   "endLine": 293,
+   "endColumn": 50
   },
   {
    "rule": "B905",
    "path": "django/db/models/fields/tuple_lookups.py",
    "line": 367,
-   "column": 41
+   "column": 41,
+   "endLine": 367,
+   "endColumn": 55
   },
   {
    "rule": "B905",
    "path": "django/db/models/fields/tuple_lookups.py",
    "line": 392,
-   "column": 60
+   "column": 60,
+   "endLine": 392,
+   "endColumn": 84
   },
   {
    "rule": "B905",
    "path": "django/db/models/fields/tuple_lookups.py",
    "line": 409,
-   "column": 56
+   "column": 56,
+   "endLine": 409,
+   "endColumn": 70
   },
   {
    "rule": "B905",
    "path": "django/db/models/indexes.py",
    "line": 265,
-   "column": 53
+   "column": 53,
+   "endLine": 267,
+   "endColumn": 14
   },
   {
    "rule": "B905",
    "path": "django/db/models/lookups.py",
    "line": 350,
-   "column": 23
+   "column": 23,
+   "endLine": 355,
+   "endColumn": 10
   },
   {
    "rule": "B905",
    "path": "django/db/models/lookups.py",
    "line": 353,
-   "column": 35
+   "column": 35,
+   "endLine": 353,
+   "endColumn": 54
   },
   {
    "rule": "B905",
    "path": "django/db/models/query.py",
    "line": 937,
-   "column": 45
+   "column": 45,
+   "endLine": 937,
+   "endColumn": 80
   },
   {
    "rule": "B905",
    "path": "django/db/models/query.py",
    "line": 938,
-   "column": 42
+   "column": 42,
+   "endLine": 938,
+   "endColumn": 80
   },
   {
    "rule": "B905",
    "path": "django/db/models/query.py",
    "line": 959,
-   "column": 48
+   "column": 48,
+   "endLine": 959,
+   "endColumn": 86
   },
   {
    "rule": "B905",
    "path": "django/db/models/query.py",
    "line": 960,
-   "column": 42
+   "column": 42,
+   "endLine": 960,
+   "endColumn": 80
   },
   {
    "rule": "B905",
    "path": "django/db/models/query.py",
    "line": 978,
-   "column": 31
+   "column": 31,
+   "endLine": 978,
+   "endColumn": 55
   },
   {
    "rule": "B905",
    "path": "django/db/models/sql/compiler.py",
    "line": 645,
-   "column": 33
+   "column": 33,
+   "endLine": 647,
+   "endColumn": 10
   },
   {
    "rule": "B905",
    "path": "django/db/models/sql/compiler.py",
    "line": 1805,
-   "column": 58
+   "column": 58,
+   "endLine": 1807,
+   "endColumn": 18
   },
   {
    "rule": "B905",
    "path": "django/db/models/sql/compiler.py",
    "line": 1814,
-   "column": 36
+   "column": 36,
+   "endLine": 1814,
+   "endColumn": 45
   },
   {
    "rule": "B905",
    "path": "django/db/models/sql/compiler.py",
    "line": 1818,
-   "column": 40
+   "column": 40,
+   "endLine": 1818,
+   "endColumn": 69
   },
   {
    "rule": "B905",
    "path": "django/db/models/sql/compiler.py",
    "line": 1883,
-   "column": 31
+   "column": 31,
+   "endLine": 1883,
+   "endColumn": 47
   },
   {
    "rule": "B905",
    "path": "django/db/models/sql/compiler.py",
    "line": 1946,
-   "column": 32
+   "column": 32,
+   "endLine": 1946,
+   "endColumn": 65
   },
   {
    "rule": "B905",
    "path": "django/db/models/sql/query.py",
    "line": 650,
-   "column": 21
+   "column": 21,
+   "endLine": 650,
+   "endColumn": 63
   },
   {
    "rule": "B905",
    "path": "django/db/models/sql/query.py",
    "line": 2439,
-   "column": 32
+   "column": 32,
+   "endLine": 2439,
+   "endColumn": 68
   },
   {
    "rule": "B905",
    "path": "django/db/models/sql/query.py",
    "line": 2617,
-   "column": 33
+   "column": 33,
+   "endLine": 2617,
+   "endColumn": 64
   },
   {
    "rule": "B905",
    "path": "django/dispatch/dispatcher.py",
    "line": 260,
-   "column": 24
+   "column": 24,
+   "endLine": 260,
+   "endColumn": 61
   },
   {
    "rule": "B905",
    "path": "django/dispatch/dispatcher.py",
    "line": 319,
-   "column": 26
+   "column": 26,
+   "endLine": 319,
+   "endColumn": 63
   },
   {
    "rule": "B905",
    "path": "django/dispatch/dispatcher.py",
    "line": 388,
-   "column": 24
+   "column": 24,
+   "endLine": 388,
+   "endColumn": 61
   },
   {
    "rule": "B905",
    "path": "django/dispatch/dispatcher.py",
    "line": 460,
-   "column": 26
+   "column": 26,
+   "endLine": 460,
+   "endColumn": 63
   },
   {
    "rule": "B905",
    "path": "django/forms/boundfield.py",
    "line": 287,
-   "column": 44
+   "column": 44,
+   "endLine": 287,
+   "endColumn": 82
   },
   {
    "rule": "B905",
    "path": "django/forms/fields.py",
    "line": 1176,
-   "column": 37
+   "column": 37,
+   "endLine": 1176,
+   "endColumn": 68
   },
   {
    "rule": "B905",
    "path": "django/forms/widgets.py",
    "line": 1041,
-   "column": 13
+   "column": 13,
+   "endLine": 1041,
+   "endColumn": 50
   },
   {
    "rule": "B905",
    "path": "django/forms/widgets.py",
    "line": 1067,
-   "column": 40
+   "column": 40,
+   "endLine": 1067,
+   "endColumn": 77
   },
   {
    "rule": "B905",
    "path": "django/forms/widgets.py",
    "line": 1073,
-   "column": 40
+   "column": 40,
+   "endLine": 1073,
+   "endColumn": 77
   },
   {
    "rule": "B905",
    "path": "django/middleware/csrf.py",
    "line": 66,
-   "column": 13
+   "column": 13,
+   "endLine": 66,
+   "endColumn": 82
   },
   {
    "rule": "B905",
    "path": "django/middleware/csrf.py",
    "line": 80,
-   "column": 13
+   "column": 13,
+   "endLine": 80,
+   "endColumn": 81
   },
   {
    "rule": "B905",
    "path": "django/template/defaulttags.py",
    "line": 242,
-   "column": 42
+   "column": 42,
+   "endLine": 242,
+   "endColumn": 66
   },
   {
    "rule": "B905",
    "path": "django/test/runner.py",
    "line": 1313,
-   "column": 37
+   "column": 37,
+   "endLine": 1313,
+   "endColumn": 61
   },
   {
    "rule": "B905",
    "path": "django/test/utils.py",
    "line": 690,
-   "column": 55
+   "column": 55,
+   "endLine": 690,
+   "endColumn": 87
   },
   {
    "rule": "B905",
    "path": "django/urls/resolvers.py",
    "line": 771,
-   "column": 43
+   "column": 43,
+   "endLine": 771,
+   "endColumn": 60
   },
   {
    "rule": "B905",
    "path": "django/utils/regex_helper.py",
    "line": 193,
-   "column": 17
+   "column": 17,
+   "endLine": 193,
+   "endColumn": 45
   },
   {
    "rule": "B905",
    "path": "django/utils/regex_helper.py",
    "line": 330,
-   "column": 31
+   "column": 31,
+   "endLine": 330,
+   "endColumn": 55
   },
   {
    "rule": "B905",
    "path": "django/utils/regex_helper.py",
    "line": 331,
-   "column": 39
+   "column": 39,
+   "endLine": 331,
+   "endColumn": 68
   },
   {
    "rule": "B905",
    "path": "django/utils/translation/trans_real.py",
    "line": 124,
-   "column": 28
+   "column": 28,
+   "endLine": 124,
+   "endColumn": 62
   },
   {
    "rule": "F821",
    "path": "django/core/handlers/asgi.py",
    "line": 210,
-   "column": 20
+   "column": 20,
+   "endLine": 210,
+   "endColumn": 38
   },
   {
    "rule": "F821",
    "path": "django/dispatch/dispatcher.py",
    "line": 60,
-   "column": 12
+   "column": 12,
+   "endLine": 60,
+   "endColumn": 30
   }
  ]
 }

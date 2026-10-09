@@ -863,4813 +863,6417 @@
    "rule": "n/callback-return",
    "path": "callback-return/invalid-001.js",
    "line": 1,
-   "column": 30
+   "column": 30,
+   "endLine": 1,
+   "endColumn": 44
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-002.js",
    "line": 1,
-   "column": 63
+   "column": 63,
+   "endLine": 1,
+   "endColumn": 73
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-003.js",
    "line": 1,
-   "column": 61
+   "column": 61,
+   "endLine": 1,
+   "endColumn": 71
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-004.js",
    "line": 1,
-   "column": 35
+   "column": 35,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-005.js",
    "line": 1,
-   "column": 31
+   "column": 31,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-006.js",
    "line": 1,
-   "column": 31
+   "column": 31,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-007.js",
    "line": 3,
-   "column": 2
+   "column": 2,
+   "endLine": 3,
+   "endColumn": 15
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-008.js",
    "line": 1,
-   "column": 43
+   "column": 43,
+   "endLine": 1,
+   "endColumn": 57
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-009.js",
    "line": 1,
-   "column": 19
+   "column": 19,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-010.js",
    "line": 1,
-   "column": 19
+   "column": 19,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-011.js",
    "line": 1,
-   "column": 30
+   "column": 30,
+   "endLine": 1,
+   "endColumn": 44
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-012.js",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-013.js",
    "line": 1,
-   "column": 30
+   "column": 30,
+   "endLine": 1,
+   "endColumn": 44
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-014.js",
    "line": 3,
-   "column": 1
+   "column": 1,
+   "endLine": 3,
+   "endColumn": 11
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-015.js",
    "line": 1,
-   "column": 32
+   "column": 32,
+   "endLine": 1,
+   "endColumn": 42
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-016.js",
    "line": 1,
-   "column": 30
+   "column": 30,
+   "endLine": 1,
+   "endColumn": 40
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-016.js",
    "line": 1,
-   "column": 50
+   "column": 50,
+   "endLine": 1,
+   "endColumn": 60
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-017.js",
    "line": 1,
-   "column": 52
+   "column": 52,
+   "endLine": 1,
+   "endColumn": 62
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-018.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/invalid-019.js",
    "line": 1,
-   "column": 42
+   "column": 42,
+   "endLine": 1,
+   "endColumn": 52
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/valid-030.js",
    "line": 1,
-   "column": 30
+   "column": 30,
+   "endLine": 1,
+   "endColumn": 43
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/valid-031.js",
    "line": 1,
-   "column": 30
+   "column": 30,
+   "endLine": 1,
+   "endColumn": 43
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/valid-032.js",
    "line": 1,
-   "column": 56
+   "column": 56,
+   "endLine": 1,
+   "endColumn": 66
   },
   {
    "rule": "n/callback-return",
    "path": "callback-return/valid-036.js",
    "line": 1,
-   "column": 30
+   "column": 30,
+   "endLine": 1,
+   "endColumn": 43
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/invalid-001.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/invalid-002.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/invalid-003.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 27
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/invalid-004.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/invalid-005.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/invalid-006.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/invalid-007.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 27
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/invalid-008.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/invalid-009.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/invalid-029.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 27
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/invalid-030.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/invalid-031.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 27
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/invalid-031.js",
    "line": 1,
-   "column": 38
+   "column": 38,
+   "endLine": 1,
+   "endColumn": 47
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/invalid-032.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/invalid-032.js",
    "line": 1,
-   "column": 38
+   "column": 38,
+   "endLine": 1,
+   "endColumn": 47
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/valid-003.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/valid-004.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/valid-005.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 27
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/valid-006.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/valid-007.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 27
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/valid-008.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/valid-008.js",
    "line": 1,
-   "column": 38
+   "column": 38,
+   "endLine": 1,
+   "endColumn": 46
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/valid-009.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 27
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/valid-009.js",
    "line": 1,
-   "column": 38
+   "column": 38,
+   "endLine": 1,
+   "endColumn": 46
   },
   {
    "rule": "n/exports-style",
    "path": "exports-style/valid-011.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/exports-style",
    "path": "no-exports-assign/invalid-001.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/exports-style",
    "path": "no-exports-assign/valid-002.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/exports-style",
    "path": "no-exports-assign/valid-003.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 27
   },
   {
    "rule": "n/exports-style",
    "path": "no-exports-assign/valid-004.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/global-require",
    "path": "global-require/invalid-001.js",
    "line": 2,
-   "column": 2
+   "column": 2,
+   "endLine": 2,
+   "endColumn": 18
   },
   {
    "rule": "n/global-require",
    "path": "global-require/invalid-002.js",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/global-require",
    "path": "global-require/invalid-003.js",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/global-require",
    "path": "global-require/invalid-004.js",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/global-require",
    "path": "global-require/invalid-005.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 19
   },
   {
    "rule": "n/global-require",
    "path": "global-require/invalid-006.js",
    "line": 1,
-   "column": 22
+   "column": 22,
+   "endLine": 1,
+   "endColumn": 32
   },
   {
    "rule": "n/global-require",
    "path": "global-require/invalid-007.js",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/global-require",
    "path": "global-require/invalid-008.js",
    "line": 1,
-   "column": 23
+   "column": 23,
+   "endLine": 1,
+   "endColumn": 35
   },
   {
    "rule": "n/global-require",
    "path": "no-deprecated-api/invalid-001.js",
    "line": 1,
-   "column": 6
+   "column": 6,
+   "endLine": 1,
+   "endColumn": 23
   },
   {
    "rule": "n/global-require",
    "path": "no-deprecated-api/invalid-002.js",
    "line": 1,
-   "column": 6
+   "column": 6,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/global-require",
    "path": "no-deprecated-api/invalid-009.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 35
   },
   {
    "rule": "n/global-require",
    "path": "no-deprecated-api/invalid-013.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 35
   },
   {
    "rule": "n/global-require",
    "path": "no-deprecated-api/invalid-085.js",
    "line": 1,
-   "column": 6
+   "column": 6,
+   "endLine": 1,
+   "endColumn": 23
   },
   {
    "rule": "n/global-require",
    "path": "no-deprecated-api/valid-004.js",
    "line": 1,
-   "column": 6
+   "column": 6,
+   "endLine": 1,
+   "endColumn": 31
   },
   {
    "rule": "n/global-require",
    "path": "no-deprecated-api/valid-017.js",
    "line": 1,
-   "column": 6
+   "column": 6,
+   "endLine": 1,
+   "endColumn": 23
   },
   {
    "rule": "n/global-require",
    "path": "no-deprecated-api/valid-028.js",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 29
   },
   {
    "rule": "n/global-require",
    "path": "no-new-require/valid-002.js",
    "line": 1,
-   "column": 22
+   "column": 22,
+   "endLine": 1,
+   "endColumn": 43
   },
   {
    "rule": "n/global-require",
    "path": "no-new-require/valid-003.js",
    "line": 1,
-   "column": 22
+   "column": 22,
+   "endLine": 1,
+   "endColumn": 40
   },
   {
    "rule": "n/global-require",
    "path": "prefer-node-protocol/valid-021.mjs",
    "line": 1,
-   "column": 12
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 27
   },
   {
    "rule": "n/handle-callback-err",
    "path": "callback-return/valid-027.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 55
   },
   {
    "rule": "n/handle-callback-err",
    "path": "callback-return/valid-048.js",
    "line": 1,
-   "column": 47
+   "column": 47,
+   "endLine": 1,
+   "endColumn": 76
   },
   {
    "rule": "n/handle-callback-err",
    "path": "handle-callback-err/invalid-001.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/handle-callback-err",
    "path": "handle-callback-err/invalid-002.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/handle-callback-err",
    "path": "handle-callback-err/invalid-003.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 41
   },
   {
    "rule": "n/handle-callback-err",
    "path": "handle-callback-err/invalid-004.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 41
   },
   {
    "rule": "n/handle-callback-err",
    "path": "handle-callback-err/invalid-005.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 66
   },
   {
    "rule": "n/handle-callback-err",
    "path": "handle-callback-err/invalid-005.js",
    "line": 1,
-   "column": 36
+   "column": 36,
+   "endLine": 1,
+   "endColumn": 62
   },
   {
    "rule": "n/handle-callback-err",
    "path": "handle-callback-err/invalid-006.js",
    "line": 1,
-   "column": 12
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 23
   },
   {
    "rule": "n/handle-callback-err",
    "path": "handle-callback-err/invalid-007.js",
    "line": 1,
-   "column": 12
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/handle-callback-err",
    "path": "handle-callback-err/invalid-008.js",
    "line": 1,
-   "column": 12
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "n/handle-callback-err",
    "path": "handle-callback-err/invalid-009.js",
    "line": 1,
-   "column": 12
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 48
   },
   {
    "rule": "n/handle-callback-err",
    "path": "handle-callback-err/invalid-010.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 71
   },
   {
    "rule": "n/handle-callback-err",
    "path": "handle-callback-err/invalid-012.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 168
   },
   {
    "rule": "n/handle-callback-err",
    "path": "handle-callback-err/invalid-013.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 157
   },
   {
    "rule": "n/handle-callback-err",
    "path": "handle-callback-err/invalid-013.js",
    "line": 1,
-   "column": 52
+   "column": 52,
+   "endLine": 1,
+   "endColumn": 153
   },
   {
    "rule": "n/handle-callback-err",
    "path": "handle-callback-err/invalid-014.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 91
   },
   {
    "rule": "n/handle-callback-err",
    "path": "handle-callback-err/invalid-015.js",
    "line": 1,
-   "column": 19
+   "column": 19,
+   "endLine": 1,
+   "endColumn": 116
   },
   {
    "rule": "n/handle-callback-err",
    "path": "handle-callback-err/invalid-018.js",
    "line": 1,
-   "column": 12
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 49
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-001/shebang/string-bin/bin/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-002/shebang/string-bin/bin/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 16
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-003/shebang/string-bin/lib/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-004/shebang/object-bin/bin/a.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-005/shebang/object-bin/bin/b.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 16
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-006/shebang/object-bin/bin/c.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-007/shebang/no-bin-field/lib/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-010/shebang/string-bin/src/bin/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 16
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-011/shebang/string-bin/src/lib/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-013/shebang/object-bin/src/bin/b.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 16
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-014/shebang/object-bin/src/bin/c.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-015/shebang/no-bin-field/src/lib/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-016/shebang/string-bin/bin/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-017/shebang/string-bin/lib/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-018/shebang/string-bin/bin/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-019/shebang/string-bin/bin/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-020/shebang/string-bin/bin/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-021/shebang/string-bin/bin/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-022/shebang/string-bin/bin/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-023/shebang/string-bin/bin/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-024/shebang/string-bin/bin/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-025/shebang/string-bin/bin/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-026/shebang/string-bin/bin/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-026/shebang/string-bin/bin/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-027/shebang/string-bin/lib/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 30
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-028/shebang/object-bin/bin/index.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-029/shebang/unpublished/unpublished.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-030/shebang/unpublished/published.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-031/shebang/unpublished/published.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-033/shebang/unpublished/not-a-test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/invalid-034/shebang/object-bin/bin/t.ts",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/valid-012.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/valid-014/shebang/string-bin/src/bin/test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/valid-016/shebang/object-bin/src/bin/a.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/valid-017/shebang/object-bin/src/bin/b.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/valid-030/shebang/unpublished/unpublished.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/valid-032/shebang/unpublished/something.test.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/hashbang",
    "path": "hashbang/valid-033/shebang/object-bin/bin/t.ts",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 23
   },
   {
    "rule": "n/no-callback-literal",
    "path": "no-callback-literal/invalid-001.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/no-callback-literal",
    "path": "no-callback-literal/invalid-002.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/no-callback-literal",
    "path": "no-callback-literal/invalid-003.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 23
   },
   {
    "rule": "n/no-callback-literal",
    "path": "no-callback-literal/invalid-004.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/no-callback-literal",
    "path": "no-callback-literal/invalid-005.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 11
   },
   {
    "rule": "n/no-callback-literal",
    "path": "no-callback-literal/invalid-006.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/no-callback-literal",
    "path": "no-callback-literal/invalid-007.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/no-callback-literal",
    "path": "no-callback-literal/invalid-008.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 7
   },
   {
    "rule": "n/no-callback-literal",
    "path": "no-callback-literal/invalid-009.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 23
   },
   {
    "rule": "n/no-callback-literal",
    "path": "no-callback-literal/invalid-010.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 23
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-001.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-002.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-003.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 27
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-004.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 32
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-005.js",
    "line": 1,
-   "column": 28
+   "column": 28,
+   "endLine": 1,
+   "endColumn": 42
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-006.js",
    "line": 1,
-   "column": 28
+   "column": 28,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-007.js",
    "line": 1,
-   "column": 28
+   "column": 28,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-008.js",
    "line": 1,
-   "column": 35
+   "column": 35,
+   "endLine": 1,
+   "endColumn": 42
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-009.js",
    "line": 1,
-   "column": 8
+   "column": 8,
+   "endLine": 1,
+   "endColumn": 46
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-009.js",
    "line": 1,
-   "column": 48
+   "column": 48,
+   "endLine": 1,
+   "endColumn": 62
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-010.js",
    "line": 1,
-   "column": 38
+   "column": 38,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-011.js",
    "line": 1,
-   "column": 49
+   "column": 49,
+   "endLine": 1,
+   "endColumn": 56
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-012.js",
    "line": 1,
-   "column": 47
+   "column": 47,
+   "endLine": 1,
+   "endColumn": 54
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-013.js",
    "line": 1,
-   "column": 50
+   "column": 50,
+   "endLine": 1,
+   "endColumn": 57
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-014.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 29
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-015.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-016.js",
    "line": 1,
-   "column": 28
+   "column": 28,
+   "endLine": 1,
+   "endColumn": 40
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-017.js",
    "line": 1,
-   "column": 6
+   "column": 6,
+   "endLine": 1,
+   "endColumn": 19
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-018.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 21
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-019.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-020.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-021.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 21
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-022.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 30
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-023.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-024.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-025.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-026.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 32
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-027.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-028.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 30
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-029.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 21
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-030.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 21
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-031.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-032.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 29
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-033.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 30
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-034.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-035.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-036.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 32
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-037.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 35
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-038.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 21
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-039.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-040.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-041.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 32
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-042.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 35
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-043.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 41
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-044.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-045.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-046.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 31
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-047.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-048.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-049.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 32
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-050.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 31
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-051.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-052.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-053.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-054.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-055.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-056.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-057.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 23
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-058.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-059.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 27
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-060.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 23
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-061.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-062.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-063.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-064.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-065.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-066.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-067.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-068.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-069.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-070.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-071.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 21
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-072.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 21
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-073.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-074.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 32
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-075.mjs",
    "line": 1,
-   "column": 25
+   "column": 25,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-076.mjs",
    "line": 1,
-   "column": 30
+   "column": 30,
+   "endLine": 1,
+   "endColumn": 44
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-077.mjs",
    "line": 1,
-   "column": 30
+   "column": 30,
+   "endLine": 1,
+   "endColumn": 44
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-078.mjs",
    "line": 1,
-   "column": 30
+   "column": 30,
+   "endLine": 1,
+   "endColumn": 52
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-079.mjs",
    "line": 1,
-   "column": 37
+   "column": 37,
+   "endLine": 1,
+   "endColumn": 44
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-080.mjs",
    "line": 1,
-   "column": 25
+   "column": 25,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-081.mjs",
    "line": 1,
-   "column": 30
+   "column": 30,
+   "endLine": 1,
+   "endColumn": 42
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-082.mjs",
    "line": 1,
-   "column": 30
+   "column": 30,
+   "endLine": 1,
+   "endColumn": 50
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-083.mjs",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-084.mjs",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 29
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-085.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-086.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 27
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-087.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 40
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-088.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 40
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-089.js",
    "line": 1,
-   "column": 47
+   "column": 47,
+   "endLine": 1,
+   "endColumn": 61
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-090.js",
    "line": 1,
-   "column": 52
+   "column": 52,
+   "endLine": 1,
+   "endColumn": 66
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-091.js",
    "line": 1,
-   "column": 54
+   "column": 54,
+   "endLine": 1,
+   "endColumn": 66
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-092.js",
    "line": 1,
-   "column": 56
+   "column": 56,
+   "endLine": 1,
+   "endColumn": 63
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-093.js",
    "line": 1,
-   "column": 47
+   "column": 47,
+   "endLine": 1,
+   "endColumn": 59
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-094.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 50
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-095.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 50
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-096.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 44
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-097.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 57
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-098.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 57
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-099.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 11
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-100.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-101.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 7
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-102.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 21
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-103.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 19
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-105.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 21
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-106.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 35
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-107.js",
    "line": 1,
-   "column": 12
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-108.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-109.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/invalid-110.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/valid-017.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/valid-018.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 27
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/valid-019.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 32
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/valid-020.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/valid-021.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/valid-022.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 32
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/valid-023.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 11
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/valid-024.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 9
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/valid-025.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 21
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "no-deprecated-api/valid-026.js",
    "line": 1,
-   "column": 12
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "prefer-node-protocol/valid-008.mjs",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 19
   },
   {
    "rule": "n/no-deprecated-api",
    "path": "prefer-promises/fs/invalid-025.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "n/no-exports-assign",
    "path": "exports-style/invalid-001.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 19
   },
   {
    "rule": "n/no-exports-assign",
    "path": "exports-style/invalid-005.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 19
   },
   {
    "rule": "n/no-exports-assign",
    "path": "exports-style/invalid-009.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 19
   },
   {
    "rule": "n/no-exports-assign",
    "path": "exports-style/invalid-031.js",
    "line": 1,
-   "column": 38
+   "column": 38,
+   "endLine": 1,
+   "endColumn": 51
   },
   {
    "rule": "n/no-exports-assign",
    "path": "exports-style/invalid-032.js",
    "line": 1,
-   "column": 38
+   "column": 38,
+   "endLine": 1,
+   "endColumn": 51
   },
   {
    "rule": "n/no-exports-assign",
    "path": "no-exports-assign/invalid-001.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/no-mixed-requires",
    "path": "global-require/valid-004.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 29
   },
   {
    "rule": "n/no-mixed-requires",
    "path": "no-mixed-requires/invalid-001.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "n/no-mixed-requires",
    "path": "no-mixed-requires/invalid-002.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/no-mixed-requires",
    "path": "no-mixed-requires/invalid-010.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 82
   },
   {
    "rule": "n/no-mixed-requires",
    "path": "no-mixed-requires/valid-013.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 74
   },
   {
    "rule": "n/no-new-require",
    "path": "no-new-require/invalid-001.js",
    "line": 1,
-   "column": 17
+   "column": 17,
+   "endLine": 1,
+   "endColumn": 42
   },
   {
    "rule": "n/no-new-require",
    "path": "no-new-require/invalid-002.js",
    "line": 1,
-   "column": 17
+   "column": 17,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-001.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-002.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-003.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-004.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-005.mjs",
    "line": 1,
-   "column": 44
+   "column": 44,
+   "endLine": 1,
+   "endColumn": 75
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-006.mjs",
    "line": 1,
-   "column": 44
+   "column": 44,
+   "endLine": 1,
+   "endColumn": 76
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-007.mjs",
    "line": 1,
-   "column": 44
+   "column": 44,
+   "endLine": 1,
+   "endColumn": 64
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-008.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 31
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-009.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 44
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-010.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 58
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-011.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 56
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-012.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-013.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-014.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-015.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-016.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 47
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-017.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 48
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-018.mjs",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 42
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-019.mjs",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/no-path-concat",
    "path": "no-path-concat/invalid-020.mjs",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/no-process-env",
    "path": "global-require/invalid-001.js",
    "line": 1,
-   "column": 5
+   "column": 5,
+   "endLine": 1,
+   "endColumn": 16
   },
   {
    "rule": "n/no-process-env",
    "path": "no-deprecated-api/invalid-106.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 12
   },
   {
    "rule": "n/no-process-env",
    "path": "no-process-env/invalid-001.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 12
   },
   {
    "rule": "n/no-process-env",
    "path": "no-process-env/invalid-002.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/no-process-env",
    "path": "no-process-env/invalid-003.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 12
   },
   {
    "rule": "n/no-process-env",
    "path": "no-process-env/invalid-004.js",
    "line": 1,
-   "column": 3
+   "column": 3,
+   "endLine": 1,
+   "endColumn": 14
   },
   {
    "rule": "n/no-process-env",
    "path": "no-process-env/invalid-005.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 12
   },
   {
    "rule": "n/no-process-env",
    "path": "no-process-env/invalid-006.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 12
   },
   {
    "rule": "n/no-process-env",
    "path": "no-process-env/invalid-007.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/no-process-env",
    "path": "no-process-env/invalid-008.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/no-process-env",
    "path": "no-process-env/invalid-009.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 12
   },
   {
    "rule": "n/no-process-env",
    "path": "no-process-env/invalid-010.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/no-process-env",
    "path": "no-process-env/valid-005.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 12
   },
   {
    "rule": "n/no-process-env",
    "path": "no-process-env/valid-006.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 12
   },
   {
    "rule": "n/no-process-env",
    "path": "no-process-env/valid-007.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/no-process-env",
    "path": "no-process-env/valid-008.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/no-process-exit",
    "path": "no-process-exit/invalid-001.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 16
   },
   {
    "rule": "n/no-process-exit",
    "path": "no-process-exit/invalid-002.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 16
   },
   {
    "rule": "n/no-process-exit",
    "path": "no-process-exit/invalid-003.js",
    "line": 1,
-   "column": 3
+   "column": 3,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/no-process-exit",
    "path": "prefer-global/process/invalid-009.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 16
   },
   {
    "rule": "n/no-process-exit",
    "path": "prefer-global/process/valid-001.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 16
   },
   {
    "rule": "n/no-process-exit",
    "path": "prefer-global/process/valid-002.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 16
   },
   {
    "rule": "n/no-process-exit",
    "path": "prefer-global/process/valid-003.js",
    "line": 1,
-   "column": 35
+   "column": 35,
+   "endLine": 1,
+   "endColumn": 50
   },
   {
    "rule": "n/no-process-exit",
    "path": "prefer-global/process/valid-004.js",
    "line": 1,
-   "column": 40
+   "column": 40,
+   "endLine": 1,
+   "endColumn": 55
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/invalid-001.js",
    "line": 1,
-   "column": 11
+   "column": 11,
+   "endLine": 1,
+   "endColumn": 21
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/invalid-002.js",
    "line": 1,
-   "column": 11
+   "column": 11,
+   "endLine": 1,
+   "endColumn": 21
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/invalid-003.js",
    "line": 1,
-   "column": 11
+   "column": 11,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/invalid-004.js",
    "line": 1,
-   "column": 11
+   "column": 11,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/invalid-005.js",
    "line": 1,
-   "column": 11
+   "column": 11,
+   "endLine": 1,
+   "endColumn": 21
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/invalid-006.js",
    "line": 1,
-   "column": 12
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/invalid-007.js",
    "line": 1,
-   "column": 26
+   "column": 26,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/invalid-008.js",
    "line": 1,
-   "column": 26
+   "column": 26,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/invalid-009.js",
    "line": 1,
-   "column": 34
+   "column": 34,
+   "endLine": 1,
+   "endColumn": 44
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/invalid-010.js",
    "line": 1,
-   "column": 8
+   "column": 8,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/invalid-011.ts",
    "line": 3,
-   "column": 1
+   "column": 1,
+   "endLine": 3,
+   "endColumn": 10
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/invalid-012.ts",
    "line": 3,
-   "column": 1
+   "column": 1,
+   "endLine": 3,
+   "endColumn": 10
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/invalid-013.ts",
    "line": 3,
-   "column": 1
+   "column": 1,
+   "endLine": 3,
+   "endColumn": 23
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/invalid-014.ts",
    "line": 3,
-   "column": 1
+   "column": 1,
+   "endLine": 3,
+   "endColumn": 10
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/valid-007.js",
    "line": 1,
-   "column": 12
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/valid-008.js",
    "line": 1,
-   "column": 12
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 21
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/valid-009.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/valid-010.ts",
    "line": 3,
-   "column": 1
+   "column": 1,
+   "endLine": 3,
+   "endColumn": 10
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/valid-011.ts",
    "line": 3,
-   "column": 1
+   "column": 1,
+   "endLine": 3,
+   "endColumn": 10
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/valid-012.ts",
    "line": 3,
-   "column": 1
+   "column": 1,
+   "endLine": 3,
+   "endColumn": 23
   },
   {
    "rule": "n/no-sync",
    "path": "no-sync/valid-013.ts",
    "line": 3,
-   "column": 1
+   "column": 1,
+   "endLine": 3,
+   "endColumn": 10
   },
   {
    "rule": "n/no-sync",
    "path": "prefer-promises/dns/valid-001.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 43
   },
   {
    "rule": "n/no-sync",
    "path": "prefer-promises/fs/valid-002.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 40
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-001.js",
    "line": 1,
-   "column": 6
+   "column": 6,
+   "endLine": 1,
+   "endColumn": 30
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-002.js",
    "line": 1,
-   "column": 6
+   "column": 6,
+   "endLine": 1,
+   "endColumn": 35
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-003.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-004.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 30
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-005.js",
    "line": 1,
-   "column": 32
+   "column": 32,
+   "endLine": 1,
+   "endColumn": 40
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-006.js",
    "line": 1,
-   "column": 32
+   "column": 32,
+   "endLine": 1,
+   "endColumn": 43
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-007.js",
    "line": 1,
-   "column": 32
+   "column": 32,
+   "endLine": 1,
+   "endColumn": 43
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-008.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-009.js",
    "line": 1,
-   "column": 13
+   "column": 13,
+   "endLine": 1,
+   "endColumn": 43
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-009.js",
    "line": 1,
-   "column": 52
+   "column": 52,
+   "endLine": 1,
+   "endColumn": 60
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-010.js",
    "line": 1,
-   "column": 6
+   "column": 6,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-011.js",
    "line": 1,
-   "column": 6
+   "column": 6,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-012.js",
    "line": 1,
-   "column": 6
+   "column": 6,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-013.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 42
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-075.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-076.mjs",
    "line": 1,
-   "column": 34
+   "column": 34,
+   "endLine": 1,
+   "endColumn": 42
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-077.mjs",
    "line": 1,
-   "column": 34
+   "column": 34,
+   "endLine": 1,
+   "endColumn": 42
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-078.mjs",
    "line": 1,
-   "column": 34
+   "column": 34,
+   "endLine": 1,
+   "endColumn": 50
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-079.mjs",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-085.js",
    "line": 1,
-   "column": 6
+   "column": 6,
+   "endLine": 1,
+   "endColumn": 30
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-086.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-089.js",
    "line": 1,
-   "column": 51
+   "column": 51,
+   "endLine": 1,
+   "endColumn": 59
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-090.js",
    "line": 1,
-   "column": 56
+   "column": 56,
+   "endLine": 1,
+   "endColumn": 64
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-091.js",
    "line": 1,
-   "column": 8
+   "column": 8,
+   "endLine": 1,
+   "endColumn": 14
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-092.js",
    "line": 1,
-   "column": 8
+   "column": 8,
+   "endLine": 1,
+   "endColumn": 16
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-095.js",
    "line": 1,
-   "column": 6
+   "column": 6,
+   "endLine": 1,
+   "endColumn": 47
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/invalid-096.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 42
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/valid-001.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/valid-002.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 30
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/valid-003.js",
    "line": 1,
-   "column": 5
+   "column": 5,
+   "endLine": 1,
+   "endColumn": 29
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/valid-017.js",
    "line": 1,
-   "column": 6
+   "column": 6,
+   "endLine": 1,
+   "endColumn": 30
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/valid-018.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "no-deprecated-api/valid-019.js",
    "line": 1,
-   "column": 1
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 30
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "prefer-global/buffer/invalid-001.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "prefer-global/buffer/invalid-002.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "prefer-global/buffer/invalid-003.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "prefer-global/buffer/invalid-004.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "prefer-global/buffer/invalid-005.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "prefer-global/buffer/invalid-006.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "prefer-global/buffer/invalid-007.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "prefer-global/buffer/invalid-008.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "prefer-global/buffer/valid-003.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "prefer-global/buffer/valid-004.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "prefer-global/buffer/valid-005.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-global/buffer",
    "path": "prefer-global/buffer/valid-006.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-global/console",
    "path": "prefer-global/console/invalid-001.js",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "n/prefer-global/console",
    "path": "prefer-global/console/invalid-002.js",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/prefer-global/console",
    "path": "prefer-global/console/invalid-003.js",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "n/prefer-global/console",
    "path": "prefer-global/console/invalid-004.js",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/prefer-global/console",
    "path": "prefer-global/console/invalid-005.js",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 50
   },
   {
    "rule": "n/prefer-global/console",
    "path": "prefer-global/console/invalid-006.js",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 55
   },
   {
    "rule": "n/prefer-global/console",
    "path": "prefer-global/console/invalid-007.js",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 50
   },
   {
    "rule": "n/prefer-global/console",
    "path": "prefer-global/console/invalid-008.js",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 55
   },
   {
    "rule": "n/prefer-global/console",
    "path": "prefer-global/console/valid-003.js",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "n/prefer-global/console",
    "path": "prefer-global/console/valid-004.js",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/prefer-global/console",
    "path": "prefer-global/console/valid-005.js",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 50
   },
   {
    "rule": "n/prefer-global/console",
    "path": "prefer-global/console/valid-006.js",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 55
   },
   {
    "rule": "n/prefer-global/process",
    "path": "prefer-global/process/invalid-001.js",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/prefer-global/process",
    "path": "prefer-global/process/invalid-002.js",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "n/prefer-global/process",
    "path": "prefer-global/process/invalid-003.js",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/prefer-global/process",
    "path": "prefer-global/process/invalid-004.js",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "n/prefer-global/process",
    "path": "prefer-global/process/invalid-005.js",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 51
   },
   {
    "rule": "n/prefer-global/process",
    "path": "prefer-global/process/invalid-006.js",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 56
   },
   {
    "rule": "n/prefer-global/process",
    "path": "prefer-global/process/invalid-007.js",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 51
   },
   {
    "rule": "n/prefer-global/process",
    "path": "prefer-global/process/invalid-008.js",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 56
   },
   {
    "rule": "n/prefer-global/process",
    "path": "prefer-global/process/valid-003.js",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "n/prefer-global/process",
    "path": "prefer-global/process/valid-004.js",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/prefer-global/text-decoder",
    "path": "prefer-global/text-decoder/invalid-001.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-decoder",
    "path": "prefer-global/text-decoder/invalid-002.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-decoder",
    "path": "prefer-global/text-decoder/invalid-003.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-decoder",
    "path": "prefer-global/text-decoder/invalid-004.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-decoder",
    "path": "prefer-global/text-decoder/invalid-005.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-decoder",
    "path": "prefer-global/text-decoder/invalid-006.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-decoder",
    "path": "prefer-global/text-decoder/invalid-007.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-decoder",
    "path": "prefer-global/text-decoder/invalid-008.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-decoder",
    "path": "prefer-global/text-decoder/valid-003.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-decoder",
    "path": "prefer-global/text-decoder/valid-004.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-decoder",
    "path": "prefer-global/text-decoder/valid-005.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-decoder",
    "path": "prefer-global/text-decoder/valid-006.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-encoder",
    "path": "prefer-global/text-encoder/invalid-001.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-encoder",
    "path": "prefer-global/text-encoder/invalid-002.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-encoder",
    "path": "prefer-global/text-encoder/invalid-003.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-encoder",
    "path": "prefer-global/text-encoder/invalid-004.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-encoder",
    "path": "prefer-global/text-encoder/invalid-005.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-encoder",
    "path": "prefer-global/text-encoder/invalid-006.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-encoder",
    "path": "prefer-global/text-encoder/invalid-007.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-encoder",
    "path": "prefer-global/text-encoder/invalid-008.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-encoder",
    "path": "prefer-global/text-encoder/valid-003.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-encoder",
    "path": "prefer-global/text-encoder/valid-004.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-encoder",
    "path": "prefer-global/text-encoder/valid-005.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/text-encoder",
    "path": "prefer-global/text-encoder/valid-006.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 18
   },
   {
    "rule": "n/prefer-global/url",
    "path": "prefer-global/url/invalid-001.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/prefer-global/url",
    "path": "prefer-global/url/invalid-002.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/prefer-global/url",
    "path": "prefer-global/url/invalid-003.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/prefer-global/url",
    "path": "prefer-global/url/invalid-004.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/prefer-global/url",
    "path": "prefer-global/url/invalid-005.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/prefer-global/url",
    "path": "prefer-global/url/invalid-006.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/prefer-global/url",
    "path": "prefer-global/url/invalid-007.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/prefer-global/url",
    "path": "prefer-global/url/invalid-008.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/prefer-global/url",
    "path": "prefer-global/url/valid-003.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/prefer-global/url",
    "path": "prefer-global/url/valid-004.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/prefer-global/url",
    "path": "prefer-global/url/valid-005.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/prefer-global/url",
    "path": "prefer-global/url/valid-006.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 10
   },
   {
    "rule": "n/prefer-global/url-search-params",
    "path": "prefer-global/url-search-params/invalid-001.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-global/url-search-params",
    "path": "prefer-global/url-search-params/invalid-002.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-global/url-search-params",
    "path": "prefer-global/url-search-params/invalid-003.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-global/url-search-params",
    "path": "prefer-global/url-search-params/invalid-004.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-global/url-search-params",
    "path": "prefer-global/url-search-params/invalid-005.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-global/url-search-params",
    "path": "prefer-global/url-search-params/invalid-006.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-global/url-search-params",
    "path": "prefer-global/url-search-params/invalid-007.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-global/url-search-params",
    "path": "prefer-global/url-search-params/invalid-008.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-global/url-search-params",
    "path": "prefer-global/url-search-params/valid-003.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-global/url-search-params",
    "path": "prefer-global/url-search-params/valid-004.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-global/url-search-params",
    "path": "prefer-global/url-search-params/valid-005.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-global/url-search-params",
    "path": "prefer-global/url-search-params/valid-006.js",
    "line": 1,
-   "column": 7
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-001.js",
    "line": 1,
-   "column": 14
+   "column": 14,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-003.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-005.js",
    "line": 1,
-   "column": 17
+   "column": 17,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-006.js",
    "line": 1,
-   "column": 17
+   "column": 17,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-007.js",
    "line": 1,
-   "column": 17
+   "column": 17,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-008.js",
    "line": 1,
-   "column": 17
+   "column": 17,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-009.js",
    "line": 1,
-   "column": 26
+   "column": 26,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-010.js",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 35
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-011.js",
    "line": 1,
-   "column": 38
+   "column": 38,
+   "endLine": 1,
+   "endColumn": 46
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-012.js",
    "line": 1,
-   "column": 36
+   "column": 36,
+   "endLine": 1,
+   "endColumn": 44
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-013.js",
    "line": 1,
-   "column": 26
+   "column": 26,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-014.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-016.js",
    "line": 1,
-   "column": 17
+   "column": 17,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-017.js",
    "line": 1,
-   "column": 31
+   "column": 31,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-019.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-020.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-022.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-023.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-025.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-026.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-028.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-029.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-030.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-031.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-032.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-033.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-034.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-035.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-036.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-037.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-038.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-039.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-041.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 19
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-042.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 19
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-043.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 19
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-044.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 19
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-046.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 14
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-047.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 14
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-048.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 14
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-049.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 14
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-050.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 14
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-051.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 14
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-052.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-053.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-054.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-055.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-056.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-057.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-058.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-059.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-060.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-061.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-062.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-063.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-064.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-065.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-066.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-067.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-068.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-069.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-070.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-071.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-072.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-073.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 15
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-074.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-075.mjs",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 23
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-077.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-078.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-079.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 35
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-080.mjs",
    "line": 1,
-   "column": 15
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 23
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-081.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-082.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-083.mjs",
    "line": 1,
-   "column": 31
+   "column": 31,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-085.js",
    "line": 1,
-   "column": 14
+   "column": 14,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-086.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-087.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-088.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-089.js",
    "line": 1,
-   "column": 36
+   "column": 36,
+   "endLine": 1,
+   "endColumn": 44
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-091.js",
    "line": 1,
-   "column": 43
+   "column": 43,
+   "endLine": 1,
+   "endColumn": 51
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-092.js",
    "line": 1,
-   "column": 45
+   "column": 45,
+   "endLine": 1,
+   "endColumn": 53
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-093.js",
    "line": 1,
-   "column": 36
+   "column": 36,
+   "endLine": 1,
+   "endColumn": 44
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-095.js",
    "line": 1,
-   "column": 31
+   "column": 31,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-096.js",
    "line": 1,
-   "column": 26
+   "column": 26,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-097.js",
    "line": 1,
-   "column": 26
+   "column": 26,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/invalid-098.js",
    "line": 1,
-   "column": 26
+   "column": 26,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/valid-001.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/valid-003.js",
    "line": 1,
-   "column": 13
+   "column": 13,
+   "endLine": 1,
+   "endColumn": 21
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/valid-005.js",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/valid-006.js",
    "line": 1,
-   "column": 25
+   "column": 25,
+   "endLine": 1,
+   "endColumn": 31
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/valid-007.js",
    "line": 1,
-   "column": 14
+   "column": 14,
+   "endLine": 1,
+   "endColumn": 21
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/valid-007.js",
    "line": 1,
-   "column": 33
+   "column": 33,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/valid-010.mjs",
    "line": 1,
-   "column": 23
+   "column": 23,
+   "endLine": 1,
+   "endColumn": 29
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/valid-012.js",
    "line": 1,
-   "column": 44
+   "column": 44,
+   "endLine": 1,
+   "endColumn": 50
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/valid-013.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 13
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/valid-016.js",
    "line": 1,
-   "column": 24
+   "column": 24,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/valid-017.js",
    "line": 1,
-   "column": 14
+   "column": 14,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/valid-018.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/valid-021.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/valid-022.js",
    "line": 1,
-   "column": 9
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 17
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-deprecated-api/valid-028.js",
    "line": 1,
-   "column": 24
+   "column": 24,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-mixed-requires/invalid-001.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-mixed-requires/invalid-002.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-mixed-requires/invalid-004.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-mixed-requires/invalid-005.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-mixed-requires/invalid-006.js",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 35
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-mixed-requires/invalid-007.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-mixed-requires/valid-003.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-mixed-requires/valid-004.js",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 35
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-mixed-requires/valid-005.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-mixed-requires/valid-007.js",
    "line": 1,
-   "column": 23
+   "column": 23,
+   "endLine": 1,
+   "endColumn": 31
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-mixed-requires/valid-007.js",
    "line": 1,
-   "column": 60
+   "column": 60,
+   "endLine": 1,
+   "endColumn": 64
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-mixed-requires/valid-010.js",
    "line": 1,
-   "column": 18
+   "column": 18,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-path-concat/invalid-005.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-path-concat/invalid-006.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "no-path-concat/invalid-007.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/buffer/invalid-001.js",
    "line": 1,
-   "column": 26
+   "column": 26,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/buffer/invalid-003.js",
    "line": 1,
-   "column": 26
+   "column": 26,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/buffer/invalid-005.js",
    "line": 1,
-   "column": 43
+   "column": 43,
+   "endLine": 1,
+   "endColumn": 51
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/buffer/invalid-007.js",
    "line": 1,
-   "column": 43
+   "column": 43,
+   "endLine": 1,
+   "endColumn": 51
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/buffer/valid-003.js",
    "line": 1,
-   "column": 26
+   "column": 26,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/buffer/valid-005.js",
    "line": 1,
-   "column": 43
+   "column": 43,
+   "endLine": 1,
+   "endColumn": 51
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/console/invalid-001.js",
    "line": 1,
-   "column": 23
+   "column": 23,
+   "endLine": 1,
+   "endColumn": 32
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/console/invalid-003.js",
    "line": 1,
-   "column": 23
+   "column": 23,
+   "endLine": 1,
+   "endColumn": 32
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/console/invalid-005.js",
    "line": 1,
-   "column": 40
+   "column": 40,
+   "endLine": 1,
+   "endColumn": 49
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/console/invalid-007.js",
    "line": 1,
-   "column": 40
+   "column": 40,
+   "endLine": 1,
+   "endColumn": 49
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/console/valid-003.js",
    "line": 1,
-   "column": 23
+   "column": 23,
+   "endLine": 1,
+   "endColumn": 32
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/console/valid-005.js",
    "line": 1,
-   "column": 40
+   "column": 40,
+   "endLine": 1,
+   "endColumn": 49
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/process/invalid-001.js",
    "line": 1,
-   "column": 24
+   "column": 24,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/process/invalid-003.js",
    "line": 1,
-   "column": 24
+   "column": 24,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/process/invalid-005.js",
    "line": 1,
-   "column": 41
+   "column": 41,
+   "endLine": 1,
+   "endColumn": 50
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/process/invalid-007.js",
    "line": 1,
-   "column": 41
+   "column": 41,
+   "endLine": 1,
+   "endColumn": 50
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/process/valid-003.js",
    "line": 1,
-   "column": 23
+   "column": 23,
+   "endLine": 1,
+   "endColumn": 32
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/process/valid-005.js",
    "line": 1,
-   "column": 26
+   "column": 26,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/text-decoder/invalid-001.js",
    "line": 1,
-   "column": 31
+   "column": 31,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/text-decoder/invalid-003.js",
    "line": 1,
-   "column": 31
+   "column": 31,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/text-decoder/invalid-005.js",
    "line": 1,
-   "column": 48
+   "column": 48,
+   "endLine": 1,
+   "endColumn": 54
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/text-decoder/invalid-007.js",
    "line": 1,
-   "column": 48
+   "column": 48,
+   "endLine": 1,
+   "endColumn": 54
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/text-decoder/valid-003.js",
    "line": 1,
-   "column": 31
+   "column": 31,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/text-decoder/valid-005.js",
    "line": 1,
-   "column": 48
+   "column": 48,
+   "endLine": 1,
+   "endColumn": 54
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/text-encoder/invalid-001.js",
    "line": 1,
-   "column": 31
+   "column": 31,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/text-encoder/invalid-003.js",
    "line": 1,
-   "column": 31
+   "column": 31,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/text-encoder/invalid-005.js",
    "line": 1,
-   "column": 48
+   "column": 48,
+   "endLine": 1,
+   "endColumn": 54
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/text-encoder/invalid-007.js",
    "line": 1,
-   "column": 48
+   "column": 48,
+   "endLine": 1,
+   "endColumn": 54
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/text-encoder/valid-003.js",
    "line": 1,
-   "column": 31
+   "column": 31,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/text-encoder/valid-005.js",
    "line": 1,
-   "column": 48
+   "column": 48,
+   "endLine": 1,
+   "endColumn": 54
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/url-search-params/invalid-001.js",
    "line": 1,
-   "column": 35
+   "column": 35,
+   "endLine": 1,
+   "endColumn": 40
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/url-search-params/invalid-003.js",
    "line": 1,
-   "column": 35
+   "column": 35,
+   "endLine": 1,
+   "endColumn": 40
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/url-search-params/invalid-005.js",
    "line": 1,
-   "column": 52
+   "column": 52,
+   "endLine": 1,
+   "endColumn": 57
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/url-search-params/invalid-007.js",
    "line": 1,
-   "column": 52
+   "column": 52,
+   "endLine": 1,
+   "endColumn": 57
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/url-search-params/valid-003.js",
    "line": 1,
-   "column": 35
+   "column": 35,
+   "endLine": 1,
+   "endColumn": 40
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/url-search-params/valid-005.js",
    "line": 1,
-   "column": 52
+   "column": 52,
+   "endLine": 1,
+   "endColumn": 57
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/url/invalid-001.js",
    "line": 1,
-   "column": 23
+   "column": 23,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/url/invalid-003.js",
    "line": 1,
-   "column": 23
+   "column": 23,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/url/invalid-005.js",
    "line": 1,
-   "column": 40
+   "column": 40,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/url/invalid-007.js",
    "line": 1,
-   "column": 40
+   "column": 40,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/url/valid-003.js",
    "line": 1,
-   "column": 23
+   "column": 23,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-global/url/valid-005.js",
    "line": 1,
-   "column": 40
+   "column": 40,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-001.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-002.mjs",
    "line": 1,
-   "column": 24
+   "column": 24,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-003.mjs",
    "line": 3,
-   "column": 45
+   "column": 45,
+   "endLine": 3,
+   "endColumn": 49
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-004.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 29
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-005.mjs",
    "line": 1,
-   "column": 23
+   "column": 23,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-006.mjs",
    "line": 3,
-   "column": 45
+   "column": 45,
+   "endLine": 3,
+   "endColumn": 58
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-007.mjs",
    "line": 1,
-   "column": 24
+   "column": 24,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-008.mjs",
    "line": 1,
-   "column": 35
+   "column": 35,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-009.mjs",
    "line": 1,
-   "column": 24
+   "column": 24,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-010.mjs",
    "line": 3,
-   "column": 45
+   "column": 45,
+   "endLine": 3,
+   "endColumn": 58
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-011.mjs",
    "line": 3,
-   "column": 58
+   "column": 58,
+   "endLine": 3,
+   "endColumn": 76
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-012.mjs",
    "line": 1,
-   "column": 8
+   "column": 8,
+   "endLine": 1,
+   "endColumn": 16
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-013.mjs",
    "line": 1,
-   "column": 8
+   "column": 8,
+   "endLine": 1,
+   "endColumn": 23
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-014.mjs",
    "line": 1,
-   "column": 8
+   "column": 8,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-015.mjs",
    "line": 1,
-   "column": 28
+   "column": 28,
+   "endLine": 1,
+   "endColumn": 32
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-016.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-017.mjs",
    "line": 3,
-   "column": 36
+   "column": 36,
+   "endLine": 3,
+   "endColumn": 49
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-018.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-019.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-020.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-021.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-022.mjs",
    "line": 2,
-   "column": 36
+   "column": 36,
+   "endLine": 2,
+   "endColumn": 40
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-022.mjs",
    "line": 3,
-   "column": 36
+   "column": 36,
+   "endLine": 3,
+   "endColumn": 44
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-023.mjs",
    "line": 1,
-   "column": 19
+   "column": 19,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-024.mjs",
    "line": 1,
-   "column": 45
+   "column": 45,
+   "endLine": 1,
+   "endColumn": 49
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-025.mjs",
    "line": 1,
-   "column": 56
+   "column": 56,
+   "endLine": 1,
+   "endColumn": 60
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-026.mjs",
    "line": 1,
-   "column": 45
+   "column": 45,
+   "endLine": 1,
+   "endColumn": 49
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-027.mjs",
    "line": 1,
-   "column": 37
+   "column": 37,
+   "endLine": 1,
+   "endColumn": 50
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-028.mjs",
    "line": 3,
-   "column": 53
+   "column": 53,
+   "endLine": 3,
+   "endColumn": 66
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/invalid-029.mjs",
    "line": 1,
-   "column": 45
+   "column": 45,
+   "endLine": 1,
+   "endColumn": 49
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/valid-026.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/valid-027.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/valid-028.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/valid-029.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/valid-030.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-node-protocol/valid-031.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-001.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-003.mjs",
    "line": 1,
-   "column": 26
+   "column": 26,
+   "endLine": 1,
+   "endColumn": 31
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-004.mjs",
    "line": 1,
-   "column": 17
+   "column": 17,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-006.mjs",
    "line": 1,
-   "column": 22
+   "column": 22,
+   "endLine": 1,
+   "endColumn": 27
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-007.mjs",
    "line": 1,
-   "column": 22
+   "column": 22,
+   "endLine": 1,
+   "endColumn": 27
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-008.mjs",
    "line": 1,
-   "column": 38
+   "column": 38,
+   "endLine": 1,
+   "endColumn": 43
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-010.mjs",
    "line": 1,
-   "column": 43
+   "column": 43,
+   "endLine": 1,
+   "endColumn": 48
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-011.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-012.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-013.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-014.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-015.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-016.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-017.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-018.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-019.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-020.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-021.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-022.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-023.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-024.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-025.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-026.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/invalid-027.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/valid-001.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/valid-002.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/valid-004.mjs",
    "line": 1,
-   "column": 28
+   "column": 28,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/valid-005.mjs",
    "line": 1,
-   "column": 33
+   "column": 33,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/valid-006.mjs",
    "line": 1,
-   "column": 38
+   "column": 38,
+   "endLine": 1,
+   "endColumn": 43
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/valid-007.mjs",
    "line": 1,
-   "column": 17
+   "column": 17,
+   "endLine": 1,
+   "endColumn": 22
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/valid-009.mjs",
    "line": 1,
-   "column": 22
+   "column": 22,
+   "endLine": 1,
+   "endColumn": 27
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/valid-010.mjs",
    "line": 1,
-   "column": 24
+   "column": 24,
+   "endLine": 1,
+   "endColumn": 29
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/valid-011.mjs",
    "line": 1,
-   "column": 31
+   "column": 31,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/valid-012.mjs",
    "line": 1,
-   "column": 38
+   "column": 38,
+   "endLine": 1,
+   "endColumn": 43
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/valid-014.mjs",
    "line": 1,
-   "column": 45
+   "column": 45,
+   "endLine": 1,
+   "endColumn": 50
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/dns/valid-015.mjs",
    "line": 1,
-   "column": 50
+   "column": 50,
+   "endLine": 1,
+   "endColumn": 55
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-001.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-003.mjs",
    "line": 1,
-   "column": 26
+   "column": 26,
+   "endLine": 1,
+   "endColumn": 30
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-004.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-006.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-007.mjs",
    "line": 1,
-   "column": 22
+   "column": 22,
+   "endLine": 1,
+   "endColumn": 26
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-008.mjs",
    "line": 1,
-   "column": 37
+   "column": 37,
+   "endLine": 1,
+   "endColumn": 41
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-010.mjs",
    "line": 1,
-   "column": 43
+   "column": 43,
+   "endLine": 1,
+   "endColumn": 47
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-011.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-012.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-013.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-014.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-015.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-016.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-017.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-018.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-019.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-020.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-021.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-022.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-023.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-024.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-025.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-026.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-027.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-028.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-029.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-030.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-031.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-032.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-033.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-034.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-035.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-036.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-037.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-038.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-039.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/invalid-040.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/valid-001.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/valid-002.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/valid-003.mjs",
    "line": 1,
-   "column": 20
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 24
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/valid-005.mjs",
    "line": 1,
-   "column": 28
+   "column": 28,
+   "endLine": 1,
+   "endColumn": 32
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/valid-006.mjs",
    "line": 1,
-   "column": 32
+   "column": 32,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/valid-007.mjs",
    "line": 1,
-   "column": 38
+   "column": 38,
+   "endLine": 1,
+   "endColumn": 42
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/valid-008.mjs",
    "line": 1,
-   "column": 16
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 20
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/valid-010.mjs",
    "line": 1,
-   "column": 21
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 25
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/valid-011.mjs",
    "line": 1,
-   "column": 24
+   "column": 24,
+   "endLine": 1,
+   "endColumn": 28
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/valid-012.mjs",
    "line": 1,
-   "column": 30
+   "column": 30,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/valid-013.mjs",
    "line": 1,
-   "column": 37
+   "column": 37,
+   "endLine": 1,
+   "endColumn": 41
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/valid-015.mjs",
    "line": 1,
-   "column": 45
+   "column": 45,
+   "endLine": 1,
+   "endColumn": 49
   },
   {
    "rule": "n/prefer-node-protocol",
    "path": "prefer-promises/fs/valid-016.mjs",
    "line": 1,
-   "column": 49
+   "column": 49,
+   "endLine": 1,
+   "endColumn": 53
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-001.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 41
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-002.mjs",
    "line": 1,
-   "column": 34
+   "column": 34,
+   "endLine": 1,
+   "endColumn": 46
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-003.mjs",
    "line": 1,
-   "column": 34
+   "column": 34,
+   "endLine": 1,
+   "endColumn": 42
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-004.mjs",
    "line": 1,
-   "column": 24
+   "column": 24,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-005.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 41
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-006.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 41
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-007.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-008.mjs",
    "line": 1,
-   "column": 46
+   "column": 46,
+   "endLine": 1,
+   "endColumn": 58
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-009.mjs",
    "line": 1,
-   "column": 51
+   "column": 51,
+   "endLine": 1,
+   "endColumn": 63
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-010.mjs",
    "line": 1,
-   "column": 51
+   "column": 51,
+   "endLine": 1,
+   "endColumn": 59
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-011.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 48
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-012.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 47
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-013.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-014.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 42
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-015.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 43
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-016.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 43
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-017.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-018.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 47
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-019.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 44
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-020.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 47
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-021.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 44
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-022.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-023.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-024.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-025.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-026.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 42
   },
   {
    "rule": "n/prefer-promises/dns",
    "path": "prefer-promises/dns/invalid-027.mjs",
    "line": 1,
-   "column": 29
+   "column": 29,
+   "endLine": 1,
+   "endColumn": 45
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-001.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-002.mjs",
    "line": 1,
-   "column": 32
+   "column": 32,
+   "endLine": 1,
+   "endColumn": 43
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-003.mjs",
    "line": 1,
-   "column": 33
+   "column": 33,
+   "endLine": 1,
+   "endColumn": 41
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-004.mjs",
    "line": 1,
-   "column": 22
+   "column": 22,
+   "endLine": 1,
+   "endColumn": 33
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-005.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-006.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-007.mjs",
    "line": 1,
-   "column": 28
+   "column": 28,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-008.mjs",
    "line": 1,
-   "column": 44
+   "column": 44,
+   "endLine": 1,
+   "endColumn": 55
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-009.mjs",
    "line": 1,
-   "column": 49
+   "column": 49,
+   "endLine": 1,
+   "endColumn": 60
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-010.mjs",
    "line": 1,
-   "column": 50
+   "column": 50,
+   "endLine": 1,
+   "endColumn": 58
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-011.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 40
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-012.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-013.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-014.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 40
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-015.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-016.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-017.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-018.mjs",
    "line": 1,
-   "column": 26
+   "column": 26,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-019.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-020.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-021.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-022.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-023.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-024.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-025.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-026.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-027.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 37
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-028.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-029.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 40
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-030.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-031.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 41
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-032.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 42
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-033.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 40
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-034.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-035.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 36
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-036.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-037.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 39
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-038.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 34
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-039.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 38
   },
   {
    "rule": "n/prefer-promises/fs",
    "path": "prefer-promises/fs/invalid-040.mjs",
    "line": 1,
-   "column": 27
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 53
   }
  ]
 }

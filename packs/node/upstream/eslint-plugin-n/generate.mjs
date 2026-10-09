@@ -13,6 +13,11 @@
 // 2. Runs the pinned plugin (ESLint Node API, one config, default rule options, every chosen rule on) over every
 //    fixture file and every pinned corpus file, and writes fixtures.expected.json and corpus-<name>.expected.json.
 // 3. Writes ../../licenses/eslint-plugin-n/{LICENSE,UPSTREAM.md}.
+// 4. Writes source.json, the plugin's source facts (conformance/recorders/eslint-source.mjs), from every upstream rule
+//    test file (tests/lib/rules/**/*.js, loaded with the same stub; a file that does not load stops the recorder)
+//    under conformance.json's approved configuration. The upstream checkout needs the release tag v18.4.1 fetched.
+//    flat/recommended is the module or script variant by the package.json of the working directory the recorder
+//    runs in; both turn on the same ported rules.
 //
 // Source type is what Node itself uses for the file: `.mjs`/`.mts` module, `.cjs`/`.cts` commonjs, otherwise the
 // nearest package.json's `type` ("module" → module, anything else → commonjs). Globals: `globals.node` (globals
@@ -26,6 +31,7 @@ import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { assertCommit, corpusFiles, lint, pack, pinnedRequire, REPOSITORY, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
+import { assertUpstream, checkoutFiles, sourceFacts, writeSource } from "../../../../conformance/recorders/eslint-source.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOL = "eslint-plugin-n";
@@ -33,6 +39,7 @@ const VERSION = "18.4.1";
 const PINS = { eslint: "10.11.0", "eslint-plugin-n": VERSION, "@typescript-eslint/parser": "8.70.1", typescript: "5.9.3", globals: "17.13.0" };
 const UPSTREAM_REPOSITORY = "https://github.com/eslint-community/eslint-plugin-n";
 const UPSTREAM_COMMIT = "f1d47aff402b9e009578f4b3155b84f7d8beef9b";
+const UPSTREAM_TAG = "v18.4.1";
 const CORPORA = { fastify: "0d945819bebc08f4ca666d8283c03a26ed9706a0", prettier: "5927216227411bc2cdaf30d50559e0a475ab4832" };
 
 /** The chosen eslint-plugin-n rules (ids without the `n/` prefix); each test file is tests/lib/rules/<rule>.js. */
@@ -133,16 +140,19 @@ const TESTS = join(HERE, "tests");
 const STUB = pathToFileURL(join(HERE, "stub-test-helpers.js")).href;
 const EMPTY_MODULE = "data:text/javascript,export default {}";
 
-function installHooks(toolsDirectory) {
+function installHooks(toolsDirectory, upstream) {
   const toolsParent = pathToFileURL(join(toolsDirectory, "package.json")).href;
-  const testsUrl = pathToFileURL(TESTS).href;
+  const testsUrls = [TESTS, join(upstream, "tests")].map(path => pathToFileURL(path).href);
+  const installedRules = join(toolsDirectory, "node_modules", "eslint-plugin-n", "lib", "rules");
   registerHooks({
     resolve(specifier, context, nextResolve) {
-      const fromTests = context.parentURL?.startsWith(testsUrl) === true;
+      const fromTests = testsUrls.some(url => context.parentURL?.startsWith(url) === true);
       if (!fromTests) return nextResolve(specifier, context);
       if (specifier === "#test-helpers" || specifier.endsWith("/test-helpers.js")) return { url: STUB, shortCircuit: true };
-      // The rule under test and sinon are never exercised: the stub only captures cases.
-      if (specifier.includes("/lib/rules/") || specifier === "sinon") return { url: EMPTY_MODULE, shortCircuit: true };
+      // The rule under test is the installed plugin's (eslint-plugin-n publishes lib/ as it is), so a run's rule is
+      // the plugin's own rule object. Sinon is never exercised: the stub only captures cases.
+      if (specifier.includes("/lib/rules/")) return { url: pathToFileURL(join(installedRules, specifier.slice(specifier.indexOf("/lib/rules/") + "/lib/rules/".length))).href, shortCircuit: true };
+      if (specifier === "sinon") return { url: EMPTY_MODULE, shortCircuit: true };
       if (!/^(\.|\/|node:|file:|data:)/u.test(specifier)) return nextResolve(specifier, { ...context, parentURL: toolsParent });
       return nextResolve(specifier, context);
     },
@@ -150,7 +160,8 @@ function installHooks(toolsDirectory) {
   const noop = () => {};
   globalThis.describe = (_name, body) => body.call({ timeout: noop });
   globalThis.it = noop;
-  for (const hook of ["before", "after", "beforeEach", "afterEach"]) globalThis[hook] = noop;
+  // Mocha's hooks, and its skipped tests and suites (process-exit-as-throw's tests are xit()s).
+  for (const hook of ["before", "after", "beforeEach", "afterEach", "xit", "xdescribe"]) globalThis[hook] = noop;
 }
 
 function copyTests(upstream) {
@@ -192,16 +203,25 @@ function casePath(upstream, rule, kind, index, run, item) {
   return { path: `${base}${extension}`, manifests: [], sourceType };
 }
 
+/** The runs one test file makes, loaded once: `{ name, rule, languageOptions, typescript, valid, invalid }`. */
+const loadedRuns = new Map();
+async function capturedRuns(path) {
+  if (!loadedRuns.has(path)) {
+    const { captured } = await import(STUB);
+    const before = captured.length;
+    await import(pathToFileURL(path).href);
+    loadedRuns.set(path, captured.slice(before));
+  }
+  return loadedRuns.get(path);
+}
+
 async function extract(upstream) {
   copyTests(upstream);
-  const { captured } = await import(STUB);
   const cases = [];
   let skippedUpstream = 0;
   for (const rule of RULES) {
     const testFile = `tests/lib/rules/${rule}.js`;
-    const before = captured.length;
-    await import(pathToFileURL(join(HERE, testFile)).href);
-    const runs = captured.slice(before);
+    const runs = await capturedRuns(join(HERE, testFile));
     if (runs.length === 0) throw new Error(`${testFile}: no RuleTester run captured`);
     const counters = { valid: 0, invalid: 0 };
     runs.forEach((run, runIndex) => {
@@ -261,16 +281,19 @@ function writeLicenses(upstream, cases, manifests) {
   const directory = join(HERE, "..", "..", "licenses", TOOL);
   mkdirSync(directory, { recursive: true });
   copyFileSync(join(upstream, "LICENSE"), join(directory, "LICENSE"));
-  const rows = [];
+  const rows = [`|\`upstream/${TOOL}/source.json\`|the rules' implementations and tests, and the helpers they delegate to, at the revision above|extracted: the names, words and regexes \`source.json\` records|`];
   for (const rule of RULES) rows.push(`|\`upstream/${TOOL}/tests/lib/rules/${rule}.js\`|\`tests/lib/rules/${rule}.js\`|verbatim|`);
   rows.push(`|\`upstream/${TOOL}/fixtures/package.json\`|none|Rerail's own, not copied: the fixtures' source type and engines (\`fixturePackageJson\`), under the pack's \`LICENSE\`|`);
   for (const [copy, original] of [...manifests].sort()) rows.push(`|\`upstream/${TOOL}/fixtures/${copy}\`|\`${original}\`|verbatim (test data a case's \`filename\` reads)|`);
   for (const entry of cases) rows.push(`|\`upstream/${TOOL}/fixtures/${entry.path}\`|\`${entry.testFile}\`|extracted from ${entry.testFile} ${entry.origin}|`);
   const text = `# eslint-plugin-n ${VERSION}
 
+Revision: ${UPSTREAM_COMMIT}
+Source: ${UPSTREAM_REPOSITORY}
+
 Upstream: [eslint-community/eslint-plugin-n](${UPSTREAM_REPOSITORY}/tree/${UPSTREAM_COMMIT}) at tag \`v${VERSION}\` (commit \`${UPSTREAM_COMMIT}\`). License: MIT (Copyright (c) 2015 Toru Nagashima); [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the upstream rule tests of the rules the Node pack records (\`conformance.json\`, \`upstream/${TOOL}/generate.mjs\`), the upstream test data they read, and one file per test case holding that case's \`code\` verbatim; they remain under eslint-plugin-n's license. One listed file is Rerail's and says so in its row: \`upstream/${TOOL}/fixtures/package.json\` (the fixtures' source type and engines), listed because it sits among the copied fixtures. Every other file in this pack is Rerail's, under the Apache License 2.0 (the pack's \`LICENSE\`): the rule documents in \`rules/\` and \`candidates/\`, the recorder \`upstream/${TOOL}/generate.mjs\`, \`upstream/${TOOL}/stub-test-helpers.js\` (stands in for upstream's \`tests/test-helpers.js\` and only captures cases), and the \`*.expected.json\` recordings written by running eslint-plugin-n.
+The files listed below are the upstream rule tests of the rules the Node pack records (\`conformance.json\`, \`upstream/${TOOL}/generate.mjs\`), the upstream test data they read, and one file per test case holding that case's \`code\` verbatim; they remain under eslint-plugin-n's license. One listed file is Rerail's and says so in its row: \`upstream/${TOOL}/fixtures/package.json\` (the fixtures' source type and engines), listed because it sits among the copied fixtures. Every other file in this pack is Rerail's, under the Apache License 2.0 (the pack's \`LICENSE\`): the rule documents in \`rules/\` and \`candidates/\`, the recorder \`upstream/${TOOL}/generate.mjs\`, \`upstream/${TOOL}/stub-test-helpers.js\` (stands in for upstream's \`tests/test-helpers.js\` and only captures cases), and the \`*.expected.json\` recordings written by running eslint-plugin-n. \`upstream/${TOOL}/source.json\`, the facts the recorder records from the upstream source and tests at the revision above, holds names, words and regexes extracted from them: it is eslint-plugin-n's material and Rerail's, under \`MIT AND Apache-2.0\`, as \`REUSE.toml\` annotates it, and the table lists it.
 
 Paths are relative to the pack directory, \`packs/node/\`.
 
@@ -279,6 +302,50 @@ Paths are relative to the pack directory, \`packs/node/\`.
 ${rows.join("\n")}
 `;
   writeFileSync(join(directory, "UPSTREAM.md"), text);
+}
+
+// ---- 4. source facts ----------------------------------------------------------------------------------------------
+
+/**
+ * source.json: the plugin's source facts, from every RuleTester run of every upstream rule test file, with the cases
+ * the fixtures leave out (`unscored`, `{ rule, test, case, reason }`).
+ */
+async function recordSource(toolsDirectory, upstream, unscored) {
+  const pinned = pack("node").tools.find(entry => entry.name === TOOL);
+  if (pinned?.recommended === undefined) throw new Error(`conformance.json declares no recommended configurations for ${TOOL}`);
+  const plugin = { package: "eslint-plugin-n", namespace: "n" };
+  const release = { path: "lib", installed: "eslint-plugin-n/lib" };
+  assertUpstream({ checkout: upstream, commit: UPSTREAM_COMMIT, tag: UPSTREAM_TAG, version: VERSION, tools: toolsDirectory, plugin, release });
+  const runs = [];
+  const failed = [];
+  for (const testFile of checkoutFiles(upstream, ["tests/lib/rules/**/*.js"])) {
+    // The chosen rules' tests load from their verbatim copies under tests/, which are the same files.
+    const copy = join(TESTS, relative("tests", testFile));
+    try {
+      for (const run of await capturedRuns(existsSync(copy) ? copy : join(upstream, testFile))) runs.push({ testFile, rule: run.rule, tests: { valid: run.valid, invalid: run.invalid } });
+    } catch (error) {
+      failed.push(`${testFile}: ${String(error?.message ?? error).split("\n")[0]}`);
+    }
+  }
+  if (failed.length > 0) throw new Error(`${failed.length} upstream test file(s) do not load:\n${failed.join("\n")}`);
+  const facts = sourceFacts({
+    tool: TOOL,
+    version: VERSION,
+    repository: UPSTREAM_REPOSITORY,
+    commit: UPSTREAM_COMMIT,
+    tag: UPSTREAM_TAG,
+    tools: toolsDirectory,
+    checkout: upstream,
+    plugin,
+    configurations: pinned.recommended,
+    rules: pack("node").rules.map(rule => rule.upstream.rule),
+    implementation: "lib/rules/{rule}.js",
+    helpers: ["@eslint-community/eslint-utils"],
+    runs,
+    unscored: unscored.filter(entry => pack("node").rules.some(rule => rule.upstream.rule === entry.rule)),
+  });
+  writeSource(join(HERE, "source.json"), facts);
+  console.log(`source: ${Object.keys(facts.rules).length} rules, ${facts.testWords.length} test words`);
 }
 
 // ---- main ---------------------------------------------------------------------------------------------------------
@@ -303,7 +370,7 @@ async function main() {
   const upstream = join(toolsDirectory, "upstream-eslint-plugin-n");
   assertCommit(upstream, UPSTREAM_COMMIT);
   const tools = await loadTools(toolsDirectory);
-  installHooks(toolsDirectory);
+  installHooks(toolsDirectory, upstream);
 
   const { cases, skippedUpstream } = await extract(upstream);
   const manifests = writeFixtures(upstream, cases);
@@ -314,6 +381,8 @@ async function main() {
   for (const path of dropped.keys()) rmSync(join(fixtures, path));
   writeRecording(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${UPSTREAM_REPOSITORY}@${UPSTREAM_COMMIT}`, rules: RULE_IDS, files: kept.map(entry => entry.path).sort() }, fixtureRun.findings);
   writeLicenses(upstream, kept, manifests);
+  const unscored = cases.filter(entry => dropped.has(entry.path)).map(entry => ({ rule: `n/${entry.rule}`, test: entry.testFile, case: entry.origin, reason: "unparsable" }));
+  await recordSource(toolsDirectory, upstream, unscored);
 
   const mismatches = [];
   for (const entry of kept) {

@@ -14,11 +14,14 @@
 // 3. Runs the pinned plugin (common.mjs `config`: every chosen rule, default options) over every fixture file and
 //    each corpus, and writes fixtures.expected.json / corpus-<name>.expected.json.
 // 4. Writes ../../licenses/eslint-plugin-react/UPSTREAM.md and LICENSE.
+// 5. Loads every upstream rule test file (tests/lib/rules/*.js) with the same stubs, and writes source.json: the
+//    plugin's source facts (common.mjs `recordSource`). A test file that does not load stops the recorder.
 import { copyFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertCommit } from "../../../../conformance/recorders/eslint-record.mjs";
-import { execute, finishFixtures, options, recordCorpora, RULES, toolsRequire, UPSTREAM, writeLicense } from "../common.mjs";
+import { checkoutFiles } from "../../../../conformance/recorders/eslint-source.mjs";
+import { execute, finishFixtures, options, recordCorpora, recordSource, RULES, toolsRequire, UPSTREAM, writeLicense } from "../common.mjs";
 
 const TOOL = "eslint-plugin-react";
 const DIRECTORY = dirname(fileURLToPath(import.meta.url));
@@ -34,14 +37,14 @@ const DROP_FEATURES = new Set(["flow", "bind operator", "do expressions"]);
 const TS_FEATURES = new Set(["ts", "types", "decorators"]);
 const PARSER_STUBS = { BABEL_ESLINT: "babel-eslint", "@BABEL_ESLINT": "@babel/eslint-parser", TYPESCRIPT_ESLINT: "typescript-eslint-parser", "@TYPESCRIPT_ESLINT": "@typescript-eslint/parser" };
 
-/** Ours: the stub `tests/helpers/*` and rule modules the copied test files require. */
+/** Ours: the stub `tests/helpers/*` modules the copied test files require; their rule modules are the installed plugin's. */
 function stubs(captured) {
   class RuleTester {
     constructor(config) {
       this.config = config;
     }
-    run(name, _rule, tests) {
-      captured.push({ name, tests });
+    run(name, rule, tests) {
+      captured.push({ name, rule, tests });
     }
   }
   const parsers = {
@@ -55,8 +58,9 @@ function stubs(captured) {
     if (id.endsWith("helpers/ruleTester")) return RuleTester;
     if (id.endsWith("helpers/parsers")) return parsers;
     if (id.endsWith("helpers/getRuleDefiner")) return () => ({ defineRule() {} });
-    if (id.endsWith("helpers/getESLintCoreRule")) return () => ({});
-    if (id.includes("/lib/rules/")) return {};
+    if (id.endsWith("helpers/getESLintCoreRule")) return name => require("eslint/use-at-your-own-risk").builtinRules.get(name);
+    // The installed rule, which is the plugin's own rule object.
+    if (id.includes("/lib/rules/")) return require(`eslint-plugin-react/lib/rules/${id.slice(id.lastIndexOf("/") + 1)}`);
     return require(id);
   };
 }
@@ -90,13 +94,27 @@ for (const rule of RULES[TOOL]) {
     captured[0].tests[kind].forEach((test, index) => {
       const code = typeof test === "string" ? test : test.code;
       const errors = kind === "valid" ? 0 : typeof test.errors === "number" ? test.errors : test.errors.length;
-      cases.push({ rule, directory: name, kind, index, test, code, errors, origin: `${relativeTest} ${kind}[${index}]`, filename: typeof test === "string" ? undefined : test.filename, ...classify(test) });
+      cases.push({ rule, directory: name, kind, index, test, code, errors, origin: `${relativeTest} ${kind}[${index}]`, upstreamTest: relativeTest, label: `${kind}[${index}]`, filename: typeof test === "string" ? undefined : test.filename, ...classify(test) });
     });
   }
 }
 
 const result = await finishFixtures(require, TOOL, DIRECTORY, cases, tools);
 writeLicense(TOOL, upstream, copied, result.kept);
+
+const runs = [];
+const failed = [];
+for (const testFile of checkoutFiles(upstream, UPSTREAM[TOOL].tests)) {
+  const captured = [];
+  try {
+    execute(join(upstream, testFile), stubs(captured));
+  } catch (error) {
+    failed.push(`${testFile}: ${String(error?.message ?? error).split("\n")[0]}`);
+  }
+  for (const { rule, tests } of captured) runs.push({ testFile, rule, tests });
+}
+if (failed.length > 0) throw new Error(`${failed.length} upstream test file(s) do not load:\n${failed.join("\n")}`);
+recordSource(TOOL, DIRECTORY, tools, upstream, runs, result.unscored);
 if (!argv.includes("--no-corpora")) {
   const summary = await recordCorpora(require, TOOL, DIRECTORY, corpora);
   for (const entry of summary) console.log(`corpus ${entry.corpus}: ${entry.files} files, ${entry.skipped} skipped, ${entry.findings} findings`);

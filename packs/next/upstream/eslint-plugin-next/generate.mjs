@@ -9,7 +9,7 @@
 //
 // Usage (offline, maintainer only; Node >= 23.6 for type stripping and module.registerHooks):
 //   node packs/next/upstream/eslint-plugin-next/generate.mjs [--tools <dir>] [--corpora <dir>] [--upstream <dir>]
-//                                                            [--only fixtures|corpora|tests|licenses]
+//                                                            [--only fixtures|corpora|tests|licenses|source]
 //
 // 1. tests: copies the chosen rules' upstream test files verbatim into tests/.
 // 2. fixtures: executes each copied test with a stub `RuleTester` (ours, below) that captures run(name, rule,
@@ -20,12 +20,17 @@
 // 3. corpora: the same config over each pinned corpus's files (conformance.json paths and excludes):
 //    corpus-<name>.expected.json.
 // 4. licenses: packs/next/licenses/next.js/{LICENSE,UPSTREAM.md}.
+// 5. source: source.json, the plugin's source facts (conformance/recorders/eslint-source.mjs), from every upstream rule
+//    test file (test/unit/eslint-plugin-next/*.test.ts, loaded with the same stubs; a file that does not load stops
+//    the recorder) and the fixture directories they read, under conformance.json's approved configuration. The
+//    upstream checkout needs the release tag v16.3.8 fetched.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { assertCommit, corpusFiles, lint, pinnedRequire, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
+import { assertUpstream, checkoutFiles, sourceFacts, writeSource } from "../../../../conformance/recorders/eslint-source.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** The pack directory, packs/next/. */
@@ -52,6 +57,7 @@ const PINS = {
 };
 const UPSTREAM_REPOSITORY = "https://github.com/vercel/next.js";
 const UPSTREAM_COMMIT = "b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6";
+const UPSTREAM_TAG = "v16.3.8";
 const UPSTREAM_TESTS = "test/unit/eslint-plugin-next";
 const CORPUS_COMMITS = {
   "shadcn-ui": "0e3abd65a97707f4a9cc3ed07bf5006e1cb67b13",
@@ -138,36 +144,62 @@ function copyTests() {
   for (const rule of RULES) copyFileSync(join(upstream, UPSTREAM_TESTS, `${rule}.test.ts`), join(testsDirectory, `${rule}.test.ts`));
 }
 
-// Ours: the stub `eslint` module the copied tests import. Its RuleTester only captures what run() is given.
+// Ours: the stub `eslint` module the copied tests import. Its RuleTester only captures what run() is given; its
+// Linter (no-html-link-for-pages' tests lint inside it() bodies, which never run) does nothing.
 const STUB_ESLINT = `export class RuleTester {
   constructor(config) { this.config = config; }
   run(name, rule, tests) { globalThis.__nextCaptured.push({ name, rule, config: this.config, valid: tests.valid ?? [], invalid: tests.invalid ?? [] }); }
+}
+export class Linter {
+  defineRule() {}
+  defineRules() {}
+  verify() { return []; }
 }`;
+// Ours: the stub `glob` the plugin's index test lists the built rules with; its it() bodies never run.
+const STUB_GLOB = `export default { sync: () => [] };`;
 // Ours: the stub plugin module; `rules[name]` is the name itself.
 const STUB_PLUGIN = `export const rules = new Proxy({}, { get: (_, name) => String(name) }); export default { rules };`;
 
 /** Executes each copied test file with the stubs; returns { rule: { valid: [case], invalid: [case] } }. */
 async function captureCases() {
-  registerHooks({
-    resolve(specifier, context, next) {
-      if (specifier === "eslint") return { url: `data:text/javascript,${encodeURIComponent(STUB_ESLINT)}`, shortCircuit: true };
-      if (specifier === "@next/eslint-plugin-next") return { url: `data:text/javascript,${encodeURIComponent(STUB_PLUGIN)}`, shortCircuit: true };
-      return next(specifier, context);
-    },
-  });
-  globalThis.describe = (_name, body) => body();
-  globalThis.it = () => {
-    throw new Error("a chosen test file uses it(); extend the stub");
-  };
   const cases = {};
   for (const rule of RULES) {
-    globalThis.__nextCaptured = [];
-    await import(pathToFileURL(join(testsDirectory, `${rule}.test.ts`)).href);
-    const runs = globalThis.__nextCaptured;
+    const runs = await capturedRuns(join(testsDirectory, `${rule}.test.ts`));
     if (runs.length !== 1 || runs[0].rule !== rule) throw new Error(`${rule}.test.ts: expected one run of ${rule}, got ${JSON.stringify(runs.map(run => run.rule))}`);
     cases[rule] = { valid: runs[0].valid, invalid: runs[0].invalid };
   }
   return cases;
+}
+
+/** The RuleTester runs one test file makes, loaded once (an ES module): `{ name, rule, config, valid, invalid }`. */
+const loadedRuns = new Map();
+let stubbed = false;
+async function capturedRuns(path) {
+  if (!stubbed) {
+    stubbed = true;
+    registerHooks({
+      resolve(specifier, context, next) {
+        if (specifier === "eslint") return { url: `data:text/javascript,${encodeURIComponent(STUB_ESLINT)}`, shortCircuit: true };
+        if (specifier === "@next/eslint-plugin-next") return { url: `data:text/javascript,${encodeURIComponent(STUB_PLUGIN)}`, shortCircuit: true };
+        if (specifier === "glob") return { url: `data:text/javascript,${encodeURIComponent(STUB_GLOB)}`, shortCircuit: true };
+        return next(specifier, context);
+      },
+    });
+    globalThis.describe = (_name, body) => body();
+    globalThis.it = () => undefined;
+  }
+  if (!loadedRuns.has(path)) {
+    globalThis.__nextCaptured = [];
+    // The tests run as ES modules here, where no-html-link-for-pages' top-level `__dirname` (jest's CommonJS) is a global.
+    globalThis.__dirname = dirname(path);
+    try {
+      await import(pathToFileURL(path).href);
+    } finally {
+      delete globalThis.__dirname;
+    }
+    loadedRuns.set(path, globalThis.__nextCaptured);
+  }
+  return loadedRuns.get(path);
 }
 
 /** A test case's filename as a relative path under its case directory. */
@@ -245,6 +277,7 @@ function writeLicenses() {
   copyFileSync(join(upstream, "license.md"), join(directory, "LICENSE"));
   const { cases } = JSON.parse(readFileSync(join(HERE, "fixtures.cases.json"), "utf8"));
   const rows = [
+    `| \`upstream/${TOOL}/source.json\` | the rules' implementations and tests, and the helpers they delegate to, at the revision above | extracted: the names, words and regexes \`source.json\` records |`,
     ...RULES.map(rule => `| \`upstream/${TOOL}/tests/${rule}.test.ts\` | \`${UPSTREAM_TESTS}/${rule}.test.ts\` | verbatim |`),
     ...cases
       .filter(entry => !entry.dropped)
@@ -252,9 +285,12 @@ function writeLicenses() {
   ];
   const text = `# Next.js ${PLUGIN_VERSION} (@next/eslint-plugin-next)
 
-Upstream: [vercel/next.js](${UPSTREAM_REPOSITORY}/tree/${UPSTREAM_COMMIT}) at tag \`v${PLUGIN_VERSION}\` (commit \`${UPSTREAM_COMMIT}\`), the source of \`@next/eslint-plugin-next\` ${PLUGIN_VERSION}. License: MIT (Copyright (c) 2025 Vercel, Inc.); [\`LICENSE\`](LICENSE) is the upstream \`license.md\`, copied verbatim at that tag.
+Revision: ${UPSTREAM_COMMIT}
+Source: ${UPSTREAM_REPOSITORY}
 
-The files listed below are the plugin's rule tests and the test cases extracted from them, and remain under Next.js's license. Every other file in this pack is Rerail's, under the Apache License 2.0 (the pack's \`LICENSE\`): the rule documents in \`rules/\`, the recorder \`upstream/${TOOL}/generate.mjs\` (with its stub \`RuleTester\` and stub plugin module), \`upstream/${TOOL}/fixtures.cases.json\`, and the \`*.expected.json\` outputs recorded by running the pinned plugin.
+Upstream: [vercel/next.js](${UPSTREAM_REPOSITORY}/tree/${UPSTREAM_COMMIT}) at tag \`${UPSTREAM_TAG}\` (commit \`${UPSTREAM_COMMIT}\`), the source of \`@next/eslint-plugin-next\` ${PLUGIN_VERSION}. License: MIT (Copyright (c) 2025 Vercel, Inc.); [\`LICENSE\`](LICENSE) is the upstream \`license.md\`, copied verbatim at that tag.
+
+The files listed below are the plugin's rule tests and the test cases extracted from them, and remain under Next.js's license. Every other file in this pack is Rerail's. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of @next/eslint-plugin-next's rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them. The rest is under the Apache License 2.0 (the pack's \`LICENSE\`): the recorder \`upstream/${TOOL}/generate.mjs\` (with its stub \`RuleTester\` and stub plugin module), \`upstream/${TOOL}/fixtures.cases.json\`, and the \`*.expected.json\` outputs recorded by running the pinned plugin. \`upstream/${TOOL}/source.json\`, the facts the recorder records from the upstream source and tests at the revision above, holds names, words and regexes extracted from them: it is Next.js's material and Rerail's, under \`MIT AND Apache-2.0\`, as \`REUSE.toml\` annotates it, and the table lists it.
 
 Paths are relative to the pack directory, \`packs/next/\`.
 
@@ -266,8 +302,60 @@ ${rows.join("\n")}
   console.log(`licenses: ${rows.length} rows`);
 }
 
+/**
+ * source.json: the plugin's source facts under conformance.json's approved configuration, from every RuleTester run of
+ * every upstream rule test file (`test/unit/eslint-plugin-next/*.test.ts`) and the fixture directories they read, with
+ * the cases fixtures.cases.json records as dropped (the pack configuration cannot parse them) as `unscored`.
+ */
+async function recordSource() {
+  const pinned = JSON.parse(readFileSync(join(PACK, "conformance.json"), "utf8")).tools.find(entry => entry.name === TOOL);
+  if (pinned?.recommended === undefined) throw new Error(`conformance.json declares no recommended configurations for ${TOOL}`);
+  const plugin = { package: "@next/eslint-plugin-next", namespace: "@next/next" };
+  assertUpstream({ checkout: upstream, commit: UPSTREAM_COMMIT, tag: UPSTREAM_TAG, version: PLUGIN_VERSION, tools, plugin, release: { path: "packages/eslint-plugin-next/src" } });
+  const runs = [];
+  const failed = [];
+  for (const testFile of checkoutFiles(upstream, [`${UPSTREAM_TESTS}/*.test.ts`])) {
+    // The chosen rules' tests load from their verbatim copies under tests/, which are the same files.
+    const name = testFile.slice(UPSTREAM_TESTS.length + 1);
+    const copy = join(testsDirectory, name);
+    try {
+      const path = existsSync(copy) ? copy : join(upstream, testFile);
+      for (const run of await capturedRuns(path)) runs.push({ testFile, rule: run.rule, tests: { valid: run.valid, invalid: run.invalid } });
+    } catch (error) {
+      failed.push(`${testFile}: ${String(error?.message ?? error).split("\n")[0]}`);
+    }
+  }
+  if (failed.length > 0) throw new Error(`${failed.length} upstream test file(s) do not load:\n${failed.join("\n")}`);
+  const ported = JSON.parse(readFileSync(join(PACK, "conformance.json"), "utf8")).rules.map(rule => rule.upstream.rule);
+  const { cases } = JSON.parse(readFileSync(join(HERE, "fixtures.cases.json"), "utf8"));
+  const unscored = cases
+    .filter(entry => entry.dropped)
+    .map(entry => ({ rule: `@next/next/${entry.rule}`, test: `${UPSTREAM_TESTS}/${entry.rule}.test.ts`, case: `${entry.kind}[${entry.index}]`, reason: "unparsable" }))
+    .filter(entry => ported.includes(entry.rule));
+  const facts = sourceFacts({
+    tool: TOOL,
+    version: PLUGIN_VERSION,
+    repository: UPSTREAM_REPOSITORY,
+    commit: UPSTREAM_COMMIT,
+    tag: UPSTREAM_TAG,
+    tools,
+    checkout: upstream,
+    plugin,
+    configurations: pinned.recommended,
+    rules: ported,
+    implementation: "packages/eslint-plugin-next/src/rules/{rule}.ts",
+    helpers: ["@eslint-community/eslint-utils"],
+    runs,
+    testFixtures: [`${UPSTREAM_TESTS}/*/**`],
+    unscored,
+  });
+  writeSource(join(HERE, "source.json"), facts);
+  console.log(`source: ${Object.keys(facts.rules).length} rules, ${facts.testWords.length} test words`);
+}
+
 const only = options.only;
 if (only === undefined || only === "tests") copyTests();
 if (only === undefined || only === "fixtures") await recordFixtures();
 if (only === undefined || only === "licenses") writeLicenses();
+if (only === undefined || only === "source") await recordSource();
 if (only === undefined || only === "corpora") await recordCorpora();

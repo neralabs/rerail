@@ -641,10 +641,27 @@ path = [
   "packs/python/upstream/ruff/fixtures/flake8_pie/**",
   "packs/python/upstream/ruff/fixtures/flake8_simplify/SIM222.py",
   "packs/python/upstream/ruff/fixtures/pycodestyle/**",
+  "packs/python/upstream/ruff/fixtures/ruff/**",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2022 Charles Marsh"
 SPDX-License-Identifier = "MIT"
+
+# Ruff 0.16.9 source facts: names, words and regexes the facts recorder extracts from the upstream source and tests, listed in the
+# pack's UPSTREAM.md.
+[[annotations]]
+path = "packs/python/upstream/ruff/source.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["2022 Charles Marsh", "2005-2011 Divmod, Inc.", "2013-2014 Florent Xicluna", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# Bandit 1.8.6 source facts: names, words and regexes the facts recorder extracts from the upstream source and tests, listed in the
+# pack's UPSTREAM.md.
+[[annotations]]
+path = "packs/python/upstream/bandit/source.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["2014 Hewlett-Packard Development Company, L.P.", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0"
 
 # packs/php
 
@@ -734,6 +751,22 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
+# ESLint 10.11.0 source facts (with @eslint-community/eslint-utils): names, words and regexes the facts recorder extracts from the upstream source and tests, listed in the
+# pack's UPSTREAM.md.
+[[annotations]]
+path = "packs/typescript/upstream/eslint/source.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["OpenJS Foundation and other contributors, <www.openjsf.org>", "2018 Toru Nagashima", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# typescript-eslint 8.70.1 source facts (with @eslint-community/eslint-utils): names, words and regexes the facts recorder extracts from the upstream source and tests, listed in the
+# pack's UPSTREAM.md.
+[[annotations]]
+path = "packs/typescript/upstream/typescript-eslint/source.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2018 Toru Nagashima", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
 # packs/react
 
 # Rule documents and candidate rule documents: Rerail's re-implementations of eslint-plugin-react's and
@@ -765,6 +798,22 @@ path = [
 precedence = "override"
 SPDX-FileCopyrightText = "Meta Platforms, Inc. and affiliates."
 SPDX-License-Identifier = "MIT"
+
+# eslint-plugin-react 7.37.5 source facts (with jsx-ast-utils): names, words and regexes the facts recorder extracts from the upstream source and tests, listed in the
+# pack's UPSTREAM.md.
+[[annotations]]
+path = "packs/react/upstream/eslint-plugin-react/source.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["2014 Yannick Croissant", "2016 Ethan Cohen", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# eslint-plugin-react-hooks 7.1.1 source facts: names, words and regexes the facts recorder extracts from the upstream source and tests, listed in the
+# pack's UPSTREAM.md.
+[[annotations]]
+path = "packs/react/upstream/eslint-plugin-react-hooks/source.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["Meta Platforms, Inc. and affiliates.", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
 
 # packs/node
 
@@ -804,6 +853,14 @@ precedence = "override"
 SPDX-FileCopyrightText = "2015 Toru Nagashima"
 SPDX-License-Identifier = "MIT"
 
+# eslint-plugin-n 18.4.1 source facts (with @eslint-community/eslint-utils): names, words and regexes the facts recorder extracts from the upstream source and tests, listed in the
+# pack's UPSTREAM.md.
+[[annotations]]
+path = "packs/node/upstream/eslint-plugin-n/source.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["2015 Toru Nagashima", "2018 Toru Nagashima", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
 # packs/next
 # Rule documents and candidate rule documents: Rerail's re-implementations of @next/eslint-plugin-next's rules,
 # annotated with the licence the pack publishes them under (its package.json); whether adapted rule documents need the
@@ -824,3 +881,11 @@ path = [
 precedence = "override"
 SPDX-FileCopyrightText = "2025 Vercel, Inc."
 SPDX-License-Identifier = "MIT"
+
+# Next.js 16.3.8 source facts (with @eslint-community/eslint-utils): names, words and regexes the facts recorder extracts from the upstream source and tests, listed in the
+# pack's UPSTREAM.md.
+[[annotations]]
+path = "packs/next/upstream/eslint-plugin-next/source.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["2025 Vercel, Inc.", "2018 Toru Nagashima", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"

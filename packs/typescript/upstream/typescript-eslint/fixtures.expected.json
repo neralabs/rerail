@@ -1,753 +1,1466 @@
 {
-  "tool": "typescript-eslint",
-  "version": "8.70.1",
-  "source": {
-    "kind": "fixtures",
-    "origin": "https://github.com/typescript-eslint/typescript-eslint@23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7",
-    "rules": [
-      "@typescript-eslint/no-duplicate-enum-values",
-      "@typescript-eslint/no-namespace",
-      "@typescript-eslint/no-non-null-assertion",
-      "@typescript-eslint/no-this-alias",
-      "@typescript-eslint/no-unsafe-function-type",
-      "@typescript-eslint/no-wrapper-object-types",
-      "@typescript-eslint/prefer-as-const"
-    ],
-    "files": [
-      "no-duplicate-enum-values/001.ts",
-      "no-duplicate-enum-values/002.ts",
-      "no-duplicate-enum-values/003.ts",
-      "no-duplicate-enum-values/004.ts",
-      "no-duplicate-enum-values/005.ts",
-      "no-duplicate-enum-values/006.ts",
-      "no-duplicate-enum-values/007.ts",
-      "no-duplicate-enum-values/008.ts",
-      "no-duplicate-enum-values/009.ts",
-      "no-duplicate-enum-values/010.ts",
-      "no-duplicate-enum-values/011.ts",
-      "no-duplicate-enum-values/012.ts",
-      "no-duplicate-enum-values/013.ts",
-      "no-duplicate-enum-values/014.ts",
-      "no-duplicate-enum-values/015.ts",
-      "no-duplicate-enum-values/016.ts",
-      "no-duplicate-enum-values/017.ts",
-      "no-duplicate-enum-values/018.ts",
-      "no-duplicate-enum-values/019.ts",
-      "no-duplicate-enum-values/020.ts",
-      "no-duplicate-enum-values/021.ts",
-      "no-duplicate-enum-values/022.ts",
-      "no-duplicate-enum-values/023.ts",
-      "no-duplicate-enum-values/024.ts",
-      "no-duplicate-enum-values/025.ts",
-      "no-duplicate-enum-values/026.ts",
-      "no-duplicate-enum-values/027.ts",
-      "no-duplicate-enum-values/028.ts",
-      "no-duplicate-enum-values/029.ts",
-      "no-duplicate-enum-values/030.ts",
-      "no-duplicate-enum-values/031.ts",
-      "no-duplicate-enum-values/032.ts",
-      "no-duplicate-enum-values/033.ts",
-      "no-duplicate-enum-values/034.ts",
-      "no-duplicate-enum-values/035.ts",
-      "no-duplicate-enum-values/036.ts",
-      "no-duplicate-enum-values/037.ts",
-      "no-duplicate-enum-values/038.ts",
-      "no-duplicate-enum-values/039.ts",
-      "no-duplicate-enum-values/040.ts",
-      "no-namespace/001.ts",
-      "no-namespace/002.ts",
-      "no-namespace/003.ts",
-      "no-namespace/004.ts",
-      "no-namespace/005.ts",
-      "no-namespace/006.ts",
-      "no-namespace/007.ts",
-      "no-non-null-assertion/001.ts",
-      "no-non-null-assertion/002.ts",
-      "no-non-null-assertion/003.ts",
-      "no-non-null-assertion/004.ts",
-      "no-non-null-assertion/005.ts",
-      "no-non-null-assertion/006.ts",
-      "no-non-null-assertion/007.ts",
-      "no-non-null-assertion/008.ts",
-      "no-non-null-assertion/009.ts",
-      "no-non-null-assertion/010.ts",
-      "no-non-null-assertion/011.ts",
-      "no-non-null-assertion/012.ts",
-      "no-non-null-assertion/013.ts",
-      "no-non-null-assertion/014.ts",
-      "no-non-null-assertion/015.ts",
-      "no-non-null-assertion/016.ts",
-      "no-non-null-assertion/017.ts",
-      "no-non-null-assertion/018.ts",
-      "no-non-null-assertion/019.ts",
-      "no-non-null-assertion/020.ts",
-      "no-non-null-assertion/021.ts",
-      "no-non-null-assertion/022.ts",
-      "no-non-null-assertion/023.ts",
-      "no-non-null-assertion/024.ts",
-      "no-non-null-assertion/025.ts",
-      "no-non-null-assertion/026.ts",
-      "no-non-null-assertion/027.ts",
-      "no-non-null-assertion/028.ts",
-      "no-this-alias/001.ts",
-      "no-this-alias/002.ts",
-      "no-this-alias/003.ts",
-      "no-this-alias/004.ts",
-      "no-this-alias/005.ts",
-      "no-unsafe-function-type/001.ts",
-      "no-unsafe-function-type/002.ts",
-      "no-unsafe-function-type/003.ts",
-      "no-unsafe-function-type/004.ts",
-      "no-unsafe-function-type/005.ts",
-      "no-unsafe-function-type/006.ts",
-      "no-unsafe-function-type/007.ts",
-      "no-unsafe-function-type/008.ts",
-      "no-wrapper-object-types/001.ts",
-      "no-wrapper-object-types/002.ts",
-      "no-wrapper-object-types/003.ts",
-      "no-wrapper-object-types/004.ts",
-      "no-wrapper-object-types/005.ts",
-      "no-wrapper-object-types/006.ts",
-      "no-wrapper-object-types/007.ts",
-      "no-wrapper-object-types/008.ts",
-      "no-wrapper-object-types/009.ts",
-      "no-wrapper-object-types/010.ts",
-      "no-wrapper-object-types/011.ts",
-      "no-wrapper-object-types/012.ts",
-      "no-wrapper-object-types/013.ts",
-      "no-wrapper-object-types/014.ts",
-      "no-wrapper-object-types/015.ts",
-      "no-wrapper-object-types/016.ts",
-      "no-wrapper-object-types/017.ts",
-      "no-wrapper-object-types/018.ts",
-      "no-wrapper-object-types/019.ts",
-      "no-wrapper-object-types/020.ts",
-      "no-wrapper-object-types/021.ts",
-      "no-wrapper-object-types/022.ts",
-      "no-wrapper-object-types/023.ts",
-      "no-wrapper-object-types/024.ts",
-      "no-wrapper-object-types/025.ts",
-      "no-wrapper-object-types/026.ts",
-      "no-wrapper-object-types/027.ts",
-      "no-wrapper-object-types/028.ts",
-      "no-wrapper-object-types/029.ts",
-      "no-wrapper-object-types/030.ts",
-      "no-wrapper-object-types/031.ts",
-      "no-wrapper-object-types/032.ts",
-      "no-wrapper-object-types/033.ts",
-      "no-wrapper-object-types/034.ts",
-      "no-wrapper-object-types/035.ts",
-      "no-wrapper-object-types/036.ts",
-      "no-wrapper-object-types/037.ts",
-      "no-wrapper-object-types/038.ts",
-      "no-wrapper-object-types/039.ts",
-      "no-wrapper-object-types/040.ts",
-      "no-wrapper-object-types/041.ts",
-      "no-wrapper-object-types/042.ts",
-      "no-wrapper-object-types/043.ts",
-      "no-wrapper-object-types/044.ts",
-      "no-wrapper-object-types/045.ts",
-      "no-wrapper-object-types/046.ts",
-      "no-wrapper-object-types/047.ts",
-      "no-wrapper-object-types/048.ts",
-      "no-wrapper-object-types/049.ts",
-      "no-wrapper-object-types/050.ts",
-      "no-wrapper-object-types/051.ts",
-      "no-wrapper-object-types/052.ts",
-      "no-wrapper-object-types/053.ts",
-      "no-wrapper-object-types/054.ts",
-      "no-wrapper-object-types/055.ts",
-      "no-wrapper-object-types/056.ts",
-      "no-wrapper-object-types/057.ts",
-      "no-wrapper-object-types/058.ts",
-      "prefer-as-const/001.ts",
-      "prefer-as-const/002.ts",
-      "prefer-as-const/003.ts",
-      "prefer-as-const/004.ts",
-      "prefer-as-const/005.ts",
-      "prefer-as-const/006.ts",
-      "prefer-as-const/007.ts",
-      "prefer-as-const/008.ts",
-      "prefer-as-const/009.ts",
-      "prefer-as-const/010.ts",
-      "prefer-as-const/011.ts",
-      "prefer-as-const/012.ts",
-      "prefer-as-const/013.ts",
-      "prefer-as-const/014.ts",
-      "prefer-as-const/015.ts",
-      "prefer-as-const/016.ts",
-      "prefer-as-const/017.ts",
-      "prefer-as-const/018.ts",
-      "prefer-as-const/019.ts",
-      "prefer-as-const/020.ts",
-      "prefer-as-const/021.ts",
-      "prefer-as-const/022.ts",
-      "prefer-as-const/023.ts",
-      "prefer-as-const/024.ts",
-      "prefer-as-const/025.ts",
-      "prefer-as-const/026.ts",
-      "prefer-as-const/027.ts",
-      "prefer-as-const/028.ts",
-      "prefer-as-const/029.ts",
-      "prefer-as-const/030.ts",
-      "prefer-as-const/031.ts",
-      "prefer-as-const/032.ts",
-      "prefer-as-const/033.ts",
-      "prefer-as-const/034.ts",
-      "prefer-as-const/035.ts",
-      "prefer-as-const/036.ts",
-      "prefer-as-const/037.ts",
-      "prefer-as-const/038.ts",
-      "prefer-as-const/039.ts",
-      "prefer-as-const/040.ts",
-      "prefer-as-const/041.ts",
-      "prefer-as-const/042.ts",
-      "prefer-as-const/043.ts",
-      "prefer-as-const/044.ts",
-      "prefer-as-const/045.ts",
-      "prefer-as-const/046.ts"
-    ]
-  },
-  "findings": [
-    {
-      "rule": "@typescript-eslint/no-duplicate-enum-values",
-      "path": "no-duplicate-enum-values/026.ts",
-      "line": 4,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/no-duplicate-enum-values",
-      "path": "no-duplicate-enum-values/027.ts",
-      "line": 4,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/no-duplicate-enum-values",
-      "path": "no-duplicate-enum-values/028.ts",
-      "line": 4,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/no-duplicate-enum-values",
-      "path": "no-duplicate-enum-values/029.ts",
-      "line": 4,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/no-duplicate-enum-values",
-      "path": "no-duplicate-enum-values/030.ts",
-      "line": 4,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/no-duplicate-enum-values",
-      "path": "no-duplicate-enum-values/031.ts",
-      "line": 4,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/no-duplicate-enum-values",
-      "path": "no-duplicate-enum-values/032.ts",
-      "line": 4,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/no-duplicate-enum-values",
-      "path": "no-duplicate-enum-values/033.ts",
-      "line": 4,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/no-duplicate-enum-values",
-      "path": "no-duplicate-enum-values/034.ts",
-      "line": 4,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/no-duplicate-enum-values",
-      "path": "no-duplicate-enum-values/035.ts",
-      "line": 4,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/no-duplicate-enum-values",
-      "path": "no-duplicate-enum-values/036.ts",
-      "line": 4,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/no-duplicate-enum-values",
-      "path": "no-duplicate-enum-values/037.ts",
-      "line": 4,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/no-duplicate-enum-values",
-      "path": "no-duplicate-enum-values/038.ts",
-      "line": 4,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/no-duplicate-enum-values",
-      "path": "no-duplicate-enum-values/038.ts",
-      "line": 6,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/no-duplicate-enum-values",
-      "path": "no-duplicate-enum-values/039.ts",
-      "line": 4,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/no-duplicate-enum-values",
-      "path": "no-duplicate-enum-values/040.ts",
-      "line": 4,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/no-namespace",
-      "path": "no-namespace/003.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-namespace",
-      "path": "no-namespace/004.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-namespace",
-      "path": "no-namespace/005.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-namespace",
-      "path": "no-namespace/006.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-namespace",
-      "path": "no-namespace/007.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-namespace",
-      "path": "no-namespace/007.ts",
-      "line": 3,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/007.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/008.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/009.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/010.ts",
-      "line": 1,
-      "column": 2
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/011.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/012.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/013.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/014.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/015.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/016.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/016.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/016.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/017.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/017.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/018.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/018.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/019.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/019.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/020.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/021.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/022.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/023.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/024.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/025.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/026.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/027.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-non-null-assertion",
-      "path": "no-non-null-assertion/028.ts",
-      "line": 2,
-      "column": 14
-    },
-    {
-      "rule": "@typescript-eslint/no-this-alias",
-      "path": "no-this-alias/003.ts",
-      "line": 1,
-      "column": 7
-    },
-    {
-      "rule": "@typescript-eslint/no-this-alias",
-      "path": "no-this-alias/004.ts",
-      "line": 3,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-this-alias",
-      "path": "no-this-alias/005.ts",
-      "line": 2,
-      "column": 5
-    },
-    {
-      "rule": "@typescript-eslint/no-this-alias",
-      "path": "no-this-alias/005.ts",
-      "line": 5,
-      "column": 7
-    },
-    {
-      "rule": "@typescript-eslint/no-this-alias",
-      "path": "no-this-alias/005.ts",
-      "line": 8,
-      "column": 9
-    },
-    {
-      "rule": "@typescript-eslint/no-unsafe-function-type",
-      "path": "no-unsafe-function-type/004.ts",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "@typescript-eslint/no-unsafe-function-type",
-      "path": "no-unsafe-function-type/005.ts",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "@typescript-eslint/no-unsafe-function-type",
-      "path": "no-unsafe-function-type/006.ts",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "@typescript-eslint/no-unsafe-function-type",
-      "path": "no-unsafe-function-type/007.ts",
-      "line": 2,
-      "column": 24
-    },
-    {
-      "rule": "@typescript-eslint/no-unsafe-function-type",
-      "path": "no-unsafe-function-type/008.ts",
-      "line": 2,
-      "column": 25
-    },
-    {
-      "rule": "@typescript-eslint/no-wrapper-object-types",
-      "path": "no-wrapper-object-types/045.ts",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "@typescript-eslint/no-wrapper-object-types",
-      "path": "no-wrapper-object-types/046.ts",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "@typescript-eslint/no-wrapper-object-types",
-      "path": "no-wrapper-object-types/047.ts",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "@typescript-eslint/no-wrapper-object-types",
-      "path": "no-wrapper-object-types/048.ts",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "@typescript-eslint/no-wrapper-object-types",
-      "path": "no-wrapper-object-types/049.ts",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "@typescript-eslint/no-wrapper-object-types",
-      "path": "no-wrapper-object-types/050.ts",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "@typescript-eslint/no-wrapper-object-types",
-      "path": "no-wrapper-object-types/051.ts",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "@typescript-eslint/no-wrapper-object-types",
-      "path": "no-wrapper-object-types/051.ts",
-      "line": 1,
-      "column": 21
-    },
-    {
-      "rule": "@typescript-eslint/no-wrapper-object-types",
-      "path": "no-wrapper-object-types/052.ts",
-      "line": 1,
-      "column": 24
-    },
-    {
-      "rule": "@typescript-eslint/no-wrapper-object-types",
-      "path": "no-wrapper-object-types/053.ts",
-      "line": 1,
-      "column": 6
-    },
-    {
-      "rule": "@typescript-eslint/no-wrapper-object-types",
-      "path": "no-wrapper-object-types/054.ts",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "@typescript-eslint/no-wrapper-object-types",
-      "path": "no-wrapper-object-types/055.ts",
-      "line": 1,
-      "column": 16
-    },
-    {
-      "rule": "@typescript-eslint/no-wrapper-object-types",
-      "path": "no-wrapper-object-types/056.ts",
-      "line": 1,
-      "column": 26
-    },
-    {
-      "rule": "@typescript-eslint/no-wrapper-object-types",
-      "path": "no-wrapper-object-types/057.ts",
-      "line": 1,
-      "column": 31
-    },
-    {
-      "rule": "@typescript-eslint/no-wrapper-object-types",
-      "path": "no-wrapper-object-types/058.ts",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "@typescript-eslint/no-wrapper-object-types",
-      "path": "no-wrapper-object-types/058.ts",
-      "line": 1,
-      "column": 24
-    },
-    {
-      "rule": "@typescript-eslint/prefer-as-const",
-      "path": "prefer-as-const/032.ts",
-      "line": 1,
-      "column": 27
-    },
-    {
-      "rule": "@typescript-eslint/prefer-as-const",
-      "path": "prefer-as-const/033.ts",
-      "line": 1,
-      "column": 23
-    },
-    {
-      "rule": "@typescript-eslint/prefer-as-const",
-      "path": "prefer-as-const/034.ts",
-      "line": 1,
-      "column": 9
-    },
-    {
-      "rule": "@typescript-eslint/prefer-as-const",
-      "path": "prefer-as-const/035.ts",
-      "line": 1,
-      "column": 10
-    },
-    {
-      "rule": "@typescript-eslint/prefer-as-const",
-      "path": "prefer-as-const/036.ts",
-      "line": 1,
-      "column": 10
-    },
-    {
-      "rule": "@typescript-eslint/prefer-as-const",
-      "path": "prefer-as-const/037.ts",
-      "line": 1,
-      "column": 27
-    },
-    {
-      "rule": "@typescript-eslint/prefer-as-const",
-      "path": "prefer-as-const/038.ts",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "@typescript-eslint/prefer-as-const",
-      "path": "prefer-as-const/039.ts",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "@typescript-eslint/prefer-as-const",
-      "path": "prefer-as-const/040.ts",
-      "line": 1,
-      "column": 20
-    },
-    {
-      "rule": "@typescript-eslint/prefer-as-const",
-      "path": "prefer-as-const/041.ts",
-      "line": 1,
-      "column": 16
-    },
-    {
-      "rule": "@typescript-eslint/prefer-as-const",
-      "path": "prefer-as-const/042.ts",
-      "line": 3,
-      "column": 8
-    },
-    {
-      "rule": "@typescript-eslint/prefer-as-const",
-      "path": "prefer-as-const/043.ts",
-      "line": 3,
-      "column": 8
-    },
-    {
-      "rule": "@typescript-eslint/prefer-as-const",
-      "path": "prefer-as-const/044.ts",
-      "line": 3,
-      "column": 10
-    },
-    {
-      "rule": "@typescript-eslint/prefer-as-const",
-      "path": "prefer-as-const/045.ts",
-      "line": 3,
-      "column": 18
-    },
-    {
-      "rule": "@typescript-eslint/prefer-as-const",
-      "path": "prefer-as-const/046.ts",
-      "line": 3,
-      "column": 14
-    }
+ "tool": "typescript-eslint",
+ "version": "8.70.1",
+ "source": {
+  "kind": "fixtures",
+  "origin": "https://github.com/typescript-eslint/typescript-eslint@23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7",
+  "rules": [
+   "@typescript-eslint/no-duplicate-enum-values",
+   "@typescript-eslint/no-namespace",
+   "@typescript-eslint/no-non-null-assertion",
+   "@typescript-eslint/no-this-alias",
+   "@typescript-eslint/no-unsafe-function-type",
+   "@typescript-eslint/no-wrapper-object-types",
+   "@typescript-eslint/prefer-as-const"
+  ],
+  "files": [
+   "no-duplicate-enum-values/001.ts",
+   "no-duplicate-enum-values/002.ts",
+   "no-duplicate-enum-values/003.ts",
+   "no-duplicate-enum-values/004.ts",
+   "no-duplicate-enum-values/005.ts",
+   "no-duplicate-enum-values/006.ts",
+   "no-duplicate-enum-values/007.ts",
+   "no-duplicate-enum-values/008.ts",
+   "no-duplicate-enum-values/009.ts",
+   "no-duplicate-enum-values/010.ts",
+   "no-duplicate-enum-values/011.ts",
+   "no-duplicate-enum-values/012.ts",
+   "no-duplicate-enum-values/013.ts",
+   "no-duplicate-enum-values/014.ts",
+   "no-duplicate-enum-values/015.ts",
+   "no-duplicate-enum-values/016.ts",
+   "no-duplicate-enum-values/017.ts",
+   "no-duplicate-enum-values/018.ts",
+   "no-duplicate-enum-values/019.ts",
+   "no-duplicate-enum-values/020.ts",
+   "no-duplicate-enum-values/021.ts",
+   "no-duplicate-enum-values/022.ts",
+   "no-duplicate-enum-values/023.ts",
+   "no-duplicate-enum-values/024.ts",
+   "no-duplicate-enum-values/025.ts",
+   "no-duplicate-enum-values/026.ts",
+   "no-duplicate-enum-values/027.ts",
+   "no-duplicate-enum-values/028.ts",
+   "no-duplicate-enum-values/029.ts",
+   "no-duplicate-enum-values/030.ts",
+   "no-duplicate-enum-values/031.ts",
+   "no-duplicate-enum-values/032.ts",
+   "no-duplicate-enum-values/033.ts",
+   "no-duplicate-enum-values/034.ts",
+   "no-duplicate-enum-values/035.ts",
+   "no-duplicate-enum-values/036.ts",
+   "no-duplicate-enum-values/037.ts",
+   "no-duplicate-enum-values/038.ts",
+   "no-duplicate-enum-values/039.ts",
+   "no-duplicate-enum-values/040.ts",
+   "no-namespace/001.ts",
+   "no-namespace/002.ts",
+   "no-namespace/003.ts",
+   "no-namespace/004.ts",
+   "no-namespace/005.ts",
+   "no-namespace/006.ts",
+   "no-namespace/007.ts",
+   "no-namespace/008.ts",
+   "no-namespace/009.ts",
+   "no-namespace/010.ts",
+   "no-namespace/011.ts",
+   "no-namespace/012.ts",
+   "no-namespace/013.d.ts",
+   "no-namespace/014.d.ts",
+   "no-namespace/015.d.ts",
+   "no-namespace/016.d.ts",
+   "no-namespace/017.ts",
+   "no-namespace/018.ts",
+   "no-namespace/019.ts",
+   "no-namespace/020.ts",
+   "no-namespace/021.ts",
+   "no-namespace/022.ts",
+   "no-namespace/023.ts",
+   "no-namespace/024.ts",
+   "no-namespace/025.ts",
+   "no-namespace/026.ts",
+   "no-namespace/027.ts",
+   "no-namespace/028.ts",
+   "no-namespace/029.ts",
+   "no-namespace/030.ts",
+   "no-namespace/031.ts",
+   "no-namespace/032.ts",
+   "no-namespace/033.ts",
+   "no-non-null-assertion/001.ts",
+   "no-non-null-assertion/002.ts",
+   "no-non-null-assertion/003.ts",
+   "no-non-null-assertion/004.ts",
+   "no-non-null-assertion/005.ts",
+   "no-non-null-assertion/006.ts",
+   "no-non-null-assertion/007.ts",
+   "no-non-null-assertion/008.ts",
+   "no-non-null-assertion/009.ts",
+   "no-non-null-assertion/010.ts",
+   "no-non-null-assertion/011.ts",
+   "no-non-null-assertion/012.ts",
+   "no-non-null-assertion/013.ts",
+   "no-non-null-assertion/014.ts",
+   "no-non-null-assertion/015.ts",
+   "no-non-null-assertion/016.ts",
+   "no-non-null-assertion/017.ts",
+   "no-non-null-assertion/018.ts",
+   "no-non-null-assertion/019.ts",
+   "no-non-null-assertion/020.ts",
+   "no-non-null-assertion/021.ts",
+   "no-non-null-assertion/022.ts",
+   "no-non-null-assertion/023.ts",
+   "no-non-null-assertion/024.ts",
+   "no-non-null-assertion/025.ts",
+   "no-non-null-assertion/026.ts",
+   "no-non-null-assertion/027.ts",
+   "no-non-null-assertion/028.ts",
+   "no-this-alias/001.ts",
+   "no-this-alias/002.ts",
+   "no-this-alias/003.ts",
+   "no-this-alias/004.ts",
+   "no-this-alias/005.ts",
+   "no-this-alias/006.ts",
+   "no-this-alias/007.ts",
+   "no-this-alias/008.ts",
+   "no-unsafe-function-type/001.ts",
+   "no-unsafe-function-type/002.ts",
+   "no-unsafe-function-type/003.ts",
+   "no-unsafe-function-type/004.ts",
+   "no-unsafe-function-type/005.ts",
+   "no-unsafe-function-type/006.ts",
+   "no-unsafe-function-type/007.ts",
+   "no-unsafe-function-type/008.ts",
+   "no-wrapper-object-types/001.ts",
+   "no-wrapper-object-types/002.ts",
+   "no-wrapper-object-types/003.ts",
+   "no-wrapper-object-types/004.ts",
+   "no-wrapper-object-types/005.ts",
+   "no-wrapper-object-types/006.ts",
+   "no-wrapper-object-types/007.ts",
+   "no-wrapper-object-types/008.ts",
+   "no-wrapper-object-types/009.ts",
+   "no-wrapper-object-types/010.ts",
+   "no-wrapper-object-types/011.ts",
+   "no-wrapper-object-types/012.ts",
+   "no-wrapper-object-types/013.ts",
+   "no-wrapper-object-types/014.ts",
+   "no-wrapper-object-types/015.ts",
+   "no-wrapper-object-types/016.ts",
+   "no-wrapper-object-types/017.ts",
+   "no-wrapper-object-types/018.ts",
+   "no-wrapper-object-types/019.ts",
+   "no-wrapper-object-types/020.ts",
+   "no-wrapper-object-types/021.ts",
+   "no-wrapper-object-types/022.ts",
+   "no-wrapper-object-types/023.ts",
+   "no-wrapper-object-types/024.ts",
+   "no-wrapper-object-types/025.ts",
+   "no-wrapper-object-types/026.ts",
+   "no-wrapper-object-types/027.ts",
+   "no-wrapper-object-types/028.ts",
+   "no-wrapper-object-types/029.ts",
+   "no-wrapper-object-types/030.ts",
+   "no-wrapper-object-types/031.ts",
+   "no-wrapper-object-types/032.ts",
+   "no-wrapper-object-types/033.ts",
+   "no-wrapper-object-types/034.ts",
+   "no-wrapper-object-types/035.ts",
+   "no-wrapper-object-types/036.ts",
+   "no-wrapper-object-types/037.ts",
+   "no-wrapper-object-types/038.ts",
+   "no-wrapper-object-types/039.ts",
+   "no-wrapper-object-types/040.ts",
+   "no-wrapper-object-types/041.ts",
+   "no-wrapper-object-types/042.ts",
+   "no-wrapper-object-types/043.ts",
+   "no-wrapper-object-types/044.ts",
+   "no-wrapper-object-types/045.ts",
+   "no-wrapper-object-types/046.ts",
+   "no-wrapper-object-types/047.ts",
+   "no-wrapper-object-types/048.ts",
+   "no-wrapper-object-types/049.ts",
+   "no-wrapper-object-types/050.ts",
+   "no-wrapper-object-types/051.ts",
+   "no-wrapper-object-types/052.ts",
+   "no-wrapper-object-types/053.ts",
+   "no-wrapper-object-types/054.ts",
+   "no-wrapper-object-types/055.ts",
+   "no-wrapper-object-types/056.ts",
+   "no-wrapper-object-types/057.ts",
+   "no-wrapper-object-types/058.ts",
+   "prefer-as-const/001.ts",
+   "prefer-as-const/002.ts",
+   "prefer-as-const/003.ts",
+   "prefer-as-const/004.ts",
+   "prefer-as-const/005.ts",
+   "prefer-as-const/006.ts",
+   "prefer-as-const/007.ts",
+   "prefer-as-const/008.ts",
+   "prefer-as-const/009.ts",
+   "prefer-as-const/010.ts",
+   "prefer-as-const/011.ts",
+   "prefer-as-const/012.ts",
+   "prefer-as-const/013.ts",
+   "prefer-as-const/014.ts",
+   "prefer-as-const/015.ts",
+   "prefer-as-const/016.ts",
+   "prefer-as-const/017.ts",
+   "prefer-as-const/018.ts",
+   "prefer-as-const/019.ts",
+   "prefer-as-const/020.ts",
+   "prefer-as-const/021.ts",
+   "prefer-as-const/022.ts",
+   "prefer-as-const/023.ts",
+   "prefer-as-const/024.ts",
+   "prefer-as-const/025.ts",
+   "prefer-as-const/026.ts",
+   "prefer-as-const/027.ts",
+   "prefer-as-const/028.ts",
+   "prefer-as-const/029.ts",
+   "prefer-as-const/030.ts",
+   "prefer-as-const/031.ts",
+   "prefer-as-const/032.ts",
+   "prefer-as-const/033.ts",
+   "prefer-as-const/034.ts",
+   "prefer-as-const/035.ts",
+   "prefer-as-const/036.ts",
+   "prefer-as-const/037.ts",
+   "prefer-as-const/038.ts",
+   "prefer-as-const/039.ts",
+   "prefer-as-const/040.ts",
+   "prefer-as-const/041.ts",
+   "prefer-as-const/042.ts",
+   "prefer-as-const/043.ts",
+   "prefer-as-const/044.ts",
+   "prefer-as-const/045.ts",
+   "prefer-as-const/046.ts"
   ]
+ },
+ "findings": [
+  {
+   "rule": "@typescript-eslint/no-duplicate-enum-values",
+   "path": "no-duplicate-enum-values/026.ts",
+   "line": 4,
+   "column": 3,
+   "endLine": 4,
+   "endColumn": 8
+  },
+  {
+   "rule": "@typescript-eslint/no-duplicate-enum-values",
+   "path": "no-duplicate-enum-values/027.ts",
+   "line": 4,
+   "column": 3,
+   "endLine": 4,
+   "endColumn": 9
+  },
+  {
+   "rule": "@typescript-eslint/no-duplicate-enum-values",
+   "path": "no-duplicate-enum-values/028.ts",
+   "line": 4,
+   "column": 3,
+   "endLine": 4,
+   "endColumn": 9
+  },
+  {
+   "rule": "@typescript-eslint/no-duplicate-enum-values",
+   "path": "no-duplicate-enum-values/029.ts",
+   "line": 4,
+   "column": 3,
+   "endLine": 4,
+   "endColumn": 8
+  },
+  {
+   "rule": "@typescript-eslint/no-duplicate-enum-values",
+   "path": "no-duplicate-enum-values/030.ts",
+   "line": 4,
+   "column": 3,
+   "endLine": 4,
+   "endColumn": 9
+  },
+  {
+   "rule": "@typescript-eslint/no-duplicate-enum-values",
+   "path": "no-duplicate-enum-values/031.ts",
+   "line": 4,
+   "column": 3,
+   "endLine": 4,
+   "endColumn": 8
+  },
+  {
+   "rule": "@typescript-eslint/no-duplicate-enum-values",
+   "path": "no-duplicate-enum-values/032.ts",
+   "line": 4,
+   "column": 3,
+   "endLine": 4,
+   "endColumn": 9
+  },
+  {
+   "rule": "@typescript-eslint/no-duplicate-enum-values",
+   "path": "no-duplicate-enum-values/033.ts",
+   "line": 4,
+   "column": 3,
+   "endLine": 4,
+   "endColumn": 10
+  },
+  {
+   "rule": "@typescript-eslint/no-duplicate-enum-values",
+   "path": "no-duplicate-enum-values/034.ts",
+   "line": 4,
+   "column": 3,
+   "endLine": 4,
+   "endColumn": 8
+  },
+  {
+   "rule": "@typescript-eslint/no-duplicate-enum-values",
+   "path": "no-duplicate-enum-values/035.ts",
+   "line": 4,
+   "column": 3,
+   "endLine": 4,
+   "endColumn": 10
+  },
+  {
+   "rule": "@typescript-eslint/no-duplicate-enum-values",
+   "path": "no-duplicate-enum-values/036.ts",
+   "line": 4,
+   "column": 3,
+   "endLine": 4,
+   "endColumn": 9
+  },
+  {
+   "rule": "@typescript-eslint/no-duplicate-enum-values",
+   "path": "no-duplicate-enum-values/037.ts",
+   "line": 4,
+   "column": 3,
+   "endLine": 4,
+   "endColumn": 10
+  },
+  {
+   "rule": "@typescript-eslint/no-duplicate-enum-values",
+   "path": "no-duplicate-enum-values/038.ts",
+   "line": 4,
+   "column": 3,
+   "endLine": 4,
+   "endColumn": 10
+  },
+  {
+   "rule": "@typescript-eslint/no-duplicate-enum-values",
+   "path": "no-duplicate-enum-values/038.ts",
+   "line": 6,
+   "column": 3,
+   "endLine": 6,
+   "endColumn": 8
+  },
+  {
+   "rule": "@typescript-eslint/no-duplicate-enum-values",
+   "path": "no-duplicate-enum-values/039.ts",
+   "line": 4,
+   "column": 3,
+   "endLine": 4,
+   "endColumn": 10
+  },
+  {
+   "rule": "@typescript-eslint/no-duplicate-enum-values",
+   "path": "no-duplicate-enum-values/040.ts",
+   "line": 4,
+   "column": 3,
+   "endLine": 4,
+   "endColumn": 10
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/003.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 14
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/004.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 17
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/005.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 22
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/006.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 25
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/007.ts",
+   "line": 2,
+   "column": 1,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/007.ts",
+   "line": 3,
+   "column": 3,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/008.ts",
+   "line": 3,
+   "column": 3,
+   "endLine": 3,
+   "endColumn": 19
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/009.ts",
+   "line": 2,
+   "column": 1,
+   "endLine": 4,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/009.ts",
+   "line": 3,
+   "column": 3,
+   "endLine": 3,
+   "endColumn": 19
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/010.ts",
+   "line": 3,
+   "column": 3,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/010.ts",
+   "line": 4,
+   "column": 5,
+   "endLine": 4,
+   "endColumn": 21
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/011.ts",
+   "line": 2,
+   "column": 1,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/011.ts",
+   "line": 3,
+   "column": 3,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/011.ts",
+   "line": 4,
+   "column": 5,
+   "endLine": 4,
+   "endColumn": 21
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/012.ts",
+   "line": 2,
+   "column": 8,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/012.ts",
+   "line": 3,
+   "column": 10,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/012.ts",
+   "line": 4,
+   "column": 5,
+   "endLine": 4,
+   "endColumn": 21
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/017.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 21
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/018.ts",
+   "line": 2,
+   "column": 1,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/018.ts",
+   "line": 3,
+   "column": 3,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/018.ts",
+   "line": 4,
+   "column": 5,
+   "endLine": 4,
+   "endColumn": 27
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/019.ts",
+   "line": 2,
+   "column": 1,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/019.ts",
+   "line": 3,
+   "column": 3,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/019.ts",
+   "line": 4,
+   "column": 12,
+   "endLine": 4,
+   "endColumn": 34
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/020.ts",
+   "line": 2,
+   "column": 1,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/020.ts",
+   "line": 3,
+   "column": 3,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/020.ts",
+   "line": 4,
+   "column": 5,
+   "endLine": 4,
+   "endColumn": 19
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/021.ts",
+   "line": 2,
+   "column": 1,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/021.ts",
+   "line": 3,
+   "column": 10,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/021.ts",
+   "line": 4,
+   "column": 5,
+   "endLine": 4,
+   "endColumn": 19
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/022.ts",
+   "line": 2,
+   "column": 1,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/022.ts",
+   "line": 3,
+   "column": 10,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/022.ts",
+   "line": 4,
+   "column": 5,
+   "endLine": 4,
+   "endColumn": 27
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/023.ts",
+   "line": 2,
+   "column": 1,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/023.ts",
+   "line": 3,
+   "column": 10,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/023.ts",
+   "line": 4,
+   "column": 12,
+   "endLine": 4,
+   "endColumn": 34
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/024.ts",
+   "line": 2,
+   "column": 1,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/024.ts",
+   "line": 3,
+   "column": 3,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/024.ts",
+   "line": 4,
+   "column": 12,
+   "endLine": 4,
+   "endColumn": 34
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/025.ts",
+   "line": 2,
+   "column": 1,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/025.ts",
+   "line": 3,
+   "column": 10,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/025.ts",
+   "line": 4,
+   "column": 12,
+   "endLine": 4,
+   "endColumn": 34
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/026.ts",
+   "line": 2,
+   "column": 8,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/026.ts",
+   "line": 3,
+   "column": 3,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/026.ts",
+   "line": 4,
+   "column": 5,
+   "endLine": 4,
+   "endColumn": 27
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/027.ts",
+   "line": 2,
+   "column": 8,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/027.ts",
+   "line": 3,
+   "column": 3,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/027.ts",
+   "line": 4,
+   "column": 12,
+   "endLine": 4,
+   "endColumn": 34
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/028.ts",
+   "line": 2,
+   "column": 8,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/028.ts",
+   "line": 3,
+   "column": 3,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/028.ts",
+   "line": 4,
+   "column": 5,
+   "endLine": 4,
+   "endColumn": 19
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/029.ts",
+   "line": 2,
+   "column": 8,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/029.ts",
+   "line": 3,
+   "column": 10,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/029.ts",
+   "line": 4,
+   "column": 5,
+   "endLine": 4,
+   "endColumn": 19
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/030.ts",
+   "line": 2,
+   "column": 8,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/030.ts",
+   "line": 3,
+   "column": 10,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/030.ts",
+   "line": 4,
+   "column": 5,
+   "endLine": 4,
+   "endColumn": 27
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/031.ts",
+   "line": 2,
+   "column": 8,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/031.ts",
+   "line": 3,
+   "column": 10,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/031.ts",
+   "line": 4,
+   "column": 12,
+   "endLine": 4,
+   "endColumn": 34
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/032.ts",
+   "line": 2,
+   "column": 8,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/032.ts",
+   "line": 3,
+   "column": 3,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/032.ts",
+   "line": 4,
+   "column": 12,
+   "endLine": 4,
+   "endColumn": 34
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/033.ts",
+   "line": 2,
+   "column": 8,
+   "endLine": 6,
+   "endColumn": 2
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/033.ts",
+   "line": 3,
+   "column": 10,
+   "endLine": 5,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-namespace",
+   "path": "no-namespace/033.ts",
+   "line": 4,
+   "column": 12,
+   "endLine": 4,
+   "endColumn": 34
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/007.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 3
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/008.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 3
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/009.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 5
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/010.ts",
+   "line": 1,
+   "column": 2,
+   "endLine": 1,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/011.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 3
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/012.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 3
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/013.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 3
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/014.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 7
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/015.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 8
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/016.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 3
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/016.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/016.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 5
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/017.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 3
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/017.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 4
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/018.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 5
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/018.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 6
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/019.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 7
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/019.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 8
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/020.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 3
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/021.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 3
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/022.ts",
+   "line": 1,
+   "column": 1,
+   "endLine": 1,
+   "endColumn": 7
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/023.ts",
+   "line": 2,
+   "column": 1,
+   "endLine": 2,
+   "endColumn": 3
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/024.ts",
+   "line": 2,
+   "column": 1,
+   "endLine": 2,
+   "endColumn": 3
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/025.ts",
+   "line": 2,
+   "column": 1,
+   "endLine": 2,
+   "endColumn": 3
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/026.ts",
+   "line": 2,
+   "column": 1,
+   "endLine": 2,
+   "endColumn": 3
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/027.ts",
+   "line": 2,
+   "column": 1,
+   "endLine": 2,
+   "endColumn": 33
+  },
+  {
+   "rule": "@typescript-eslint/no-non-null-assertion",
+   "path": "no-non-null-assertion/028.ts",
+   "line": 2,
+   "column": 14,
+   "endLine": 2,
+   "endColumn": 46
+  },
+  {
+   "rule": "@typescript-eslint/no-this-alias",
+   "path": "no-this-alias/003.ts",
+   "line": 1,
+   "column": 7,
+   "endLine": 1,
+   "endColumn": 11
+  },
+  {
+   "rule": "@typescript-eslint/no-this-alias",
+   "path": "no-this-alias/004.ts",
+   "line": 3,
+   "column": 1,
+   "endLine": 3,
+   "endColumn": 5
+  },
+  {
+   "rule": "@typescript-eslint/no-this-alias",
+   "path": "no-this-alias/005.ts",
+   "line": 2,
+   "column": 5,
+   "endLine": 2,
+   "endColumn": 13
+  },
+  {
+   "rule": "@typescript-eslint/no-this-alias",
+   "path": "no-this-alias/005.ts",
+   "line": 5,
+   "column": 7,
+   "endLine": 5,
+   "endColumn": 17
+  },
+  {
+   "rule": "@typescript-eslint/no-this-alias",
+   "path": "no-this-alias/005.ts",
+   "line": 8,
+   "column": 9,
+   "endLine": 8,
+   "endColumn": 17
+  },
+  {
+   "rule": "@typescript-eslint/no-this-alias",
+   "path": "no-this-alias/008.ts",
+   "line": 4,
+   "column": 11,
+   "endLine": 4,
+   "endColumn": 24
+  },
+  {
+   "rule": "@typescript-eslint/no-this-alias",
+   "path": "no-this-alias/008.ts",
+   "line": 5,
+   "column": 11,
+   "endLine": 5,
+   "endColumn": 23
+  },
+  {
+   "rule": "@typescript-eslint/no-this-alias",
+   "path": "no-this-alias/008.ts",
+   "line": 13,
+   "column": 11,
+   "endLine": 13,
+   "endColumn": 27
+  },
+  {
+   "rule": "@typescript-eslint/no-unsafe-function-type",
+   "path": "no-unsafe-function-type/004.ts",
+   "line": 1,
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 20
+  },
+  {
+   "rule": "@typescript-eslint/no-unsafe-function-type",
+   "path": "no-unsafe-function-type/005.ts",
+   "line": 1,
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 20
+  },
+  {
+   "rule": "@typescript-eslint/no-unsafe-function-type",
+   "path": "no-unsafe-function-type/006.ts",
+   "line": 1,
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 20
+  },
+  {
+   "rule": "@typescript-eslint/no-unsafe-function-type",
+   "path": "no-unsafe-function-type/007.ts",
+   "line": 2,
+   "column": 24,
+   "endLine": 2,
+   "endColumn": 32
+  },
+  {
+   "rule": "@typescript-eslint/no-unsafe-function-type",
+   "path": "no-unsafe-function-type/008.ts",
+   "line": 2,
+   "column": 25,
+   "endLine": 2,
+   "endColumn": 33
+  },
+  {
+   "rule": "@typescript-eslint/no-wrapper-object-types",
+   "path": "no-wrapper-object-types/045.ts",
+   "line": 1,
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 18
+  },
+  {
+   "rule": "@typescript-eslint/no-wrapper-object-types",
+   "path": "no-wrapper-object-types/046.ts",
+   "line": 1,
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 19
+  },
+  {
+   "rule": "@typescript-eslint/no-wrapper-object-types",
+   "path": "no-wrapper-object-types/047.ts",
+   "line": 1,
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 18
+  },
+  {
+   "rule": "@typescript-eslint/no-wrapper-object-types",
+   "path": "no-wrapper-object-types/048.ts",
+   "line": 1,
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 18
+  },
+  {
+   "rule": "@typescript-eslint/no-wrapper-object-types",
+   "path": "no-wrapper-object-types/049.ts",
+   "line": 1,
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 18
+  },
+  {
+   "rule": "@typescript-eslint/no-wrapper-object-types",
+   "path": "no-wrapper-object-types/050.ts",
+   "line": 1,
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 18
+  },
+  {
+   "rule": "@typescript-eslint/no-wrapper-object-types",
+   "path": "no-wrapper-object-types/051.ts",
+   "line": 1,
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 18
+  },
+  {
+   "rule": "@typescript-eslint/no-wrapper-object-types",
+   "path": "no-wrapper-object-types/051.ts",
+   "line": 1,
+   "column": 21,
+   "endLine": 1,
+   "endColumn": 27
+  },
+  {
+   "rule": "@typescript-eslint/no-wrapper-object-types",
+   "path": "no-wrapper-object-types/052.ts",
+   "line": 1,
+   "column": 24,
+   "endLine": 1,
+   "endColumn": 30
+  },
+  {
+   "rule": "@typescript-eslint/no-wrapper-object-types",
+   "path": "no-wrapper-object-types/053.ts",
+   "line": 1,
+   "column": 6,
+   "endLine": 1,
+   "endColumn": 12
+  },
+  {
+   "rule": "@typescript-eslint/no-wrapper-object-types",
+   "path": "no-wrapper-object-types/054.ts",
+   "line": 1,
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 21
+  },
+  {
+   "rule": "@typescript-eslint/no-wrapper-object-types",
+   "path": "no-wrapper-object-types/055.ts",
+   "line": 1,
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 22
+  },
+  {
+   "rule": "@typescript-eslint/no-wrapper-object-types",
+   "path": "no-wrapper-object-types/056.ts",
+   "line": 1,
+   "column": 26,
+   "endLine": 1,
+   "endColumn": 32
+  },
+  {
+   "rule": "@typescript-eslint/no-wrapper-object-types",
+   "path": "no-wrapper-object-types/057.ts",
+   "line": 1,
+   "column": 31,
+   "endLine": 1,
+   "endColumn": 37
+  },
+  {
+   "rule": "@typescript-eslint/no-wrapper-object-types",
+   "path": "no-wrapper-object-types/058.ts",
+   "line": 1,
+   "column": 15,
+   "endLine": 1,
+   "endColumn": 21
+  },
+  {
+   "rule": "@typescript-eslint/no-wrapper-object-types",
+   "path": "no-wrapper-object-types/058.ts",
+   "line": 1,
+   "column": 24,
+   "endLine": 1,
+   "endColumn": 30
+  },
+  {
+   "rule": "@typescript-eslint/prefer-as-const",
+   "path": "prefer-as-const/032.ts",
+   "line": 1,
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 32
+  },
+  {
+   "rule": "@typescript-eslint/prefer-as-const",
+   "path": "prefer-as-const/033.ts",
+   "line": 1,
+   "column": 23,
+   "endLine": 1,
+   "endColumn": 24
+  },
+  {
+   "rule": "@typescript-eslint/prefer-as-const",
+   "path": "prefer-as-const/034.ts",
+   "line": 1,
+   "column": 9,
+   "endLine": 1,
+   "endColumn": 14
+  },
+  {
+   "rule": "@typescript-eslint/prefer-as-const",
+   "path": "prefer-as-const/035.ts",
+   "line": 1,
+   "column": 10,
+   "endLine": 1,
+   "endColumn": 15
+  },
+  {
+   "rule": "@typescript-eslint/prefer-as-const",
+   "path": "prefer-as-const/036.ts",
+   "line": 1,
+   "column": 10,
+   "endLine": 1,
+   "endColumn": 11
+  },
+  {
+   "rule": "@typescript-eslint/prefer-as-const",
+   "path": "prefer-as-const/037.ts",
+   "line": 1,
+   "column": 27,
+   "endLine": 1,
+   "endColumn": 32
+  },
+  {
+   "rule": "@typescript-eslint/prefer-as-const",
+   "path": "prefer-as-const/038.ts",
+   "line": 1,
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 17
+  },
+  {
+   "rule": "@typescript-eslint/prefer-as-const",
+   "path": "prefer-as-const/039.ts",
+   "line": 1,
+   "column": 12,
+   "endLine": 1,
+   "endColumn": 13
+  },
+  {
+   "rule": "@typescript-eslint/prefer-as-const",
+   "path": "prefer-as-const/040.ts",
+   "line": 1,
+   "column": 20,
+   "endLine": 1,
+   "endColumn": 25
+  },
+  {
+   "rule": "@typescript-eslint/prefer-as-const",
+   "path": "prefer-as-const/041.ts",
+   "line": 1,
+   "column": 16,
+   "endLine": 1,
+   "endColumn": 17
+  },
+  {
+   "rule": "@typescript-eslint/prefer-as-const",
+   "path": "prefer-as-const/042.ts",
+   "line": 3,
+   "column": 8,
+   "endLine": 3,
+   "endColumn": 13
+  },
+  {
+   "rule": "@typescript-eslint/prefer-as-const",
+   "path": "prefer-as-const/043.ts",
+   "line": 3,
+   "column": 8,
+   "endLine": 3,
+   "endColumn": 9
+  },
+  {
+   "rule": "@typescript-eslint/prefer-as-const",
+   "path": "prefer-as-const/044.ts",
+   "line": 3,
+   "column": 10,
+   "endLine": 3,
+   "endColumn": 15
+  },
+  {
+   "rule": "@typescript-eslint/prefer-as-const",
+   "path": "prefer-as-const/045.ts",
+   "line": 3,
+   "column": 18,
+   "endLine": 3,
+   "endColumn": 23
+  },
+  {
+   "rule": "@typescript-eslint/prefer-as-const",
+   "path": "prefer-as-const/046.ts",
+   "line": 3,
+   "column": 14,
+   "endLine": 3,
+   "endColumn": 15
+  }
+ ]
 }

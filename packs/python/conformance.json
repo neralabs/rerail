@@ -37,11 +37,17 @@
   "tools": [
     {
       "name": "ruff",
-      "version": "0.16.9"
+      "version": "0.16.9",
+      "recommended": [
+        "default"
+      ]
     },
     {
       "name": "bandit",
-      "version": "1.8.6"
+      "version": "1.8.6",
+      "recommended": [
+        "default"
+      ]
     }
   ],
   "rules": [

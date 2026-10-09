@@ -39,7 +39,10 @@
   "tools": [
     {
       "name": "eslint-plugin-n",
-      "version": "18.4.1"
+      "version": "18.4.1",
+      "recommended": [
+        "flat/recommended"
+      ]
     }
   ],
   "rules": [
