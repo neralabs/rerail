@@ -307,6 +307,10 @@
       "verdict": "PASS",
       "truePositives": 4
     },
+    "no-reference-import": {
+      "verdict": "PASS",
+      "truePositives": 2
+    },
     "no-require-imports": {
       "verdict": "PASS",
       "truePositives": 5

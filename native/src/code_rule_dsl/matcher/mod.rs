@@ -5,6 +5,8 @@ mod binds;
 mod call;
 mod captures;
 mod collate;
+#[cfg(test)]
+mod comments_tests;
 mod compare;
 mod count;
 mod each;
