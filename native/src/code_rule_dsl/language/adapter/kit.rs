@@ -31,6 +31,7 @@ struct Expect {
     /// The suffix of the family's files, and the module of `pkg/mod<suffix>` in a package `pkg`.
     module: (&'static str, Option<&'static str>),
     arguments: super::arguments::kit::Expect,
+    format_args: super::format_args::kit::Expect,
     syntax: super::syntax::kit::Expect,
 }
 
@@ -98,6 +99,7 @@ fn kit<A: Adapter>(expect: &Expect) {
     super::arguments::kit::check::<A>(&expect.arguments, expect.dialect, |s| {
         tape(s, expect.dialect)
     });
+    super::format_args::kit::check::<A>(&expect.format_args);
     with_adapter!(expect.family, B => super::syntax::kit::check::<B>(&expect.syntax, expect.dialect, |s| tape(s, expect.dialect)));
 }
 
@@ -121,6 +123,17 @@ fn python() {
                 ),
             ],
             passed: ("f(1, b=2)\n", ["1", "2"]),
+        },
+        format_args: super::format_args::kit::Expect {
+            follows_strings: false,
+            styles: [
+                None,
+                None,
+                Some(
+                    "`printf` reads PHP's printf-family calls; Python's printf formats are style `percent`",
+                ),
+                Some("`scanf` reads PHP's sscanf and fscanf calls; Python has no scanf formats"),
+            ],
         },
         syntax: super::syntax::kit::Expect {
             option_keys: super::OptionKeys::Python,
@@ -165,6 +178,10 @@ fn ecma() {
                 None,
             ],
             passed: ("f(1, ...xs);\n", ["1", "?"]),
+        },
+        format_args: super::format_args::kit::Expect {
+            follows_strings: false,
+            styles: [Some("formatArgs reads Python and PHP format calls"); 4],
         },
         syntax: super::syntax::kit::Expect {
             option_keys: super::OptionKeys::Ecma,
@@ -213,6 +230,19 @@ fn php() {
                 ),
             ],
             passed: ("<?php f(1, b: 2);\n", ["1", "2"]),
+        },
+        format_args: super::format_args::kit::Expect {
+            follows_strings: true,
+            styles: [
+                Some(
+                    "`brace` reads Python's `str.format` calls; PHP has no such templates (its printf-family calls are style `printf`)",
+                ),
+                Some(
+                    "`percent` reads Python's `%` formats; PHP's printf-family calls are style `printf`",
+                ),
+                None,
+                None,
+            ],
         },
         syntax: super::syntax::kit::Expect {
             option_keys: super::OptionKeys::Ecma,
@@ -270,6 +300,19 @@ fn blade() {
                 ),
             ],
             passed: ("{{ f(1, b: 2) }}\n", ["1", "2"]),
+        },
+        format_args: super::format_args::kit::Expect {
+            follows_strings: true,
+            styles: [
+                Some(
+                    "`brace` reads Python's `str.format` calls; blade embeds PHP, which has no such templates (its printf-family calls are style `printf`)",
+                ),
+                Some(
+                    "`percent` reads Python's `%` formats; blade embeds PHP, whose printf-family calls are style `printf`",
+                ),
+                None,
+                None,
+            ],
         },
         syntax: super::syntax::kit::Expect {
             option_keys: super::OptionKeys::Ecma,
