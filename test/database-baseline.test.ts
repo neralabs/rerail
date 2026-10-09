@@ -66,6 +66,10 @@ function unreadable(path: string, recorded: string): string {
     + "Move the file aside to start fresh.";
 }
 
+const newerRefusal = (path: string, version: number): string =>
+  `${path} was written by a newer Rerail (schema v${version}); this Rerail supports schema v${RERAIL_SCHEMA_VERSION}. `
+  + "Update Rerail to open it, or move the file aside to start fresh.";
+
 /** Expect every open of `path` (writable, read-only, lazy) to be refused with `message`. */
 function expectRefused(path: string, message: string): void {
   expect(() => openRerailDatabase(path)).toThrow(new Error(message));
@@ -111,6 +115,25 @@ describe("the baseline schema", () => {
     expectRefused(path, `${path} was written by a newer Rerail (schema v${newer}); this Rerail supports schema v${RERAIL_SCHEMA_VERSION}. `
       + "Update Rerail to open it, or move the file aside to start fresh.");
     expect(readFileSync(path)).toEqual(before);
+  });
+
+  // Only a file with no table and no stamp is new: a stamp alone still says who wrote the file.
+  it.each([
+    { writer: "a newer Rerail", version: RERAIL_SCHEMA_VERSION + 1, refusal: newerRefusal },
+    { writer: "other software", version: -1, refusal: (path: string) => unreadable(path, "no Rerail schema version") },
+  ])("refuses a file stamped by $writer that holds no table, writable or read-only, and leaves it untouched", async ({ version, refusal }) => {
+    const path = await temporaryDatabase();
+    await mkdir(dirname(path), { recursive: true });
+    const stamped = new Database(path);
+    try {
+      stamped.pragma(`user_version = ${version}`);
+    } finally {
+      stamped.close();
+    }
+    const before = settledBytes(path);
+    expectRefused(path, refusal(path, version));
+    expect(readFileSync(path)).toEqual(before);
+    expect(stampOf(path)).toEqual({ tables: [], version });
   });
 
   it("refuses a file that has tables but no Rerail schema version, writable or read-only, and leaves it untouched", async () => {

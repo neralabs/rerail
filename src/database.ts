@@ -60,7 +60,7 @@ export function openSqliteDatabase(path: string, options: OpenRerailDatabaseOpti
 
 /** What a file on disk records about its schema. */
 interface SchemaStamp {
-  /** Whether the file holds any table; a file without one is new. */
+  /** Whether the file holds any table; a file without one is new while it carries no stamp either. */
   readonly empty: boolean;
   /** `PRAGMA user_version`: the schema version the file was written for, 0 when no Rerail stamped it. */
   readonly version: number;
@@ -86,14 +86,15 @@ function notADatabase(error: unknown): boolean {
 
 /**
  * Why this build cannot open a file stamped `stamp`, or undefined when it can: a file stamped by a newer Rerail,
- * or a file with tables that no Rerail stamped.
+ * or a file that is not new and carries no Rerail stamp (a `user_version` below 1). Only a file with neither a
+ * table nor a stamp is new; a stamped file is judged by its stamp even when it holds no table.
  */
 function schemaRefusal(path: string, stamp: SchemaStamp): string | undefined {
-  if (stamp.empty) return undefined;
   if (stamp.version > schema.RERAIL_SCHEMA_VERSION) {
     return `${path} was written by a newer Rerail (schema v${stamp.version}); this Rerail supports schema v${schema.RERAIL_SCHEMA_VERSION}. `
       + "Update Rerail to open it, or move the file aside to start fresh.";
   }
+  if (stamp.version === 0 && stamp.empty) return undefined;
   if (stamp.version < 1) return unreadableDatabase(path, "no Rerail schema version");
   return undefined;
 }
@@ -103,7 +104,7 @@ function schemaRefusal(path: string, stamp: SchemaStamp): string | undefined {
  * Writers own the file mode (0600) and directory mode (0700) they create.
  *
  * `PRAGMA user_version` holds the schema version the file was written for. A file stamped by a
- * newer Rerail, a file with tables no Rerail stamped, and a file that is not SQLite at all are
+ * newer Rerail, a file with tables or a stamp no Rerail wrote, and a file that is not SQLite at all are
  * refused, writable or read-only, and left untouched: a writable open checks the stamp before it sets the file
  * mode or switches the journal to WAL. Otherwise the current DDL, which is idempotent, is applied and the file
  * is stamped with this build's version. A read-only open of a file whose creator has not committed the
