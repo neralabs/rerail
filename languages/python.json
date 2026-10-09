@@ -1,0 +1,24 @@
+{
+  "format": "rerail.language/v1",
+  "id": "python",
+  "status": "supported",
+  "family": "python",
+  "dialects": [
+    {
+      "label": "python",
+      "variant": "Python",
+      "suffixes": [".py", ".pyi"],
+      "parser": "tree-sitter",
+      "grammar": "vendored:python",
+      "tapeTag": 1
+    }
+  ],
+  "capabilities": {
+    "scope": "supported",
+    "value": "supported",
+    "arguments": "supported",
+    "calls": "supported",
+    "formatArgs": "supported"
+  },
+  "suppressions": ["noqa"]
+}

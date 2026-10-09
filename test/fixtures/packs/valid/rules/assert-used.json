@@ -1,0 +1,31 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "valid:assert-used",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of examplelint's EX101: every assert statement.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "assert-used",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "assert_statement"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "EX101",
+        "message": "examplelint EX101 (assert-used)"
+      }
+    }
+  ]
+}

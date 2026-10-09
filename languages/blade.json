@@ -1,0 +1,30 @@
+{
+  "format": "rerail.language/v1",
+  "id": "blade",
+  "status": "supported",
+  "family": "blade",
+  "dialects": [
+    {
+      "label": "blade",
+      "variant": "Blade",
+      "suffixes": [".blade.php"],
+      "parser": "tree-sitter",
+      "grammar": "vendored:blade",
+      "tapeTag": 8
+    }
+  ],
+  "capabilities": {
+    "scope": "supported",
+    "value": "supported",
+    "arguments": "supported",
+    "calls": "supported",
+    "formatArgs": "supported"
+  },
+  "suppressions": [],
+  "embeds": [
+    {
+      "language": "php",
+      "via": "compiled-view"
+    }
+  ]
+}

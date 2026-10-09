@@ -70,7 +70,8 @@ jobs:
           npm run check:reference
 
   # Pull requests that touch none of the engine's inputs skip the Rust jobs. The engine's tests also
-  # read code-rule-dsl/, conformance/ and fixtures/; package.json holds the cargo commands. Pushes to
+  # read code-rule-dsl/, conformance/, fixtures/, the packs' rules and the language registry (languages/
+  # and its generated TS module); package.json holds the cargo commands. Pushes to
   # main run everything (the filter step is skipped and the output is empty).
   changes:
     name: Detect engine changes
@@ -92,6 +93,9 @@ jobs:
               - 'code-rule-dsl/**'
               - 'conformance/**'
               - 'fixtures/**'
+              - 'packs/**'
+              - 'languages/**'
+              - 'src/code-rule-language-registry.generated.ts'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
@@ -171,8 +175,9 @@ jobs:
         name: Read pinned Rust toolchain
         run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
 
-      # The release engine depends only on the engine's sources, the lockfile, the workspace profile,
-      # the toolchain and the napi CLI. Most pull requests change none of them and reuse main's build.
+      # The release engine depends only on the engine's sources, the language registry (build.rs generates
+      # its tables from languages/), the lockfile, the workspace profile, the toolchain and the napi CLI.
+      # Most pull requests change none of them and reuse main's build.
       - id: napi
         name: Read the napi CLI version
         run: echo "version=$(node -p "require('./package.json').devDependencies['@napi-rs/cli']")" >> "$GITHUB_OUTPUT"
@@ -185,7 +190,7 @@ jobs:
             native/*.node
             native/index.js
             native/index.d.ts
-          key: rerail-native-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-napi${{ steps.napi.outputs.version }}-${{ hashFiles('native/**', '!native/*.node', '!native/index.js', '!native/index.d.ts', 'Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml') }}
+          key: rerail-native-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-napi${{ steps.napi.outputs.version }}-${{ hashFiles('native/**', '!native/*.node', '!native/index.js', '!native/index.d.ts', 'languages/**', 'Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml') }}
 
       - name: Install pinned Rust toolchain
         if: steps.native-cache.outputs.cache-hit != 'true'
@@ -274,7 +279,7 @@ jobs:
         run: npm run test:integration:built
 
   tools:
-    name: Scripts, reference examples, and rule playground
+    name: Scripts, reference examples, conformance, and rule playground
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -293,6 +298,11 @@ jobs:
         run: |
           npm run test:scripts
           npm run test:reference
+
+      # Fetches TSLint's rule tests at the pinned commit, runs the conformance harnesses' own tests
+      # (conformance/**/*.test.ts: the TSLint golden and rename gates) and conformance:languages:check.
+      - name: Conformance harnesses
+        run: npm run test:conformance
 
       # The rule playground is a development tool with its own lockfile; it type-checks against dist/.
       - name: Check, build, and test the rule playground

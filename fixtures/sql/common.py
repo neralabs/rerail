@@ -1,4 +1,4 @@
-"""Pins shared by the SQL pack's offline generators (rerail-fixtures/sql/). Run offline by a maintainer, never in CI.
+"""Pins shared by the SQL pack's offline generators (fixtures/sql/). Run offline by a maintainer, never in CI.
 
 Tools live under the gitignored `<checkout>/.rerail/tools/sql/` and corpora under `<checkout>/.rerail/corpora/sql/`, where
 `<checkout>` is the nearest ancestor holding `.rerail/corpora/sql` (sub-worktrees under `.rerail/wt/` find it this way).

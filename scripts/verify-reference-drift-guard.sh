@@ -7,7 +7,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 for path in package.json scripts/code-rule-dsl-reference.mjs src/code-rule-schema.ts src/code-rule-schema-semantic.ts \
-  src/code-rule-languages.ts src/code-rule-languages-semantic.ts src/rule-mode.ts \
+  src/code-rule-languages.ts src/code-rule-language-registry.generated.ts src/rule-mode.ts \
   native/src/code_rule_dsl/compile/ast_rule.rs docs/code-rule-dsl-reference.html; do
   mkdir -p "$work/$(dirname "$path")"
   cp "$root/$path" "$work/$path"

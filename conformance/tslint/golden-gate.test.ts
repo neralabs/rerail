@@ -17,7 +17,7 @@ describe.skipIf(!existsSync(FIXTURE_RULES))("golden gate", () => {
     expect(goldenFailures(await evaluate(goldenRules()))).toEqual([]);
   }, 120_000);
 
-  it("names each rule that misses its golden.json entry", async () => {
+  it("names each rule that misses its conformance.json entry", async () => {
     const manifest = loadGoldenManifest();
     const results = await evaluate(["no-debugger", "quotemark"]);
     const debuggerEntry = manifest.rules["no-debugger"]!;

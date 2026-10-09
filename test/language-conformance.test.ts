@@ -95,8 +95,8 @@ describe("language conformance runner", () => {
   });
 
   describe("capability exemptions", () => {
-    const raw = JSON.parse(readFileSync(`${SAMPLE}pack.json`, "utf8")) as Record<string, unknown>;
-    const exemption = (capability: string, coveredBy = ["T2: rerail-fixtures/php/calls/", "T3: benchmark_php_calls_corpus"]): CapabilityExemption => ({
+    const raw = JSON.parse(readFileSync(`${SAMPLE}conformance.json`, "utf8")) as Record<string, unknown>;
+    const exemption = (capability: string, coveredBy = ["T2: fixtures/php/calls/", "T3: benchmark_php_calls_corpus"]): CapabilityExemption => ({
       capability,
       reason: "no pinned linter reads callees transitively",
       evidence: "PHPStan 2.2.16, Psalm 6.19.1 and PHPCS 4.0.4 rules read only the direct callee's declaration",
@@ -119,7 +119,7 @@ describe("language conformance runner", () => {
 
     it("needs a declared capability and both T2 and T3 coverage", () => {
       expect(() => withExemption(["syntax", "scope"], [exemption("calls")])).toThrow(/does not declare/u);
-      expect(() => withExemption(["syntax", "scope", "calls"], [exemption("calls", ["T2: rerail-fixtures/php/calls/"])])).toThrow(/one T2 and one T3/u);
+      expect(() => withExemption(["syntax", "scope", "calls"], [exemption("calls", ["T2: fixtures/php/calls/"])])).toThrow(/one T2 and one T3/u);
       expect(() => withExemption(["syntax", "scope", "calls"], [{ ...exemption("calls"), evidence: " " }])).toThrow();
     });
   });

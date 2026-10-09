@@ -1,18 +1,18 @@
 /**
- * Promote a proven TSLint port into the golden set: Rerail's opt-in pack
- * (`code-rule-dsl/rules/opt-in/tslint/<rule>.json`, rule id `tslint:<rule>`, seeded disabled). A port
- * qualifies when its PASS audit class is `genuine` (audit.ts), TSLint gives it meaningful option-less behaviour (not in
- * `REQUIRES_CONFIGURATION`), and, scored with the doc as it would ship, its effective verdict is PASS (raw or on a
- * repaired fixture) and it scores identically on renamed fixtures.
+ * Promote a proven TSLint port into the golden set: Rerail's TSLint pack
+ * (`packs/tslint/rules/<rule>.json`, rule id `tslint:<rule>`, seeded disabled). A port
+ * qualifies when its PASS audit class is `genuine` (`packs/tslint/divergences.json`), TSLint gives it meaningful
+ * option-less behaviour (not in `REQUIRES_CONFIGURATION`), and, scored with the doc as it would ship, its effective
+ * verdict is PASS (raw or on a repaired fixture) and it scores identically on renamed fixtures.
  *
  * The shipped doc is the port's default-options doc with two changes: a description naming the TSLint rule and its
  * page, and a source-tree scope (TypeScript files, no dependency, build-output or generated directories). Clauses,
- * violations, anchors and fixes are the port's. Promotion writes the doc and the rule's golden.json entry from the run,
+ * violations, anchors and fixes are the port's. Promotion writes the doc and the rule's conformance.json entry from the run,
  * then names the port default and verdict sidecar to `git rm`: the pack doc replaces them, and option-variant
- * overrides stay in `rules/<rule>/`.
+ * overrides stay in `packs/tslint/candidates/<rule>/`. The rule's `pack.json` entry (title, group) is written by hand.
  *
  *   node --import tsx conformance/tslint/promote.ts <rule>    promote one port (needs the fixtures: `cli.ts fetch`)
- *   node --import tsx conformance/tslint/promote.ts --check   pack <-> golden.json <-> audit consistency (no fixtures needed)
+ *   node --import tsx conformance/tslint/promote.ts --check   pack <-> conformance.json <-> audit consistency (no fixtures needed)
  */
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -96,14 +96,14 @@ export function documentText(document: Record<string, unknown>): string {
 function auditProblems(rule: string): string[] {
   const problems: string[] = [];
   const audit = PASS_AUDIT[rule];
-  if (audit?.class !== "genuine") problems.push(`${rule}: audit class ${audit?.class ?? "none"}, golden rules must be genuine (audit.ts)`);
+  if (audit?.class !== "genuine") problems.push(`${rule}: audit class ${audit?.class ?? "none"}, golden rules must be genuine (packs/tslint/divergences.json)`);
   if (REQUIRES_CONFIGURATION.has(rule)) problems.push(`${rule}: requires configuration (${REQUIRES_CONFIGURATION.get(rule)})`);
   return problems;
 }
 
 /**
- * Static consistency of the golden set: pack folder, golden.json and audit agree, every pack doc is well-formed, and no
- * golden rule keeps a port default or verdict sidecar in `rules/`.
+ * Static consistency of the golden set: pack folder, conformance.json and audit agree, every pack doc is well-formed, and no
+ * golden rule keeps a port default or verdict sidecar in `candidates/`.
  */
 export function checkGolden(manifest: GoldenManifest = loadGoldenManifest(), directory = PACK_DIRECTORY): string[] {
   const rules = goldenRules(directory);
@@ -114,11 +114,11 @@ export function checkGolden(manifest: GoldenManifest = loadGoldenManifest(), dir
     problems.push(...auditProblems(rule));
     for (const stale of [`${rule}.json`, `${rule}.verdict.json`]) {
       const path = join(COMMITTED_PORTS_DIRECTORY, stale);
-      if (existsSync(path)) problems.push(`${rule}: golden, so ${relative(RERAIL_ROOT, path)} duplicates the pack doc and golden.json; git rm it`);
+      if (existsSync(path)) problems.push(`${rule}: golden, so ${relative(RERAIL_ROOT, path)} duplicates the pack doc and conformance.json; git rm it`);
     }
     const entry = manifest.rules[rule];
     if (entry?.verdict === "PASS (repaired fixture)" && (entry.evidence ?? []).length === 0) {
-      problems.push(`${rule}: a repaired-fixture PASS must cite the invalid fixture lines in golden.json evidence`);
+      problems.push(`${rule}: a repaired-fixture PASS must cite the invalid fixture lines in conformance.json evidence`);
     }
     const parsed = codeRuleSchema.safeParse(JSON.parse(readFileSync(goldenDocumentPath(rule, directory), "utf8")));
     if (!parsed.success) {
@@ -180,6 +180,7 @@ export async function promote(rule: string, log: (line: string) => void = consol
   log(`promoted ${rule}: ${relative(RERAIL_ROOT, packPath)} (${entry.verdict}, TP ${entry.truePositives}${entry.outOfScope === undefined ? "" : `, out of scope ${entry.outOfScope.join(", ")}`})`);
   const stale = [portPath, sidecarPath].filter(path => existsSync(path)).map(path => relative(RERAIL_ROOT, path));
   log(`the pack doc replaces the port default; remove it with: git rm ${stale.join(" ")}`);
+  log(`list it in ${relative(RERAIL_ROOT, join(PACK_DIRECTORY, "..", "pack.json"))}: { "id": "tslint:${rule}", "document": "rules/${rule}.json", "title": ..., "group": "TSLint" }`);
   if (entry.verdict === "PASS (repaired fixture)" && entry.evidence === undefined) log(`add evidence for the invalid fixture lines to ${relative(RERAIL_ROOT, GOLDEN_MANIFEST)}`);
   return [];
 }

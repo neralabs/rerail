@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
-import { assertCodeRuleCompiles, CodeRuleCompileError } from "./code-rule-compile.js";
+import { assertCodeRuleStorable, CodeRuleCompileError } from "./code-rule-compile.js";
 import { codeRuleSchema, CODE_RULE_FORMAT } from "./code-rule-schema.js";
 import { conversationRuleSchema } from "./rule-schema.js";
 import { RULE_APPLICABILITIES, RULE_KINDS, RULE_ORIGINS } from "./schema.js";
@@ -13,9 +13,27 @@ import { ScopedRuleCatalog } from "./scoped-rule-catalog.js";
 export const RULES_DUMP_VERSION = 1 as const;
 export const RULES_DUMP_FILE = "rules.json";
 
-/** `<package>/code-rule-dsl/rules`: the documents every project database is seeded with. */
+const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/**
+ * `<package>/code-rule-dsl/rules`: core's own rule documents, seeded enabled into every project database. None ship
+ * today, so the directory may be absent.
+ */
 export function bundledRulesDirectory(): string {
-  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "code-rule-dsl", "rules");
+  return join(PACKAGE_ROOT, "code-rule-dsl", "rules");
+}
+
+/**
+ * The rule packs core ships inside its own package (`package.json` `files`) until it loads installed packs: TSLint and
+ * complexity.
+ * Each is a `packs/<id>/` directory in the pack layout (`docs/pack-format.md`); its `rules/` documents are seeded
+ * disabled, and its `pack.json` is read by `src/rule-packs.ts`.
+ */
+export const CORE_RULE_PACKS = ["tslint", "complexity"] as const;
+
+/** `<package>/packs/<id>` for each pack core ships. */
+export function corePackDirectories(): string[] {
+  return CORE_RULE_PACKS.map(id => join(PACKAGE_ROOT, "packs", id));
 }
 
 /** `rerail rules export` writes beside the database it describes: `$RERAIL_HOME/rules.json`. */
@@ -31,49 +49,30 @@ function parseRuleDocument(value: unknown, label: string): RuleDocument {
   throw new Error(`${label} is neither a ${CODE_RULE_FORMAT} document nor a conversation rule: ${conversationRule.error.issues[0]?.message ?? "invalid"}`);
 }
 
-/**
- * Subdirectory of the bundled rules holding opt-in packs, one folder per pack (`opt-in/<pack>/*.json`, e.g. the TSLint
- * ports in `opt-in/tslint/`), whose documents are seeded disabled.
- */
-export const OPT_IN_RULES_DIRECTORY = "opt-in";
+/** The rule document at `path`: a code rule or a conversation rule, JSON without duplicate keys. */
+export function readRuleDocument(path: string): RuleDocument {
+  return parseRuleDocument(parseJsonWithoutDuplicateKeys(readFileSync(path, "utf8"), path), path);
+}
 
+/** Every `*.json` rule document directly in `directory`, sorted by file name; none when it does not exist. */
 function readRuleDirectory(directory: string): { path: string; document: RuleDocument }[] {
+  if (!existsSync(directory)) return [];
   return readdirSync(directory, { withFileTypes: true })
     .filter(entry => entry.isFile() && entry.name.endsWith(".json"))
     .map(entry => entry.name)
     .sort()
-    .map(name => {
-      const path = join(directory, name);
-      return { path, document: parseRuleDocument(parseJsonWithoutDuplicateKeys(readFileSync(path, "utf8"), path), path) };
-    });
+    .map(name => ({ path: join(directory, name), document: readRuleDocument(join(directory, name)) }));
 }
 
 /**
- * Every opt-in pack's documents, by pack name then file name. Hidden entries (`.DS_Store`, `.hidden-pack/`) and non-JSON
- * files directly in `opt-in/` (a README) are ignored; a `*.json` file there belongs to no pack and is an error.
+ * Core's own rule documents in `directory`, sorted by file name, then each pack's `rules/*.json` (in `packs` order,
+ * then by file name) marked `enabledByDefault: false`; ids must be unique across all of them.
  */
-function readOptInPacks(directory: string): { path: string; document: RuleDocument }[] {
-  if (!existsSync(directory)) return [];
-  const entries = readdirSync(directory, { withFileTypes: true }).filter(entry => !entry.name.startsWith("."));
-  const loose = entries
-    .filter(entry => !entry.isDirectory() && entry.name.endsWith(".json"))
-    .map(entry => join(directory, entry.name));
-  if (loose.length > 0) throw new Error(`Opt-in rules must live in a pack folder (${OPT_IN_RULES_DIRECTORY}/<pack>/*.json): ${loose.join(", ")}`);
-  return entries
-    .filter(entry => entry.isDirectory())
-    .map(entry => entry.name)
-    .sort()
-    .flatMap(pack => readRuleDirectory(join(directory, pack)));
-}
-
-/**
- * Every `*.json` rule document in a directory, sorted by file name, then those in each `opt-in/<pack>/` folder
- * (by pack, then file name) marked `enabledByDefault: false`; ids must be unique across all of them.
- */
-export function loadBundledRules(directory = bundledRulesDirectory()): BundledRuleDocument[] {
+export function loadBundledRules(directory = bundledRulesDirectory(), packs: readonly string[] = corePackDirectories()): BundledRuleDocument[] {
   const entries: { path: string; document: BundledRuleDocument }[] = [
     ...readRuleDirectory(directory),
-    ...readOptInPacks(join(directory, OPT_IN_RULES_DIRECTORY))
+    ...packs
+      .flatMap(pack => readRuleDirectory(join(pack, "rules")))
       .map(({ path, document }) => ({ path, document: { ...document, enabledByDefault: false } })),
   ];
   const seen = new Set<string>();
@@ -116,14 +115,15 @@ export function exportScopedRules(store: ScopedRuleCatalog, path: string, now = 
 
 /**
  * Compile every code rule of a dump in the engine before anything is written, so an import is all or nothing:
- * the error lists each rule the engine rejects, by dump index and id.
+ * the error lists each rule the engine rejects, by dump index and id. A rule whose language is not supported yet
+ * imports, inactive.
  */
 function assertDumpCompiles(path: string, documents: readonly RuleDocument[]): void {
   const problems: string[] = [];
   for (const [index, document] of documents.entries()) {
     if (document.kind !== "file") continue;
     try {
-      assertCodeRuleCompiles(document.rule);
+      assertCodeRuleStorable(document.rule);
     } catch (error) {
       if (!(error instanceof CodeRuleCompileError)) throw error;
       problems.push(`  rules[${index}] (${document.rule.id}): ${error.reason}`);

@@ -17,22 +17,25 @@ Rerail's `native/src/code_rule_dsl/` and `conformance/languages/`.
 
 | Family | Upstream tools | Features |
 |---|---|---|
-| `python/` | Ruff 0.16.9, Pyflakes 3.4.0, Bandit 1.8.6, CPython 3.13, Jedi 0.19.2 | `calls`, `identifier`, `literal`, `rules`, `scope`, `suppress`, `value` |
+| `python/` | Ruff 0.16.9, Pyflakes 3.4.0, Bandit 1.8.6, CPython 3.13, Jedi 0.19.2 | `calls`, `identifier`, `literal`, `scope`, `suppress`, `value` |
 | `ecma/` | ESLint 10.11.0, typescript-eslint 8.70.1, eslint-utils 4.10.1, natural-compare 1.4.0 | `lines`, `scope`, `suppress`, `value` |
-| `php/` | PHP 8.5.11, PHPStan 2.2.16, Psalm 6.19.1, PHP_CodeSniffer 4.0.4 and 3.13.6, nikic/php-parser 5.9.0, phpstan/phpdoc-parser 2.3.5 | `arguments`, `calls`, `compare`, `format_args`, `literal`, `rules`, `scope`, `suppress`, `value` |
-| `blade/` | illuminate/view 13.34.0, PHP 8.5.11, PHPStan 2.2.16, stillat/blade-parser 2.1.0, Bladestan 0.11.7, tlint 9.7.0 | `rules`, `view` |
-| `typescript/` | ESLint 10.11.0, typescript-eslint 8.70.1, TypeScript 5.9.3 | `rules` |
-| `next/` | @next/eslint-plugin-next 16.3.8, ESLint 10.11.0, typescript-eslint 8.70.1 | `candidates`, `policies`, `probes`, `rules` |
-| `node/` | eslint-plugin-n 18.4.1, ESLint 10.11.0, globals 17.13.0 | `candidates`, `policies`, `probes`, `rules` |
-| `react/` | eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1, ESLint 9.39.5 | `candidates`, `policies`, `probes`, `rules` |
-| `vue/` | @vue/compiler-sfc 3.5.43, vue-eslint-parser 10.4.1, eslint-plugin-vue 10.11.1, ESLint 10.11.0 | `grammar`, `rules`, `view` |
-| `rust/` | rustc, clippy and rust-analyzer 1.99.0, tree-sitter-rust 0.24.2, syn 2 | `feasibility`, `grammar`, `literal`, `rules`, `suppress` |
-| `sql/` | SQLFluff 4.4.0, PostgreSQL 18 parser (pglast 8.5), SQLite 3.50.4, MySQL 8.4.11 | `names`, `rules`, `suppress`, `t1`, `t3`, `value` |
+| `php/` | PHP 8.5.11, PHPStan 2.2.16, Psalm 6.19.1, PHP_CodeSniffer 4.0.4 and 3.13.6, nikic/php-parser 5.9.0, phpstan/phpdoc-parser 2.3.5 | `arguments`, `calls`, `compare`, `format_args`, `literal`, `scope`, `suppress`, `value` |
+| `blade/` | illuminate/view 13.34.0, PHP 8.5.11, PHPStan 2.2.16 | `view` |
+| `vue/` | @vue/compiler-sfc 3.5.43, vue-eslint-parser 10.4.1, eslint-plugin-vue 10.11.1, ESLint 10.11.0 | `grammar`, `upstream`, `view` |
+| `rust/` | rustc, clippy and rust-analyzer 1.99.0, tree-sitter-rust 0.24.2, syn 2 | `feasibility`, `grammar`, `literal`, `suppress`, `upstream` |
+| `sql/` | SQLFluff 4.4.0, PostgreSQL 18 parser (pglast 8.5), SQLite 3.50.4, MySQL 8.4.11 | `names`, `suppress`, `t1`, `t3`, `upstream`, `value` |
 
-`frameworks/eslint_record.mjs` is the recorder the `next/`, `node/` and `react/` generators share. `rules/` holds a
-pack's T4 recordings: each ported rule's upstream test cases (`fixtures/`) and pinned public corpora
-(`corpus-<name>.expected.json`). `candidates/` and `probes/` are runnable packs scored against those recordings, and
-`grammar/`, `t1/`, `t3/` and `feasibility/` hold the measurement tools of a pack's earlier tiers.
+The rule packs (python, php, blade, typescript, react, node, next) live in `packs/<id>/`
+([pack format](../docs/pack-format.md#moving-to-this-layout)): their upstream tools' copied tests and recordings, their
+candidates and their licence records moved there. What stays here is engine oracles, and the material `vue/`, `rust/`
+and `sql/` recorded ahead of their packs. Those languages have upstream recordings but no rules yet, so they have no
+pack directory: `<id>/upstream/` holds the upstream linters' recorders, their copied tests (`<tool>/fixtures/`) and
+recordings on those tests and on pinned public corpora (`<tool>/corpus-<name>.expected.json`), laid out as a pack's
+`upstream/`, beside the planned rule list (`rust/upstream/conformance.draft.json`,
+`sql/upstream/conformance.draft.json`, `vue/upstream/rules.json`); `grammar/`, `t1/`, `t3/` and `feasibility/` hold
+the measurement tools. When a language's pack gains its first rules, its draft becomes `packs/<id>/conformance.json`
+and `<id>/upstream/` moves to `packs/<id>/upstream/`. `../conformance/recorders/eslint-record.mjs` is the recorder the
+ESLint-based generators share.
 
 Each oracle stays whole inside its feature directory (generator, inputs and recorded output together), so every
 generator reads and writes relative to its own directory. A generator that needs pinned tools or corpus checkouts
@@ -55,19 +58,7 @@ upstream path and whether the copy is verbatim, derived or an excerpt. Those fil
 | `ecma/licenses/eslint-utils/` | eslint-utils 4.10.1 | MIT |
 | `php/licenses/laravel/` | laravel/framework e5f3d6265f | MIT |
 | `php/licenses/symfony/` | symfony/symfony 2c4011aa7e | MIT |
-| `php/licenses/phpstan/` | PHPStan 2.2.16 | MIT |
-| `php/licenses/psalm/` | vimeo/psalm 6.19.1 | MIT |
-| `php/licenses/php_codesniffer/` | PHP_CodeSniffer 4.0.4 | BSD-3-Clause |
-| `blade/licenses/blade-parser/` | stillat/blade-parser 2.1.0 | MIT |
-| `blade/licenses/bladestan/` | Bladestan 0.11.7 | MIT |
-| `blade/licenses/tlint/` | tlint 9.7.0 | MIT |
 | `blade/licenses/bagisto/`, `bookstack/`, `filament/`, `livewire/` | directive closures excerpted into `blade/view/directives.php` | MIT |
-| `typescript/licenses/eslint/` | ESLint 10.11.0 | MIT |
-| `typescript/licenses/typescript-eslint/` | typescript-eslint 8.70.1 | MIT |
-| `next/licenses/next.js/` | Next.js 16.3.8 (@next/eslint-plugin-next) | MIT |
-| `node/licenses/eslint-plugin-n/` | eslint-plugin-n 18.4.1 | MIT |
-| `react/licenses/eslint-plugin-react/` | eslint-plugin-react 7.37.5 | MIT |
-| `react/licenses/react/` | facebook/react (eslint-plugin-react-hooks 7.1.1) | MIT |
 | `vue/licenses/eslint-plugin-vue/` | eslint-plugin-vue 10.11.1 | MIT |
 | `rust/licenses/clippy/` | rust-clippy (Rust 1.99.0) | MIT OR Apache-2.0 |
 | `sql/licenses/sqlfluff/` | SQLFluff 4.4.0 | MIT |

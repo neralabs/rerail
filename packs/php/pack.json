@@ -1,0 +1,151 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "php",
+  "name": "PHP",
+  "category": "language",
+  "covers": "18 PHP_CodeSniffer, PHPStan and Psalm rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
+  "reason": "matches PHP",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "**/*.php"
+        ],
+        "exclude": [
+          "**/*.blade.php"
+        ],
+        "label": "*.php files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "phpcs-generic-code-analysis-empty-statement",
+      "document": "rules/phpcs-generic-code-analysis-empty-statement.json",
+      "title": "PHP_CodeSniffer Generic.CodeAnalysis.EmptyStatement: Empty statement",
+      "group": "PHP_CodeSniffer"
+    },
+    {
+      "id": "phpcs-generic-php-backtick-operator",
+      "document": "rules/phpcs-generic-php-backtick-operator.json",
+      "title": "PHP_CodeSniffer Generic.PHP.BacktickOperator: Backtick operator",
+      "group": "PHP_CodeSniffer"
+    },
+    {
+      "id": "phpcs-generic-php-deprecated-functions",
+      "document": "rules/phpcs-generic-php-deprecated-functions.json",
+      "title": "PHP_CodeSniffer Generic.PHP.DeprecatedFunctions: Deprecated functions",
+      "group": "PHP_CodeSniffer"
+    },
+    {
+      "id": "phpcs-generic-php-forbidden-functions",
+      "document": "rules/phpcs-generic-php-forbidden-functions.json",
+      "title": "PHP_CodeSniffer Generic.PHP.ForbiddenFunctions: Forbidden functions",
+      "group": "PHP_CodeSniffer"
+    },
+    {
+      "id": "phpcs-generic-php-lower-case-constant",
+      "document": "rules/phpcs-generic-php-lower-case-constant.json",
+      "title": "PHP_CodeSniffer Generic.PHP.LowerCaseConstant: Lower-case constant",
+      "group": "PHP_CodeSniffer"
+    },
+    {
+      "id": "phpcs-generic-php-no-silenced-errors",
+      "document": "rules/phpcs-generic-php-no-silenced-errors.json",
+      "title": "PHP_CodeSniffer Generic.PHP.NoSilencedErrors: No silenced errors",
+      "group": "PHP_CodeSniffer"
+    },
+    {
+      "id": "phpcs-squiz-php-disallow-size-functions-in-loops",
+      "document": "rules/phpcs-squiz-php-disallow-size-functions-in-loops.json",
+      "title": "PHP_CodeSniffer Squiz.PHP.DisallowSizeFunctionsInLoops: Size functions in loops",
+      "group": "PHP_CodeSniffer"
+    },
+    {
+      "id": "phpcs-squiz-php-eval",
+      "document": "rules/phpcs-squiz-php-eval.json",
+      "title": "PHP_CodeSniffer Squiz.PHP.Eval: Eval",
+      "group": "PHP_CodeSniffer",
+      "examples": {
+        "caught": {
+          "path": "app/render.php",
+          "text": "<?php\n\nfunction render(string $template): void\n{\n    eval($template);\n}\n"
+        },
+        "passes": {
+          "path": "app/render.php",
+          "text": "<?php\n\nfunction render(string $template): void\n{\n    echo htmlspecialchars($template);\n}\n"
+        }
+      }
+    },
+    {
+      "id": "phpstan-variable-undefined",
+      "document": "rules/phpstan-variable-undefined.json",
+      "title": "PHPStan variable.undefined: Undefined variable",
+      "group": "PHPStan"
+    },
+    {
+      "id": "phpstan-argument-sprintf",
+      "document": "rules/phpstan-argument-sprintf.json",
+      "title": "PHPStan argument.sprintf: sprintf() argument count",
+      "group": "PHPStan",
+      "examples": {
+        "caught": {
+          "path": "app/greet.php",
+          "text": "<?php\n\nfunction greet(string $name): string\n{\n    return sprintf('Hello %s, you have %d messages', $name);\n}\n"
+        },
+        "passes": {
+          "path": "app/greet.php",
+          "text": "<?php\n\nfunction greet(string $name, int $count): string\n{\n    return sprintf('Hello %s, you have %d messages', $name, $count);\n}\n"
+        }
+      }
+    },
+    {
+      "id": "phpstan-argument-sscanf",
+      "document": "rules/phpstan-argument-sscanf.json",
+      "title": "PHPStan argument.sscanf: sscanf() argument count",
+      "group": "PHPStan"
+    },
+    {
+      "id": "phpstan-array-duplicate-key",
+      "document": "rules/phpstan-array-duplicate-key.json",
+      "title": "PHPStan array.duplicateKey: Duplicate array key",
+      "group": "PHPStan"
+    },
+    {
+      "id": "phpstan-random-int-parameters",
+      "document": "rules/phpstan-random-int-parameters.json",
+      "title": "PHPStan argument.type: random_int() parameters",
+      "group": "PHPStan"
+    },
+    {
+      "id": "phpstan-missing-function-return-type",
+      "document": "rules/phpstan-missing-function-return-type.json",
+      "title": "PHPStan missingType.return: Missing function return type",
+      "group": "PHPStan"
+    },
+    {
+      "id": "phpstan-if-always-true",
+      "document": "rules/phpstan-if-always-true.json",
+      "title": "PHPStan if.alwaysTrue: If condition always true",
+      "group": "PHPStan"
+    },
+    {
+      "id": "phpstan-if-always-false",
+      "document": "rules/phpstan-if-always-false.json",
+      "title": "PHPStan if.alwaysFalse: If condition always false",
+      "group": "PHPStan"
+    },
+    {
+      "id": "psalm-unused-variable",
+      "document": "rules/psalm-unused-variable.json",
+      "title": "Psalm UnusedVariable: Unused variable",
+      "group": "Psalm"
+    },
+    {
+      "id": "psalm-forbidden-code",
+      "document": "rules/psalm-forbidden-code.json",
+      "title": "Psalm ForbiddenCode: Forbidden code",
+      "group": "Psalm"
+    }
+  ]
+}

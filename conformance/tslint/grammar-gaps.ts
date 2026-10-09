@@ -1,6 +1,7 @@
 import ts from "typescript";
 import { loadNativeBinding } from "../../src/native.js";
-import { applyToWorkspace, capabilitiesJson, PARSE_FAILURE_CODES } from "./runner.js";
+import { capabilitiesJson } from "../engine.js";
+import { applyToWorkspace, PARSE_FAILURE_CODES } from "./runner.js";
 
 /**
  * Constructs that TSLint fixtures (or ports) suggested tree-sitter-typescript cannot handle. Each is checked two

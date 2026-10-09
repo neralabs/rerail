@@ -1,21 +1,20 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { z } from "zod";
 import { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
-import { bundledRulesDirectory, loadBundledRules } from "./rule-bootstrap.js";
+import { corePackDirectories, readRuleDocument } from "./rule-bootstrap.js";
 import { globPattern, matchReason, scanRepository, type RulePackMatch, type RulePackSignal } from "./rule-pack-matcher.js";
-import type { RuleDocument } from "./rule-store.js";
 import { RULE_MODES, type RuleMode } from "./rule-mode.js";
+import type { RuleDocument } from "./rule-store.js";
 
 export type { RulePackMatch, RulePackSignal } from "./rule-pack-matcher.js";
 
 /**
- * Rule packs: named sets of rules that come with Rerail. A pack's optional match definition says which repositories
- * it fits and why; a pack without one is never recommended and is chosen by hand. Pack definitions live apart from
- * rule documents (`policies/rule-packs/<id>.json`); a pack lists bundled rules by id and adds no rules of its own.
- * Attaching packs to repositories, and so seeding their rules, is not built yet; this module defines, validates and
- * recommends.
+ * Rule packs: named sets of rules. A pack's optional match definition says which repositories it fits and why; a pack
+ * without one is never recommended and is chosen by hand. A pack is a `packs/<id>/` directory (`docs/pack-format.md`):
+ * `pack.json` lists each rule with the document in the pack's `rules/` that defines it. Core ships the packs in
+ * `CORE_RULE_PACKS` inside its own package. Attaching packs to repositories, and so seeding their rules, is not built
+ * yet; this module defines, validates and recommends.
  */
 export const RULE_PACK_FORMAT = "rerail.rule-pack/v1" as const;
 export const RULE_PACK_CATEGORIES = ["language", "framework", "repository"] as const;
@@ -32,19 +31,20 @@ const exampleSchema = z
   })
   .strict();
 
-const packRuleSchema = z
-  .object({
-    id: nonEmpty,
-    title: nonEmpty,
-    group: nonEmpty,
-    /** The rule mode the pack starts the rule in; default: the mode its document has. */
-    mode: z.enum(RULE_MODES).optional(),
-    /** Whether the rule is on when its pack is added; default on. */
-    on: z.boolean().optional(),
-    /** One example the rule catches and one it lets pass, for the rule panel; tests prove both. */
-    examples: z.object({ caught: exampleSchema, passes: exampleSchema }).strict().optional(),
-  })
-  .strict();
+/** A rule's code-rule document, relative to the pack directory: `rules/<name>.json`. */
+const documentPathSchema = z.string().regex(/^rules\/[^/]+\.json$/u, "must be rules/<name>.json");
+
+const packRuleFields = {
+  id: nonEmpty,
+  title: nonEmpty,
+  group: nonEmpty,
+  /** The rule mode the pack starts the rule in; default: the mode its document has. */
+  mode: z.enum(RULE_MODES).optional(),
+  /** Whether the rule is on when its pack is added; default on. */
+  on: z.boolean().optional(),
+  /** One example the rule catches and one it lets pass, for the rule panel; tests prove both. */
+  examples: z.object({ caught: exampleSchema, passes: exampleSchema }).strict().optional(),
+};
 
 const signalSchema: z.ZodType<RulePackSignal> = z.union([
   z.object({ files: z.array(nonEmpty).min(1), exclude: z.array(nonEmpty).optional(), label: nonEmpty }).strict(),
@@ -53,7 +53,8 @@ const signalSchema: z.ZodType<RulePackSignal> = z.union([
 
 const matchSchema: z.ZodType<RulePackMatch> = z.object({ any: z.array(signalSchema).min(1) }).strict();
 
-const packFileSchema = z
+/** `packs/<id>/pack.json`: every rule names its document, so the pack is self-contained. */
+export const rulePackFileSchema = z
   .object({
     format: z.literal(RULE_PACK_FORMAT),
     id: z.string().regex(/^[a-z][a-z0-9-]*$/u, "must be lowercase letters, digits and dashes"),
@@ -65,9 +66,30 @@ const packFileSchema = z
     match: matchSchema.optional(),
     /** Whether the pack's rules honour their linters' suppression comments (`# noqa`, `eslint-disable`); default yes. */
     honourSuppressionComments: z.boolean().optional(),
-    rules: z.array(packRuleSchema).min(1),
+    rules: z.array(z.object({ ...packRuleFields, document: documentPathSchema }).strict()).min(1),
   })
   .strict();
+export type RulePackFile = z.infer<typeof rulePackFileSchema>;
+
+/** The npm package name of pack `<id>`. */
+export const rulePackPackageName = (id: string): string => `@neralabs/rerail-pack-${id}`;
+
+/**
+ * `packs/<id>/package.json`: the pack's npm package. Core's version range is a peer dependency, a declaration and not
+ * an import; the pack contract (`docs/pack-format.md`) adds that the name matches the pack, that there are no
+ * `dependencies`, that `files` publishes no validation material, and that `license` agrees with `licenses/`.
+ */
+export const rulePackPackageSchema = z.looseObject({
+  name: z.string().regex(/^@neralabs\/rerail-pack-[a-z][a-z0-9-]*$/u, "must be @neralabs/rerail-pack-<id>"),
+  version: z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u, "must be a semver version"),
+  description: nonEmpty.optional(),
+  /** An SPDX expression naming every licence the published files carry. */
+  license: nonEmpty,
+  files: z.array(nonEmpty).min(1),
+  peerDependencies: z.looseObject({ "@neralabs/rerail": nonEmpty }),
+  publishConfig: z.looseObject({ access: z.enum(["restricted", "public"]) }).optional(),
+});
+export type RulePackPackage = z.infer<typeof rulePackPackageSchema>;
 
 export interface RuleExample {
   readonly path?: string | undefined;
@@ -114,24 +136,17 @@ export interface RulePackRecommendation {
 
 const CATEGORY_ORDER: Record<RulePackCategory, number> = { language: 0, framework: 1, repository: 2 };
 
-/** `<package>/policies/rule-packs`: one `<id>.json` definition per pack. */
-export function rulePacksDirectory(): string {
-  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "policies", "rule-packs");
-}
-
-/** The packs in `directory`, validated against the bundled rules: every rule resolves and belongs to one pack. */
-export function readRulePacks(directory = rulePacksDirectory(), bundledDirectory = bundledRulesDirectory()): readonly RulePack[] {
-  const pool = new Map<string, RuleDocument>();
-  for (const document of loadBundledRules(bundledDirectory)) {
-    pool.set(document.rule.id, document);
-  }
+/**
+ * The packs in `packs` (each a `packs/<id>/` directory), validated: `pack.json` parses and names its directory, every
+ * rule's document exists and carries its id, and no rule is in two packs.
+ */
+export function readRulePacks(packs: readonly string[] = corePackDirectories()): readonly RulePack[] {
   const owner = new Map<string, string>();
-  return readdirSync(directory, { withFileTypes: true })
-    .filter(entry => entry.isFile() && entry.name.endsWith(".json"))
-    .map(entry => {
-      const path = join(directory, entry.name);
-      const file = packFileSchema.parse(parseJsonWithoutDuplicateKeys(readFileSync(path, "utf8"), path));
-      if (`${file.id}.json` !== entry.name) throw new Error(`Rule pack ${file.id} must be stored as ${file.id}.json, not ${entry.name}`);
+  return packs
+    .map(directory => {
+      const path = join(directory, "pack.json");
+      const file = rulePackFileSchema.parse(parseJsonWithoutDuplicateKeys(readFileSync(path, "utf8"), path));
+      if (file.id !== basename(directory)) throw new Error(`Rule pack ${file.id} must be stored in packs/${file.id}/, not ${basename(directory)}/`);
       for (const signal of file.match?.any ?? []) {
         if (!("files" in signal)) continue;
         try {
@@ -143,8 +158,10 @@ export function readRulePacks(directory = rulePacksDirectory(), bundledDirectory
       // Like each rule's mode and on state, this takes effect only once packs are attached.
       const honourSuppressionComments = file.honourSuppressionComments ?? true;
       const rules = file.rules.map((rule): RulePackRule => {
-        const document = pool.get(rule.id);
-        if (document === undefined) throw new Error(`Rule pack ${file.id} lists ${rule.id}, which is not a bundled rule`);
+        const documentPath = join(directory, rule.document);
+        if (!existsSync(documentPath)) throw new Error(`Rule pack ${file.id} lists ${rule.id}, whose document ${rule.document} does not exist`);
+        const document: RuleDocument = readRuleDocument(documentPath);
+        if (document.rule.id !== rule.id) throw new Error(`Rule pack ${file.id} lists ${rule.id}, but ${rule.document} has id ${document.rule.id}`);
         const previous = owner.get(rule.id);
         if (previous !== undefined) throw new Error(`Rule ${rule.id} is in both rule packs ${previous} and ${file.id}`);
         const examples = rule.examples;

@@ -3,8 +3,9 @@
 Upstream: [Ruff 0.16.9](https://github.com/astral-sh/ruff/tree/0.16.9). License: MIT (Copyright (c) 2022 Charles Marsh); [`LICENSE`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
 The files listed below contain material copied from Ruff and remain under its license. Every other file in this
-pack is Rerail's, under the Apache License 2.0 (this repository's `LICENSE`): the `generate_*` scripts, `rules/common.py` and `rules/*/generate.py`, the `*.expected.json`
-outputs recorded by running Ruff, and the fixtures and cases written for Rerail.
+directory tree is Rerail's, under the Apache License 2.0 (this repository's `LICENSE`): the `generate_*` scripts, the
+`*.expected.json` outputs recorded by running Ruff, and the fixtures and cases written for Rerail. The rule tests
+copied from Ruff for the Python rule pack are recorded in `packs/python/licenses/ruff/UPSTREAM.md`.
 
 Ruff's `LICENSE` also carries the notices of the projects Ruff derives from, Pyflakes among them. Ruff's pyflakes fixtures come with that notice, and so does the one case below taken from Pyflakes' own test suite.
 
@@ -78,97 +79,3 @@ Paths are relative to `python/`.
 | `value/ruff/SIM222.py` | `crates/ruff_linter/resources/test/fixtures/flake8_simplify/SIM222.py` | derived: 2 of its 23 lines. |
 | `value/ruff/SIM910.py` | `crates/ruff_linter/resources/test/fixtures/flake8_simplify/SIM910.py` | derived: 2 of its 44 lines. |
 | `value/ruff/SIM911.py` | `crates/ruff_linter/resources/test/fixtures/flake8_simplify/SIM911.py` | derived: 4 of its 14 lines, the `zip(d.keys(), d.values())` cases. |
-| `rules/ruff/fixtures/flake8_bugbear/B011.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B011.py` | verbatim |
-| `rules/ruff/fixtures/flake8_bugbear/B028.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B028.py` | verbatim |
-| `rules/ruff/fixtures/flake8_bugbear/B905.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B905.py` | verbatim |
-| `rules/ruff/fixtures/flake8_pie/PIE796.py` | `crates/ruff_linter/resources/test/fixtures/flake8_pie/PIE796.py` | verbatim |
-| `rules/ruff/fixtures/flake8_pie/PIE796.pyi` | `crates/ruff_linter/resources/test/fixtures/flake8_pie/PIE796.pyi` | verbatim |
-| `rules/ruff/fixtures/flake8_simplify/SIM222.py` | `crates/ruff_linter/resources/test/fixtures/flake8_simplify/SIM222.py` | verbatim |
-| `rules/ruff/fixtures/pycodestyle/E711.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E711.py` | verbatim |
-| `rules/ruff/fixtures/pycodestyle/E722.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E722.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F50x.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F50x.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F523.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F523.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F524.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F524.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F601.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F601.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F632.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F632.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F722.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F722.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F722_1.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F722_1.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_0.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_0.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_1.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_1.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_10.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_10.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_11.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_11.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_12.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_12.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_13.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_13.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_14.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_14.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_15.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_15.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_16.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_16.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_17.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_17.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_18.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_18.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_19.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_19.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_2.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_2.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_20.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_20.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_21.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_21.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_22.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_22.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_23.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_23.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_24.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_24.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_25.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_25.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_26.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_26.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_27.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_27.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_28.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_28.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_29.pyi` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_29.pyi` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_3.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_3.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_30.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_30.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_31.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_31.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_32.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_32.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_33.pyi` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_33.pyi` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_35.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_35.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_36.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_36.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_4.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_4.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_5.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_5.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_6.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_6.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_7.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_7.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_8.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_8.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F811_9.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_9.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_0.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_0.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_1.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_1.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_10.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_10.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_11.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_11.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_11.pyi` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_11.pyi` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_12.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_12.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_13.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_13.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_14.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_14.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_15.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_15.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_16.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_16.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_17.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_17.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_18.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_18.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_19.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_19.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_2.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_2.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_20.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_20.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_21.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_21.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_23.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_23.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_24.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_24.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_25.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_25.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_26.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_26.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_26.pyi` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_26.pyi` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_27.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_27.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_28.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_28.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_29.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_29.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_3.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_3.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_30.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_30.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_31.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_31.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_32.pyi` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_32.pyi` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_33.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_33.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_34.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_34.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_34.pyi` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_34.pyi` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_4.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_4.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_5.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_5.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_5.pyi` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_5.pyi` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_6.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_6.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_7.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_7.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_8.pyi` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_8.pyi` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F821_9.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_9.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F823.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F823.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F841_0.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F841_0.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F841_1.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F841_1.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F841_2.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F841_2.py` | verbatim |
-| `rules/ruff/fixtures/pyflakes/F841_3.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F841_3.py` | verbatim |

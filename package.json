@@ -58,7 +58,10 @@
     "CHANGELOG.md",
     "THIRD_PARTY_NOTICES",
     "code-rule-dsl/rules",
-    "policies/rule-packs"
+    "packs/tslint/pack.json",
+    "packs/tslint/rules",
+    "packs/complexity/pack.json",
+    "packs/complexity/rules"
   ],
   "scripts": {
     "build": "npm run build:clean && npm run build:native && npm run build:js",
@@ -81,6 +84,7 @@
     "check:reference": "node scripts/code-rule-dsl-reference.mjs grammar",
     "check:ui-tokens": "node scripts/check-ui-tokens.mjs",
     "test": "vitest run --dir test",
+    "test:conformance": "node --import tsx conformance/tslint/cli.ts fetch && vitest run --dir conformance && npm run conformance:languages:check",
     "test:native": "cargo test --manifest-path Cargo.toml --workspace",
     "test:code-rule-dsl-runtime": "vitest run test/native-code-rule-dsl-runtime.test.ts",
     "bench:code-rule-dsl": "node --import tsx scripts/code-rule-dsl-bench.ts",
@@ -90,13 +94,14 @@
     "test:e2e:host": "npm run build && node --import tsx scripts/host-smoke.ts",
     "test:e2e:lifecycle": "npm run build:ts && node --import tsx scripts/host-lifecycle.ts omp",
     "test:e2e:lifecycle:pi": "npm run build:ts && node --import tsx scripts/host-lifecycle.ts pi",
-    "test:all": "npm run build && npm test && npm run test:scripts && npm run test:reference && npm run test:native && npm run test:integration:built",
+    "test:all": "npm run build && npm test && npm run test:conformance && npm run test:scripts && npm run test:reference && npm run test:native && npm run test:integration:built",
     "test:reference": "node --import tsx scripts/code-rule-dsl-reference.mjs examples",
     "test:scripts": "vitest run scripts/rerail-setup.test.mjs scripts/rerail-restore.test.mjs scripts/rerail-nuke.test.mjs scripts/rerail-dev.test.mjs && node --test scripts/ensure-sqlite.test.mjs",
     "test:watch": "vitest --dir test",
     "conformance:languages": "node --import tsx conformance/languages/cli.ts",
     "conformance:languages:check": "node --import tsx conformance/languages/cli.ts --check",
     "generate:schema": "node --import tsx scripts/generate-schema-sql.ts",
+    "generate:languages": "node --import tsx scripts/generate-language-registry.ts",
     "package:check": "npm run build && npm pack --dry-run",
     "prepack": "node scripts/stamp-plugin-versions.mjs stamp",
     "postpack": "node scripts/stamp-plugin-versions.mjs restore"
@@ -118,6 +123,7 @@
   },
   "devDependencies": {
     "@ast-grep/cli": "0.45.3",
+    "@changesets/cli": "3.0.3",
     "@earendil-works/pi-agent-core": "0.85.1",
     "@earendil-works/pi-ai": "0.85.1",
     "@earendil-works/pi-coding-agent": "0.87.1",

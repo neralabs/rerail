@@ -8,7 +8,7 @@ import { IGNORED_DIRECTORIES, languageFor } from "../../src/code-rule-enforcer.j
 import { encodeCodeRuleWorkspaceRequest, loadNativeBinding, nativePlatformSuffix, type NativeCompiledCodeRuleDsl } from "../../src/native.js";
 import { CODE_RULE_AST_LANGUAGES, CODE_RULE_DIALECTS, codeRuleLanguageFamily } from "../../src/code-rule-languages.js";
 import { compareDeterministicStrings } from "../../src/stable-json.js";
-import { capabilitiesJson, INFORMATIONAL_FAILURE_CODES } from "../tslint/runner.js";
+import { capabilitiesJson, INFORMATIONAL_FAILURE_CODES } from "../engine.js";
 import {
   corpusRecordingPath,
   defaultCorpusRoot,

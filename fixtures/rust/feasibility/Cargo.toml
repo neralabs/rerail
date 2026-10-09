@@ -1,7 +1,7 @@
 # Measurement tool for the Rust pack feasibility study.
 # Build offline, never in CI, with the target dir outside the repository:
 #   CARGO_TARGET_DIR=<checkout>/.rerail/tools/rust/feasibility/target \
-#     cargo +1.99.0 build --release --manifest-path rerail-fixtures/rust/feasibility/Cargo.toml
+#     cargo +1.99.0 build --release --manifest-path fixtures/rust/feasibility/Cargo.toml
 # `generate.py` beside this file builds and drives it.
 [package]
 name = "rerail-rust-feasibility"

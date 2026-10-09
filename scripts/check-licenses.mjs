@@ -12,18 +12,8 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** SPDX ids allowed for files committed to this repository. */
-const ALLOWED_LICENSES = new Set([
-  "0BSD",
-  "Apache-2.0",
-  "BSD-2-Clause",
-  "BSD-3-Clause",
-  "CC0-1.0",
-  "ISC",
-  "MIT",
-  "Unicode-3.0",
-  "Zlib",
-]);
+/** SPDX ids allowed for files committed to this repository; the pack tests read the same list. */
+const ALLOWED_LICENSES = new Set(JSON.parse(readFileSync(join(root, "scripts", "licence-allowlist.json"), "utf8")));
 
 /** Licence families that impose terms on the work they are combined with. */
 const COPYLEFT = /\b(A?GPL|LGPL|MPL|EPL|EUPL|CDDL|CPAL|OSL|SSPL|RPL|QPL|Sleepycat|CC-BY-SA|CC-BY-NC)\b/iu;
