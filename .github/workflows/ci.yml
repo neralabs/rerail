@@ -299,8 +299,8 @@ jobs:
           npm run test:scripts
           npm run test:reference
 
-      # Fetches TSLint's rule tests at the pinned commit, runs the conformance harnesses' own tests
-      # (conformance/**/*.test.ts: the TSLint golden and rename gates) and conformance:languages:check.
+      # Offline: the conformance tests (test/conformance: the identifier-rename gate over the recorded upstream tests)
+      # and conformance:languages:check, which scores every pack's ported rules against its recordings.
       - name: Conformance harnesses
         run: npm run test:conformance
 

@@ -95,7 +95,7 @@ function fires(ruleId: string, path: string, text: string): boolean {
 }
 
 describe("shipped rule packs", () => {
-  it("are the complexity pack and the TSLint pack of the golden TSLint ports, and nothing else", () => {
+  it("are the complexity pack and the TSLint pack of the shipped TSLint ports, and nothing else", () => {
     expect(packs.map(candidate => candidate.id)).toEqual(["complexity", "tslint"]);
     expect(ids(tslint)).toEqual(tslintIds);
     expect(ids(complexity)).toEqual(complexityIds);
@@ -308,8 +308,9 @@ describe("rule pack API", () => {
       const listed = await get("/api/rule-packs", rulePackListSchema);
       expect(listed.packs.map(found => [found.id, found.category, found.rules.length]))
         .toEqual([["complexity", "language", complexity.rules.length], ["tslint", "language", tslint.rules.length]]);
+      const tripleEquals = tslint.rules.find(rule => rule.id === "tslint:triple-equals")!;
       expect(listed.packs.find(found => found.id === "tslint")!.rules.find(rule => rule.id === "tslint:triple-equals"))
-        .toEqual({ id: "tslint:triple-equals", kind: "file", title: tslint.rules.find(rule => rule.id === "tslint:triple-equals")!.title, group: "TSLint", mode: "steer", on: true });
+        .toEqual({ id: "tslint:triple-equals", kind: "file", title: tripleEquals.title, group: "TSLint", mode: "steer", on: true, examples: tripleEquals.examples });
 
       const recommended = await get("/api/rule-packs/recommendations", rulePackRecommendationsSchema);
       expect(recommended).toEqual({ repositoryId: "repo-a", recommendations: [{ packId: "tslint", ruleCount: tslint.rules.length, reason: "matches *.ts files in src" }] });
