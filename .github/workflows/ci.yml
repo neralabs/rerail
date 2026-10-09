@@ -24,13 +24,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
           persist-credentials: false
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
 
       # Every file carries licence information and every licence it names has its text in LICENSES/.
       - name: REUSE lint
@@ -40,33 +40,98 @@ jobs:
       - name: Licence allowlist and copyleft gate
         run: node scripts/check-licenses.mjs
 
-  build:
-    name: Check, build, and test
+  # Type checks and generated-reference checks need neither Rust nor a build.
+  lint:
+    name: Lint and type-check
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Set up Node.js v24
-        uses: actions/setup-node@v6
-        with:
-          node-version: "24"
-          cache: "npm"
-          cache-dependency-path: |
-            package-lock.json
-            playground/package-lock.json
-
       - name: Set up just
-        uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
         with:
           just-version: "1.57.0"
 
       - name: Check the Justfile
         run: just --fmt --check --unstable
+
+      - uses: ./.github/actions/node-deps
+
+      # The UI token reference check and the policy DSL reference grammar check.
+      - name: Type-check and check generated references
+        run: |
+          npm run check
+          npm run check:ui-tokens
+          npm run check:reference
+
+  # Pull requests that touch none of the engine's inputs skip the Rust jobs. The engine's tests also
+  # read code-rule-dsl/, conformance/, fixtures/, the packs' rules and the language registry (languages/
+  # and its generated TS module); package.json holds the cargo commands. Pushes to
+  # main run everything (the filter step is skipped and the output is empty).
+  changes:
+    name: Detect engine changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.3
+        with:
+          filters: |
+            rust:
+              - 'native/**'
+              - 'code-rule-dsl/**'
+              - 'conformance/**'
+              - 'fixtures/**'
+              - 'packs/**'
+              - 'languages/**'
+              - 'src/code-rule-language-registry.generated.ts'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.cargo/**'
+              - 'package.json'
+              - '.github/workflows/ci.yml'
+
+  # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
+  # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts.
+  rust:
+    name: Rust engine (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.rust != 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - task: clippy
+            name: fmt, clippy
+            run: npm run check:native
+          - task: test
+            name: tests
+            run: npm run test:native
+    # Line tables keep file:line in panics at a fraction of full debuginfo; incremental state only
+    # bloats the cache, since dependencies never build incrementally.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
 
       # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
       # so the toolchain installed here must be the same channel.
@@ -75,41 +140,169 @@ jobs:
         run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
 
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           components: rustfmt, clippy
 
       - name: Cache cargo artifacts
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rerail-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
+          key: rerail-${{ matrix.task }}-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            rerail-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-
-            rerail-${{ runner.os }}-
+            rerail-${{ matrix.task }}-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-
 
-      - name: Install dependencies
-        run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
+      - name: Run ${{ matrix.name }}
+        run: ${{ matrix.run }}
+
+  # Builds the package once: dist/ and the release native engine, handed to every test job.
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      # The release engine depends only on the engine's sources, the language registry (build.rs generates
+      # its tables from languages/), the lockfile, the workspace profile, the toolchain and the napi CLI.
+      # Most pull requests change none of them and reuse main's build.
+      - id: napi
+        name: Read the napi CLI version
+        run: echo "version=$(node -p "require('./package.json').devDependencies['@napi-rs/cli']")" >> "$GITHUB_OUTPUT"
+
+      - id: native-cache
+        name: Restore the release native engine
+        uses: actions/cache@v6
+        with:
+          path: |
+            native/*.node
+            native/index.js
+            native/index.d.ts
+          key: rerail-native-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-napi${{ steps.napi.outputs.version }}-${{ hashFiles('native/**', '!native/*.node', '!native/index.js', '!native/index.d.ts', 'languages/**', 'Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml') }}
+
+      - name: Install pinned Rust toolchain
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Cache cargo artifacts
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rerail-release-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rerail-release-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Build the native engine
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: npm run build:native
+
+      - name: Build the package
+        run: npm run build:js
+
+      - name: Upload the built package
+        uses: actions/upload-artifact@v7
+        with:
+          name: built
+          path: |
+            dist/
+            native/*.node
+            native/index.js
+            native/index.d.ts
+          if-no-files-found: error
+          retention-days: 1
+
+  unit:
+    name: Unit tests (${{ matrix.shard }}/2)
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+        with:
+          built: "true"
+
+      - name: Unit tests
+        run: npm test -- --shard=${{ matrix.shard }}/2
+
+  integration:
+    name: Integration tests
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+        with:
+          built: "true"
 
       - name: Provision pinned standalone OMP host
         run: |
           host="$(node scripts/install-omp-host.mjs)"
           printf 'RERAIL_OMP_EXECUTABLE=%s\n' "$host" >> "$GITHUB_ENV"
 
-      # check:all covers type checking, rustfmt and clippy, the UI token reference check
-      # (check:ui-tokens), and the policy DSL reference grammar check.
-      - name: Check
-        run: npm run check:all
+      - name: Integration tests
+        run: npm run test:integration:built
 
-      # test:all includes test:conformance: it fetches TSLint's rule tests at the pinned commit, runs the
-      # conformance harnesses' own tests (conformance/**/*.test.ts: the TSLint golden and rename gates) and
-      # npm run conformance:languages:check.
-      - name: Build and test
-        run: npm run test:all
+  tools:
+    name: Scripts, reference examples, conformance, and rule playground
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+        with:
+          built: "true"
+
+      - name: Script tests and reference examples
+        run: |
+          npm run test:scripts
+          npm run test:reference
+
+      # Fetches TSLint's rule tests at the pinned commit, runs the conformance harnesses' own tests
+      # (conformance/**/*.test.ts: the TSLint golden and rename gates) and conformance:languages:check.
+      - name: Conformance harnesses
+        run: npm run test:conformance
 
       # The rule playground is a development tool with its own lockfile; it type-checks against dist/.
       - name: Check, build, and test the rule playground
@@ -121,30 +314,26 @@ jobs:
           npm --prefix playground run test:ui
           npm --prefix playground run test:integration
 
-      - name: Exercise host parity and command-hook runtimes
-        run: >-
-          npm exec --
-          vitest run
-          test/parity-harness.test.ts
-          test/claude-hook.test.ts
-          test/codex-hook.test.ts
-          integration/cursor-plugin.test.ts
-          integration/event-adapter-parity.test.ts
-
-      - name: Exercise OMP and Pi real-session runtime paths
-        if: >-
-          ${{
-            github.event_name != 'pull_request' ||
-            (
-              github.event.pull_request.head.repo.full_name == github.repository &&
-              github.actor != 'dependabot[bot]'
-            )
-          }}
-        env:
-          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
-          AZURE_OPENAI_BASE_URL: ${{ vars.AZURE_OPENAI_BASE_URL }}
-          RERAIL_SMOKE_OMP_MODEL: ${{ vars.RERAIL_SMOKE_OMP_MODEL }}
-          RERAIL_SMOKE_PI_MODEL: ${{ vars.RERAIL_SMOKE_PI_MODEL }}
+  real-sessions:
+    name: OMP and Pi real-session runtime paths
+    needs: build
+    if: >-
+      ${{
+        github.event_name != 'pull_request' ||
+        (
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.actor != 'dependabot[bot]'
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+      AZURE_OPENAI_BASE_URL: ${{ vars.AZURE_OPENAI_BASE_URL }}
+      RERAIL_SMOKE_OMP_MODEL: ${{ vars.RERAIL_SMOKE_OMP_MODEL }}
+      RERAIL_SMOKE_PI_MODEL: ${{ vars.RERAIL_SMOKE_PI_MODEL }}
+    steps:
+      - name: Require provider credentials and endpoints
         run: |
           set -euo pipefail
           missing=()
@@ -155,6 +344,25 @@ jobs:
             echo "::error::Real-session smoke needs repository secret/variable(s): ${missing[*]}"
             exit 1
           fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+        with:
+          built: "true"
+
+      - name: Provision pinned standalone OMP host
+        run: |
+          host="$(node scripts/install-omp-host.mjs)"
+          printf 'RERAIL_OMP_EXECUTABLE=%s\n' "$host" >> "$GITHUB_ENV"
+
+      - name: Exercise OMP and Pi real-session runtime paths
+        run: |
+          set -euo pipefail
           export PATH="$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
           results="$RUNNER_TEMP/rerail-harness-smoke"
           mkdir -p "$results"
@@ -206,7 +414,7 @@ jobs:
           fi
 
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -221,22 +429,38 @@ jobs:
         name: Read pinned Rust toolchain
         run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
 
+      # As in the build job: reuse main's release engine when its inputs are unchanged.
+      - id: napi
+        name: Read the napi CLI version
+        run: echo "version=$(node -p "require('./package.json').devDependencies['@napi-rs/cli']")" >> "$GITHUB_OUTPUT"
+
+      - id: native-cache
+        name: Restore the release native engine
+        uses: actions/cache@v6
+        with:
+          path: |
+            native/*.node
+            native/index.js
+            native/index.d.ts
+          key: rerail-native-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-napi${{ steps.napi.outputs.version }}-${{ hashFiles('native/**', '!native/*.node', '!native/index.js', '!native/index.d.ts', 'Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml') }}
+
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
       - name: Cache cargo artifacts
-        uses: actions/cache@v5
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rerail-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
+          key: rerail-release-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            rerail-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-
-            rerail-${{ runner.os }}-
+            rerail-release-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-
 
       - name: Install dependencies
         run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
@@ -255,9 +479,12 @@ jobs:
           ln -s "$HOME/.local/share/cursor-agent/cursor-agent" "$HOME/.local/bin/agent"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      - name: Build the native engine
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: npm run build:native
+
       - name: Build host assets
         run: |
-          npm run build:native
           npm run build:ts
           npm run build:claude
           npm run build:codex
