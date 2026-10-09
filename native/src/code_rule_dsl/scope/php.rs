@@ -334,13 +334,13 @@ enum Context {
 
 type Visit<T = Flowing> = Result<T, BuildError>;
 
-pub(super) fn visit_program<D: Doc>(builder: &mut Builder, root: &Node<'_, D>) -> Visit<()> {
+pub(crate) fn visit_program<D: Doc>(builder: &mut Builder, root: &Node<'_, D>) -> Visit<()> {
     visit(builder, root, false)
 }
 
 /// A Blade template's embedded program (`blade::view`), whose markers stand for the variables
 /// Blade's directives define.
-pub(super) fn visit_blade_program<D: Doc>(builder: &mut Builder, root: &Node<'_, D>) -> Visit<()> {
+pub(crate) fn visit_blade_program<D: Doc>(builder: &mut Builder, root: &Node<'_, D>) -> Visit<()> {
     visit(builder, root, true)
 }
 

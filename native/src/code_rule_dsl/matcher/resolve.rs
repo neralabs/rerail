@@ -1,7 +1,7 @@
 use super::util::{UNKNOWN, UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
 use crate::code_rule_dsl::budget;
 use crate::code_rule_dsl::identifier::{name_in, python_identifier};
-use crate::code_rule_dsl::language::adapter::{Adapter, with_adapter};
+use crate::code_rule_dsl::language::adapter::{Adapter, Globals, ScopeRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::language::{SourceType, is_stub_file};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
@@ -236,7 +236,12 @@ enum ThisBoundary {
 
 impl Resolves {
     pub(super) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
-        if Family::of(self.language).reads_php() {
+        with_adapter!(Family::of(self.language), A => self.holds_in::<<A as Adapter>::Scope, D>(node))
+    }
+
+    /// `holds`, where `S` reads the family's scope.
+    fn holds_in<S: ScopeRules, D: Doc>(&self, node: &Node<'_, D>) -> bool {
+        if S::FLOW {
             return self.php_holds(node);
         }
         if self.item {
@@ -277,7 +282,7 @@ impl Resolves {
             return false;
         }
         if let Some(mode) = self.unresolved {
-            return !self.attribute_kinds.contains(&kind) && self.is_unresolved(node, mode);
+            return !self.attribute_kinds.contains(&kind) && self.is_unresolved::<S, D>(node, mode);
         }
         let chain =
             (!self.imports.is_empty() || self.import_any) && self.import_chain(node).is_some();
@@ -305,7 +310,7 @@ impl Resolves {
 
     /// Ruff's F821 and F405, ESLint's no-undef: `node` reads a name with no binding (or one an
     /// unconditional `del` unbound) that is no builtin, declared global or implicit name.
-    fn is_unresolved<D: Doc>(&self, node: &Node<'_, D>, mode: Unresolved) -> bool {
+    fn is_unresolved<S: ScopeRules, D: Doc>(&self, node: &Node<'_, D>, mode: Unresolved) -> bool {
         let Some(table) = file_table(node, self.language, self.reading()) else {
             return false;
         };
@@ -316,35 +321,38 @@ impl Resolves {
         // A function's bare annotation ends a load: an unbound local, whatever an outer scope,
         // builtin or star import binds, unless a nested `nonlocal` may initialize it (Ruff's
         // `annotation_binding_id` with rebinding scopes).
-        if self.language == GrammarDialect::Python
-            && let Some(annotation) = table.walk(reference, &name, true).unbound
-        {
+        if let Some(annotation) = S::unbound_annotation(&table, reference, &name) {
             return mode == Unresolved::Unbound && !table.binding_at(annotation, &name).rebound;
         }
-        match table.resolve(reference, &name) {
+        if let Some(binding) = S::resolve(&table, reference, &name) {
             // Ruff stops at a deletion: the name is unbound, whatever a star import binds.
-            Some(binding) => binding.is_deletion() && mode == Unresolved::Unbound,
+            return binding.is_deletion() && mode == Unresolved::Unbound;
+        }
+        match S::GLOBALS {
             // Ruff stops at an `except` name its handler unbound, as at a deletion, unless the name
             // was a builtin when the handler began (`UnboundException(Some(builtin))`): a binding
             // before the handler is found by the walk, so here only the builtin is left.
-            None if self.language == GrammarDialect::Python
-                && table.unbound_exception(reference, &name)
-                && !self.python_options().declares(&name) =>
+            Globals::Ruff
+                if table.unbound_exception(reference, &name)
+                    && !self.python_options().declares(&name) =>
             {
                 mode == Unresolved::Unbound
             }
-            None if self.language == GrammarDialect::Python => {
+            Globals::Ruff => {
                 let init = file_module().is_some_and(|module| module.last() == "__init__");
                 !self.python_options().declares(&name)
                     && !table.implicit(reference, &name, init)
                     && table.star_visible(reference) == (mode == Unresolved::Star)
             }
-            None => {
+            Globals::Eslint => {
                 let directives = self.directives.then_some(&table.directives);
                 mode == Unresolved::Unbound
                     && !self.options.as_deref().is_some_and(|options| {
                         options.declares_in(&name, reference.spaces, directives)
                     })
+            }
+            Globals::Superglobals => {
+                unreachable!("a variable's flow resolves PHP's superglobals (`php_variable`)")
             }
         }
     }
@@ -644,8 +652,8 @@ impl Resolves {
     /// which builds no scope table and ignores the module path (`relative: "text"` included). As
     /// sound under syntax errors as a pattern, when positive.
     pub(crate) fn witness_only(&self) -> bool {
-        Family::of(self.language) == Family::Python
-            && !self.imported.is_empty()
+        // `imported` reads dotted names alone (`dotted_kinds`: Python's, without `seenBefore`).
+        !self.dotted_kinds.is_empty()
             && self.globals.is_empty()
             && self.imports.is_empty()
             && !self.this_global
@@ -1431,8 +1439,11 @@ pub(super) fn file_table<D: Doc>(
     if UTIL_EXCEEDED.get().is_some() {
         return None;
     }
-    let stub = language == GrammarDialect::Python
-        && FILE_SCOPES.with_borrow(|slot| slot.as_ref().is_some_and(|slot| slot.stub));
+    let (stubs, flow) = with_adapter!(Family::of(language), A => (
+        <<A as Adapter>::Scope as ScopeRules>::STUBS,
+        <<A as Adapter>::Scope as ScopeRules>::FLOW,
+    ));
+    let stub = stubs && FILE_SCOPES.with_borrow(|slot| slot.as_ref().is_some_and(|slot| slot.stub));
     let reading = Reading {
         stub,
         python_minor: if stub { reading.python_minor } else { 0 },
@@ -1449,9 +1460,10 @@ pub(super) fn file_table<D: Doc>(
         });
         return table.or_else(exceed);
     }
-    let php_names = match Family::of(language) {
-        Family::Php | Family::Blade => Some(file_php_names(node, language)?),
-        Family::Python | Family::Ecma => None,
+    let php_names = if flow {
+        Some(file_php_names(node, language)?)
+    } else {
+        None
     };
     let clause = CURRENT_CLAUSE.get();
     let installed = FILE_SCOPES.with_borrow(|slot| {

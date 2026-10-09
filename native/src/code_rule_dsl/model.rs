@@ -532,8 +532,10 @@ impl FileInput {
                     "{at}/module must be a dotted module path (non-empty names joined by `.`) or a list of names"
                 ))
             })?),
-            None if language == "python" => ModulePath::stem(&path),
-            None => None,
+            None => crate::code_rule_dsl::language::dialect_by_label(&language).and_then(|dialect| {
+                use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
+                with_adapter!(crate::code_rule_dsl::language::Family::of(dialect), A => <<A as Adapter>::Scope as ScopeRules>::unpackaged_module(&path))
+            }),
         };
         Ok(Self {
             path,
