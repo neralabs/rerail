@@ -5,7 +5,7 @@
 default:
     @just --list --unsorted
 
-# Install Rerail on this machine from npm and wire it into every coding agent (`npx @neralabs/rerail setup`); --restore [dir] then restores a nuke-rerail backup's databases.
+# Install Rerail on this machine from npm and run its set-up (`npx @neralabs/rerail setup`); arguments go to `rerail setup`; --restore [dir] then restores a nuke-rerail backup's databases.
 rerail *args:
     @node scripts/rerail-setup.mjs {{ args }}
 
