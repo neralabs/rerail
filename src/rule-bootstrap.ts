@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
-import { assertCodeRuleStorable, CodeRuleCompileError } from "./code-rule-compile.js";
+import { validateCodeRule } from "./rules.js";
 import { codeRuleSchema, CODE_RULE_FORMAT } from "./code-rule-schema.js";
 import { conversationRuleSchema } from "./rule-schema.js";
 import { RULE_APPLICABILITIES, RULE_KINDS, RULE_ORIGINS } from "./schema.js";
@@ -122,12 +122,8 @@ function assertDumpCompiles(path: string, documents: readonly RuleDocument[]): v
   const problems: string[] = [];
   for (const [index, document] of documents.entries()) {
     if (document.kind !== "file") continue;
-    try {
-      assertCodeRuleStorable(document.rule);
-    } catch (error) {
-      if (!(error instanceof CodeRuleCompileError)) throw error;
-      problems.push(`  rules[${index}] (${document.rule.id}): ${error.reason}`);
-    }
+    const validation = validateCodeRule(document.rule);
+    if (!validation.ok) problems.push(`  rules[${index}] (${document.rule.id}): ${validation.reason}`);
   }
   if (problems.length > 0) {
     throw new Error(`${path}: nothing imported; ${problems.length} file rule(s) do not compile:\n${problems.join("\n")}`);
