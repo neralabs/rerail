@@ -2,9 +2,9 @@ use super::AstMatcher;
 use super::binding::{match_binding_nodes, match_occurrence};
 use super::resolve::{file_table, file_usage, table_reading};
 use super::util::{THREE_VALUED, UNKNOWN};
-use crate::code_rule_dsl::language::adapter::{Adapter, Globals, ScopeRules, with_adapter};
+use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
-use crate::code_rule_dsl::scope::options::{DEFAULT_JSX_PRAGMA, LanguageOptions, PythonOptions};
+use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::usage::{BindingId, PrivateMember, Usage};
 use crate::code_rule_dsl::scope::{Form, ScopeKind, ScopeTable, TYPE, VALUE};
 use ast_grep_core::meta_var::MetaVarEnv;
@@ -49,7 +49,9 @@ pub(crate) struct BindingFilter {
     /// TypeScript `directives: "eslint"`: `/* exported */` comments export global variables.
     pub(crate) directives: bool,
     pub(crate) language: Option<GrammarDialect>,
-    /// TypeScript: the query's `languageOptions` (script or module, the JSX pragma).
+    /// ESLint's settings declaring the family's globals (`ScopeRules::eslint_options`): the
+    /// query's `languageOptions` (script or module, the JSX pragma), else ESLint's defaults;
+    /// `None` for a family they do not configure.
     pub(crate) options: Option<Arc<LanguageOptions>>,
 }
 
@@ -141,20 +143,10 @@ impl BindingFilter {
             || self.exported.is_some()
     }
 
-    /// Whether the filter reads ESLint's globals (`Globals::Eslint`): its top level may be the
-    /// global scope, and a JSX pragma may read a variable.
-    fn eslint(&self) -> bool {
-        self.language.is_some_and(|language| {
-            with_adapter!(Family::of(language), A => <<A as Adapter>::Scope as ScopeRules>::GLOBALS)
-                == Globals::Eslint
-        })
-    }
-
     /// The name a filter gives the scope at `index`.
     pub(crate) fn scope_name(&self, table: &ScopeTable, index: u32) -> ScopeName {
         let kind = table.scopes[index as usize].kind;
-        let global = self.eslint()
-            && index == 0
+        let global = index == 0
             && self
                 .options
                 .as_deref()
@@ -184,17 +176,14 @@ impl BindingFilter {
     /// Whether typescript-eslint's JSX pragma (or, for fragments, fragment name) reads the variable
     /// `id` belongs to: the first JSX element whose scope sees a variable of that name reads it.
     fn pragma_reads(&self, table: &ScopeTable, id: BindingId<'_>) -> bool {
-        if !self.eslint() || table.jsx.is_empty() {
+        let Some(options) = self.options.as_deref() else {
+            return false;
+        };
+        if table.jsx.is_empty() {
             return false;
         }
-        let pragma = match self.options.as_deref() {
-            Some(options) => options.jsx_pragma.as_deref(),
-            None => Some(DEFAULT_JSX_PRAGMA),
-        };
-        let fragment = self
-            .options
-            .as_deref()
-            .and_then(|options| options.jsx_fragment_name.as_deref());
+        let pragma = options.jsx_pragma.as_deref();
+        let fragment = options.jsx_fragment_name.as_deref();
         [(pragma, false), (fragment, true)]
             .into_iter()
             .any(|(name, fragments_only)| {

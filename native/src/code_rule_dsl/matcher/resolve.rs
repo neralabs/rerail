@@ -1,7 +1,7 @@
 use super::util::{UNKNOWN, UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
 use crate::code_rule_dsl::budget;
 use crate::code_rule_dsl::identifier::{name_in, python_identifier};
-use crate::code_rule_dsl::language::adapter::{Adapter, Globals, ScopeRules, with_adapter};
+use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::language::{SourceType, is_stub_file};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
@@ -328,33 +328,15 @@ impl Resolves {
             // Ruff stops at a deletion: the name is unbound, whatever a star import binds.
             return binding.is_deletion() && mode == Unresolved::Unbound;
         }
-        match S::GLOBALS {
-            // Ruff stops at an `except` name its handler unbound, as at a deletion, unless the name
-            // was a builtin when the handler began (`UnboundException(Some(builtin))`): a binding
-            // before the handler is found by the walk, so here only the builtin is left.
-            Globals::Ruff
-                if table.unbound_exception(reference, &name)
-                    && !self.python_options().declares(&name) =>
-            {
-                mode == Unresolved::Unbound
-            }
-            Globals::Ruff => {
-                let init = file_module().is_some_and(|module| module.last() == "__init__");
-                !self.python_options().declares(&name)
-                    && !table.implicit(reference, &name, init)
-                    && table.star_visible(reference) == (mode == Unresolved::Star)
-            }
-            Globals::Eslint => {
-                let directives = self.directives.then_some(&table.directives);
-                mode == Unresolved::Unbound
-                    && !self.options.as_deref().is_some_and(|options| {
-                        options.declares_in(&name, reference.spaces, directives)
-                    })
-            }
-            Globals::Superglobals => {
-                unreachable!("a variable's flow resolves PHP's superglobals (`php_variable`)")
-            }
-        }
+        S::unresolved(
+            &table,
+            reference,
+            &name,
+            mode,
+            &self.python_options(),
+            self.options.as_deref(),
+            self.directives.then_some(&table.directives),
+        )
     }
 
     /// Ruff's `seen_module`: an import of a listed module is visited before `node` in Ruff's order.
@@ -983,7 +965,7 @@ impl Drop for FileScopeSlot {
 }
 
 /// The module path of the file being matched, if the host or its name gives one.
-fn file_module() -> Option<Arc<ModulePath>> {
+pub(crate) fn file_module() -> Option<Arc<ModulePath>> {
     FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.module.clone()))
 }
 

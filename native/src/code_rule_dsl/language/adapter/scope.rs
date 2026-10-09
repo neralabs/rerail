@@ -1,28 +1,22 @@
 //! Scope tables, bindings and usage (`resolves`, `binds`): `Semantic::Scope`.
 
 use super::{Adapter, Blade, Ecma, Php, Python, Refusal};
-use crate::code_rule_dsl::matcher::ScopeName;
+use crate::code_rule_dsl::language::SourceType;
+use crate::code_rule_dsl::matcher::{ScopeName, Unresolved, file_module};
 use crate::code_rule_dsl::module_path::ModulePath;
+use crate::code_rule_dsl::scope::options::{
+    DEFAULT_PYTHON_MINOR, EsGlobals, LanguageOptions, PythonOptions,
+};
 use crate::code_rule_dsl::scope::php::Defined;
 use crate::code_rule_dsl::scope::usage::{Steps, Usage};
 use crate::code_rule_dsl::scope::{
-    Access, Binding, BuildError, Builder, Form, Lookup, Reading, Reference, ScopeKind, ScopeTable,
-    ecma, php, python,
+    Access, Binding, BuildError, Builder, Directives, Form, Lookup, Reading, Reference, ScopeKind,
+    ScopeTable, ecma, php, python,
 };
 use crate::code_rule_dsl::value::NodeRef;
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
-
-/// What declares the globals a family's reads may name.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Globals {
-    /// Ruff's builtins, under its settings (`PythonOptions`).
-    Ruff,
-    /// ESLint's `languageOptions` and `/* global */` comments (`LanguageOptions`).
-    Eslint,
-    /// PHP's superglobals, which no configuration changes.
-    Superglobals,
-}
+use std::sync::Arc;
 
 /// A `resolves` or `binds` option some family has no counterpart for.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -76,8 +70,6 @@ pub(crate) trait ScopeRules {
     /// (`php_names`) and its variables' flow; a read's binding, a name resolved at run time, a
     /// binding's `latest`, `outer` and redefinitions may be unknown.
     const FLOW: bool;
-    /// What declares the family's globals.
-    const GLOBALS: Globals;
     /// Whether the family reads a stub file (`.pyi`) as Ruff's `is_stub` does.
     const STUBS: bool;
     /// Whether `redefines` reads the one binding a binding shadows (Ruff's `shadowed_bindings`),
@@ -141,6 +133,25 @@ pub(crate) trait ScopeRules {
         reference: &Reference,
         name: &str,
     ) -> Option<(u32, usize)>;
+    /// Whether a read of `name` at `reference`, which no binding resolves, is unresolved as
+    /// `mode` asks (Ruff's F821 and F405, ESLint's no-undef): no builtin, configured global or
+    /// implicit name declares it. `python` and `options` are the query's Ruff and ESLint
+    /// settings; `directives` the file's `/* global */` comments, where honored.
+    fn unresolved(
+        table: &ScopeTable,
+        reference: &Reference,
+        name: &str,
+        mode: Unresolved,
+        python: &PythonOptions,
+        options: Option<&LanguageOptions>,
+        directives: Option<&Directives>,
+    ) -> bool;
+    /// ESLint's settings declaring the family's globals: `options`, the query's, else ESLint's
+    /// defaults (the latest `ecmaVersion`, a module); `None` for a family they do not configure.
+    fn eslint_options(options: Option<&Arc<LanguageOptions>>) -> Option<Arc<LanguageOptions>>;
+    /// Ruff's settings declaring the family's builtins: `python`, the query's, else Ruff's
+    /// default version; `None` for a family they do not configure.
+    fn ruff_options(python: Option<&Arc<PythonOptions>>) -> Option<Arc<PythonOptions>>;
     /// `ScopeTable::unbound_locally`.
     #[cfg(test)]
     fn unbound_locally(
@@ -193,7 +204,6 @@ const LEXICAL_FORMS: &[(&str, Form)] = &[
 impl ScopeRules for Python {
     const SUPPORTED: bool = true;
     const FLOW: bool = false;
-    const GLOBALS: Globals = Globals::Ruff;
     const STUBS: bool = true;
     const REDEFINES_SHADOWED: bool = true;
     const REFERENCE_KINDS: &'static [&'static str] = &["identifier"];
@@ -278,6 +288,39 @@ impl ScopeRules for Python {
         table.walk(reference, name, true).unbound
     }
 
+    fn unresolved(
+        table: &ScopeTable,
+        reference: &Reference,
+        name: &str,
+        mode: Unresolved,
+        python: &PythonOptions,
+        _: Option<&LanguageOptions>,
+        _: Option<&Directives>,
+    ) -> bool {
+        // Ruff stops at an `except` name its handler unbound, as at a deletion, unless the name
+        // was a builtin when the handler began (`UnboundException(Some(builtin))`): a binding
+        // before the handler is found by the walk, so here only the builtin is left.
+        if table.unbound_exception(reference, name) && !python.declares(name) {
+            return mode == Unresolved::Unbound;
+        }
+        let init = file_module().is_some_and(|module| module.last() == "__init__");
+        !python.declares(name)
+            && !table.implicit(reference, name, init)
+            && table.star_visible(reference) == (mode == Unresolved::Star)
+    }
+
+    fn eslint_options(_: Option<&Arc<LanguageOptions>>) -> Option<Arc<LanguageOptions>> {
+        None
+    }
+
+    fn ruff_options(python: Option<&Arc<PythonOptions>>) -> Option<Arc<PythonOptions>> {
+        Some(
+            python
+                .cloned()
+                .unwrap_or_else(|| Arc::new(PythonOptions::new(DEFAULT_PYTHON_MINOR))),
+        )
+    }
+
     #[cfg(test)]
     fn unbound_locally(
         table: &ScopeTable,
@@ -344,7 +387,6 @@ impl ScopeRules for Python {
 impl ScopeRules for Ecma {
     const SUPPORTED: bool = true;
     const FLOW: bool = false;
-    const GLOBALS: Globals = Globals::Eslint;
     const STUBS: bool = false;
     const REDEFINES_SHADOWED: bool = false;
     const REFERENCE_KINDS: &'static [&'static str] = &[
@@ -445,6 +487,34 @@ impl ScopeRules for Ecma {
     }
 
     fn unbound_annotation(_: &ScopeTable, _: &Reference, _: &str) -> Option<(u32, usize)> {
+        None
+    }
+
+    fn unresolved(
+        _: &ScopeTable,
+        reference: &Reference,
+        name: &str,
+        mode: Unresolved,
+        _: &PythonOptions,
+        options: Option<&LanguageOptions>,
+        directives: Option<&Directives>,
+    ) -> bool {
+        mode == Unresolved::Unbound
+            && !options
+                .is_some_and(|options| options.declares_in(name, reference.spaces, directives))
+    }
+
+    fn eslint_options(options: Option<&Arc<LanguageOptions>>) -> Option<Arc<LanguageOptions>> {
+        Some(options.cloned().unwrap_or_else(|| {
+            Arc::new(LanguageOptions::new(
+                EsGlobals::get().latest,
+                SourceType::Module,
+                [],
+            ))
+        }))
+    }
+
+    fn ruff_options(_: Option<&Arc<PythonOptions>>) -> Option<Arc<PythonOptions>> {
         None
     }
 
@@ -573,7 +643,6 @@ fn php_feature(
 impl ScopeRules for Php {
     const SUPPORTED: bool = true;
     const FLOW: bool = true;
-    const GLOBALS: Globals = Globals::Superglobals;
     const STUBS: bool = false;
     const REDEFINES_SHADOWED: bool = false;
     const REFERENCE_KINDS: &'static [&'static str] = &["variable_name"];
@@ -668,6 +737,26 @@ impl ScopeRules for Php {
         None
     }
 
+    fn unresolved(
+        _: &ScopeTable,
+        _: &Reference,
+        _: &str,
+        _: Unresolved,
+        _: &PythonOptions,
+        _: Option<&LanguageOptions>,
+        _: Option<&Directives>,
+    ) -> bool {
+        unreachable!("a variable's flow resolves PHP's superglobals (`php_variable`)")
+    }
+
+    fn eslint_options(_: Option<&Arc<LanguageOptions>>) -> Option<Arc<LanguageOptions>> {
+        None
+    }
+
+    fn ruff_options(_: Option<&Arc<PythonOptions>>) -> Option<Arc<PythonOptions>> {
+        None
+    }
+
     #[cfg(test)]
     fn unbound_locally(_: &ScopeTable, _: &Reference, _: &str, _: bool) -> bool {
         false
@@ -700,7 +789,6 @@ impl ScopeRules for Php {
 impl ScopeRules for Blade {
     const SUPPORTED: bool = true;
     const FLOW: bool = <Php as ScopeRules>::FLOW;
-    const GLOBALS: Globals = <Php as ScopeRules>::GLOBALS;
     const STUBS: bool = <Php as ScopeRules>::STUBS;
     const REDEFINES_SHADOWED: bool = <Php as ScopeRules>::REDEFINES_SHADOWED;
     const REFERENCE_KINDS: &'static [&'static str] = <Php as ScopeRules>::REFERENCE_KINDS;
@@ -773,6 +861,26 @@ impl ScopeRules for Blade {
         <Php as ScopeRules>::unbound_annotation(table, reference, name)
     }
 
+    fn unresolved(
+        table: &ScopeTable,
+        reference: &Reference,
+        name: &str,
+        mode: Unresolved,
+        python: &PythonOptions,
+        options: Option<&LanguageOptions>,
+        directives: Option<&Directives>,
+    ) -> bool {
+        <Php as ScopeRules>::unresolved(table, reference, name, mode, python, options, directives)
+    }
+
+    fn eslint_options(options: Option<&Arc<LanguageOptions>>) -> Option<Arc<LanguageOptions>> {
+        <Php as ScopeRules>::eslint_options(options)
+    }
+
+    fn ruff_options(python: Option<&Arc<PythonOptions>>) -> Option<Arc<PythonOptions>> {
+        <Php as ScopeRules>::ruff_options(python)
+    }
+
     #[cfg(test)]
     fn unbound_locally(
         table: &ScopeTable,
@@ -807,9 +915,11 @@ impl ScopeRules for Blade {
 
 #[cfg(test)]
 pub(super) mod kit {
-    use super::{Adapter, Globals, ScopeFeature, ScopeRules};
-    use crate::code_rule_dsl::language::GrammarDialect;
+    use super::{Adapter, ScopeFeature, ScopeRules};
     use crate::code_rule_dsl::language::adapter::Refusal;
+    use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
+    use crate::code_rule_dsl::matcher::Unresolved;
+    use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
     use crate::code_rule_dsl::scope::{Form, ScopeTable};
     use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
     use ast_grep_core::AstGrep;
@@ -819,7 +929,12 @@ pub(super) mod kit {
     /// What one family's scope rules answer.
     pub(crate) struct Expect {
         pub(crate) flow: bool,
-        pub(crate) globals: Globals,
+        /// The ESLint `ecmaVersion` and source type, and the Ruff version (its minor), the
+        /// family's default settings declare its globals by.
+        pub(crate) declared: (Option<(u16, SourceType)>, Option<u8>),
+        /// Files, a name each reads last that no binding resolves, and whether that read is
+        /// unresolved under the default settings.
+        pub(crate) unresolved: &'static [(&'static str, &'static str, bool)],
         pub(crate) stubs: bool,
         pub(crate) redefines_shadowed: bool,
         pub(crate) reference_kinds: &'static [&'static str],
@@ -849,7 +964,53 @@ pub(super) mod kit {
     /// `A`'s scope rules against `expect`, its files in `dialect` with `suffix`.
     pub(crate) fn kit<A: Adapter>(dialect: GrammarDialect, suffix: &str, expect: &Expect) {
         assert_eq!(<A::Scope as ScopeRules>::FLOW, expect.flow);
-        assert_eq!(<A::Scope as ScopeRules>::GLOBALS, expect.globals);
+        let eslint = <A::Scope as ScopeRules>::eslint_options(None);
+        let ruff = <A::Scope as ScopeRules>::ruff_options(None);
+        assert_eq!(
+            (
+                eslint
+                    .as_deref()
+                    .map(|options| (options.ecma_version, options.source_type)),
+                ruff.as_deref().map(|python| python.minor)
+            ),
+            expect.declared
+        );
+        let options = Arc::new(LanguageOptions::new(5, SourceType::Script, []));
+        assert_eq!(
+            <A::Scope as ScopeRules>::eslint_options(Some(&options))
+                .is_some_and(|kept| Arc::ptr_eq(&kept, &options)),
+            eslint.is_some()
+        );
+        let python = Arc::new(PythonOptions::new(12));
+        assert_eq!(
+            <A::Scope as ScopeRules>::ruff_options(Some(&python))
+                .is_some_and(|kept| Arc::ptr_eq(&kept, &python)),
+            ruff.is_some()
+        );
+        let builtins = PythonOptions::new(ruff.as_deref().map_or(0, |python| python.minor));
+        for (source, name, unresolved) in expect.unresolved {
+            let doc = tape(source, dialect);
+            let table = ScopeTable::build(doc.root(), dialect, usize::MAX, &|| false)
+                .expect("table builds");
+            let start = source.rfind(name).expect("the name is read");
+            let reference = table
+                .reference(&(start..start + name.len()))
+                .expect("a reference");
+            assert!(<A::Scope as ScopeRules>::resolve(&table, reference, name).is_none());
+            assert_eq!(
+                <A::Scope as ScopeRules>::unresolved(
+                    &table,
+                    reference,
+                    name,
+                    Unresolved::Unbound,
+                    &builtins,
+                    eslint.as_deref(),
+                    None
+                ),
+                *unresolved,
+                "{source:?}"
+            );
+        }
         assert_eq!(<A::Scope as ScopeRules>::STUBS, expect.stubs);
         assert_eq!(
             <A::Scope as ScopeRules>::REDEFINES_SHADOWED,
