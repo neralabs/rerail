@@ -2,20 +2,17 @@ use super::ast_rule::{compile_ast_rule, validate_ast_rule};
 use super::resolve::{BINDING_KEYS, OCCURRENCE_KEY};
 use super::utils::{UtilIds, UtilScope};
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
-use crate::code_rule_dsl::language::SourceType;
 use crate::code_rule_dsl::language::adapter::{
-    Adapter, Globals, ScopeFeature, ScopeRules, gate, with_adapter,
+    Adapter, ScopeFeature, ScopeRules, gate, with_adapter,
 };
 use crate::code_rule_dsl::language::kind_ids;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::matcher::Semantic;
 use crate::code_rule_dsl::matcher::{AstMatcher, BindingCount, BindingFilter, Binds, Redefines};
 use crate::code_rule_dsl::model::Limits;
-use crate::code_rule_dsl::scope::options::{EsGlobals, LanguageOptions};
 use napi::Result;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
 /// Filters over a binding, in `binds` and `resolves.binding`.
 pub(super) const FILTER_KEYS: &[&str] = &[
@@ -216,17 +213,7 @@ pub(super) fn compile_filter<S: ScopeRules>(
         builtin: boolean(object, "builtin", path)?,
         directives: object.contains_key("directives"),
         language: Some(language),
-        options: (S::GLOBALS == Globals::Eslint)
-            .then(|| {
-                utils.options.clone().or_else(|| {
-                    Some(Arc::new(LanguageOptions::new(
-                        EsGlobals::get().latest,
-                        SourceType::Module,
-                        [],
-                    )))
-                })
-            })
-            .flatten(),
+        options: S::eslint_options(utils.options.as_ref()),
     })
 }
 
