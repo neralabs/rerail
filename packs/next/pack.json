@@ -20,6 +20,7 @@
       "document": "rules/next-no-img-element.json",
       "title": "No img element",
       "group": "Next.js",
+      "on": false,
       "examples": {
         "caught": {
           "path": "app/page.tsx",
@@ -36,6 +37,7 @@
       "document": "rules/next-no-sync-scripts.json",
       "title": "No sync scripts",
       "group": "Next.js",
+      "on": false,
       "examples": {
         "caught": {
           "path": "pages/index.tsx",
@@ -51,91 +53,106 @@
       "id": "next-no-css-tags",
       "document": "rules/next-no-css-tags.json",
       "title": "No css tags",
-      "group": "Next.js"
+      "group": "Next.js",
+      "on": false
     },
     {
       "id": "next-google-font-preconnect",
       "document": "rules/next-google-font-preconnect.json",
       "title": "Google font preconnect",
-      "group": "Next.js"
+      "group": "Next.js",
+      "on": false
     },
     {
       "id": "next-next-script-for-ga",
       "document": "rules/next-next-script-for-ga.json",
       "title": "Next script for ga",
-      "group": "Next.js"
+      "group": "Next.js",
+      "on": false
     },
     {
       "id": "next-no-unwanted-polyfillio",
       "document": "rules/next-no-unwanted-polyfillio.json",
       "title": "No unwanted polyfillio",
-      "group": "Next.js"
+      "group": "Next.js",
+      "on": false
     },
     {
       "id": "next-no-assign-module-variable",
       "document": "rules/next-no-assign-module-variable.json",
       "title": "No assign module variable",
-      "group": "Next.js"
+      "group": "Next.js",
+      "on": false
     },
     {
       "id": "next-no-document-import-in-page",
       "document": "rules/next-no-document-import-in-page.json",
       "title": "No document import in page",
-      "group": "Next.js"
+      "group": "Next.js",
+      "on": false
     },
     {
       "id": "next-no-head-import-in-document",
       "document": "rules/next-no-head-import-in-document.json",
       "title": "No head import in document",
-      "group": "Next.js"
+      "group": "Next.js",
+      "on": false
     },
     {
       "id": "next-no-styled-jsx-in-document",
       "document": "rules/next-no-styled-jsx-in-document.json",
       "title": "No styled jsx in document",
-      "group": "Next.js"
+      "group": "Next.js",
+      "on": false
     },
     {
       "id": "next-no-title-in-document-head",
       "document": "rules/next-no-title-in-document-head.json",
       "title": "No title in document head",
-      "group": "Next.js"
+      "group": "Next.js",
+      "on": false
     },
     {
       "id": "next-no-script-component-in-head",
       "document": "rules/next-no-script-component-in-head.json",
       "title": "No script component in head",
-      "group": "Next.js"
+      "group": "Next.js",
+      "on": false
     },
     {
       "id": "next-inline-script-id",
       "document": "rules/next-inline-script-id.json",
       "title": "Inline script id",
-      "group": "Next.js"
+      "group": "Next.js",
+      "on": false
     },
     {
       "id": "next-no-async-client-component",
       "document": "rules/next-no-async-client-component.json",
       "title": "No async client component",
-      "group": "Next.js"
+      "group": "Next.js",
+      "on": false
     },
     {
       "id": "next-no-before-interactive-script-outside-document",
       "document": "rules/next-no-before-interactive-script-outside-document.json",
       "title": "No before interactive script outside document",
-      "group": "Next.js"
+      "group": "Next.js",
+      "on": false
     },
     {
       "id": "next-no-duplicate-head",
       "document": "rules/next-no-duplicate-head.json",
       "title": "No duplicate head",
-      "group": "Next.js"
+      "group": "Next.js",
+      "on": false
     },
     {
       "id": "next-no-typos",
       "document": "rules/next-no-typos.json",
       "title": "No typos",
-      "group": "Next.js"
+      "group": "Next.js",
+      "on": false
     }
   ]
 }
