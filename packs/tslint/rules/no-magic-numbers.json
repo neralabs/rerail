@@ -150,7 +150,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_MAGIC_NUMBERS",
+        "code": "no-magic-numbers",
         "message": "'magic numbers' are not allowed"
       }
     }

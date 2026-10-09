@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:invalid-void",
+  "id": "tslint:invalid-void/allow-generics/whitelist",
   "revision": 1,
   "mode": "steer",
   "description": "Disallows void outside of return types and generic type arguments of the listed generics (allow-generics [\"Allowed\"]).",
@@ -166,7 +166,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "INVALID_VOID",
+        "code": "invalid-void",
         "message": "void is only valid as a return type or generic type variable"
       }
     }

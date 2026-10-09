@@ -1,0 +1,201 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:promise-function-async",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Requires functions that return promises to be async. Syntactic proxy for the inferred return type: a Promise return annotation, `return new Promise`, or returning a value from a Promise-annotated parameter.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "promise-function-async",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  },
+                  {
+                    "kind": "method_definition"
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^async$"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "all": [
+                    {
+                      "kind": "arrow_function"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "call_expression"
+                          },
+                          {
+                            "all": [
+                              {
+                                "kind": "parenthesized_expression"
+                              },
+                              {
+                                "regex": "^\\(+[^()]*\\([^;]*\\)+$"
+                              }
+                            ]
+                          }
+                        ],
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "^=>$"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "type_annotation",
+                      "regex": "^:\\s*Promise\\b"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "statement_block",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "return_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "all": [
+                            {
+                              "kind": "new_expression"
+                            },
+                            {
+                              "regex": "^new\\s+Promise\\b"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "kind": "new_expression"
+                        },
+                        {
+                          "regex": "^new\\s+Promise\\b"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "formal_parameters",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "required_parameter"
+                                  },
+                                  {
+                                    "kind": "optional_parameter"
+                                  }
+                                ]
+                              },
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type_annotation",
+                                  "regex": "^:\\s*Promise\\s*<"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "statement_block",
+                              "has": {
+                                "stopBy": "end",
+                                "kind": "return_statement",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "identifier"
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "all": [
+                              {
+                                "kind": "arrow_function"
+                              },
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "identifier",
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^=>$"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "promise-function-async",
+        "message": "functions that return promises must be async"
+      }
+    }
+  ]
+}

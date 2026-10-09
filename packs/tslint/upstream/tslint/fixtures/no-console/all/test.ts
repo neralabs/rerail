@@ -1,0 +1,11 @@
+console.time();
+console.log("log");
+console.dir(object);
+console.info("info");
+console.trace("trace");
+console.warn("warn");
+console.error("error");
+console.something();
+console.timeEnd();
+[].forEach(console.log);
+

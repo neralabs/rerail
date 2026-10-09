@@ -72,7 +72,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_MISUSED_NEW",
+        "code": "no-misused-new",
         "message": "Interfaces cannot be constructed, only classes. Did you mean `declare class`?"
       }
     },
@@ -108,7 +108,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_MISUSED_NEW",
+        "code": "no-misused-new",
         "message": "Interfaces cannot be constructed, only classes. Did you mean `declare class`?"
       }
     },
@@ -191,7 +191,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_MISUSED_NEW",
+        "code": "no-misused-new",
         "message": "`new` in a class is a method named \"new\". Did you mean `constructor`?"
       }
     }

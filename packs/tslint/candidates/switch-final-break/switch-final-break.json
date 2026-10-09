@@ -1,0 +1,160 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:switch-final-break",
+  "revision": 1,
+  "mode": "steer",
+  "description": "The final clause of a switch must not end with a redundant `break;` (TSLint default).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "final-break",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "break_statement"
+              },
+              {
+                "not": {
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^\\}$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "all": [
+                            {
+                              "any": [
+                                {
+                                  "kind": "switch_case"
+                                },
+                                {
+                                  "kind": "switch_default"
+                                }
+                              ]
+                            },
+                            {
+                              "not": {
+                                "precedes": {
+                                  "stopBy": "neighbor",
+                                  "all": [
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "switch_case"
+                                        },
+                                        {
+                                          "kind": "switch_default"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "statement_block",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "switch_case"
+                                  },
+                                  {
+                                    "kind": "switch_default"
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "precedes": {
+                                    "stopBy": "neighbor",
+                                    "all": [
+                                      {
+                                        "any": [
+                                          {
+                                            "kind": "switch_case"
+                                          },
+                                          {
+                                            "kind": "switch_default"
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^(case\\b[^:]*|default\\s*):\\s*\\{[\\s\\S]*\\}$"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "regex": "^break\\s*;?$"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "switch_statement",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "labeled_statement"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "switch-final-break",
+        "message": "Final clause in 'switch' statement should not end with 'break;'."
+      }
+    }
+  ]
+}

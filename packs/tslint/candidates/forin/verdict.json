@@ -1,0 +1,6 @@
+{
+  "audit": {
+    "class": "fixture-fit",
+    "note": "has continue_statement anywhere in the if subtree; confirmed nested continue inside a deeper if is still treated as filtered (should only count a direct/blocked continue in the then-branch) -- port is looser than TSLint but same direction of error, no FN found in the direct case; treat as fixture-fit since TSLint's own filter is stricter (an else-branch continue, sibling structure) and the port's has() search is unscoped."
+  }
+}

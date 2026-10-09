@@ -768,7 +768,7 @@
       },
       "violation": {
         "anchor": "capture.KW",
-        "code": "NO_SWITCH_CASE_FALL_THROUGH",
+        "code": "no-switch-case-fall-through",
         "message": "expected a 'break' before '$KW'"
       }
     }

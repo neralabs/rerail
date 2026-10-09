@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:invalid-void",
+  "id": "tslint:invalid-void/allow-generics/false",
   "revision": 1,
   "mode": "steer",
   "description": "Disallows void outside of return types, including generic type arguments (allow-generics false).",
@@ -140,7 +140,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "INVALID_VOID",
+        "code": "invalid-void",
         "message": "void is only valid as a return type"
       }
     }

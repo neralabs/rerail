@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:completed-docs",
+  "id": "tslint:completed-docs/tags/content",
   "revision": 1,
   "mode": "steer",
   "description": "variables, exempt when @see matches #<digits>.",
@@ -70,7 +70,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for variables."
       }
     },
@@ -146,7 +146,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for exported variables."
       }
     }

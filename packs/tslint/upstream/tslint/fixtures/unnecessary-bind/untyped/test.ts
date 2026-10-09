@@ -1,0 +1,51 @@
+const arrowLambda = () => {};
+const functionVar = function () {};
+
+class Class {
+    public constructor() { }
+
+    public bind() { }
+
+    public method() { }
+
+    public boundFunction = function () {}.bind(this)
+
+    public boundAsyncFunction = (async function () {}).bind(this)
+}
+
+const instance = new Class();
+
+arrowLambda.bind(this);
+arrowLambda.bind(arrowLambda);
+arrowLambda.bind(undefined);
+arrowLambda.bind(this, 1);
+arrowLambda.bind(this, undefined);
+
+functionVar.bind(this);
+functionVar.bind(functionVar);
+functionVar.bind(undefined);
+functionVar.bind(this, 1);
+functionVar.bind(this, undefined);
+
+const immediatelyBoundFunction = function () {}.bind(this);
+const immediatelyBoundFunctionReturn = function (i: number): number { return i; }.bind(this);
+const immediatelyBoundFunctionWrapped = (function () {}).bind(this);
+const immediatelyBoundFunctionWrappedReturn = (function (i: number): number { return i; }).bind(this);
+const immediatelyBoundFunctionArgs = function (i: number): number {}.bind(this, 1);
+const immediatelyBoundFunctionArgsReturn = function (i: number): number { return i; }.bind(this, 1);
+const immediatelyBoundFunctionNameUnused = function foo() { functionVar(); }.bind(this);
+const immediatelyBoundFunctionNameUsed = function foo() { foo(); }.bind(this);
+
+const immediatelyBoundArrow = ((i: number) => i).bind(this);
+const immediatelyBoundArrowArgs = ((i: number) => i).bind(this, 1);
+const immediatelyBoundArrowArgsReturn = function (i: number): number { return i; }.bind(this, 1);
+
+const asyncFunction = async function () {}.bind(this);
+const asyncFunctionReturn = async function (): number { return 1; }.bind(this);
+const asyncArrow = (async () => {}).bind(this);
+const asyncArrowReturn = (async (): number => { return 1; }).bind(this);
+
+(function* generator() {}).bind(this);
+instance.method.bind(this);
+instance.bind(this);
+Class.bind(this);

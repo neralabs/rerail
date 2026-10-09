@@ -1,0 +1,1286 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:unified-signatures",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Overloads that could be one signature: same key (name, static-ness; call/construct signatures by kind), return type, type parameters and outer-type-parameter use, and either the same arity with exactly one parameter's type differing (sigils equal, not rest; the parameters around it equal by text), or a longer list whose parameters beyond the shorter one's length plus one may be missing, with the shorter list's last type equal and not rest. Any list length.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unifiable-overloads",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "matches": "not-rest"
+                  },
+                  {
+                    "inside": {
+                      "kind": "formal_parameters",
+                      "inside": {
+                        "all": [
+                          {
+                            "matches": "overload-scope"
+                          },
+                          {
+                            "matches": "same-signature"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "pattern": "$X"
+                  },
+                  {
+                    "matches": "sigil"
+                  },
+                  {
+                    "matches": "position"
+                  },
+                  {
+                    "matches": "type"
+                  },
+                  {
+                    "inside": {
+                      "kind": "formal_parameters",
+                      "any": [
+                        {
+                          "pattern": {
+                            "context": "function f($$$PRE, $X, $$$POST);",
+                            "selector": "formal_parameters"
+                          }
+                        },
+                        {
+                          "pattern": {
+                            "context": "function f($$$PRE, $X);",
+                            "selector": "formal_parameters"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "formal_parameters",
+                      "inside": {
+                        "any": [
+                          {
+                            "follows": {
+                              "stopBy": "end",
+                              "any": [
+                                {
+                                  "kind": "call_signature"
+                                },
+                                {
+                                  "kind": "construct_signature"
+                                },
+                                {
+                                  "has": {
+                                    "pattern": "$K"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "has": {
+                                      "pattern": "$K"
+                                    }
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "has": {
+                                      "has": {
+                                        "pattern": "$K"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "matches": "differing-site"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "any": [
+                                {
+                                  "kind": "export_statement"
+                                },
+                                {
+                                  "kind": "ambient_declaration"
+                                }
+                              ],
+                              "follows": {
+                                "stopBy": "end",
+                                "any": [
+                                  {
+                                    "kind": "call_signature"
+                                  },
+                                  {
+                                    "kind": "construct_signature"
+                                  },
+                                  {
+                                    "has": {
+                                      "pattern": "$K"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "has": {
+                                        "pattern": "$K"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "has": {
+                                        "has": {
+                                          "pattern": "$K"
+                                        }
+                                      }
+                                    }
+                                  }
+                                ],
+                                "matches": "differing-site"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "matches": "parameter"
+                  },
+                  {
+                    "not": {
+                      "precedes": {
+                        "stopBy": "end",
+                        "matches": "parameter"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "formal_parameters",
+                      "inside": {
+                        "all": [
+                          {
+                            "matches": "overload-scope"
+                          },
+                          {
+                            "matches": "same-signature"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "follows": {
+                          "stopBy": "end",
+                          "all": [
+                            {
+                              "matches": "parameter"
+                            },
+                            {
+                              "pattern": "$LP"
+                            },
+                            {
+                              "matches": "type"
+                            },
+                            {
+                              "not": {
+                                "precedes": {
+                                  "stopBy": "end",
+                                  "matches": "parameter",
+                                  "precedes": {
+                                    "stopBy": "end",
+                                    "matches": "required"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "inside": {
+                                "kind": "formal_parameters",
+                                "pattern": {
+                                  "context": "function f($$$PRE, $LP, $$$POST);",
+                                  "selector": "formal_parameters"
+                                }
+                              }
+                            },
+                            {
+                              "inside": {
+                                "kind": "formal_parameters",
+                                "inside": {
+                                  "any": [
+                                    {
+                                      "any": [
+                                        {
+                                          "follows": {
+                                            "stopBy": "end",
+                                            "any": [
+                                              {
+                                                "kind": "call_signature"
+                                              },
+                                              {
+                                                "kind": "construct_signature"
+                                              },
+                                              {
+                                                "has": {
+                                                  "pattern": "$K"
+                                                }
+                                              },
+                                              {
+                                                "has": {
+                                                  "has": {
+                                                    "pattern": "$K"
+                                                  }
+                                                }
+                                              },
+                                              {
+                                                "has": {
+                                                  "has": {
+                                                    "has": {
+                                                      "pattern": "$K"
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            ],
+                                            "matches": "shorter-site"
+                                          }
+                                        },
+                                        {
+                                          "inside": {
+                                            "any": [
+                                              {
+                                                "kind": "export_statement"
+                                              },
+                                              {
+                                                "kind": "ambient_declaration"
+                                              }
+                                            ],
+                                            "follows": {
+                                              "stopBy": "end",
+                                              "any": [
+                                                {
+                                                  "kind": "call_signature"
+                                                },
+                                                {
+                                                  "kind": "construct_signature"
+                                                },
+                                                {
+                                                  "has": {
+                                                    "pattern": "$K"
+                                                  }
+                                                },
+                                                {
+                                                  "has": {
+                                                    "has": {
+                                                      "pattern": "$K"
+                                                    }
+                                                  }
+                                                },
+                                                {
+                                                  "has": {
+                                                    "has": {
+                                                      "has": {
+                                                        "pattern": "$K"
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              ],
+                                              "matches": "shorter-site"
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "precedes": {
+                                            "stopBy": "end",
+                                            "any": [
+                                              {
+                                                "kind": "call_signature"
+                                              },
+                                              {
+                                                "kind": "construct_signature"
+                                              },
+                                              {
+                                                "has": {
+                                                  "pattern": "$K"
+                                                }
+                                              },
+                                              {
+                                                "has": {
+                                                  "has": {
+                                                    "pattern": "$K"
+                                                  }
+                                                }
+                                              },
+                                              {
+                                                "has": {
+                                                  "has": {
+                                                    "has": {
+                                                      "pattern": "$K"
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            ],
+                                            "matches": "shorter-site"
+                                          }
+                                        },
+                                        {
+                                          "inside": {
+                                            "any": [
+                                              {
+                                                "kind": "export_statement"
+                                              },
+                                              {
+                                                "kind": "ambient_declaration"
+                                              }
+                                            ],
+                                            "precedes": {
+                                              "stopBy": "end",
+                                              "any": [
+                                                {
+                                                  "kind": "call_signature"
+                                                },
+                                                {
+                                                  "kind": "construct_signature"
+                                                },
+                                                {
+                                                  "has": {
+                                                    "pattern": "$K"
+                                                  }
+                                                },
+                                                {
+                                                  "has": {
+                                                    "has": {
+                                                      "pattern": "$K"
+                                                    }
+                                                  }
+                                                },
+                                                {
+                                                  "has": {
+                                                    "has": {
+                                                      "has": {
+                                                        "pattern": "$K"
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              ],
+                                              "matches": "shorter-site"
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "all": [
+                          {
+                            "inside": {
+                              "kind": "formal_parameters",
+                              "not": {
+                                "has": {
+                                  "matches": "required",
+                                  "follows": {
+                                    "stopBy": "end",
+                                    "matches": "parameter"
+                                  }
+                                }
+                              },
+                              "has": {
+                                "regex": "^\\($",
+                                "pattern": "$$LP"
+                              }
+                            }
+                          },
+                          {
+                            "inside": {
+                              "kind": "formal_parameters",
+                              "inside": {
+                                "any": [
+                                  {
+                                    "any": [
+                                      {
+                                        "follows": {
+                                          "stopBy": "end",
+                                          "any": [
+                                            {
+                                              "kind": "call_signature"
+                                            },
+                                            {
+                                              "kind": "construct_signature"
+                                            },
+                                            {
+                                              "has": {
+                                                "pattern": "$K"
+                                              }
+                                            },
+                                            {
+                                              "has": {
+                                                "has": {
+                                                  "pattern": "$K"
+                                                }
+                                              }
+                                            },
+                                            {
+                                              "has": {
+                                                "has": {
+                                                  "has": {
+                                                    "pattern": "$K"
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          ],
+                                          "matches": "shorter-site"
+                                        }
+                                      },
+                                      {
+                                        "inside": {
+                                          "any": [
+                                            {
+                                              "kind": "export_statement"
+                                            },
+                                            {
+                                              "kind": "ambient_declaration"
+                                            }
+                                          ],
+                                          "follows": {
+                                            "stopBy": "end",
+                                            "any": [
+                                              {
+                                                "kind": "call_signature"
+                                              },
+                                              {
+                                                "kind": "construct_signature"
+                                              },
+                                              {
+                                                "has": {
+                                                  "pattern": "$K"
+                                                }
+                                              },
+                                              {
+                                                "has": {
+                                                  "has": {
+                                                    "pattern": "$K"
+                                                  }
+                                                }
+                                              },
+                                              {
+                                                "has": {
+                                                  "has": {
+                                                    "has": {
+                                                      "pattern": "$K"
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            ],
+                                            "matches": "shorter-site"
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "any": [
+                                      {
+                                        "precedes": {
+                                          "stopBy": "end",
+                                          "any": [
+                                            {
+                                              "kind": "call_signature"
+                                            },
+                                            {
+                                              "kind": "construct_signature"
+                                            },
+                                            {
+                                              "has": {
+                                                "pattern": "$K"
+                                              }
+                                            },
+                                            {
+                                              "has": {
+                                                "has": {
+                                                  "pattern": "$K"
+                                                }
+                                              }
+                                            },
+                                            {
+                                              "has": {
+                                                "has": {
+                                                  "has": {
+                                                    "pattern": "$K"
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          ],
+                                          "matches": "shorter-site"
+                                        }
+                                      },
+                                      {
+                                        "inside": {
+                                          "any": [
+                                            {
+                                              "kind": "export_statement"
+                                            },
+                                            {
+                                              "kind": "ambient_declaration"
+                                            }
+                                          ],
+                                          "precedes": {
+                                            "stopBy": "end",
+                                            "any": [
+                                              {
+                                                "kind": "call_signature"
+                                              },
+                                              {
+                                                "kind": "construct_signature"
+                                              },
+                                              {
+                                                "has": {
+                                                  "pattern": "$K"
+                                                }
+                                              },
+                                              {
+                                                "has": {
+                                                  "has": {
+                                                    "pattern": "$K"
+                                                  }
+                                                }
+                                              },
+                                              {
+                                                "has": {
+                                                  "has": {
+                                                    "has": {
+                                                      "pattern": "$K"
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            ],
+                                            "matches": "shorter-site"
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "utils": {
+            "parameter": {
+              "any": [
+                {
+                  "kind": "required_parameter"
+                },
+                {
+                  "kind": "optional_parameter"
+                }
+              ]
+            },
+            "required": {
+              "kind": "required_parameter",
+              "not": {
+                "has": {
+                  "kind": "rest_pattern"
+                }
+              }
+            },
+            "not-rest": {
+              "any": [
+                {
+                  "kind": "optional_parameter"
+                },
+                {
+                  "matches": "required"
+                }
+              ]
+            },
+            "type": {
+              "any": [
+                {
+                  "has": {
+                    "kind": "type_annotation",
+                    "pattern": "$TX"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "kind": "type_annotation"
+                    }
+                  },
+                  "inside": {
+                    "kind": "formal_parameters",
+                    "has": {
+                      "regex": "^\\($",
+                      "pattern": "$$TX"
+                    }
+                  }
+                }
+              ]
+            },
+            "sigil": {
+              "any": [
+                {
+                  "kind": "optional_parameter",
+                  "has": {
+                    "regex": "^\\?$",
+                    "pattern": "$$SG"
+                  }
+                },
+                {
+                  "kind": "required_parameter",
+                  "inside": {
+                    "kind": "formal_parameters",
+                    "has": {
+                      "regex": "^\\($",
+                      "pattern": "$$SG"
+                    }
+                  }
+                }
+              ]
+            },
+            "position": {
+              "any": [
+                {
+                  "precedes": {
+                    "stopBy": "end",
+                    "regex": "^,$",
+                    "pattern": "$$E",
+                    "precedes": {
+                      "stopBy": "end",
+                      "matches": "parameter"
+                    }
+                  }
+                },
+                {
+                  "all": [
+                    {
+                      "not": {
+                        "precedes": {
+                          "stopBy": "end",
+                          "matches": "parameter"
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "formal_parameters",
+                        "has": {
+                          "regex": "^\\)$",
+                          "pattern": "$$E"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "name": {
+              "has": {
+                "any": [
+                  {
+                    "kind": "property_identifier",
+                    "pattern": "$K"
+                  },
+                  {
+                    "kind": "string",
+                    "has": {
+                      "kind": "string_fragment",
+                      "pattern": "$K"
+                    }
+                  },
+                  {
+                    "kind": "number",
+                    "pattern": "$K"
+                  },
+                  {
+                    "kind": "computed_property_name",
+                    "any": [
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "string",
+                              "has": {
+                                "kind": "string_fragment",
+                                "pattern": "$K"
+                              }
+                            },
+                            {
+                              "kind": "number",
+                              "pattern": "$K"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "pattern": "$K",
+                        "not": {
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "string"
+                              },
+                              {
+                                "kind": "number"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "key": {
+              "any": [
+                {
+                  "kind": "call_signature",
+                  "has": {
+                    "kind": "formal_parameters",
+                    "has": {
+                      "regex": "^\\($",
+                      "pattern": "$$K"
+                    }
+                  }
+                },
+                {
+                  "kind": "construct_signature",
+                  "has": {
+                    "regex": "^new$",
+                    "pattern": "$$K"
+                  }
+                },
+                {
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "method_signature"
+                        },
+                        {
+                          "kind": "abstract_method_signature"
+                        }
+                      ]
+                    },
+                    {
+                      "matches": "name"
+                    }
+                  ]
+                },
+                {
+                  "kind": "function_signature",
+                  "has": {
+                    "kind": "identifier",
+                    "pattern": "$K"
+                  }
+                }
+              ]
+            },
+            "uses-outer-type-parameter": {
+              "inside": {
+                "any": [
+                  {
+                    "kind": "interface_body"
+                  },
+                  {
+                    "kind": "class_body"
+                  }
+                ],
+                "inside": {
+                  "has": {
+                    "kind": "type_parameters"
+                  }
+                }
+              },
+              "has": {
+                "kind": "formal_parameters",
+                "has": {
+                  "stopBy": "end",
+                  "kind": "type_identifier",
+                  "pattern": "$U",
+                  "not": {
+                    "inside": {
+                      "kind": "nested_type_identifier"
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "interface_body"
+                      },
+                      {
+                        "kind": "class_body"
+                      }
+                    ],
+                    "inside": {
+                      "has": {
+                        "kind": "type_parameters",
+                        "has": {
+                          "kind": "type_parameter",
+                          "pattern": "$U"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "same-signature": {
+              "all": [
+                {
+                  "matches": "key"
+                },
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "regex": "^static$",
+                        "not": {
+                          "kind": "property_identifier"
+                        },
+                        "pattern": "$$ST"
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "regex": "^static$",
+                          "not": {
+                            "kind": "property_identifier"
+                          }
+                        }
+                      },
+                      "has": {
+                        "kind": "formal_parameters",
+                        "has": {
+                          "regex": "^\\($",
+                          "pattern": "$$ST"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "type_annotation"
+                          },
+                          {
+                            "kind": "type_predicate_annotation"
+                          },
+                          {
+                            "kind": "asserts_annotation"
+                          }
+                        ],
+                        "pattern": "$R"
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "type_annotation"
+                            },
+                            {
+                              "kind": "type_predicate_annotation"
+                            },
+                            {
+                              "kind": "asserts_annotation"
+                            }
+                          ]
+                        }
+                      },
+                      "has": {
+                        "kind": "formal_parameters",
+                        "has": {
+                          "regex": "^\\($",
+                          "pattern": "$$R"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "kind": "type_parameters",
+                        "pattern": "$TP"
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "kind": "type_parameters"
+                        }
+                      },
+                      "has": {
+                        "kind": "formal_parameters",
+                        "has": {
+                          "regex": "^\\($",
+                          "pattern": "$$TP"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "not": {
+                            "not": {
+                              "matches": "uses-outer-type-parameter"
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "inside": {
+                              "has": {
+                                "kind": "type_parameters",
+                                "pattern": "$OU"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "not": {
+                        "matches": "uses-outer-type-parameter"
+                      },
+                      "has": {
+                        "kind": "formal_parameters",
+                        "has": {
+                          "regex": "^\\($",
+                          "pattern": "$$OU"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "statements": {
+              "any": [
+                {
+                  "kind": "program"
+                },
+                {
+                  "kind": "statement_block",
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "internal_module"
+                      },
+                      {
+                        "kind": "module"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "overload-scope": {
+              "any": [
+                {
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "method_signature"
+                        },
+                        {
+                          "kind": "abstract_method_signature"
+                        },
+                        {
+                          "kind": "call_signature"
+                        },
+                        {
+                          "kind": "construct_signature"
+                        }
+                      ]
+                    },
+                    {
+                      "inside": {
+                        "any": [
+                          {
+                            "kind": "interface_body"
+                          },
+                          {
+                            "kind": "object_type"
+                          },
+                          {
+                            "kind": "class_body",
+                            "inside": {
+                              "any": [
+                                {
+                                  "kind": "class_declaration"
+                                },
+                                {
+                                  "kind": "abstract_class_declaration"
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "function_signature",
+                  "any": [
+                    {
+                      "inside": {
+                        "matches": "statements"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "any": [
+                          {
+                            "kind": "export_statement"
+                          },
+                          {
+                            "kind": "ambient_declaration"
+                          }
+                        ],
+                        "inside": {
+                          "matches": "statements"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "differing-parameter": {
+              "all": [
+                {
+                  "matches": "not-rest"
+                },
+                {
+                  "pattern": "$Y"
+                },
+                {
+                  "matches": "sigil"
+                },
+                {
+                  "matches": "position"
+                },
+                {
+                  "not": {
+                    "matches": "type"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "formal_parameters",
+                    "any": [
+                      {
+                        "pattern": {
+                          "context": "function f($$$PRE, $Y, $$$POST);",
+                          "selector": "formal_parameters"
+                        }
+                      },
+                      {
+                        "pattern": {
+                          "context": "function f($$$PRE, $Y);",
+                          "selector": "formal_parameters"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "differing-overload": {
+              "all": [
+                {
+                  "matches": "same-signature"
+                },
+                {
+                  "has": {
+                    "kind": "formal_parameters",
+                    "has": {
+                      "matches": "differing-parameter"
+                    }
+                  }
+                }
+              ]
+            },
+            "differing-site": {
+              "any": [
+                {
+                  "matches": "differing-overload"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "export_statement"
+                    },
+                    {
+                      "kind": "ambient_declaration"
+                    }
+                  ],
+                  "has": {
+                    "matches": "differing-overload"
+                  }
+                }
+              ]
+            },
+            "shorter-list": {
+              "any": [
+                {
+                  "has": {
+                    "all": [
+                      {
+                        "matches": "not-rest"
+                      },
+                      {
+                        "pattern": "$SP"
+                      },
+                      {
+                        "not": {
+                          "precedes": {
+                            "stopBy": "end",
+                            "matches": "parameter"
+                          }
+                        }
+                      },
+                      {
+                        "matches": "type"
+                      },
+                      {
+                        "inside": {
+                          "kind": "formal_parameters",
+                          "pattern": {
+                            "context": "function f($$$PRE, $SP);",
+                            "selector": "formal_parameters"
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "not": {
+                            "has": {
+                              "regex": "^\\($",
+                              "pattern": "$$LP"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "matches": "parameter"
+                    }
+                  },
+                  "has": {
+                    "regex": "^\\($",
+                    "pattern": "$$LP"
+                  }
+                }
+              ]
+            },
+            "shorter-overload": {
+              "all": [
+                {
+                  "matches": "same-signature"
+                },
+                {
+                  "has": {
+                    "kind": "formal_parameters",
+                    "matches": "shorter-list"
+                  }
+                }
+              ]
+            },
+            "shorter-site": {
+              "any": [
+                {
+                  "matches": "shorter-overload"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "export_statement"
+                    },
+                    {
+                      "kind": "ambient_declaration"
+                    }
+                  ],
+                  "has": {
+                    "matches": "shorter-overload"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "unified-signatures",
+        "message": "These overloads can be combined into one signature."
+      }
+    }
+  ]
+}

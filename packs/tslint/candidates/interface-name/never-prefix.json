@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:interface-name",
+  "id": "tslint:interface-name/never-prefix",
   "revision": 1,
   "mode": "steer",
   "description": "Interface names must not have an I prefix (option never-prefix).",
@@ -9,7 +9,7 @@
     {
       "id": "interface-name",
       "forbid": { "ast": { "language": "typescript", "rule": {"all":[{"kind":"type_identifier"},{"regex":"^I[A-Z][a-z]"},{"inside":{"stopBy":"neighbor","kind":"interface_declaration"}}]} } },
-      "violation": { "anchor": "witness.span", "code": "INTERFACE_NAME", "message": "interface name must not have an \"I\" prefix" }
+      "violation": { "anchor": "witness.span", "code": "interface-name", "message": "interface name must not have an \"I\" prefix" }
     }
   ]
 }

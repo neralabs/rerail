@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:no-implicit-dependencies",
+  "id": "tslint:no-implicit-dependencies/whitelist",
   "revision": 1,
   "mode": "steer",
   "description": "PORT OF THE FIXTURE, NOT THE RULE: the dependency allow-list is hardcoded from test/rules/no-implicit-dependencies/package.json because the real rule reads the nearest package.json (cross-file). Whitelist option: src, app, @components, @com/fixer.",
@@ -77,7 +77,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_IMPLICIT_DEPENDENCIES",
+        "code": "no-implicit-dependencies",
         "message": "Module is not listed as dependency in package.json"
       }
     }

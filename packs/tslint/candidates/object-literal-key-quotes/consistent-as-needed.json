@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:object-literal-key-quotes",
+  "id": "tslint:object-literal-key-quotes/consistent-as-needed",
   "revision": 1,
   "mode": "steer",
   "description": "Quote all property names if any needs quotes, otherwise none (consistent-as-needed).",
@@ -52,7 +52,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "OBJECT_LITERAL_KEY_QUOTES",
+        "code": "object-literal-key-quotes",
         "message": "Unquoted property found."
       }
     },
@@ -103,7 +103,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "OBJECT_LITERAL_KEY_QUOTES",
+        "code": "object-literal-key-quotes",
         "message": "Unnecessarily quoted property found."
       }
     }

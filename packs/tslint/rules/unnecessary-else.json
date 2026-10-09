@@ -196,7 +196,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "UNNECESSARY_ELSE",
+        "code": "unnecessary-else",
         "message": "The preceding `if` block ends with a `$KW` statement. This `else` is unnecessary."
       }
     }

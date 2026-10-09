@@ -1,0 +1,6 @@
+interface IValidInterfaceName {
+
+}
+
+interface NotValidInterfaceName {
+}

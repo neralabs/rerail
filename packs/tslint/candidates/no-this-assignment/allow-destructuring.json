@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:no-this-assignment",
+  "id": "tslint:no-this-assignment/allow-destructuring",
   "revision": 1,
   "mode": "steer",
   "description": "no-this-assignment with allow-destructuring.",
@@ -48,7 +48,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_THIS_ASSIGNMENT",
+        "code": "no-this-assignment",
         "message": "Assigning `this` reference to local variable not allowed."
       }
     }

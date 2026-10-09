@@ -50,10 +50,6 @@ rerail-command *args:
 rerail-smoke:
     @bash scripts/rerail-smoke.sh
 
-# Score Rerail code-rule ports against TSLint's rule fixtures: fetch | --rule <name> | --label <l> | --corpus <dir> | --rename-identifiers | literals.
-rerail-conformance *args:
-    @node --import tsx conformance/tslint/cli.ts {{ args }}
-
 # Language-pack rule conformance: --pack <name> [--rule <id>] [--fixtures] [--corpus <name>] [--write] | --check.
 rerail-language-conformance *args:
     @node --import tsx conformance/languages/cli.ts {{ args }}
@@ -61,7 +57,3 @@ rerail-language-conformance *args:
 # Compare a reference native query-engine addon with this checkout's addon (RERAIL_QUERY_PARITY_REFERENCE_ADDON=/absolute/reference.node, or pass both sides).
 rerail-query-parity *args:
     @node --import tsx benchmark/query-parity.ts {{ args }}
-
-# Promote a proven TSLint port into the TSLint pack, packs/tslint (the golden set, seeded disabled): <rule> | --check.
-rerail-promote-tslint *args:
-    @node --import tsx conformance/tslint/promote.ts {{ args }}

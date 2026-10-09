@@ -159,7 +159,7 @@
       },
       "violation": {
         "anchor": "capture.AWAIT",
-        "code": "NO_RETURN_AWAIT",
+        "code": "no-return-await",
         "message": "Unnecessary 'await'.",
         "fix": "$E"
       }

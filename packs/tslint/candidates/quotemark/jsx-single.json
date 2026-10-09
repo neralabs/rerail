@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:quotemark",
+  "id": "tslint:quotemark/jsx-single",
   "revision": 1,
   "mode": "steer",
   "description": "Double quotes in code, single quotes in JSX attributes.",
@@ -38,7 +38,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "QUOTEMARK",
+        "code": "quotemark",
         "message": "' should be \""
       }
     },
@@ -67,7 +67,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "QUOTEMARK",
+        "code": "quotemark",
         "message": "\" should be '"
       }
     }

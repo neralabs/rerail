@@ -1,0 +1,21 @@
+{
+  "verdict": "AUTO",
+  "primitive": "nthChild/position",
+  "secondary": [
+    "count-aggregate"
+  ],
+  "reason": "PASS, any list length. Shared bindings carry the overload key, static-ness, return type, type parameters and outer-type-parameter use across the pair (a missing one binds a `(` token, so presence compares too), so the port follows compareSignatures. `$$$PRE`/`$$$POST` captures of the witness's list (patterns `($$$PRE, $X, $$$POST)` / `($$$PRE, $X)`) align the other overload's list at the same position without enumeration: same arity with one differing parameter, or a longer list whose parameters past the shorter length plus one are optional/rest. Divergences: the parameters captured by `$$$PRE`/`$$$POST` compare by full text (names and sigils too; TSLint compares sigils and type, or type only before the shorter list's last), since comparing the i-th parameters of two lists needs a second cursor (nthChild/position); every unifiable pair is reported where TSLint stops at the first pair of a 3+ overload group.",
+  "evidence": [
+    {
+      "variant": ".",
+      "file": "test.d.ts.lint",
+      "line": 5,
+      "why": "`a0(x: number)` pairs with line 3 `a0()` two overloads back (extra parameter), not with line 4, whose return type differs: the key and return type are shared bindings across the sibling relation"
+    }
+  ],
+  "audit": {
+    "class": "fixture-fit",
+    "primitive": "nthChild/position",
+    "note": "Any list length: $$$PRE/$$$POST captures align the other overload's parameter list. Parameters around the differing one compare by full text (TSLint: sigils + type), so overloads that differ also in a parameter name are missed; all unifiable pairs reported (TSLint: first pair per 3+ group)."
+  }
+}

@@ -45,7 +45,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "BAN_TS_IGNORE",
+        "code": "ban-ts-ignore",
         "message": "Do not use \"// @ts-ignore\" comments because they suppress compilation errors."
       }
     }

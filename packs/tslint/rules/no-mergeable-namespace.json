@@ -242,7 +242,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_MERGEABLE_NAMESPACE",
+        "code": "no-mergeable-namespace",
         "message": "Mergeable namespace found. Merge its contents with the earlier namespace of the same name."
       }
     }

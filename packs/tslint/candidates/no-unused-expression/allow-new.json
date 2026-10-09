@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:no-unused-expression",
+  "id": "tslint:no-unused-expression/allow-new",
   "revision": 1,
   "mode": "steer",
   "description": "Disallows expression statements (and comma/void/ternary operands) whose value is discarded unless they are calls, assignments, increments, delete, await or yield. TSLint's checking walk is modelled with recursive utils: `checked-*` is where the walk evaluates a node in checking mode, `unused-*` what it returns there, strict/lax being allowFastNullChecks off/on. Options: allow-new, allow-fast-null-checks",
@@ -551,7 +551,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_UNUSED_EXPRESSION",
+        "code": "no-unused-expression",
         "message": "unused expression, expected an assignment or function call"
       }
     }

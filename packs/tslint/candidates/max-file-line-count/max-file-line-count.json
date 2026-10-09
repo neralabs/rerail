@@ -1,0 +1,39 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:max-file-line-count",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Requires files to remain under 300 lines.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "too-many-lines",
+      "forbid": {
+        "select_when": {
+          "select": {
+            "regex": {
+              "source": "file.content",
+              "pattern": "(?s).\\z"
+            }
+          },
+          "exists": {
+            "regex": {
+              "source": "file.content",
+              "pattern": "\\A(?:[^\\n]*\\n){300}"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "max-file-line-count",
+        "message": "This file exceeds the maximum of 300 lines allowed. Consider breaking this file up into smaller parts"
+      }
+    }
+  ]
+}

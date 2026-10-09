@@ -54,7 +54,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "SWITCH_DEFAULT",
+        "code": "switch-default",
         "message": "Switch statement should include a 'default' case"
       }
     }

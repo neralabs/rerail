@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:no-default-import",
+  "id": "tslint:no-default-import/fromModules",
   "revision": 1,
   "mode": "steer",
   "description": "Disallows default imports from modules matching fromModules ^tslint-|^\\./|^\\.\\./ (fixture option).",
@@ -42,7 +42,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_DEFAULT_IMPORT",
+        "code": "no-default-import",
         "message": "Import of default members from this module is forbidden. Import named member instead"
       }
     },
@@ -91,7 +91,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_DEFAULT_IMPORT",
+        "code": "no-default-import",
         "message": "Import of default members from this module is forbidden. Import named member instead"
       }
     }

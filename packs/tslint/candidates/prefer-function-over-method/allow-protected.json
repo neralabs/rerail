@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:prefer-function-over-method",
+  "id": "tslint:prefer-function-over-method/allow-protected",
   "revision": 1,
   "mode": "steer",
   "description": "Option allow-protected: Flags class methods with a body, not static, that never use `this` or `super` outside nested functions, object/class methods and nested classes; `this.<ownName>` (recursion), a `this` parameter and `this` types do not count.",
@@ -86,7 +86,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "PREFER_FUNCTION_OVER_METHOD",
+        "code": "prefer-function-over-method",
         "message": "Class method does not use 'this'. Use a function instead."
       }
     }

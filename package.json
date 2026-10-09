@@ -84,7 +84,7 @@
     "check:structure": "node scripts/check-structure.mjs",
     "check:ui-tokens": "node scripts/check-ui-tokens.mjs",
     "test": "vitest run --dir test",
-    "test:conformance": "node --import tsx conformance/tslint/cli.ts fetch && vitest run --dir conformance && npm run conformance:languages:check",
+    "test:conformance": "vitest run --dir test/conformance && npm run conformance:languages:check",
     "test:native": "cargo test --manifest-path Cargo.toml --workspace",
     "test:code-rule-dsl-runtime": "vitest run test/native-code-rule-dsl-runtime.test.ts",
     "bench:code-rule-dsl": "node --import tsx scripts/code-rule-dsl-bench.ts",

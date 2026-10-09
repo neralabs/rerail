@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:typedef",
+  "id": "tslint:typedef/arrow-call-signature",
   "revision": 1,
   "mode": "steer",
   "description": "Requires type definitions for: arrow-call-signature.",
@@ -48,7 +48,7 @@
       },
       "violation": {
         "anchor": "capture.AT",
-        "code": "TYPEDEF",
+        "code": "typedef",
         "message": "expected arrow-call-signature to have a typedef"
       }
     }

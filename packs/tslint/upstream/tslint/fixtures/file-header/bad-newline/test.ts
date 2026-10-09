@@ -1,0 +1,10 @@
+/*!
+ * Good header 2
+ */
+export class A {
+    public x = 1;
+
+    public B() {
+        return 2;
+    }
+}

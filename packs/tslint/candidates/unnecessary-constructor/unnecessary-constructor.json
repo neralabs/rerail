@@ -1,0 +1,91 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:unnecessary-constructor",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Prevents blank constructors, as they are redundant (TSLint default: check-super-calls off).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "empty-constructor",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "method_definition"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "property_identifier",
+                  "regex": "^constructor$"
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "accessibility_modifier",
+                    "regex": "^(private|protected)$"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "formal_parameters",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "required_parameter"
+                        },
+                        {
+                          "kind": "optional_parameter"
+                        }
+                      ],
+                      "has": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "accessibility_modifier"
+                          },
+                          {
+                            "kind": "decorator"
+                          },
+                          {
+                            "regex": "^(readonly|override)$"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "statement_block",
+                  "regex": "^\\{\\s*\\}$"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "unnecessary-constructor",
+        "message": "Remove unnecessary empty constructor."
+      }
+    }
+  ]
+}

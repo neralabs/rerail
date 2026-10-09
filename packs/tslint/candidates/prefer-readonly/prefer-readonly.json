@@ -1,0 +1,184 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:prefer-readonly",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Private non-readonly fields and parameter properties never reassigned in their class: no `this.x`/alias`.x` write (=, op=, ++/--, delete) outside direct constructor code for instance members, no `ClassName.x` write for statics; writes inside nested classes belong to those classes. `this` aliases are `const a = this` in the class.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "private-member",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "all": [
+                  {"kind": "property_identifier", "pattern": "$N"},
+                  {
+                    "inside": {
+                      "kind": "public_field_definition",
+                      "matches": "private-mutable",
+                      "not": {"has": {"regex": "^static$"}}
+                    }
+                  },
+                  {"matches": "unwritten-instance"}
+                ]
+              },
+              {
+                "all": [
+                  {"kind": "property_identifier", "pattern": "$N"},
+                  {
+                    "inside": {
+                      "kind": "public_field_definition",
+                      "matches": "private-mutable",
+                      "has": {"regex": "^static$"}
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "matches": "class",
+                      "pattern": "$CLS",
+                      "has": {"kind": "type_identifier", "pattern": "$C"}
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "stopBy": "end",
+                        "pattern": "$CLS",
+                        "any": [
+                          {"inside": {"kind": "ambient_declaration"}},
+                          {"has": {"stopBy": "end", "matches": "static-write"}}
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {"kind": "identifier", "pattern": "$N"},
+                  {
+                    "inside": {
+                      "any": [{"kind": "required_parameter"}, {"kind": "optional_parameter"}],
+                      "matches": "private-mutable"
+                    }
+                  },
+                  {"matches": "unwritten-instance"}
+                ]
+              }
+            ]
+          },
+          "utils": {
+            "class": {
+              "any": [{"kind": "class_declaration"}, {"kind": "class"}, {"kind": "abstract_class_declaration"}]
+            },
+            "private-mutable": {
+              "has": {"kind": "accessibility_modifier", "regex": "^private$"},
+              "not": {"has": {"regex": "^readonly$"}}
+            },
+            "write": {
+              "any": [
+                {
+                  "inside": {"any": [{"kind": "assignment_expression"}, {"kind": "augmented_assignment_expression"}]},
+                  "precedes": {"regex": "=$"}
+                },
+                {"inside": {"kind": "update_expression"}},
+                {"inside": {"kind": "unary_expression", "regex": "^delete\\b"}}
+              ]
+            },
+            "own-class": {
+              "not": {"inside": {"stopBy": "end", "matches": "class", "inside": {"stopBy": "end", "pattern": "$CLS"}}}
+            },
+            "this-ref": {
+              "any": [
+                {"kind": "this"},
+                {
+                  "kind": "identifier",
+                  "pattern": "$A",
+                  "inside": {
+                    "stopBy": "end",
+                    "pattern": "$CLS",
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "variable_declarator",
+                      "all": [{"has": {"kind": "identifier", "pattern": "$A"}}, {"has": {"kind": "this"}}]
+                    }
+                  }
+                }
+              ]
+            },
+            "function-scope": {
+              "any": [
+                {"kind": "function_declaration"},
+                {"kind": "function_expression"},
+                {"kind": "arrow_function"},
+                {"kind": "method_definition"},
+                {"kind": "generator_function"},
+                {"kind": "generator_function_declaration"},
+                {"kind": "class_static_block"}
+              ]
+            },
+            "outside-constructor": {
+              "all": [
+                {"inside": {"stopBy": "end", "matches": "function-scope", "pattern": "$FB"}},
+                {
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "pattern": "$FB",
+                      "kind": "method_definition",
+                      "has": {"kind": "property_identifier", "regex": "^constructor$"}
+                    }
+                  }
+                }
+              ]
+            },
+            "instance-write": {
+              "all": [
+                {"kind": "member_expression", "has": {"kind": "property_identifier", "pattern": "$N"}},
+                {"has": {"matches": "this-ref"}},
+                {"matches": "write"},
+                {"matches": "own-class"},
+                {"matches": "outside-constructor"}
+              ]
+            },
+            "static-write": {
+              "all": [
+                {"kind": "member_expression", "has": {"kind": "property_identifier", "pattern": "$N"}},
+                {"has": {"kind": "identifier", "pattern": "$C"}},
+                {"matches": "write"},
+                {"matches": "own-class"}
+              ]
+            },
+            "unwritten-instance": {
+              "all": [
+                {"inside": {"stopBy": "end", "matches": "class", "pattern": "$CLS"}},
+                {
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "pattern": "$CLS",
+                      "any": [
+                        {"inside": {"kind": "ambient_declaration"}},
+                        {"has": {"stopBy": "end", "matches": "instance-write"}}
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "prefer-readonly",
+        "message": "Private member is never reassigned; mark it as 'readonly'."
+      }
+    }
+  ]
+}

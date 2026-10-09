@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:variable-name",
+  "id": "tslint:variable-name/allow-leading-trailing-underscore",
   "revision": 1,
   "mode": "steer",
   "description": "Checks variable/parameter/property names for lowerCamelCase or UPPER_CASE; alias exemption via same-metavar patterns. Options: ['allow-leading-underscore', 'allow-trailing-underscore'].",
@@ -76,7 +76,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "VARIABLE_NAME",
+        "code": "variable-name",
         "message": "variable name must be in lowerCamelCase or UPPER_CASE"
       }
     }

@@ -50,7 +50,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NEW_PARENS",
+        "code": "new-parens",
         "message": "Parentheses are required when invoking a constructor"
       }
     }

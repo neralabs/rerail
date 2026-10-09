@@ -1,0 +1,105 @@
+this.getFoo()[0].toString();
+
+this.foo()["bar"]().buzz();
+
+this.foo()["bar"]();
+
+foo().bar();
+
+const y: string[] = _observable
+                        .map(function(item) { return item.helloYay().another() }
+                        .operator()    
+                        .another(function(result) { return result.hello.Yay! }).wrong();
+
+SomeClass.propA.helloYay((a: number) => {
+    return a + 1;
+});
+
+this.some.nested();
+
+const y: string[] = _observable
+                        .map(function(item) { return item.helloYay! })
+                        .operator()    
+                        .another(function(result) { return result.hello.Yay! });
+
+
+const y: string[] = _observable.map(item => item.helloYay).operator().another(function(result) { return result.helloYay! });
+
+const x: string[] = _observable.map(item => item.helloYay);
+
+SomeClass.propA.propB.helloYay();
+
+SomeClass
+    .propA
+    .propB
+    .helloYay();
+
+SomeClass
+    .propA
+    .propB.helloYay();
+
+SomeClass
+    .propA
+    .propB
+    .helloYay(function() {
+        return 1;
+    }).test();
+
+SomeClass
+    .propA
+    .propB
+    .helloYay(function() {
+        return 1;
+    }).  test();
+
+SomeClass
+    .propA
+    .propB
+    .helloYay(function() {
+        return 1;
+    }).
+    test();
+
+SomeClass.propA.propB.methodB(() => {
+    return "hello Yay!";
+}).helloYay((a: number) => {
+    return a + 1;
+});
+
+SomeClass.propA.propB.methodB(() => {
+    return "hello Yay!";
+})
+.helloYay((a: number) => {
+    return a + 1;
+});
+
+SomeClass.propA.propB.methodB(() => {
+    return "hello Yay!";
+})
+.helloYay((a: number) => {
+    return obj.method()
+                .chainedButOkay(
+                    objB.nested().superNestedCall()
+                )
+});
+
+SomeClass.propA.propB.methodB(() => {
+    return "hello Yay!";
+})
+.helloYay((a: number) => {
+    return obj.method()
+                .chainedButOkay(
+                    objB.nested()
+                        .superNestedCall()
+                )
+});
+
+SomeClass
+    .propA
+    .propB
+    .methodC(() => {
+        return "hello Yay!";
+    })
+    .helloYay(() => {
+        return 1;
+    });

@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:strict-comparisons",
+  "id": "tslint:strict-comparisons/allow-object-equal-comparison",
   "revision": 1,
   "mode": "steer",
   "description": "strict-comparisons with allow-object-equal-comparison (literal operands only).",
@@ -98,7 +98,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "STRICT_COMPARISONS",
+        "code": "strict-comparisons",
         "message": "Cannot compare these operand types with this comparator."
       }
     }

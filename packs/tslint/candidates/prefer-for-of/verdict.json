@@ -1,0 +1,27 @@
+{
+  "verdict": "AUTO",
+  "primitive": "scope-graph",
+  "secondary": [
+    "fixture-artifact"
+  ],
+  "reason": "PASS on the repaired fixture. Shared bindings carry the index $I, the array text $A and the loop text $F into the body walk: a use of $I that is not a non-reassigned read of `$A[$I]` (parentheses unwrapped once) blocks the finding, unless it sits under a nearer declaration of $I inside the loop (block/loop let/const/var, function or arrow parameters), and a `var` index used outside the loop in the same function bails. Scoping is syntactic (catch parameters, destructured declarations, class and function names and var hoisting are not modelled), hence scope-graph. Raw: the fixture's `for (var i = 0, i < arr.length, ++i)` is a syntax error, and the negated inside/precedes checks make the file source-incomplete.",
+  "evidence": [
+    {
+      "variant": ".",
+      "file": "test.ts.lint",
+      "line": 167,
+      "why": "`for (var i = 0, i < arr.length, ++i)` does not parse; the negated relations are unsound under errors, so the kernel skips the file (source-incomplete); the repaired fixture passes"
+    },
+    {
+      "variant": ".",
+      "file": "test.ts.lint",
+      "line": 151,
+      "why": "inner `let i = 1` (and the `let x = i`, `{i, x}` uses) belong to the block's own i, and `i:`/`{i: 1}` are a label and a key: the loop at line 149 is still flagged"
+    }
+  ],
+  "audit": {
+    "class": "fixture-fit",
+    "primitive": "scope-graph",
+    "note": "Index uses resolved syntactically: nearer let/const/var/parameter declarations inside the loop shadow; catch parameters, destructured declarations and var hoisting into nested functions are not modelled."
+  }
+}

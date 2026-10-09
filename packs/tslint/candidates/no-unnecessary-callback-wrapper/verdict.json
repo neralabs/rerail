@@ -1,0 +1,7 @@
+{
+  "audit": {
+    "class": "fixture-fit",
+    "primitive": "utils",
+    "note": "Self-call exclusion only covers 1-/2-param arity; confirmed `(a, b, c) => c(a, b, c)` is flagged though TSLint's own `expression.text === name.text` bail exempts it, and confirmed `x => (f)(x)` is flagged though TSLint's isIdentifier(callee) check means TSLint itself never even considers it."
+  }
+}

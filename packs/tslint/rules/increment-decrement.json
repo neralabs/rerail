@@ -38,7 +38,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "INCREMENT_DECREMENT",
+        "code": "increment-decrement",
         "message": "Use an explicit += 1 or -= 1 operator."
       }
     }

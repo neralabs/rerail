@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:quotemark",
+  "id": "tslint:quotemark/backtick",
   "revision": 1,
   "mode": "steer",
   "description": "Backtick literals wherever TypeScript syntax allows them. JSX attributes (double quotes) are a separate check: a tsx-only kind anywhere in a rule makes it inert on .ts files.",
@@ -121,7 +121,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "QUOTEMARK",
+        "code": "quotemark",
         "message": "' or \" should be `"
       }
     },
@@ -150,7 +150,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "QUOTEMARK",
+        "code": "quotemark",
         "message": "' should be \""
       }
     }

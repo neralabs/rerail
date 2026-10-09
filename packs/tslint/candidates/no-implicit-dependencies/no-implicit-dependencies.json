@@ -1,0 +1,85 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-implicit-dependencies",
+  "revision": 1,
+  "mode": "steer",
+  "description": "PORT OF THE FIXTURE, NOT THE RULE: the dependency allow-list is hardcoded from test/rules/no-implicit-dependencies/package.json because the real rule reads the nearest package.json (cross-file). Default: dependencies + peerDependencies; node builtins allowed.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "implicit-dependency",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "string"
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "import_statement"
+                        },
+                        {
+                          "kind": "export_statement"
+                        },
+                        {
+                          "kind": "import_require_clause"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "pattern": "require($S)"
+                          },
+                          {
+                            "pattern": "import($S)"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "regex": "^[\"'][^./\"']"
+              },
+              {
+                "not": {
+                  "regex": "^[\"'](?:node:)?(?:assert|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|dns|domain|events|fs|http|http2|https|inspector|module|net|os|path|perf_hooks|process|punycode|querystring|readline|repl|stream|string_decoder|sys|timers|tls|trace_events|tty|url|util|v8|vm|worker_threads|zlib)(?:/[^\"']*)?[\"']$"
+                }
+              },
+              {
+                "not": {
+                  "regex": "^[\"'](?:foo|bar|@angular/core|@angular/common|typescript)(?:/[^\"']*)?[\"']$"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-implicit-dependencies",
+        "message": "Module is not listed as dependency in package.json"
+      }
+    }
+  ]
+}

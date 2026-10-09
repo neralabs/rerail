@@ -1,0 +1,6 @@
+{
+  "audit": {
+    "class": "option-baked",
+    "note": "Structure genuine (excludes self-declarations, heritage targets, qualified names) but TSLint's default bans nothing; the doc bakes the fixture's String/Object/Fo* list."
+  }
+}

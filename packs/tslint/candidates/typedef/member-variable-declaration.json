@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:typedef",
+  "id": "tslint:typedef/member-variable-declaration",
   "revision": 1,
   "mode": "steer",
   "description": "Requires type definitions for: member-variable-declaration.",
@@ -78,7 +78,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "TYPEDEF",
+        "code": "typedef",
         "message": "expected member-variable-declaration to have a typedef"
       }
     }

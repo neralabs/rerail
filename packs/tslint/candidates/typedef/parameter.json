@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:typedef",
+  "id": "tslint:typedef/parameter",
   "revision": 1,
   "mode": "steer",
   "description": "Requires type definitions for: parameter.",
@@ -56,7 +56,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "TYPEDEF",
+        "code": "typedef",
         "message": "expected parameter to have a typedef"
       }
     }

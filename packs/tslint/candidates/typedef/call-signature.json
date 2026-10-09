@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:typedef",
+  "id": "tslint:typedef/call-signature",
   "revision": 1,
   "mode": "steer",
   "description": "Requires type definitions for: call-signature.",
@@ -57,7 +57,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "TYPEDEF",
+        "code": "typedef",
         "message": "expected call-signature to have a typedef"
       }
     }

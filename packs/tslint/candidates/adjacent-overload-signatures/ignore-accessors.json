@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:adjacent-overload-signatures",
+  "id": "tslint:adjacent-overload-signatures/ignore-accessors",
   "revision": 1,
   "mode": "steer",
   "description": "Overloads (same name and static-ness; call and construct signatures by kind) must be adjacent: flags a member or top-level/namespace function whose key appears on an earlier sibling while the previous member (skipping any run of `;`, `,` and comments between members, and comments between statements) has a different key. Accessors are ignored.",
@@ -339,7 +339,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "ADJACENT_OVERLOAD_SIGNATURES",
+        "code": "adjacent-overload-signatures",
         "message": "All overload signatures of a name should be adjacent"
       }
     },
@@ -459,7 +459,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "ADJACENT_OVERLOAD_SIGNATURES",
+        "code": "adjacent-overload-signatures",
         "message": "All overload signatures of a name should be adjacent"
       }
     }

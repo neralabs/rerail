@@ -1,0 +1,89 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-boolean-literal-compare",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Flags the operand compared (==, ===, !=, !==) to a boolean literal; syntactic only, cannot check the operand is exactly boolean.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bool-literal-compare",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "not": {
+                  "kind": "true"
+                }
+              },
+              {
+                "not": {
+                  "kind": "false"
+                }
+              },
+              {
+                "not": {
+                  "regex": "^[!=]==?$"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "kind": "binary_expression"
+                    },
+                    {
+                      "any": [
+                        {
+                          "regex": "^(true|false)\\s*[!=]==?\\s*"
+                        },
+                        {
+                          "regex": "\\s*[!=]==?\\s*(true|false)$"
+                        }
+                      ]
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "all": [
+                            {
+                              "kind": "binary_expression"
+                            },
+                            {
+                              "any": [
+                                {
+                                  "regex": "^(true|false)\\s*[!=]==?\\s*"
+                                },
+                                {
+                                  "regex": "\\s*[!=]==?\\s*(true|false)$"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-boolean-literal-compare",
+        "message": "This expression is unnecessarily compared to a boolean."
+      }
+    }
+  ]
+}

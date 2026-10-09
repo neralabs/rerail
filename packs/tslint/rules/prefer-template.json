@@ -198,7 +198,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "PREFER_TEMPLATE",
+        "code": "prefer-template",
         "message": "Use a template literal instead of concatenating with a string literal."
       }
     }

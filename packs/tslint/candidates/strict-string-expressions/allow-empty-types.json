@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:strict-string-expressions",
+  "id": "tslint:strict-string-expressions/allow-empty-types",
   "revision": 1,
   "mode": "steer",
   "description": "Disables implicit toString() in string concatenation and template substitutions. APPROXIMATION: only operands whose syntax alone proves a non-stringifiable type (array/object/function/class/new/regex literals) are flagged; named values need the type checker.",
@@ -55,7 +55,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "STRICT_STRING_EXPRESSIONS",
+        "code": "strict-string-expressions",
         "message": "Explicit conversion to string type required"
       }
     },
@@ -122,7 +122,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "STRICT_STRING_EXPRESSIONS",
+        "code": "strict-string-expressions",
         "message": "Explicit conversion to string type required"
       }
     }

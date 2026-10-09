@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:completed-docs",
+  "id": "tslint:completed-docs/privacies",
   "revision": 1,
   "mode": "steer",
   "description": "methods, all privacies.",
@@ -60,7 +60,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for methods."
       }
     }

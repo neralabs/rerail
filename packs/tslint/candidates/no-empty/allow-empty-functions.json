@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:no-empty",
+  "id": "tslint:no-empty/allow-empty-functions",
   "revision": 1,
   "mode": "steer",
   "description": "no-empty with allow-empty-functions: empty function/method/arrow bodies are allowed (constructors and accessors still checked).",
@@ -123,7 +123,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_EMPTY",
+        "code": "no-empty",
         "message": "block is empty"
       }
     }

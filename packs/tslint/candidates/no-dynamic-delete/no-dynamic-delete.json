@@ -1,0 +1,89 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:no-dynamic-delete",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Bans delete on computed keys, except numeric literals, negative numeric literals and string keys that are not valid identifiers.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "dynamic-delete",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "regex": "^\\[$"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "subscript_expression",
+                  "all": [
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "pattern": "delete $X"
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "number"
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "unary_expression"
+                                },
+                                {
+                                  "regex": "^-"
+                                },
+                                {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "number"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "string"
+                                },
+                                {
+                                  "not": {
+                                    "regex": "^[\"'](?:[A-Za-z_$]|\\\\u00(?:4[1-9A-Fa-f]|5[0-9Aa]|6[1-9A-Fa-f]|7[0-9Aa]|5[Ff]|24))(?:[A-Za-z0-9_$]|\\\\u00(?:3[0-9]|4[1-9A-Fa-f]|5[0-9Aa]|6[1-9A-Fa-f]|7[0-9Aa]|5[Ff]|24))*[\"']$"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-dynamic-delete",
+        "message": "Do not delete dynamically computed property keys."
+      }
+    }
+  ]
+}

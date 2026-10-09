@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:file-name-casing",
+  "id": "tslint:file-name-casing/ignore",
   "revision": 1,
   "mode": "steer",
   "description": "Regex-keyed config: .ts$ ignored, .tsx$ -> PascalCase.",
@@ -31,7 +31,7 @@
       },
       "violation": {
         "anchor": "witness.start",
-        "code": "FILE_NAME_CASING",
+        "code": "file-name-casing",
         "message": "File name must be PascalCase"
       }
     }

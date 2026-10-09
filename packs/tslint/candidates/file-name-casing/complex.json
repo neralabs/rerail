@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:file-name-casing",
+  "id": "tslint:file-name-casing/complex",
   "revision": 1,
   "mode": "steer",
   "description": "Regex-keyed config: .component.ts$ -> PascalCase, .tsx$ -> PascalCase, .ts$ -> camelCase (first matching key wins; key test and casing test intersected via select_when).",
@@ -31,7 +31,7 @@
       },
       "violation": {
         "anchor": "witness.start",
-        "code": "FILE_NAME_CASING",
+        "code": "file-name-casing",
         "message": "File name must be PascalCase"
       }
     },
@@ -55,7 +55,7 @@
       },
       "violation": {
         "anchor": "witness.start",
-        "code": "FILE_NAME_CASING",
+        "code": "file-name-casing",
         "message": "File name must be PascalCase"
       }
     },
@@ -79,7 +79,7 @@
       },
       "violation": {
         "anchor": "witness.start",
-        "code": "FILE_NAME_CASING",
+        "code": "file-name-casing",
         "message": "File name must be camelCase"
       }
     }

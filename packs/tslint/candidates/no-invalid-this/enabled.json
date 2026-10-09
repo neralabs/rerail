@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:no-invalid-this",
+  "id": "tslint:no-invalid-this/enabled",
   "revision": 1,
   "mode": "steer",
   "description": "TSLint tracks the nearest enclosing class or function-like (method, accessor, constructor, property, function declaration or expression; arrow functions are transparent). `this` is allowed when that scope is a class method (a function-like whose own nearest enclosing scope is a class) or a function with a `this` parameter, found by an inside walk that stops at the nearest scope. check-function-in-method: a disallowed `this` inside a class is reported too.",
@@ -133,7 +133,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_INVALID_THIS",
+        "code": "no-invalid-this",
         "message": "the \"this\" keyword is disallowed outside of a class body"
       }
     }

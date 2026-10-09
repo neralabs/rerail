@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:curly",
+  "id": "tslint:curly/ignore-same-line",
   "revision": 1,
   "mode": "steer",
   "description": "Enforces braces unless the body is on the same line (ignore-same-line).",
@@ -50,7 +50,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "CURLY",
+        "code": "curly",
         "message": "for/while statements must be braced"
       }
     },
@@ -83,7 +83,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "CURLY",
+        "code": "curly",
         "message": "do statements must be braced"
       }
     },
@@ -116,7 +116,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "CURLY",
+        "code": "curly",
         "message": "if statements must be braced"
       }
     },
@@ -157,7 +157,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "CURLY",
+        "code": "curly",
         "message": "else statements must be braced"
       }
     }

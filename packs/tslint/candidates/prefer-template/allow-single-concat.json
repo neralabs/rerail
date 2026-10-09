@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:prefer-template",
+  "id": "tslint:prefer-template/allow-single-concat",
   "revision": 1,
   "mode": "steer",
   "description": "Prefer template literals over string concatenation (outermost offending `+` expression). TSLint's recursive containsAnyStringLiterals/containsOnlyStringLiterals are recursive utils. Options: allow-single-concat",
@@ -185,7 +185,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "PREFER_TEMPLATE",
+        "code": "prefer-template",
         "message": "Use a template literal instead of concatenating with a string literal."
       }
     }

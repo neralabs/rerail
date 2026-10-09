@@ -57,7 +57,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_CONSTRUCT",
+        "code": "no-construct",
         "message": "Forbidden constructor, use a literal or simple function call instead"
       }
     }

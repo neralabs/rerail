@@ -1,0 +1,18 @@
+{
+  "verdict": "BLOCKED",
+  "primitive": "fixture-artifact",
+  "reason": "All 11 option variants except `all` pass (one override per option config). A copy of `all/test.ts.lint` with its unclosed function repaired yields exactly the 26 expected findings at the right starts. In the real fixture, `var NoTypesFn = function (a, b) {` is never closed, so the kernel reports source-incomplete and yields zero findings; TypeScript recovers. A bare-parameter arrow's arrow-call-signature finding starts, as TSLint's does, at the last character of whatever token precedes the parameter (`return n => n`, `async n => n`, `${n => n}` all probed); its end stops one character short of TSLint's (parameter end + 1), which no anchor can express. The typedef rule's default (no options) checks nothing and an empty checks list does not compile, so rules/typedef.json holds one check that cannot match.",
+  "evidence": [
+    {
+      "variant": "all",
+      "file": "test.ts.lint",
+      "line": 31,
+      "why": "`var NoTypesFn = function (a, b) {` has no closing brace; the whole file becomes source-incomplete, losing all 26 expected findings"
+    }
+  ],
+  "audit": {
+    "class": "requires-config",
+    "note": "TSLint's typedef checks nothing without options, so the default doc is a placeholder check that cannot match; overrides carry the port. Bare-parameter arrow-call-signature starts at the last char of the preceding token (TSLint's parameters.pos - 1), via a named regex group anchor; verified `return n => n`, `async n => n`, template `${n => n}`. End stays one char short of TSLint's (param end + 1)."
+  },
+  "requiresConfiguration": "every check is an opt-in argument (typedefRule.ts:50-56, :63; minLength 0 at :93); bare `true` checks nothing, so the default doc is a placeholder that cannot match"
+}

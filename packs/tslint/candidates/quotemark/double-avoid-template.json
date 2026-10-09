@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:quotemark",
+  "id": "tslint:quotemark/double-avoid-template",
   "revision": 1,
   "mode": "steer",
   "description": "Double quotes, avoid-escape, and no-substitution templates must be quoted.",
@@ -30,7 +30,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "QUOTEMARK",
+        "code": "quotemark",
         "message": "' should be \""
       }
     },
@@ -80,7 +80,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "QUOTEMARK",
+        "code": "quotemark",
         "message": "` should be \""
       }
     }

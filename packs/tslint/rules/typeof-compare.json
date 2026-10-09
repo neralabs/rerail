@@ -101,7 +101,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "TYPEOF_COMPARE",
+        "code": "typeof-compare",
         "message": "'typeof' expression must be compared to one of: \"undefined\", \"string\", \"boolean\", \"number\", \"function\", \"object\", \"symbol\""
       }
     }

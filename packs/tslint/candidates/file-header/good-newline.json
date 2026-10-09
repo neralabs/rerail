@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:file-header",
+  "id": "tslint:file-header/good-newline",
   "revision": 1,
   "mode": "steer",
   "description": "Header /Copyright \\d{4}/ with enforce-trailing-newline.",
@@ -47,7 +47,7 @@
       },
       "violation": {
         "anchor": "capture.AFTER",
-        "code": "FILE_HEADER",
+        "code": "file-header",
         "message": "missing file header"
       }
     },
@@ -61,7 +61,7 @@
       },
       "violation": {
         "anchor": "witness.start",
-        "code": "FILE_HEADER",
+        "code": "file-header",
         "message": "missing new line following the file header"
       }
     }

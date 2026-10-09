@@ -1,0 +1,273 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tslint:return-undefined",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Approximation using explicit return-type annotations only, judged at the nearest enclosing function: `return undefined` in a function annotated effectively void (void/undefined and unions of them; for async functions also Promise<...> of those), or in a constructor, setter or generator; bare `return` in a getter or a function annotated with another type except any. Contextual and inferred return types are not visible.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "void-return",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "return_statement",
+            "pattern": "return undefined",
+            "inside": { "stopBy": "end", "matches": "void-function" },
+            "matches": "in-void-function"
+          },
+          "utils": {
+            "in-void-function": {
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  { "matches": "void-function" },
+                  { "not": { "matches": "function" }, "matches": "in-void-function" }
+                ]
+              }
+            },
+            "function": {
+              "any": [
+                { "kind": "function_declaration" },
+                { "kind": "function_expression" },
+                { "kind": "arrow_function" },
+                { "kind": "method_definition" },
+                { "kind": "generator_function" },
+                { "kind": "generator_function_declaration" }
+              ]
+            },
+            "keyword": { "not": { "kind": "property_identifier" } },
+            "void-function": {
+              "any": [
+                { "kind": "generator_function" },
+                { "kind": "generator_function_declaration" },
+                {
+                  "kind": "method_definition",
+                  "has": { "stopBy": "neighbor", "regex": "^(\\*|set)$", "matches": "keyword" }
+                },
+                {
+                  "kind": "method_definition",
+                  "has": { "stopBy": "neighbor", "kind": "property_identifier", "regex": "^constructor$" }
+                },
+                {
+                  "matches": "function",
+                  "not": { "has": { "stopBy": "neighbor", "regex": "^get$", "matches": "keyword" } },
+                  "any": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "type_annotation",
+                        "has": { "stopBy": "neighbor", "matches": "void-type" }
+                      }
+                    },
+                    {
+                      "all": [
+                        { "has": { "stopBy": "neighbor", "regex": "^async$", "matches": "keyword" } },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "type_annotation",
+                            "has": { "stopBy": "neighbor", "matches": "void-promise" }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "void-type": {
+              "any": [
+                { "kind": "predefined_type", "regex": "^void$" },
+                { "kind": "literal_type", "has": { "stopBy": "neighbor", "kind": "undefined" } },
+                { "kind": "parenthesized_type", "has": { "stopBy": "neighbor", "matches": "void-type" } },
+                {
+                  "kind": "union_type",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": { "any": [{ "regex": "^\\|$" }, { "matches": "void-type" }] }
+                    }
+                  }
+                }
+              ]
+            },
+            "void-promise": {
+              "any": [
+                { "matches": "void-type" },
+                { "kind": "parenthesized_type", "has": { "stopBy": "neighbor", "matches": "void-promise" } },
+                {
+                  "kind": "union_type",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": { "any": [{ "regex": "^\\|$" }, { "matches": "void-promise" }] }
+                    }
+                  }
+                },
+                {
+                  "kind": "generic_type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "type_arguments",
+                    "not": { "has": { "stopBy": "neighbor", "regex": "^,$" } },
+                    "has": { "stopBy": "neighbor", "matches": "void-promise" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "return-undefined",
+        "message": "`void` function should use `return;`, not `return undefined;`."
+      }
+    },
+    {
+      "id": "value-return",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "return_statement",
+            "regex": "^return\\s*;?$",
+            "inside": { "stopBy": "end", "matches": "value-function" },
+            "matches": "in-value-function"
+          },
+          "utils": {
+            "in-value-function": {
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  { "matches": "value-function" },
+                  { "not": { "matches": "function" }, "matches": "in-value-function" }
+                ]
+              }
+            },
+            "value-function": {
+              "any": [
+                { "kind": "method_definition", "has": { "stopBy": "neighbor", "regex": "^get$", "matches": "keyword" } },
+                {
+                  "matches": "function",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "type_annotation",
+                    "not": { "has": { "stopBy": "neighbor", "matches": "any-type" } }
+                  },
+                  "not": { "matches": "void-function" }
+                }
+              ]
+            },
+            "any-type": {
+              "any": [
+                { "kind": "predefined_type", "regex": "^any$" },
+                {
+                  "any": [{ "kind": "parenthesized_type" }, { "kind": "union_type" }],
+                  "has": { "stopBy": "neighbor", "matches": "any-type" }
+                }
+              ]
+            },
+            "function": {
+              "any": [
+                { "kind": "function_declaration" },
+                { "kind": "function_expression" },
+                { "kind": "arrow_function" },
+                { "kind": "method_definition" },
+                { "kind": "generator_function" },
+                { "kind": "generator_function_declaration" }
+              ]
+            },
+            "keyword": { "not": { "kind": "property_identifier" } },
+            "void-function": {
+              "any": [
+                { "kind": "generator_function" },
+                { "kind": "generator_function_declaration" },
+                {
+                  "kind": "method_definition",
+                  "has": { "stopBy": "neighbor", "regex": "^(\\*|set)$", "matches": "keyword" }
+                },
+                {
+                  "kind": "method_definition",
+                  "has": { "stopBy": "neighbor", "kind": "property_identifier", "regex": "^constructor$" }
+                },
+                {
+                  "matches": "function",
+                  "not": { "has": { "stopBy": "neighbor", "regex": "^get$", "matches": "keyword" } },
+                  "any": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "type_annotation",
+                        "has": { "stopBy": "neighbor", "matches": "void-type" }
+                      }
+                    },
+                    {
+                      "all": [
+                        { "has": { "stopBy": "neighbor", "regex": "^async$", "matches": "keyword" } },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "type_annotation",
+                            "has": { "stopBy": "neighbor", "matches": "void-promise" }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "void-type": {
+              "any": [
+                { "kind": "predefined_type", "regex": "^void$" },
+                { "kind": "literal_type", "has": { "stopBy": "neighbor", "kind": "undefined" } },
+                { "kind": "parenthesized_type", "has": { "stopBy": "neighbor", "matches": "void-type" } },
+                {
+                  "kind": "union_type",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": { "any": [{ "regex": "^\\|$" }, { "matches": "void-type" }] }
+                    }
+                  }
+                }
+              ]
+            },
+            "void-promise": {
+              "any": [
+                { "matches": "void-type" },
+                { "kind": "parenthesized_type", "has": { "stopBy": "neighbor", "matches": "void-promise" } },
+                {
+                  "kind": "union_type",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": { "any": [{ "regex": "^\\|$" }, { "matches": "void-promise" }] }
+                    }
+                  }
+                },
+                {
+                  "kind": "generic_type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "type_arguments",
+                    "not": { "has": { "stopBy": "neighbor", "regex": "^,$" } },
+                    "has": { "stopBy": "neighbor", "matches": "void-promise" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "return-undefined",
+        "message": "Value-returning function should use `return undefined;`, not just `return;`."
+      }
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+// valid code
+interface Index {
+}
+
+interface I {
+}
+
+interface ID {
+}
+
+interface IABC {
+}
+
+interface IDBFactory {
+}
+
+interface I18nFactory {
+}
+
+interface II18nFactory {
+}
+
+interface IS3Foobar {
+}
+
+interface IIS3Foobar {
+}
+
+interface ABC {
+}
+
+// invalid code
+interface IOptions {
+}

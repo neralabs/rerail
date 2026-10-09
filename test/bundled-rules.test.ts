@@ -1,66 +1,36 @@
 /**
- * The TSLint pack (packs/tslint/rules/, shipped in core and seeded disabled) is the golden set: the conformance harness proves it
- * against TSLint's own fixtures and gates it with conformance.json instead. Here each doc must compile and scope TypeScript
- * sources only, the pack must agree with conformance.json and the audit (`conformance/tslint/promote.ts --check`), and the
- * harness must score golden rules with the pack's docs. Rules TSLint cannot run without configuration
- * (`REQUIRES_CONFIGURATION`, audited `requires-config`) stay out of it.
+ * The TSLint pack (packs/tslint/rules/, shipped in core and seeded disabled) is proven against TSLint's own tests by the
+ * pack validation (test/packs.test.ts, check 4) instead. Here each doc must compile and scope TypeScript sources only,
+ * and no rule TSLint cannot run without configuration (a candidate whose verdict.json records `requiresConfiguration`)
+ * ships.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { bundledCodeRuleDslDirectory } from "../src/code-rule-compile.js";
 import { loadNativeBinding } from "../src/native.js";
-import { corePackDirectories, loadBundledRules } from "../src/rule-bootstrap.js";
-import { PASS_AUDIT } from "../conformance/tslint/audit.js";
-import { emptyGoldenManifest, goldenRules, loadGoldenManifest, PACK_DIRECTORY } from "../conformance/tslint/golden.js";
-import { checkGolden, REQUIRES_CONFIGURATION } from "../conformance/tslint/promote.js";
-import { COMMITTED_PORTS_DIRECTORY, findPort, listPortedRules } from "../conformance/tslint/runner.js";
+import { loadBundledRules } from "../src/rule-bootstrap.js";
+
+const TSLINT_CANDIDATES = fileURLToPath(new URL("../packs/tslint/candidates/", import.meta.url));
+const verdictSchema = z.object({ audit: z.object({ class: z.string() }).optional(), requiresConfiguration: z.string().min(1).optional() });
 
 const capabilities = readFileSync(join(bundledCodeRuleDslDirectory(), "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
-
 const optIn = loadBundledRules().filter(document => document.enabledByDefault === false && document.rule.id.startsWith("tslint:"));
 
 describe("TSLint pack", () => {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
-  it("is exactly the golden set, consistent with conformance.json and the PASS audit", () => {
-    expect(corePackDirectories().map(directory => join(directory, "rules"))).toContain(PACK_DIRECTORY);
-    expect(optIn.map(document => document.rule.id).sort()).toEqual(goldenRules().map(rule => `tslint:${rule}`));
-    expect(Object.keys(loadGoldenManifest().rules).sort()).toEqual(goldenRules());
-    expect(checkGolden()).toEqual([]);
-    for (const rule of goldenRules()) expect(PASS_AUDIT[rule]?.class, rule).toBe("genuine");
-  });
-
-  it("flags a conformance.json that disagrees with the pack folder", () => {
-    const [first] = goldenRules();
-    const manifest = loadGoldenManifest();
-    const missing = { ...emptyGoldenManifest(), rules: Object.fromEntries(Object.entries(manifest.rules).filter(([rule]) => rule !== first)) };
-    expect(checkGolden(missing)).toEqual([`${first}: in the pack but has no conformance.json entry`]);
-    const extra = { ...manifest, rules: { ...manifest.rules, "not-a-pack-rule": { verdict: "PASS" as const, truePositives: 1 } } };
-    expect(checkGolden(extra)).toEqual(["not-a-pack-rule: conformance.json entry without a pack doc"]);
-  });
-
-  it("is where the harness takes golden default docs from; non-golden ports stay in packs/tslint/candidates", () => {
-    const golden = goldenRules();
-    for (const rule of golden) {
-      const port = findPort(rule);
-      expect(port.golden, rule).toBe(true);
-      expect(port.document, rule).toBe(join(PACK_DIRECTORY, `${rule}.json`));
-      expect(port.sidecar, rule).toBeUndefined();
-    }
-    const port = findPort("curly");
-    expect(golden).not.toContain("curly");
-    expect(port.golden).toBe(false);
-    expect(port.document).toBe(join(COMMITTED_PORTS_DIRECTORY, "curly.json"));
-    expect(listPortedRules()).toEqual(expect.arrayContaining([...golden, "curly"]));
-  });
-
   it("leaves out every rule that requires configuration, each audited requires-config", () => {
-    const requiresConfig = Object.entries(PASS_AUDIT).filter(([, audit]) => audit.class === "requires-config").map(([rule]) => rule).sort();
-    expect([...REQUIRES_CONFIGURATION.keys()].sort()).toEqual(requiresConfig);
-    expect(requiresConfig).toEqual(expect.arrayContaining(["file-header", "typedef"]));
+    const verdicts = readdirSync(TSLINT_CANDIDATES)
+      .filter(rule => existsSync(join(TSLINT_CANDIDATES, rule, "verdict.json")))
+      .map(rule => ({ rule, verdict: verdictSchema.parse(JSON.parse(readFileSync(join(TSLINT_CANDIDATES, rule, "verdict.json"), "utf8"))) }));
+    const requiresConfig = verdicts.filter(({ verdict }) => verdict.requiresConfiguration !== undefined);
+    expect(requiresConfig.map(({ rule }) => rule)).toEqual(expect.arrayContaining(["file-header", "typedef"]));
+    for (const { rule, verdict } of requiresConfig) expect(verdict.audit?.class, rule).toBe("requires-config");
     const ids = new Set(optIn.map(document => document.rule.id));
-    expect(requiresConfig.filter(rule => ids.has(`tslint:${rule}`))).toEqual([]);
+    expect(requiresConfig.filter(({ rule }) => ids.has(`tslint:${rule}`)).map(({ rule }) => rule)).toEqual([]);
   });
 
   it.each(optIn.map(document => [document.rule.id] as const))("%s compiles and scopes TypeScript sources outside build output", id => {
