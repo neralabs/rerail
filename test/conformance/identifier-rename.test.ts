@@ -1,16 +1,23 @@
-import { existsSync } from "node:fs";
+/**
+ * The identifier-poisoning gate: every ECMA pack whose recording lists protected identifiers (today the TSLint pack) is
+ * scored again on its fixtures with every user-chosen identifier renamed (conformance/languages/identifier-rename.ts).
+ * A shipped port that implements structure scores identically; one that matches names only the tool's tests use loses
+ * TPs or gains FPs. Candidates are not gated, as in the conformance gate.
+ */
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { FIXTURE_RULES, loadScoredRules, loadVariants } from "./fixtures.js";
-import { goldenRules } from "./golden.js";
-import { literalTokens } from "./literal-scan.js";
-import { renameCheck } from "./poison.js";
-import { globalProtectedNames, optionPatterns, protectionFor, renameIdentifiers, syntaxDiagnostics, type Protection } from "./rename.js";
+import { globalProtectedNames, renamedPack, renamedTools, renameFixtures, renameIdentifiers, syntaxDiagnostics, type Protection } from "../../conformance/languages/identifier-rename.js";
+import { listPortedPacks, loadPack, packDirectory } from "../../conformance/languages/pack.js";
+import type { RuleRow } from "../../conformance/languages/report.js";
+import { runPack } from "../../conformance/languages/runner.js";
 
 const bare: Protection = { names: globalProtectedNames(), patterns: [] };
 
 /**
  * The rename is a same-length substitution of whole words by the map: outside words nothing changed, and every changed
- * word is a renamed name (private names without their `#`). This is what keeps TSLint's expected spans on their tokens.
+ * word is a renamed name (private names without their `#`). This is what keeps recorded findings on their tokens.
  */
 function isMappedRename(original: string, renamed: string, renames: Map<string, string>): boolean {
   if (original.length !== renamed.length) return false;
@@ -65,7 +72,7 @@ describe("renameIdentifiers", () => {
   });
 
   it("protects names that an option pattern selects and names spelled with unicode escapes", () => {
-    const protection: Protection = { names: globalProtectedNames(), patterns: optionPatterns([{ "allowed-names": ["^start"] }]) };
+    const protection: Protection = { names: globalProtectedNames(), patterns: [/^start/u] };
     const source = "const startEnd = this; const endStart = this; let \\u0061bc = 1; abc++;\n";
     const { renames } = renameIdentifiers(source, "a.ts", protection);
     expect(renames.has("startEnd")).toBe(false);
@@ -82,37 +89,51 @@ describe("renameIdentifiers", () => {
   });
 });
 
-describe("literalTokens", () => {
-  it("drops metavariables, regex escapes, flags and character classes", () => {
-    expect(literalTokens("$A.foo($$$B)", false)).toEqual(["foo"]);
-    expect(literalTokens("(?i)^[A-Z]\\s*\\bbar\\\\n", true)).toEqual(["bar"]);
-  });
-});
+/** What the gate holds a shipped port to: its whole score, findings included, which keep their positions on renaming. */
+const shippedScores = (rows: readonly RuleRow[]): unknown[] =>
+  rows
+    .filter(row => !row.candidate)
+    .map(row => ({
+      rule: row.rule,
+      tp: row.tp,
+      fp: row.fp,
+      fn: row.fn,
+      engineFailures: row.engineFailures,
+      partialFiles: row.partialFiles,
+      syntaxErrorFiles: row.syntaxErrorFiles.count,
+      divergences: row.divergences.length,
+      falsePositives: row.falsePositives,
+      falseNegatives: row.falseNegatives,
+    }));
 
-describe.skipIf(!existsSync(FIXTURE_RULES))("renamed TSLint fixtures", () => {
-  it("parse the same, keep every length and map back to the original text", () => {
-    const problems: string[] = [];
-    for (const rule of loadScoredRules()) {
-      for (const variant of loadVariants(rule.name)) {
-        for (const file of variant.files) {
-          if (file.parsed.skipped) continue;
-          const { source } = file.parsed;
-          const renamed = renameIdentifiers(source, file.path, protectionFor(rule.name, file.config.options));
-          const where = `${rule.name}/${variant.id}/${file.lintPath}`;
-          if (renamed.source.length !== source.length) problems.push(`${where}: length changed`);
-          else if (!isMappedRename(source, renamed.source, renamed.renames)) problems.push(`${where}: not a word-for-word rename`);
-          if (syntaxDiagnostics(renamed.source, file.path).join() !== syntaxDiagnostics(source, file.path).join()) problems.push(`${where}: parse changed`);
-          if (renamed.exhausted.length > 0) problems.push(`${where}: exhausted ${renamed.exhausted.join(",")}`);
-        }
-      }
-    }
+const gated = listPortedPacks()
+  .map(name => loadPack(packDirectory(name)))
+  .filter(loaded => loaded.pack.family === "ecma" && renamedTools(loaded).length > 0);
+
+describe.each(gated.map(loaded => [loaded.pack.pack, loaded] as const))("pack %s on renamed fixtures", (_, loaded) => {
+  const renamed = new Map(renamedTools(loaded).map(tool => [tool, renameFixtures(loaded, tool)]));
+
+  it("renames names only: same length, word for word, same TypeScript parse, no name left over", () => {
+    const problems = [...renamed].flatMap(([tool, fixtures]) =>
+      fixtures.flatMap(fixture =>
+        [...fixture.problems, ...(isMappedRename(fixture.source, fixture.renamed.source, fixture.renamed.renames) ? [] : ["not a word-for-word rename"])].map(
+          problem => `${tool}/${fixture.path}: ${problem}`,
+        ),
+      ),
+    );
     expect(problems).toEqual([]);
   });
 
-  const rules = loadScoredRules();
-  it.each(goldenRules())("golden rule %s scores identically on renamed fixtures", async name => {
-    const comparison = await renameCheck(rules.find(rule => rule.name === name)!);
-    expect(comparison.renamerIssues).toEqual([]);
-    expect({ lost: comparison.lostOnRename, gained: comparison.gainedOnRename, renamed: comparison.renamed }).toEqual({ lost: [], gained: [], renamed: comparison.normal });
-  });
+  it("scores every shipped port identically", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "rerail-identifier-rename-"));
+    try {
+      const options = { fixtures: true, corpora: [], date: "2026-01-01" };
+      const normal = await runPack(loaded, options);
+      const renamedReport = await runPack(renamedPack(loaded, renamed, directory), options);
+      expect(renamedReport.errors).toEqual(normal.errors);
+      expect(shippedScores(renamedReport.rules)).toEqual(shippedScores(normal.rules));
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 120_000);
 });

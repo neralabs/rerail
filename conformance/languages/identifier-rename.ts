@@ -1,25 +1,28 @@
 /**
- * Metamorphic identifier rename for the "identifier poisoning" check: a port that passes because it matches names only
- * TSLint's fixtures use (`foo`, `MyClass`, ...) instead of the structure the rule is about changes score when every
- * user-chosen identifier in the fixture is renamed to an opaque one.
+ * Metamorphic identifier rename for the identifier-poisoning gate (test/conformance/identifier-rename.test.ts): a port
+ * that passes because it matches names only the upstream tool's tests use (`foo`, `MyClass`, ...) instead of the
+ * structure the rule is about changes score when every user-chosen identifier in its fixtures is renamed to an opaque
+ * one. ECMA family only: the rename reads the source with TypeScript's parser.
  *
  * - Same length: each renamed identifier keeps its UTF-16 length and character shape (upper stays upper, lower stays
  *   lower, digits stay digits, `_`/`$`/non-ASCII stay put, a Hungarian `I` before an uppercase letter stays), so every
- *   expected failure span still covers the same tokens and naming-convention rules judge the same shape.
+ *   recorded finding still points at the same token and naming-convention rules judge the same shape.
  * - Consistent per file: one opaque name per distinct identifier text, applied to every occurrence (declarations,
  *   references, property names, shorthand, types, labels, user JSX tags). The map is a bijection, so every binding,
  *   shadowing and name-equality relation in the file is preserved without modelling scopes.
  * - Protected: keywords and contextual keywords used as identifiers, the ES standard library (globals and every
- *   member declared in TypeScript's lib.es*.d.ts), a curated host list (DOM/Node/React/module names), identifier-like
- *   string literals in TSLint's rule source, and words in the variant's tslint.json options. Intrinsic JSX tags and
- *   attributes on intrinsic elements are protected; so is any name with an occurrence that cannot be rewritten in
- *   place (unicode escapes). String/number literal contents and comments are never touched.
+ *   member declared in TypeScript's lib.es*.d.ts), a curated host list (DOM/Node/React/module names), and what the
+ *   tool's recording lists in `protected-identifiers.json` (for TSLint: identifier-like literals in each rule's
+ *   implementation and the words and patterns of each test's options). Intrinsic JSX tags and attributes on intrinsic
+ *   elements are protected; so is any name with an occurrence that cannot be rewritten in place (unicode escapes).
+ *   String/number literal contents and comments are never touched.
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import ts from "typescript";
-import { FIXTURE_CHECKOUT } from "./fixtures.js";
+import { z } from "zod";
+import { fixturesDirectory, fixturesRecordingPath, loadRecording, type LoadedPack } from "./pack.js";
 import { compareDeterministicStrings } from "../../src/stable-json.js";
 
 /** Globals and members a rule may legitimately target that are not in the ES lib: host, module system, React. */
@@ -78,87 +81,63 @@ export function globalProtectedNames(): ReadonlySet<string> {
   return names;
 }
 
-const IDENTIFIER_WORD = /^[A-Za-z_$][\w$]*$/;
+/** Beside a tool's fixtures recording: the names its rename keeps, by fixture path or directory. A pack opts in with it. */
+export const PROTECTED_IDENTIFIERS_FILE = "protected-identifiers.json";
 
-/** The rule implementation's path at the pinned SHA: `src/rules/<camelCase>Rule.ts`. */
-export function ruleSourcePath(rule: string): string {
-  const camel = rule.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
-  return join(FIXTURE_CHECKOUT, "src", "rules", `${camel}Rule.ts`);
+const protectedIdentifiersSchema = z.record(z.string(), z.strictObject({ names: z.array(z.string()), patterns: z.array(z.string()) }));
+type ProtectedIdentifiers = z.infer<typeof protectedIdentifiersSchema>;
+
+/** The tools of `loaded` whose fixtures the gate renames: those recording protected identifiers. */
+export function renamedTools(loaded: LoadedPack): string[] {
+  return [...new Set(loaded.pack.rules.map(rule => rule.upstream.tool))]
+    .filter(tool => existsSync(join(loaded.oraclesDirectory, tool, PROTECTED_IDENTIFIERS_FILE)))
+    .sort(compareDeterministicStrings);
+}
+
+/** One fixture's protection: the global names plus every recorded entry for the file or a directory above it. */
+function recordedProtection(recorded: ProtectedIdentifiers, path: string): Protection {
+  const entries = Object.entries(recorded).filter(([key]) => path === key || path.startsWith(`${key}/`));
+  return {
+    names: new Set([...globalProtectedNames(), ...entries.flatMap(([, entry]) => entry.names)]),
+    patterns: entries.flatMap(([, entry]) => entry.patterns.map(pattern => new RegExp(pattern))),
+  };
+}
+
+export interface RenamedFixture {
+  path: string;
+  source: string;
+  renamed: RenameResult;
+  /** Why the rename may change more than names: a changed length or TypeScript parse, names left unrenamed. */
+  problems: string[];
+}
+
+/** Every fixture of `tool`'s recording, renamed under its recorded protection. */
+export function renameFixtures(loaded: LoadedPack, tool: string): RenamedFixture[] {
+  const recorded = protectedIdentifiersSchema.parse(JSON.parse(readFileSync(join(loaded.oraclesDirectory, tool, PROTECTED_IDENTIFIERS_FILE), "utf8")));
+  const recording = loadRecording(fixturesRecordingPath(loaded, tool));
+  if (recording.source.kind !== "fixtures") throw new Error(`${tool}: not a fixtures recording`);
+  return recording.source.files.flatMap(unit => (typeof unit === "string" ? [unit] : unit)).map(path => {
+    const source = readFileSync(join(fixturesDirectory(loaded, tool), path), "utf8");
+    const renamed = renameIdentifiers(source, path, recordedProtection(recorded, path));
+    const problems: string[] = [];
+    if (renamed.source.length !== source.length) problems.push("length changed");
+    const before = syntaxDiagnostics(source, path).join(" ");
+    const after = syntaxDiagnostics(renamed.source, path).join(" ");
+    if (before !== after) problems.push(`TypeScript syntax diagnostics changed: [${before}] -> [${after}]`);
+    if (renamed.exhausted.length > 0) problems.push(`no free same-shape name for ${renamed.exhausted.join(", ")}`);
+    return { path, source, renamed, problems };
+  });
 }
 
 /**
- * Names TSLint's rule source hardcodes outside its `metadata`: every string literal that is a whole identifier
- * (`"parseInt"`, `"NaN"`), plus identifier words quoted inside message strings (`'console.log'`).
+ * `loaded` with its recordings copied to `directory` and each tool's fixtures in `renamed` replaced by their renamed
+ * text: the same findings, which still point at the same tokens, over sources whose user identifiers are opaque.
  */
-function scanRuleSource(rule: string, onLiteral: (text: string, regex: boolean) => void): void {
-  const path = ruleSourcePath(rule);
-  if (!existsSync(path)) return;
-  const visit = (node: ts.Node): void => {
-    // `metadata` holds documentation and code examples (`const foo = ...`), not names the rule checks.
-    if (ts.isPropertyDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "metadata") return;
-    if (ts.isStringLiteralLike(node)) onLiteral(node.text, false);
-    else if (ts.isRegularExpressionLiteral(node)) onLiteral(node.text, true);
-    ts.forEachChild(node, visit);
-  };
-  visit(ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.ESNext, true));
-}
-
-const ruleSourceCache = new Map<string, ReadonlySet<string>>();
-export function ruleSourceNames(rule: string): ReadonlySet<string> {
-  const cached = ruleSourceCache.get(rule);
-  if (cached !== undefined) return cached;
-  const names = new Set<string>();
-  scanRuleSource(rule, (text, regex) => {
-    if (regex) return;
-    if (IDENTIFIER_WORD.test(text)) names.add(text);
-    for (const quoted of text.matchAll(/['"`]([^'"`]+)['"`]/g)) for (const word of quoted[1]!.match(/[A-Za-z_$][\w$]*/g) ?? []) names.add(word);
-  });
-  ruleSourceCache.set(rule, names);
-  return names;
-}
-
-/** Every word in the rule source's string and regex literals outside `metadata`: what the static literal scan accepts. */
-export function ruleSourceWords(rule: string): ReadonlySet<string> {
-  const words = new Set<string>();
-  scanRuleSource(rule, text => {
-    for (const word of text.match(/[A-Za-z_$][\w$]*/g) ?? []) words.add(word);
-  });
-  return words;
-}
-
-function optionStrings(options: readonly unknown[]): string[] {
-  const strings: string[] = [];
-  const visit = (value: unknown): void => {
-    if (typeof value === "string") strings.push(value);
-    else if (Array.isArray(value)) value.forEach(visit);
-    else if (typeof value === "object" && value !== null) {
-      for (const [key, entry] of Object.entries(value)) {
-        visit(key);
-        visit(entry);
-      }
-    }
-  };
-  options.forEach(visit);
-  return strings;
-}
-
-/** Every identifier-like word in a variant's rule options (ban lists, whitelists, regex sources). */
-export function optionNames(options: readonly unknown[]): ReadonlySet<string> {
-  return new Set(optionStrings(options).flatMap(value => value.match(/[A-Za-z_$][\w$]*/g) ?? []));
-}
-
-/**
- * Option strings read as (unanchored) regexes: an identifier any of them matches keeps its name, since options such as
- * `allowed-names: ["^start"]` or ban-types' `Fo*` select identifiers by pattern.
- */
-export function optionPatterns(options: readonly unknown[]): RegExp[] {
-  return optionStrings(options).flatMap(value => {
-    try {
-      return [new RegExp(value)];
-    } catch {
-      return [];
-    }
-  });
+export function renamedPack(loaded: LoadedPack, renamed: ReadonlyMap<string, readonly RenamedFixture[]>, directory: string): LoadedPack {
+  cpSync(loaded.oraclesDirectory, directory, { recursive: true });
+  const copy = { ...loaded, oraclesDirectory: directory };
+  for (const [tool, fixtures] of renamed) for (const fixture of fixtures) writeFileSync(join(fixturesDirectory(copy, tool), fixture.path), fixture.renamed.source);
+  return copy;
 }
 
 /** What the renamer must leave alone: exact names, and patterns an identifier may match. */
@@ -339,7 +318,3 @@ export function syntaxDiagnostics(source: string, fileName: string): string[] {
   return program.getSyntacticDiagnostics(file).map(diagnostic => `${diagnostic.start ?? -1}:TS${diagnostic.code}`);
 }
 
-/** Protection for one fixture file: global set, the rule's source literals, the variant's option words and patterns. */
-export function protectionFor(rule: string, options: readonly unknown[]): Protection {
-  return { names: new Set([...globalProtectedNames(), ...ruleSourceNames(rule), ...optionNames(options)]), patterns: optionPatterns(options) };
-}
