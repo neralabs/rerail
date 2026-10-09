@@ -26,7 +26,8 @@ mod value;
 use super::json::{
     bounded_text, invalid, json_error, non_empty_str, object, reject_unknown, required_str,
 };
-use super::language::{CodeRuleLanguage, Semantic, Support, language_not_supported};
+use super::language::adapter::{Refusal, gate};
+use super::language::{CodeRuleLanguage, Semantic, Support};
 use super::matcher::{
     AnchorPlan, AstMatcher, Capture, Constrained, GrammarMatcher, Reading, RequiredText,
     UtilOrigin, UtilTable, collect_variables, reads_values,
@@ -1428,15 +1429,18 @@ pub(super) fn refuse_unavailable_semantics(
 /// The error for `predicate` at `at` when `language`'s registry entry does not support its
 /// capability.
 fn unsupported_semantic(support: Support, at: &str, predicate: &str, language: &str) -> Result<()> {
-    match support {
-        Support::Supported => Ok(()),
-        Support::Refused => Err(invalid(format!(
-            "{at}: `{predicate}` is not available for {language} policies"
-        ))),
-        Support::NotSupportedYet => Err(language_not_supported(format!(
-            "{at}: `{predicate}` is not supported yet for {language} policies"
-        ))),
-    }
+    gate(
+        at,
+        match support {
+            Support::Supported => Ok(()),
+            Support::Refused => Err(Refusal::Refused(
+                format!("`{predicate}` is not available for {language} policies").into(),
+            )),
+            Support::NotSupportedYet => Err(Refusal::NotSupportedYet(
+                format!("`{predicate}` is not supported yet for {language} policies").into(),
+            )),
+        },
+    )
 }
 
 #[cfg(test)]
