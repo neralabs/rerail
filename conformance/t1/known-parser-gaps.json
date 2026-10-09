@@ -1,0 +1,221 @@
+{
+  "v1": {
+    "repository": "neralabs/nera-rule-validation",
+    "commit": "2bf30e26beb4db11b7b7d6fac24cc63df45faa08"
+  },
+  "gaps": [
+    {
+      "id": "parenthesized-destructuring-target",
+      "language": "javascript",
+      "grammar": "tree-sitter-javascript",
+      "version": "0.25.0",
+      "construct": "A parenthesized simple target inside an object destructuring assignment pattern.",
+      "probe": "({a: (b)} = c);",
+      "source": {
+        "reports": [
+          "eslint-conformance",
+          "languages-eslint"
+        ],
+        "upstreamTestFiles": [
+          "tests/lib/rules/no-useless-rename.js#0/invalid[1]",
+          "tests/lib/rules/no-useless-rename.js#0/invalid[20]",
+          "tests/lib/rules/no-useless-rename.js#0/invalid[77]",
+          "tests/lib/rules/no-useless-rename.js#0/invalid[78]",
+          "tests/lib/rules/no-useless-rename.js#0/invalid[79]",
+          "tests/lib/rules/no-useless-rename.js#0/invalid[81]",
+          "tests/lib/rules/no-useless-rename.js#0/invalid[82]"
+        ],
+        "attribution": "copied-fixture"
+      }
+    },
+    {
+      "id": "class-field-before-computed-member",
+      "language": "javascript",
+      "grammar": "tree-sitter-javascript",
+      "version": "0.25.0",
+      "construct": "A class field with no semicolon followed on the next line by a computed member name, which ends the field by ASI.",
+      "probe": "class C {\n  a\n  [b]\n}",
+      "source": {
+        "reports": [
+          "eslint-conformance",
+          "languages-eslint"
+        ],
+        "upstreamTestFiles": [
+          "tests/lib/rules/no-unused-private-class-members.js#0/invalid[34]",
+          "tests/lib/rules/no-unused-private-class-members.js#0/invalid[35]"
+        ],
+        "attribution": "copied-fixture"
+      }
+    },
+    {
+      "id": "re-export-import-attributes",
+      "language": "javascript",
+      "grammar": "tree-sitter-javascript",
+      "version": "0.25.0",
+      "construct": "Import attributes on a re-export (ES2025); the same attributes on an import declaration parse.",
+      "probe": "export * from 'a' with { type: 'json' };",
+      "source": {
+        "reports": [
+          "eslint-conformance"
+        ],
+        "upstreamTestFiles": [
+          "tests/lib/rules/no-duplicate-imports.js#1/invalid[11]",
+          "tests/lib/rules/no-duplicate-imports.js#1/invalid[12]",
+          "tests/lib/rules/no-duplicate-imports.js#1/invalid[13]",
+          "tests/lib/rules/no-duplicate-imports.js#1/valid[12]",
+          "tests/lib/rules/no-duplicate-imports.js#1/valid[29]"
+        ],
+        "attribution": "inferred"
+      }
+    },
+    {
+      "id": "non-ascii-space-before-line-end",
+      "language": "javascript",
+      "grammar": "tree-sitter-javascript",
+      "version": "0.25.0",
+      "construct": "A non-ASCII space (U+3000 here) between a statement and the line end or end of input that ends it by ASI; before a semicolon it parses.",
+      "probe": "x\u3000",
+      "source": {
+        "reports": [
+          "eslint-conformance"
+        ],
+        "upstreamTestFiles": [
+          "tests/lib/rules/no-irregular-whitespace.js#0/invalid[76]",
+          "tests/lib/rules/no-irregular-whitespace.js#0/invalid[77]"
+        ],
+        "attribution": "inferred"
+      }
+    },
+    {
+      "id": "yield-label-in-script",
+      "language": "javascript",
+      "grammar": "tree-sitter-javascript",
+      "version": "0.25.0",
+      "construct": "`yield` as a statement label in a sloppy-mode script, where it is an ordinary identifier.",
+      "probe": "yield: x;",
+      "source": {
+        "reports": [],
+        "upstreamTestFiles": [],
+        "attribution": "unattributed"
+      }
+    },
+    {
+      "id": "using-declaration-for-initializer",
+      "language": "javascript",
+      "grammar": "tree-sitter-javascript",
+      "version": "0.25.0",
+      "construct": "A `using` declaration as a C-style for statement's initializer.",
+      "probe": "for (using x = y; ;) {}",
+      "source": {
+        "reports": [],
+        "upstreamTestFiles": [],
+        "attribution": "unattributed"
+      }
+    },
+    {
+      "id": "static-accessor-field",
+      "language": "typescript",
+      "grammar": "tree-sitter-typescript",
+      "version": "0.23.2",
+      "construct": "A static auto-accessor field; one without `static` parses.",
+      "probe": "class A {\n  static accessor x: string;\n}",
+      "source": {
+        "reports": [
+          "typescript-eslint-conformance"
+        ],
+        "upstreamTestFiles": [
+          "packages/eslint-plugin/tests/rules/no-extraneous-class.test.ts#0/invalid[10]",
+          "packages/eslint-plugin/tests/rules/no-extraneous-class.test.ts#0/invalid[11]",
+          "packages/eslint-plugin/tests/rules/no-extraneous-class.test.ts#0/valid[15]"
+        ],
+        "attribution": "inferred"
+      }
+    },
+    {
+      "id": "export-type-star",
+      "language": "typescript",
+      "grammar": "tree-sitter-typescript",
+      "version": "0.23.2",
+      "construct": "A type-only star re-export, with or without `as`; a type-only named re-export parses.",
+      "probe": "export type * from \"a\";",
+      "source": {
+        "reports": [],
+        "upstreamTestFiles": [],
+        "attribution": "unattributed"
+      }
+    },
+    {
+      "id": "anonymous-default-export-overloads",
+      "language": "typescript",
+      "grammar": "tree-sitter-typescript",
+      "version": "0.23.2",
+      "construct": "Overload signatures of an anonymous default-exported function; named ones parse.",
+      "probe": "export default function (): void;\nexport default function (): void {}",
+      "source": {
+        "reports": [],
+        "upstreamTestFiles": [],
+        "attribution": "unattributed"
+      }
+    },
+    {
+      "id": "static-index-signature",
+      "language": "typescript",
+      "grammar": "tree-sitter-typescript",
+      "version": "0.23.2",
+      "construct": "A static index signature in a class; one without `static` parses.",
+      "probe": "class A {\n  static [k: string]: number;\n}",
+      "source": {
+        "reports": [],
+        "upstreamTestFiles": [],
+        "attribution": "unattributed"
+      }
+    },
+    {
+      "id": "global-augmentation-in-ambient-module",
+      "language": "typescript",
+      "grammar": "tree-sitter-typescript",
+      "version": "0.23.2",
+      "construct": "A `global` augmentation block inside an ambient module declaration; a top-level `declare global` parses.",
+      "probe": "declare module 'm' {\n  global { interface Array<T> {} }\n}",
+      "source": {
+        "reports": [],
+        "upstreamTestFiles": [],
+        "attribution": "unattributed"
+      }
+    },
+    {
+      "id": "match-subject-starred-item",
+      "language": "python",
+      "grammar": "tree-sitter-python",
+      "version": "0.25.0",
+      "construct": "An unparenthesized match subject tuple with a starred item; the parenthesized tuple parses.",
+      "probe": "match *0, 1:\n    case _:\n        pass",
+      "source": {
+        "reports": [
+          "ruff-conformance"
+        ],
+        "upstreamTestFiles": [
+          "crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B012.py"
+        ],
+        "attribution": "inferred"
+      }
+    },
+    {
+      "id": "dict-unpacking-comprehension",
+      "language": "python",
+      "grammar": "tree-sitter-python",
+      "version": "0.25.0",
+      "construct": "Dict unpacking in a dict comprehension (Python 3.15).",
+      "probe": "{**d for d in ds}",
+      "source": {
+        "reports": [
+          "ruff-conformance"
+        ],
+        "upstreamTestFiles": [
+          "crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B035_py315.py"
+        ],
+        "attribution": "parser-message"
+      }
+    }
+  ]
+}
