@@ -12,7 +12,20 @@
           "**/*.py",
           "**/*.pyi"
         ],
-        "label": "*.py files"
+        "exclude": [
+          "**/test/**",
+          "**/tests/**",
+          "**/testing/**",
+          "**/test_*.py",
+          "**/*_test.py",
+          "**/conftest.py",
+          "**/scripts/**",
+          "**/setup.py",
+          "**/noxfile.py",
+          "**/fabfile.py",
+          "**/docs/conf.py"
+        ],
+        "label": "Python source files"
       }
     ]
   },
