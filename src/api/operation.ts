@@ -5,12 +5,13 @@
  * argument object.
  */
 import type { z } from "zod";
-import type { RerailDatabase } from "../database.js";
-import type { AuditReader } from "../audit-store.js";
-import type { SqlitePresentationPreferenceStore } from "../presentation-preference-store.js";
-import type { ApiCaller, BundledCatalog, CheckoutContext, RepositoryStartState } from "../repository-model.js";
-import type { SqliteAuditControlStore } from "../audit-control.js";
-import type { SqliteSessionReader, SqliteSessionStore } from "../session-store.js";
+import type { RerailDatabase } from "../engine/storage/database.js";
+import type { AuditReader } from "../engine/audit/audit-store.js";
+import type { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
+import type { ApiCaller, BundledCatalog, CheckoutContext, RepositoryStartState } from "../engine/catalog/repository-model.js";
+import type { CodingAgentState } from "../engine/adapter-contract.js";
+import type { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
+import type { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-store.js";
 import type { presentationDaemonSchema } from "./session-contracts.js";
 
 export interface RerailApiStores {
@@ -39,6 +40,8 @@ export interface RerailApiStores {
   /** `http://host:port` of the dashboard. */
   dashboardOrigin(): string;
   health(): z.infer<typeof presentationDaemonSchema>;
+  /** Every coding agent and whether Rerail is connected to it; undefined when this process cannot check. */
+  codingAgents(): Promise<CodingAgentState[]> | undefined;
 }
 
 export type OperationMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";

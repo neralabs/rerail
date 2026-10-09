@@ -1,7 +1,10 @@
-import { defaultRerailDatabasePath, openRerailDatabase } from "../../src/database.js";
-import type { RepositoryStartState } from "../../src/repository-model.js";
-import { recordCheckout } from "../../src/repository-registry.js";
-import { setRepositoryStarted, stopRerail } from "../../src/repository-start.js";
+import {
+  defaultRerailDatabasePath,
+  openRerailDatabase,
+  type RepositoryStartState,
+  recordCheckout,
+} from "../../src/engine/index.js";
+import { setRepositoryStarted, stopRerail } from "../../src/runtime/index.js";
 
 /** Rerail is off until started; record `workspace`'s checkout and start its repository as a whole, not set up. */
 export function startTestRepository(workspace: string, databasePath = defaultRerailDatabasePath()): string {

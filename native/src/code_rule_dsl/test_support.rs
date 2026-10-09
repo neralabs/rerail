@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-pub(super) const CAPABILITIES: &str = include_str!("../../../code-rule-dsl/capabilities.json");
+pub(super) const CAPABILITIES: &str = include_str!("capabilities.json");
 
 pub(super) const JSX_SOURCE: &str =
     "export const View = () => <button type=\"button\">Go</button>;\n";

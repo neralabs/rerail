@@ -9,7 +9,7 @@
 //! written. Synonyms PHP-Parser does not tell apart compare equal: `<>` and `!=`, `(integer)` and
 //! `(int)`, `exit` and `die`, `new C` and `new C()`, a block and a single statement as a body,
 //! `{...}` and `: ... endif;`, `$a` and `{$a}` in a string, `list()` and `[]`. The oracle is
-//! `fixtures/php/compare/generate_php.php`.
+//! `fixtures/php/value/compare/generate_php.php`.
 //!
 //! `Hash` is PHP's array key identity: an expression PHP folds to a constant (`value/php.rs`)
 //! compares by the key PHP coerces it to (`1 == '1' == 1.5 == true`, `null == ''`); anything else

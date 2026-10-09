@@ -3,7 +3,7 @@
   "id": "blade",
   "name": "Blade",
   "category": "language",
-  "covers": "17 Bladestan, tlint and stillat/blade-parser rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "15 Bladestan, tlint and stillat/blade-parser rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
   "reason": "matches Blade templates",
   "match": {
     "any": [
@@ -20,25 +20,65 @@
       "id": "bladestan-variable-undefined",
       "document": "rules/bladestan-variable-undefined.json",
       "title": "Bladestan variable.undefined: Undefined variable",
-      "group": "Bladestan"
+      "group": "Bladestan",
+      "examples": {
+        "caught": {
+          "path": "resources/views/orders/index.blade.php",
+          "text": "@php\n    $money = function ($cents) {\n        return $currency . ' ' . number_format($cents / 100, 2);\n    };\n@endphp\n<p>{{ $money($order->total) }}</p>\n"
+        },
+        "passes": {
+          "path": "resources/views/orders/index.blade.php",
+          "text": "@php\n    $money = function ($cents) use ($currency) {\n        return $currency . ' ' . number_format($cents / 100, 2);\n    };\n@endphp\n<p>{{ $money($order->total) }}</p>\n"
+        }
+      }
     },
     {
       "id": "bladestan-argument-sprintf",
       "document": "rules/bladestan-argument-sprintf.json",
       "title": "Bladestan argument.sprintf: sprintf() arguments and format disagree",
-      "group": "Bladestan"
+      "group": "Bladestan",
+      "examples": {
+        "caught": {
+          "path": "resources/views/posts/pager.blade.php",
+          "text": "<p>{{ sprintf('Page %d of %d', $page) }}</p>\n"
+        },
+        "passes": {
+          "path": "resources/views/posts/pager.blade.php",
+          "text": "<p>{{ sprintf('Page %d of %d', $page, $pages) }}</p>\n"
+        }
+      }
     },
     {
       "id": "bladestan-array-duplicate-key",
       "document": "rules/bladestan-array-duplicate-key.json",
       "title": "Bladestan array.duplicateKey: Duplicate array key",
-      "group": "Bladestan"
+      "group": "Bladestan",
+      "examples": {
+        "caught": {
+          "path": "resources/views/posts/status.blade.php",
+          "text": "@php\n    $labels = ['draft' => 'Draft', 'published' => 'Published', 'draft' => 'Pending review'];\n@endphp\n<span>{{ $labels[$post->status] }}</span>\n"
+        },
+        "passes": {
+          "path": "resources/views/posts/status.blade.php",
+          "text": "@php\n    $labels = ['draft' => 'Draft', 'published' => 'Published', 'pending' => 'Pending review'];\n@endphp\n<span>{{ $labels[$post->status] }}</span>\n"
+        }
+      }
     },
     {
       "id": "bladestan-random-int-parameters",
       "document": "rules/bladestan-random-int-parameters.json",
       "title": "Bladestan argument.type: random_int() minimum above maximum",
-      "group": "Bladestan"
+      "group": "Bladestan",
+      "examples": {
+        "caught": {
+          "path": "resources/views/auth/captcha.blade.php",
+          "text": "<input type=\"hidden\" name=\"nonce\" value=\"{{ random_int(999999, 100000) }}\">\n"
+        },
+        "passes": {
+          "path": "resources/views/auth/captcha.blade.php",
+          "text": "<input type=\"hidden\" name=\"nonce\" value=\"{{ random_int(100000, 999999) }}\">\n"
+        }
+      }
     },
     {
       "id": "bladestan-if-always-true",
@@ -50,7 +90,17 @@
       "id": "bladestan-if-always-false",
       "document": "rules/bladestan-if-always-false.json",
       "title": "Bladestan if.alwaysFalse: If condition always false",
-      "group": "Bladestan"
+      "group": "Bladestan",
+      "examples": {
+        "caught": {
+          "path": "resources/views/layouts/banner.blade.php",
+          "text": "@php\n    $showBanner = false;\n@endphp\n@if ($showBanner)\n    <div class=\"banner\">{{ $message }}</div>\n@endif\n"
+        },
+        "passes": {
+          "path": "resources/views/layouts/banner.blade.php",
+          "text": "@if ($showBanner)\n    <div class=\"banner\">{{ $message }}</div>\n@endif\n"
+        }
+      }
     },
     {
       "id": "bladestan-identical-always-true",
@@ -62,7 +112,17 @@
       "id": "bladestan-missing-function-return-type",
       "document": "rules/bladestan-missing-function-return-type.json",
       "title": "Bladestan missingType.return: Function without a return type",
-      "group": "Bladestan"
+      "group": "Bladestan",
+      "examples": {
+        "caught": {
+          "path": "resources/views/users/card.blade.php",
+          "text": "@php\n    function initials($name)\n    {\n        return strtoupper(substr($name, 0, 1));\n    }\n@endphp\n<span>{{ initials($user->name) }}</span>\n"
+        },
+        "passes": {
+          "path": "resources/views/users/card.blade.php",
+          "text": "@php\n    function initials(string $name): string\n    {\n        return strtoupper(substr($name, 0, 1));\n    }\n@endphp\n<span>{{ initials($user->name) }}</span>\n"
+        }
+      }
     },
     {
       "id": "tlint-no-json-directive",
@@ -79,18 +139,6 @@
           "text": "<script>\n    const user = {{ Js::from($user) }};\n</script>\n"
         }
       }
-    },
-    {
-      "id": "tlint-no-dump-directives",
-      "document": "rules/tlint-no-dump-directives.json",
-      "title": "tlint NoDumpDirectives: No @dd or @dump directive",
-      "group": "tlint"
-    },
-    {
-      "id": "tlint-no-ray-directive",
-      "document": "rules/tlint-no-ray-directive.json",
-      "title": "tlint NoRayDirective: No @ray directive",
-      "group": "tlint"
     },
     {
       "id": "tlint-space-after-blade-directives",

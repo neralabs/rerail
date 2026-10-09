@@ -1,0 +1,35 @@
+{
+  "upstream": "ast-grep 0.45.3",
+  "about": "Rule × source cases that pin Rerail's relational semantics to upstream ast-grep 0.45.3. Each case runs through the ast-grep CLI and through Rerail's kernel (stateless and anchor-indexed workspace), and the match sets must agree. The CLI rejects a top-level rule without a node kind (e.g. regex-only), so every rule names a kind or pattern. precedes/follows reach siblings only; anonymous tokens are children and siblings, and only regex (or a pattern of the token) names them; one metavariable environment threads through relations; in contextual patterns the selector node alone is matched and the context only guides parsing.",
+  "cases": [
+    {
+      "id": "python-call-has-no-statement-siblings",
+      "language": "python",
+      "source": "def run():\n  prepare()\n  execute()\n",
+      "rule": {
+        "pattern": "prepare()",
+        "precedes": {
+          "stopBy": "end",
+          "pattern": "execute()"
+        }
+      }
+    },
+    {
+      "id": "python-statement-siblings",
+      "language": "python",
+      "source": "def run():\n  prepare()\n  unrelated()\n  execute()\n",
+      "rule": {
+        "kind": "expression_statement",
+        "has": {
+          "pattern": "execute()"
+        },
+        "follows": {
+          "stopBy": "end",
+          "has": {
+            "pattern": "prepare()"
+          }
+        }
+      }
+    }
+  ]
+}

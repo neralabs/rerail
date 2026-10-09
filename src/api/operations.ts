@@ -2,25 +2,23 @@ import { realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
-import type { CodeRuleViolation, CodeRuleViolationFix, CodeRuleSourceSpan } from "../code-rule.js";
-import type { AuditFailure } from "../audit.js";
-import type { AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../audit-store.js";
-import { withinCheckout } from "../checkout-control.js";
-import { codingAgentHome, codingAgentStates, registrationRoot, RUNNING_PACKAGE_ROOT } from "../coding-agents.js";
-import { HARNESSES } from "../harness-registration.js";
-import { defaultRerailHome } from "../rerail-home.js";
-import { audits, presentationPreferences, PRESENTATION_HOSTS, events, workLinks } from "../schema.js";
+import type { CodeRuleViolation, CodeRuleViolationFix, CodeRuleSourceSpan } from "../engine/code-rule/code-rule.js";
+import type { AuditFailure } from "../engine/audit/audit.js";
+import type { AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../engine/audit/audit-store.js";
+import { withinCheckout } from "../engine/catalog/checkout-control.js";
+import { RERAIL_HOSTS } from "../engine/adapter-contract.js";
+import { audits, presentationPreferences, PRESENTATION_HOSTS, events, workLinks } from "../engine/storage/schema.js";
 import {
   auditControlsSchema,
   auditSettingsPatchSchema,
   repositoryAuditSchema,
   auditRequestInputSchema,
   auditRequestSchema,
-} from "../audit-control-schema.js";
-import { RULE_MODES } from "../rule-mode.js";
-import { loadRulePacks } from "../rule-packs.js";
+} from "../engine/audit/audit-control-schema.js";
+import { RULE_MODES } from "../engine/catalog/rule-mode.js";
+import { loadRulePacks } from "../engine/catalog/rule-packs.js";
 import { rulePackListSchema } from "./rule-pack-contracts.js";
-import { SESSION_EVENT_PAGE_LIMIT } from "../session-store.js";
+import { SESSION_EVENT_PAGE_LIMIT } from "../runtime/session-store.js";
 import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
 import { activityRules, historyRepositoryIds, repositoryOperations } from "./repository-operations.js";
 import { inactiveField, inactiveOf } from "./repository-contracts.js";
@@ -237,7 +235,7 @@ export const presentationPreferenceSchema = createSelectSchema(presentationPrefe
 const presentationPreferenceKeySchema = presentationPreferenceSchema.pick({ repository: true, host: true });
 
 const codingAgentSchema = z.object({
-  id: z.enum(HARNESSES),
+  id: z.enum(RERAIL_HOSTS),
   name: z.string(),
   found: z.boolean().describe("The coding agent's config folder exists on this computer."),
   connected: z.boolean().describe("Rerail's hooks and commands are in place for it."),
@@ -347,9 +345,13 @@ export const operations: readonly Operation[] = [
     path: "/api/coding-agents",
     summary: "List the coding agents Rerail works with: whether each is on this computer and whether Rerail is connected to it. Changes nothing.",
     output: z.object({ agents: z.array(codingAgentSchema) }),
-    handler: async () => ({
-      agents: await codingAgentStates(registrationRoot(defaultRerailHome(), RUNNING_PACKAGE_ROOT), codingAgentHome()),
-    }),
+    handler: async (stores) => {
+      const agents = stores.codingAgents();
+      if (agents === undefined) {
+        throw new ApiError(503, "coding-agents-unavailable", "this daemon was started without the coding agent check");
+      }
+      return { agents: await agents };
+    },
   }),
   defineOperation({
     id: "audit_settings_get",

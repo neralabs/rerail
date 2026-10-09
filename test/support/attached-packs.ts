@@ -1,5 +1,5 @@
-import { openRerailDatabase } from "../../src/database.js";
-import { lookupCheckout } from "../../src/repository-registry.js";
+import { openRerailDatabase } from "../../src/engine/index.js";
+import { lookupCheckout } from "../../src/engine/index.js";
 
 /** The rule packs added to `workspace`'s repository: the pack id, or `id@folder` for a pack added in one folder. */
 export function attachedPacks(workspace: string, databasePath: string): string[] {

@@ -8,7 +8,7 @@
 //! (`PHP_EOL`, `__LINE__`, a constant another file may declare) are `Unknown`. Integers are
 //! 64-bit, as PHP's are where Rerail runs; strings are bytes; arrays are ordered maps whose keys
 //! PHP coerces. The oracle is PHP 8.5.11 (`fixtures/php/value/generate_php.php`); PHPStan
-//! 2.2.16 reads the constants followed (`fixtures/php/format_args/phpstan/constants.php`).
+//! 2.2.16 reads the constants followed (`fixtures/php/compile/format-args/phpstan/constants.php`).
 
 use super::{BigInt, ContainerKind, Context, Value};
 use crate::code_rule_dsl::value::NodeRef;

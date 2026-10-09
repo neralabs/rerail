@@ -13,8 +13,7 @@
     "types": ["vite/client", "node"],
     "paths": {
       "@protocol": ["../src/protocol.ts"],
-      "@rerail/rule-schema": ["../../src/rule-schema.ts"],
-      "@rerail/code-rule-schema": ["../../src/code-rule-schema.ts"],
+      "@neralabs/rerail/schemas": ["../../dist/engine/schemas.d.ts"],
       "@/*": ["./src/*"]
     }
   },

@@ -2,7 +2,7 @@
 
 Status: the registry and the not-supported-yet behaviour are implemented. The adapter seam is not: each language's
 engine code is still matched on its family across the engine (`Family::` arms in `native/src/code_rule_dsl/`) and in
-the host's schema checks (`src/code-rule-schema.ts`). Moving that code behind one adapter per language is the next
+the host's schema checks (`src/engine/code-rule/code-rule-schema.ts`). Moving that code behind one adapter per language is the next
 change.
 
 ## What a language pack is
@@ -20,7 +20,7 @@ A language is three things, each owned by one place:
 Language code lives only in its adapter and its registry entry. Core, the host and packs never branch on a language:
 they ask the registry. The engine generates its language tables from the registry at build time
 (`native/build.rs`, `native/src/build_languages.rs`), and the host reads a module generated from the same files
-(`src/code-rule-language-registry.generated.ts`, written by `npm run generate:languages`). A test fails if the
+(`src/engine/code-rule/code-rule-language-registry.generated.ts`, written by `npm run generate:languages`). A test fails if the
 generated module is stale, and a native test checks that the host module and the engine's tables agree.
 
 ## The registry entry
@@ -58,7 +58,7 @@ One file per language, `languages/<id>.json`, so a language is added or changed 
 additive within `rerail.language/v1`: a new optional field or a new value is a v1 change, and renaming or removing a
 field, or changing what a value means, needs `rerail.language/v2`.
 
-The build fails, and so does `test/language-registry.test.ts`, when ids, dialect labels, suffixes or tape tags repeat;
+The build fails, and so does `test/engine/code-rule/language-registry.test.ts`, when ids, dialect labels, suffixes or tape tags repeat;
 when a supported dialect lacks a variant, parser, grammar or tape tag; when a planned language supports a capability
 or names `runsOn`; when entries name different capabilities; when `runsOn` names a dialect of another family; or when
 `embeds` names an unknown language.
@@ -86,7 +86,7 @@ or names `runsOn`; when entries name different capabilities; when `runsOn` names
 
 1. Add `languages/<id>.json` with `status: "planned"`: its family, its dialects' labels and suffixes, every
    capability `not-supported-yet`, its suppressions and anything it embeds. Run `npm run generate:languages` and
-   commit the regenerated `src/code-rule-language-registry.generated.ts`. Rules and packs for it can land now.
+   commit the regenerated `src/engine/code-rule/code-rule-language-registry.generated.ts`. Rules and packs for it can land now.
 2. Vendor or pick its grammar (a vendored one is added to `GRAMMARS` in `native/build.rs`), and give each dialect a
    `variant`, `parser`, `grammar` and the next unused `tapeTag`.
 3. Write its adapter: add the `GrammarDialect` variant and, for a new family, the `Family` variant; the build then
@@ -98,8 +98,8 @@ or names `runsOn`; when entries name different capabilities; when `runsOn` names
 
 A pack is a directory `packs/<id>/` that passes the [validation contract](pack-format.md#the-validation-contract).
 The models to copy: `packs/python/`, `packs/php/` or `packs/typescript/` (ported language packs), `packs/react/`, `packs/node/` or
-`packs/next/` (framework packs over a supported language), `test/fixtures/packs/valid/` (the smallest pack, with an
-example-proven rule and a ported one) and `test/fixtures/packs/vue/` (a pack for a planned language).
+`packs/next/` (framework packs over a supported language), `fixtures/packs/valid/` (the smallest pack, with an
+example-proven rule and a ported one) and `fixtures/packs/vue/` (a pack for a planned language).
 
 ### A pack for a supported language
 
@@ -175,7 +175,7 @@ Add a `README.md` saying what the pack covers, then record the new workspace and
 
 ```sh
 npm install --package-lock-only --ignore-scripts   # packs/* are npm workspaces: package-lock.json lists each
-npx vitest run test/packs.test.ts -t "pack laravel"
+npx vitest run test/engine/catalog/packs.test.ts -t "pack laravel"
 ```
 
 Then add a changeset for the new pack (`minor`, "Add the Laravel pack: …"). Every later change to a pack adds one too;
@@ -196,7 +196,7 @@ The same files, with rules whose `language` the registry lists as `planned` (`vu
 capability their language has `not-supported-yet`. The pack lands: its checks pass, and each such rule's test is
 skipped as `not supported yet` with the engine's reason, for example
 ``/clauses/0/forbid/ast/language: `vue` is not supported yet``. Write its `examples` now; checks 3 and 4 run them
-once core reads the language, and any other compile error fails check 1 today. `test/fixtures/packs/vue/` is a
+once core reads the language, and any other compile error fails check 1 today. `fixtures/packs/vue/` is a
 complete example.
 
 ### A ported pack
@@ -221,5 +221,5 @@ Then score one rule with every false positive and false negative listed, and run
 
 ```sh
 node --import tsx conformance/languages/cli.ts --pack <id> --rule <port id> --fixtures
-npx vitest run test/packs.test.ts -t "pack <id>"
+npx vitest run test/engine/catalog/packs.test.ts -t "pack <id>"
 ```

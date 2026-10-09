@@ -5,7 +5,7 @@ issues). Each is scored against the tool's own findings on the tool's tests, thr
 workspace path, with every disagreement declared in `divergences.json`.
 
 It follows the [pack structure and validation contract](../../docs/pack-format.md): it is checked by
-`npx vitest run test/packs.test.ts -t "pack php"`.
+`npx vitest run test/engine/catalog/packs.test.ts -t "pack php"`.
 
 | Path | What |
 |---|---|

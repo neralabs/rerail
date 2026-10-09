@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, test } from "vitest";
-import type { DaemonState } from "../src/daemon.js";
+import { ENTRY_POINTS } from "../src/engine/index.js";
+import type { DaemonState } from "../src/runtime/index.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 
 describe("Rerail daemon CLI", () => {
@@ -17,7 +18,7 @@ describe("Rerail daemon CLI", () => {
     let child: ChildProcess | undefined;
     try {
       child = spawn(process.execPath, [
-        join(process.cwd(), "dist", "daemon.js"),
+        join(process.cwd(), ENTRY_POINTS.daemon),
         "--dev",
         "--port", "0",
         "--state-file", stateFile,
@@ -43,7 +44,7 @@ describe("Rerail daemon CLI", () => {
       expect(page.headers.get("content-type")).toBe("text/html; charset=utf-8");
       expect(await page.text()).toBe(await readFile(join(process.cwd(), "ui", "index.html"), "utf8"));
       const daemonClosed = once(child, "close");
-      const stop = spawn(process.execPath, [join(process.cwd(), "dist/cli.js"), "daemon", "stop"], {
+      const stop = spawn(process.execPath, [join(process.cwd(), "dist/cli/cli.js"), "daemon", "stop"], {
         env: { ...process.env, RERAIL_HOME: root },
         stdio: "ignore",
       });
@@ -64,7 +65,7 @@ describe("Rerail daemon CLI", () => {
   test("refuses to bind off loopback unless --allow-remote is passed, before spawning anything", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-daemon-cli-"));
     try {
-      const start = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "daemon", "start", "--host", "0.0.0.0", "--port", "0"], {
+      const start = spawn(process.execPath, [join(process.cwd(), "dist", "cli", "cli.js"), "daemon", "start", "--host", "0.0.0.0", "--port", "0"], {
         env: { ...process.env, RERAIL_HOME: root },
         stdio: ["ignore", "ignore", "pipe"],
       });
@@ -92,7 +93,7 @@ describe("Rerail daemon CLI", () => {
       const state = async (...extra: string[]): Promise<string> => {
         const { stdout } = await promisify(execFile)(
           process.execPath,
-          [join(process.cwd(), "dist", "cli.js"), "state", "--repo", workspace, ...extra],
+          [join(process.cwd(), "dist", "cli", "cli.js"), "state", "--repo", workspace, ...extra],
           { env: { ...process.env, RERAIL_HOME: join(root, "home") } },
         );
         return stdout.trim();

@@ -1,21 +1,26 @@
 /**
  * The pack validation contract (docs/pack-format.md, "The validation contract"): checks 1 to 6 over one
- * `packs/<id>/` directory. Test support, not runtime: test/packs.test.ts calls it for every pack, and it reuses the
+ * `packs/<id>/` directory. Test support, not runtime: test/engine/catalog/packs.test.ts calls it for every pack, and it reuses the
  * conformance runner for ported rules, so it lives beside that runner and stays out of the published core.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join, matchesGlob, relative, sep } from "node:path";
 import { z } from "zod";
-import { languageFor } from "../src/code-rule-enforcer.js";
-import { languageNotSupportedOf } from "../src/code-rule-language-support.js";
-import { codeRuleSchema } from "../src/code-rule-schema.js";
-import { parseJsonWithoutDuplicateKeys } from "../src/json-duplicate-keys.js";
-import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../src/native.js";
-import { rulePackFileSchema, rulePackPackageName, rulePackPackageSchema, type RulePackFile } from "../src/rule-packs.js";
-import { compareDeterministicStrings } from "../src/stable-json.js";
+import {
+  languageFor,
+  languageNotSupportedOf,
+  codeRuleSchema,
+  parseJsonWithoutDuplicateKeys,
+  loadNativeBinding,
+  type NativeCompiledCodeRuleDsl,
+  rulePackFileSchema,
+  rulePackPackageName,
+  rulePackPackageSchema,
+  type RulePackFile,
+  compareDeterministicStrings,
+} from "../src/engine/index.js";
 import { CONFORMANCE_FILE, defaultCorpusRoot, loadPack, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
-import { GOLDEN_FORMAT, goldenRules, membershipProblems, parseGoldenManifest, type GoldenManifest } from "./tslint/golden.js";
 import { capabilitiesJson } from "./engine.js";
 
 export const PACK_CHECKS = [
@@ -67,9 +72,9 @@ const UPSTREAM_LICENSE = /\bLicense: ([A-Za-z0-9][A-Za-z0-9.+-]*)/u;
 const UPSTREAM_ROW = /^\|\s*`([^`]+)`/u;
 
 let allowlist: ReadonlySet<string> | undefined;
-/** The repository's licence allowlist, the one `scripts/check-licenses.mjs` enforces. */
+/** The repository's licence allowlist, the one `scripts/check/check-licenses.mjs` enforces. */
 function allowedLicenses(): ReadonlySet<string> {
-  allowlist ??= new Set(z.array(z.string()).parse(JSON.parse(readFileSync(join(RERAIL_ROOT, "scripts", "licence-allowlist.json"), "utf8"))));
+  allowlist ??= new Set(z.array(z.string()).parse(JSON.parse(readFileSync(join(RERAIL_ROOT, "scripts", "check", "licence-allowlist.json"), "utf8"))));
   return allowlist;
 }
 
@@ -192,6 +197,29 @@ function readLicences(directory: string): Licences {
 }
 
 /**
+ * Files Rerail wrote under `upstream/<tool>/` subdirectories (a corpus authored for the tool to score), as the tool's own
+ * `upstream/<tool>/UPSTREAM.md` lists them, pack-relative. A record may list only its tool's files.
+ */
+function readAuthored(directory: string): { authored: Set<string>; failures: string[] } {
+  const authored = new Set<string>();
+  const failures: string[] = [];
+  const upstream = join(directory, "upstream");
+  if (!existsSync(upstream)) return { authored, failures };
+  for (const tool of readdirSync(upstream, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort(compareDeterministicStrings)) {
+    const record = `upstream/${tool}/UPSTREAM.md`;
+    if (!existsSync(join(directory, record))) continue;
+    for (const line of readFileSync(join(directory, record), "utf8").split("\n")) {
+      const file = UPSTREAM_ROW.exec(line)?.[1];
+      if (file === undefined) continue;
+      if (!file.startsWith(`upstream/${tool}/`)) failures.push(`${record} lists ${file}, which is not under upstream/${tool}/`);
+      else if (!existsSync(join(directory, file))) failures.push(`${record} lists ${file}, which does not exist`);
+      else authored.add(file);
+    }
+  }
+  return { authored, failures };
+}
+
+/**
  * Validates `packs/<id>/` against the contract. Check 4 runs the conformance runner (the engine's production workspace
  * path), so a pack that ports rules takes as long as its fixture tier.
  */
@@ -249,23 +277,18 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     }
   }
 
-  // The ported rules, by the document they port. A pack's conformance.json is the conformance runner's pack
-  // (conformance/languages/pack.ts), or, for TSLint, the golden manifest of the TSLint harness (conformance/tslint/golden.ts),
-  // whose upstream tests are fetched at a pinned commit rather than recorded.
+  // The ported rules, by the document they port: the pack's conformance.json, the conformance runner's pack
+  // (conformance/languages/pack.ts).
   const conformancePath = join(directory, CONFORMANCE_FILE);
   let loaded: LoadedPack | undefined;
-  let golden: GoldenManifest | undefined;
   if (existsSync(conformancePath)) {
     try {
-      const text = readFileSync(conformancePath, "utf8");
-      if (z.looseObject({ format: z.literal(GOLDEN_FORMAT) }).safeParse(JSON.parse(text)).success) golden = parseGoldenManifest(text);
-      else loaded = loadPack(directory);
+      loaded = loadPack(directory);
     } catch (error) {
       fail("ports", `${CONFORMANCE_FILE}: ${message(error).replace(`${directory}${sep}`, "")}`);
     }
   }
   const portByDocument = new Map((loaded?.pack.rules ?? []).map(port => [port.policy.replace(/^\.\//u, ""), port]));
-  const goldenDocuments = new Set(Object.keys(golden?.rules ?? {}).map(rule => `rules/${rule}.json`));
 
   // Check 2: proof. Every rule has examples or a port entry.
   // Check 3: examples. A caught example produces a violation of the rule, a passes example none.
@@ -274,7 +297,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     fail("examples", "pack.json does not parse; see check 1");
   } else {
     for (const rule of pack.rules) {
-      if (rule.examples === undefined && !portByDocument.has(rule.document) && !goldenDocuments.has(rule.document)) fail("proof", `${rule.id}: no examples and no port entry in ${CONFORMANCE_FILE}`, rule.id);
+      if (rule.examples === undefined && !portByDocument.has(rule.document)) fail("proof", `${rule.id}: no examples and no port entry in ${CONFORMANCE_FILE}`, rule.id);
       const result = compiled.get(rule.id);
       if (rule.examples === undefined || result?.kind !== "compiled") continue;
       for (const side of ["caught", "passes"] as const) {
@@ -328,9 +351,6 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     }
     for (const capability of report.coverage.uncovered) fail("ports", `capability ${capability}: no ported rule exercises it and it has no exemption`);
   }
-  // TSLint: the golden manifest lists exactly the pack's rules. Its scoring against TSLint's fetched tests is the
-  // golden gate, conformance/tslint/golden-gate.test.ts.
-  if (golden !== undefined) for (const problem of membershipProblems(golden, goldenRules(join(directory, "rules")))) fail("ports", problem);
 
   // Check 5: package. Named for the pack, no dependencies, no validation material published, licence agreeing with
   // what licenses/ records.
@@ -369,14 +389,18 @@ export async function validatePack(directory: string, options: ValidatePackOptio
 
   // Check 6: licences. Every copied file is listed in an UPSTREAM.md, every listed file exists, and every recorded
   // licence is on the repository allowlist. Under upstream/<tool>/, the recordings and the recorder (files directly in
-  // it) are Rerail's; everything in its subdirectories (fixtures/, tests/) is copied from the tool.
+  // it) are Rerail's; everything in its subdirectories (fixtures/, tests/) is copied from the tool, unless the tool's
+  // own upstream/<tool>/UPSTREAM.md lists it as Rerail's.
   for (const failure of licences.failures) fail("licences", failure);
   if (!existsSync(join(directory, "LICENSE"))) fail("licences", "LICENSE is missing");
   for (const [project, licence] of licences.recorded) {
     if (!allowedLicenses().has(licence)) fail("licences", `licenses/${project}/UPSTREAM.md: ${licence} is not on the repository licence allowlist`);
   }
+  const { authored, failures: authoredFailures } = readAuthored(directory);
+  for (const failure of authoredFailures) fail("licences", failure);
   for (const file of filesUnder(directory, join(directory, "upstream"))) {
-    if (file.split("/").length > 3 && !licences.listed.has(file)) fail("licences", `${file} is copied but no licenses/*/UPSTREAM.md lists it`);
+    if (file.split("/").length > 3 && !licences.listed.has(file) && !authored.has(file))
+      fail("licences", `${file} is under upstream/<tool>/ but neither licenses/*/UPSTREAM.md (copied) nor its tool's UPSTREAM.md (Rerail's) lists it`);
   }
   for (const [file, record] of licences.listed) {
     if (!existsSync(join(directory, file))) fail("licences", `${record} lists ${file}, which does not exist`);

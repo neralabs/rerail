@@ -11,7 +11,7 @@ just rerail-playground                  # attended macOS terminal only
 just rerail-playground --install-bridge # also registers this checkout's build with every coding agent
 ```
 
-`just rerail-playground` first runs `node scripts/rerail-dev.mjs up` (what `just rerail-dev`
+`just rerail-playground` first runs `node scripts/dev/rerail-dev.mjs up` (what `just rerail-dev`
 runs), which installs the checkout if needed, builds its native engine and `dist/`, and starts
 this checkout's dev daemon on the host with its own home (`.rerail/dev/home`) and port. It then
 reads that instance from `.rerail/dev/instance.json`, prepares the playground (installs its
@@ -29,7 +29,7 @@ terminal, and read the event trace. The second is the raw protocol socket.
 `RERAIL_UNATTENDED=1` or a non-macOS host exits before anything starts; use `just rerail-dev`
 there. `RERAIL_OMP_EXECUTABLE` may point at an absolute standalone OMP executable for CI or local
 host testing; otherwise the launcher installs the release checksum-pinned to the SDK dependency
-through `scripts/install-omp-host.mjs`. Ctrl-C stops the workers; the dev daemon keeps serving
+through `scripts/host/install-omp-host.mjs`. Ctrl-C stops the workers; the dev daemon keeps serving
 (`just rerail-down` stops it). The launcher never registers harnesses unless asked with
 `--install-bridge`.
 

@@ -10,8 +10,8 @@ import { existsSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { z, ZodError } from "zod";
-import type { RerailDatabase } from "../database.js";
-import { CodeRuleCompileError, EngineUnavailableError } from "../code-rule-compile.js";
+import type { RerailDatabase } from "../engine/storage/database.js";
+import { CodeRuleCompileError, EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
 import {
   normalizeFolder,
   type ApiCaller,
@@ -23,11 +23,11 @@ import {
   type RepositoryStatus,
   type RuleSetting,
   type RuleSettingTargetKind,
-} from "../repository-model.js";
-import { repositoryIdentityLocation } from "../repository-identity.js";
-import { linkAlias, listRepositories, parentCheckouts, type RepositoryListing } from "../repository-registry.js";
-import { checkoutStatus, setCheckoutStarted, setRepositoryStarted } from "../repository-start.js";
-import { addAttachment, listRepositoryRules, recordSetUp, removeAttachment, setRuleSetting } from "../rule-configuration.js";
+} from "../engine/catalog/repository-model.js";
+import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
+import { checkoutStatus, linkAlias, listRepositories, parentCheckouts, type RepositoryListing } from "../engine/catalog/repository-registry.js";
+import { setCheckoutStarted, setRepositoryStarted } from "../runtime/repository-start.js";
+import { addAttachment, listRepositoryRules, recordSetUp, removeAttachment, setRuleSetting } from "../engine/catalog/rule-configuration.js";
 import {
   copyRerailRuleToLibrary,
   getLibraryRule,
@@ -36,10 +36,10 @@ import {
   removeLibraryRule,
   validateLibraryDocument,
   writeLibraryRule,
-} from "../rule-library.js";
-import type { RuleMode } from "../rule-mode.js";
-import { cachedRecommendRulePacks } from "../rule-packs.js";
-import { checkouts, libraryRules, repositories, ruleAttachments, ruleSettings, RULE_KINDS } from "../schema.js";
+} from "../engine/catalog/rule-library.js";
+import type { RuleMode } from "../engine/catalog/rule-mode.js";
+import { cachedRecommendRulePacks } from "../engine/catalog/rule-packs.js";
+import { checkouts, libraryRules, repositories, ruleAttachments, ruleSettings, RULE_KINDS } from "../engine/storage/schema.js";
 import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
 import {
   attachmentRecordSchema,

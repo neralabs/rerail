@@ -2,9 +2,11 @@
 //! UTF-16 code units, and operators folded, in the sense of eslint-utils' `getStaticValue`.
 
 #[rustfmt::skip]
+#[path = "ecma/builtins.generated.rs"]
 pub(crate) mod builtins;
 mod calls;
 mod destructure;
+#[path = "ecma/entities.generated.rs"]
 mod entities;
 pub(crate) mod ops;
 

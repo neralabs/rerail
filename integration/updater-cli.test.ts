@@ -65,11 +65,12 @@ async function createPackageFixture(source: string, root: string, version: strin
   if (!valid) return packageRoot;
 
   const dist = join(packageRoot, "dist");
-  await mkdir(dist);
-  const sourceCli = pathToFileURL(join(source, "dist", "cli.js")).href;
+  await mkdir(join(dist, "cli"), { recursive: true });
+  await mkdir(join(dist, "harness"));
+  const sourceCli = pathToFileURL(join(source, "dist", "cli", "cli.js")).href;
   await Promise.all([
     writeFile(join(dist, "index.js"), "export function nativeHealth() { return { ok: true }; }\n"),
-    writeFile(join(dist, "event-stream.js"), [
+    writeFile(join(dist, "harness", "event-stream.js"), [
       'import { mkdirSync, readFileSync } from "node:fs";',
       'import { join } from "node:path";',
       'const lines = readFileSync(0, "utf8").trimEnd().split("\\n");',
@@ -79,7 +80,7 @@ async function createPackageFixture(source: string, root: string, version: strin
       'process.stdout.write(JSON.stringify({ eventId: request.event.eventId, deliveries: [] }) + "\\n");',
       "",
     ].join("\n")),
-    writeFile(join(dist, "cli.js"), [
+    writeFile(join(dist, "cli", "cli.js"), [
       'import { writeFileSync } from "node:fs";',
       'const managedChildArgument = "--rerail-managed-child";',
       "if (process.argv[2] !== managedChildArgument) process.argv.splice(2, 0, managedChildArgument);",
@@ -157,7 +158,7 @@ describe("Rerail managed launcher", () => {
       RERAIL_LAUNCH_MARKER: marker,
       RERAIL_REJECTED_VERSION: rejectedVersion,
     };
-    const entrypoint = join(launcherRoot, "dist", "cli.js");
+    const entrypoint = join(launcherRoot, "dist", "cli", "cli.js");
 
     const update = await run(["node", entrypoint, "update"], environment);
     expect(update).toMatchObject({ exitCode: 0, stderr: "" });
@@ -204,10 +205,10 @@ describe("Rerail managed launcher", () => {
     })}\n`);
     const environment = { ...process.env, RERAIL_AUTO_UPDATE: "0", RERAIL_HOME: home };
 
-    const status = await run(["node", "dist/cli.js", "update", "status"], environment);
+    const status = await run(["node", "dist/cli/cli.js", "update", "status"], environment);
     expect(status).toMatchObject({ exitCode: 0, stderr: "" });
     expect(status.stdout).toContain(`Current: ${missingVersion}`);
-    const rollback = await run(["node", "dist/cli.js", "update", "rollback"], environment);
+    const rollback = await run(["node", "dist/cli/cli.js", "update", "rollback"], environment);
     expect(rollback).toMatchObject({ exitCode: 0, stderr: "" });
     expect(rollback.stdout).toContain(`Activated Rerail ${manifest.version}`);
   }, 30_000); // Rollback health-checks this checkout: a real start, then a real session.
