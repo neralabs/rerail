@@ -226,6 +226,11 @@ function shellHookTarget(context: Context, command: string, executable: string):
   return hookCommand(recorded, executable) === command || directCommand(recorded, executable) === command ? target : undefined;
 }
 
+/** A node binary as setup records it: `node` or `node.exe`, bare or at any path. */
+function isNodeExecutable(path: string): boolean {
+  return /^node(?:\.exe)?$/iu.test(path.split(/[\\/]/u).at(-1)!);
+}
+
 /** Node and hook script of a generated exec-form entry: `node <dist>/hook-launcher.js <recorded node> <dist>/<hook>`. */
 function execHookTarget(command: string, args: unknown): HookTarget | undefined {
   if (command !== "node" || !Array.isArray(args) || args.length !== 3 || !args.every(arg => typeof arg === "string")) return undefined;
@@ -243,7 +248,7 @@ async function isRerailHookEntry(context: Context, entry: JsonObject, executable
   const target = args === undefined ? shellHookTarget(context, command, executable) : execHookTarget(command, args);
   if (target === undefined) return false;
   const { nodePath, script } = target;
-  if (!/^node(?:\.exe)?$/iu.test(nodePath.split(/[\\/]/u).at(-1)!) || !isAbsolute(script) || basename(script) !== executable) return false;
+  if (!isNodeExecutable(nodePath) || !isAbsolute(script) || basename(script) !== executable) return false;
   return context.mode === "unregister" ? dirname(dirname(script)) === context.root : isReplaceableScript(context, script);
 }
 
@@ -576,7 +581,7 @@ function claudeStatusScript(command: string, platform: NodeJS.Platform): string 
   if (words === null || (words.length !== 2 && words.length !== 3) || words.join(" ") !== command) return undefined;
   const windows = platform === "win32";
   const script = unquoteShellWord(words[1]!, windows);
-  return /^node(?:\.exe)?$/iu.test(unquoteShellWord(words[0]!, windows).split(/[\\/]/u).at(-1)!)
+  return isNodeExecutable(unquoteShellWord(words[0]!, windows))
     && script.split(/[\\/]/u).at(-1) === "claude-status.js" ? script : undefined;
 }
 
@@ -755,12 +760,14 @@ export const RERAIL_MCP_SERVER_NAME = "rerail";
 
 /**
  * A bridge entry another install of this package wrote, or one that is gone (`isReplaceableScript`), under any server
- * name: `<node> <root>/dist/cli.js mcp-bridge`.
+ * name. Only the shape setup writes counts, `<node> <root>/dist/cli.js mcp-bridge`, so a gone entry of another tool
+ * (an `npx` command, or a script outside `dist/`) stays.
  */
 async function isPackageMcpBridge(context: Context, server: unknown): Promise<boolean> {
   if (!isObject(server) || typeof server.command !== "string" || !Array.isArray(server.args) || server.args.length !== 2) return false;
   const [script, command] = server.args as unknown[];
   if (command !== "mcp-bridge" || typeof script !== "string" || !isAbsolute(script) || basename(script) !== "cli.js") return false;
+  if (!isNodeExecutable(server.command) || basename(dirname(script)) !== "dist") return false;
   return await isReplaceableScript(context, script);
 }
 

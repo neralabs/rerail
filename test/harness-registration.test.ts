@@ -1194,6 +1194,24 @@ describe("OMP extensions symlink", () => {
     expect(await readdir(extensions)).toEqual(["foreign"]);
   });
 
+  // An entry whose script is gone, as on an unmounted volume, is replaced only when it has the shape setup writes.
+  it("replaces a gone install's bridge and keeps a gone entry that does not run node on a dist/cli.js", async () => {
+    const { home, root, nodePath } = await fixture();
+    const gone = join(dirname(home), "deleted-home", "current");
+    const unmounted = join(dirname(home), "unmounted-volume", "tool");
+    const path = join(home, ".omp", "agent", "mcp.json");
+    const binTool = { command: "/old/node", args: [join(unmounted, "bin", "cli.js"), "mcp-bridge"] };
+    const npxTool = { command: "npx", args: [join(unmounted, "dist", "cli.js"), "mcp-bridge"] };
+    await seed(path, {
+      mcpServers: { previous: { command: "/old/node", args: [join(gone, "dist", "cli.js"), "mcp-bridge"] }, binTool, npxTool },
+    });
+
+    await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] });
+    expect(await readJson(path)).toEqual({
+      mcpServers: { binTool, npxTool, rerail: { command: nodePath, args: [join(root, "dist", "cli.js"), "mcp-bridge"] } },
+    });
+  });
+
   it("creates the user mcp.json when absent and leaves an empty file alone on unregister", async () => {
     const { home, root, nodePath } = await fixture();
     const path = join(home, ".omp", "agent", "mcp.json");
