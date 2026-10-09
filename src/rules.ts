@@ -1,7 +1,8 @@
 import { z } from "zod";
-import { CodeRuleCompileError, EngineUnavailableError, storableCodeRule } from "./code-rule-compile.js";
+import { CodeRuleCompileError, EngineUnavailableError, NOT_JSON_REPRESENTABLE, storableCodeRule } from "./code-rule-compile.js";
 import type { LANGUAGE_NOT_SUPPORTED } from "./code-rule-language-support.js";
 import { codeRuleSchema, type CodeRule } from "./code-rule-schema.js";
+import { stableJsonText } from "./stable-json.js";
 
 /**
  * `@neralabs/rerail/rules`: whether a code-rule document is one Rerail stores, checked exactly as its own writes check
@@ -18,6 +19,8 @@ export type CodeRuleValidation =
 
 /** Schema, then the engine compile the live catalog uses. Throws EngineUnavailableError only. */
 export function validateCodeRule(input: unknown): CodeRuleValidation {
+  // The schema's recursive preprocessing would overflow on a cycle before it reports an issue.
+  if (stableJsonText(input) === undefined) return { ok: false, code: "invalid-rule", reason: NOT_JSON_REPRESENTABLE };
   try {
     return { ok: true, ...storableCodeRule(input) };
   } catch (error) {

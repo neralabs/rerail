@@ -44,4 +44,10 @@ describe("validateCodeRule", () => {
       reason: "/clauses/0/violation/message: `$TYPO` names no capture; the query binds no captures; write `\\$TYPO` for literal text",
     });
   });
+
+  it("refuses a document that is not JSON, without throwing", () => {
+    const rule: Record<string, unknown> = astRule("python");
+    rule.self = rule;
+    expect(validateCodeRule(rule)).toEqual({ ok: false, code: "invalid-rule", reason: "the document is not JSON representable" });
+  });
 });
