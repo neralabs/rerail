@@ -1,0 +1,182 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint:no-misused-new",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of typescript-eslint's `no-misused-new` rule (https://typescript-eslint.io/rules/no-misused-new). Reports a bodiless class method `new` returning its own class, an interface construct signature returning its own interface, and a `constructor` method signature in an interface or type literal.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "class-method-new",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "method_signature",
+            "all": [
+              {
+                "has": {
+                  "kind": "property_identifier",
+                  "regex": "^new$",
+                  "stopBy": "neighbor"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "class_body",
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "class_declaration"
+                      },
+                      {
+                        "kind": "abstract_class_declaration"
+                      },
+                      {
+                        "kind": "class"
+                      }
+                    ],
+                    "has": {
+                      "kind": "type_identifier",
+                      "pattern": "$NAME",
+                      "stopBy": "neighbor"
+                    },
+                    "stopBy": "neighbor"
+                  },
+                  "stopBy": "neighbor"
+                }
+              },
+              {
+                "has": {
+                  "kind": "type_annotation",
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "type_identifier",
+                        "pattern": "$NAME"
+                      },
+                      {
+                        "kind": "generic_type",
+                        "has": {
+                          "kind": "type_identifier",
+                          "pattern": "$NAME",
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ],
+                    "stopBy": "neighbor"
+                  },
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-misused-new",
+        "message": "Class cannot have method named `new`."
+      }
+    },
+    {
+      "id": "interface-construct-signature",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "construct_signature",
+            "all": [
+              {
+                "inside": {
+                  "kind": "interface_body",
+                  "inside": {
+                    "kind": "interface_declaration",
+                    "has": {
+                      "kind": "type_identifier",
+                      "pattern": "$NAME",
+                      "stopBy": "neighbor"
+                    },
+                    "stopBy": "neighbor"
+                  },
+                  "stopBy": "neighbor"
+                }
+              },
+              {
+                "has": {
+                  "kind": "type_annotation",
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "type_identifier",
+                        "pattern": "$NAME"
+                      },
+                      {
+                        "kind": "generic_type",
+                        "has": {
+                          "kind": "type_identifier",
+                          "pattern": "$NAME",
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ],
+                    "stopBy": "neighbor"
+                  },
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-misused-new",
+        "message": "Interfaces cannot be constructed, only classes."
+      }
+    },
+    {
+      "id": "interface-constructor",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "method_signature",
+            "all": [
+              {
+                "has": {
+                  "kind": "property_identifier",
+                  "regex": "^constructor$",
+                  "stopBy": "neighbor"
+                }
+              },
+              {
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "interface_body"
+                    },
+                    {
+                      "kind": "object_type"
+                    }
+                  ],
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-misused-new",
+        "message": "Interfaces cannot be constructed, only classes."
+      }
+    }
+  ]
+}

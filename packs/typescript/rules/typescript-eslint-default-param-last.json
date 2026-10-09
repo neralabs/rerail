@@ -1,0 +1,55 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint:default-param-last",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of typescript-eslint's `default-param-last` rule (https://typescript-eslint.io/rules/default-param-last), identical to the ESLint base port. Reports a defaulted or optional parameter of a function with a body that is followed by a required, non-rest parameter.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "default-param-not-last",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "utils": {
+            "defaulted": {
+              "any": [
+                { "kind": "optional_parameter" },
+                { "kind": "required_parameter", "has": { "regex": "^=$", "stopBy": "neighbor" } }
+              ]
+            },
+            "plain": {
+              "kind": "required_parameter",
+              "not": {
+                "any": [
+                  { "has": { "regex": "^=$", "stopBy": "neighbor" } },
+                  { "has": { "kind": "rest_pattern", "stopBy": "neighbor" } }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "matches": "defaulted",
+            "precedes": { "matches": "plain", "stopBy": "end" },
+            "inside": {
+              "kind": "formal_parameters",
+              "stopBy": "neighbor",
+              "inside": {
+                "any": [
+                  { "kind": "function_declaration" },
+                  { "kind": "function_expression" },
+                  { "kind": "generator_function_declaration" },
+                  { "kind": "generator_function" },
+                  { "kind": "arrow_function" },
+                  { "kind": "method_definition" }
+                ],
+                "stopBy": "neighbor"
+              }
+            }
+          }
+        }
+      },
+      "violation": { "anchor": "witness.span", "code": "@typescript-eslint/default-param-last", "message": "Default parameters should be last." }
+    }
+  ]
+}
