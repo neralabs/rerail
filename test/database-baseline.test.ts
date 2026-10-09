@@ -182,6 +182,27 @@ describe("the baseline schema", () => {
     }
   });
 
+  it("refuses a rule kind other than code or conversation in the library tables", async () => {
+    const path = await temporaryDatabase();
+    openRerailDatabase(path).$client.close();
+    const database = new Database(path);
+    try {
+      database.exec(`
+        INSERT INTO rule_catalog_identities (rule_id, kind) VALUES ('rule', 'code');
+        INSERT INTO library_rules (rule_id, kind, document_json, revision, payload_hash, created_at, updated_at)
+        VALUES ('rule', 'code', '{}', 1, 'digest', 0, 0);
+      `);
+      for (const table of ["library_rules", "rule_catalog_identities"]) {
+        // The code rule kind's legacy kind name, the likeliest bad value.
+        expect(() => database.exec(`UPDATE ${table} SET kind = 'file'`)).toThrow(`CHECK constraint failed: ${table}_kind`);
+      }
+      expect(database.prepare("SELECT kind FROM library_rules UNION ALL SELECT kind FROM rule_catalog_identities").pluck().all())
+        .toEqual(["code", "code"]);
+    } finally {
+      database.close();
+    }
+  });
+
   it("reads a missing file lazily as nothing yet, and never creates it", async () => {
     const path = await temporaryDatabase();
     const lazy = new LazyReadonlyRerailDatabase(path);

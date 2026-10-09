@@ -238,7 +238,7 @@ apart. It opens the file, and:
   repositories, the rules stored there are not shown: they are in a table this
   release does not read;
 - from a later development build, which stores code rules as `file`, those
-  rules are quarantined.
+  rules are quarantined with the reason `unknown rule kind file`.
 
 The old tables also keep the checks they were created with, not this
 release's. Move such a file aside before you start this release. An export

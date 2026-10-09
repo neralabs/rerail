@@ -145,10 +145,14 @@ export const rules = sqliteTable(
 );
 
 /** One logical rule id has one evaluation kind across every owner. */
-export const ruleCatalogIdentities = sqliteTable("rule_catalog_identities", {
-  ruleId: text("rule_id").primaryKey(),
-  kind: text("kind", { enum: RULE_KINDS }).notNull(),
-});
+export const ruleCatalogIdentities = sqliteTable(
+  "rule_catalog_identities",
+  {
+    ruleId: text("rule_id").primaryKey(),
+    kind: text("kind", { enum: RULE_KINDS }).notNull(),
+  },
+  table => [check("rule_catalog_identities_kind", sql`${table.kind} IN (${sql.raw(inList(RULE_KINDS))})`)],
+);
 
 /**
  * A repository Rerail knows on this machine. The key is `remote:<host>/<path>` from the normalised
@@ -246,7 +250,10 @@ export const libraryRules = sqliteTable(
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  table => [check("library_rules_revision", sql`${table.revision} > 0`)],
+  table => [
+    check("library_rules_kind", sql`${table.kind} IN (${sql.raw(inList(RULE_KINDS))})`),
+    check("library_rules_revision", sql`${table.revision} > 0`),
+  ],
 );
 
 /**

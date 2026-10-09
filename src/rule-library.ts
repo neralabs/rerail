@@ -2,9 +2,9 @@
  * The rule library: rules people wrote ("Created by you"), stored once per machine and added to
  * repositories by attachments. A library rule can't take a By Rerail rule's id, and one id keeps one kind.
  */
-import { and, asc, eq, or } from "drizzle-orm";
+import { and, asc, eq, notInArray, or } from "drizzle-orm";
 import type { RerailDatabase } from "./database.js";
-import { readStoredCodeRule, type QuarantinedRule } from "./rule-quarantine.js";
+import { readStoredCodeRule, unknownRuleKind, type QuarantinedRule } from "./rule-quarantine.js";
 import { assertCodeRuleStorable } from "./code-rule-compile.js";
 import { codeRuleSchema } from "./code-rule-schema.js";
 import type { BundledCatalog, LibraryRule, RepositoryKey } from "./repository-model.js";
@@ -16,6 +16,7 @@ import {
   ruleAttachments,
   ruleCatalogIdentities,
   ruleSettings,
+  RULE_KINDS,
   type RuleKind,
 } from "./schema.js";
 import { ruleDocumentDigest } from "./stable-json.js";
@@ -69,6 +70,12 @@ export function writeLibraryRule(db: Queries, bundle: BundledCatalog, document: 
   if (bundle.documents.has(id) && existing === undefined && options.shadowBundled !== true) {
     throw new Error(`rule ${id} is a By Rerail rule id; give your rule another id`);
   }
+  // A database from before the library table can hold an id's kind with no library row; one of a kind this build
+  // does not know (the code rule kind's old name) locks nothing, since no remove could clear it.
+  if (existing === undefined) {
+    db.delete(ruleCatalogIdentities)
+      .where(and(eq(ruleCatalogIdentities.ruleId, id), notInArray(ruleCatalogIdentities.kind, [...RULE_KINDS]))).run();
+  }
   db.insert(ruleCatalogIdentities).values({ ruleId: id, kind: document.kind }).onConflictDoNothing().run();
   const identity = db.select().from(ruleCatalogIdentities).where(eq(ruleCatalogIdentities.ruleId, id)).get();
   if (identity?.kind !== document.kind) {
@@ -113,12 +120,14 @@ export function upsertLibraryRule(
   }, { behavior: "immediate" });
 }
 
-/** A stored row read and validated; a row that fails validation is quarantined, never thrown. */
+/** A stored row read and validated; a row that fails validation, or whose kind is unknown, is quarantined, never thrown. */
 export function readLibraryRow(row: LibraryRow): { ok: true; rule: LibraryRule } | { ok: false; quarantined: QuarantinedRule } {
-  const quarantine = (reason: string) => ({
+  const quarantine = (reason: string, kind: RuleKind = row.kind) => ({
     ok: false as const,
-    quarantined: { ruleId: row.ruleId, kind: row.kind, owner: LIBRARY_OWNER, reason },
+    quarantined: { ruleId: row.ruleId, kind, owner: LIBRARY_OWNER, reason },
   });
+  const unknown = unknownRuleKind(row.kind, row.document);
+  if (unknown !== undefined) return quarantine(unknown.reason, unknown.kind);
   let document: RuleDocument;
   if (row.kind === "code") {
     const read = readStoredCodeRule(row.document.rule);

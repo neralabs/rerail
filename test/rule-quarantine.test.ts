@@ -3,10 +3,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sql } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
+import { createRerailApi } from "../src/api/http.js";
+import { operations } from "../src/api/operations.js";
+import { DatabaseApiStores } from "../src/api/stores.js";
+import { loadBundledCatalog } from "../src/bundled-rules.js";
 import { openRerailDatabase } from "../src/database.js";
 import { codeRuleSchema, type CodeRule } from "../src/code-rule-schema.js";
+import { listLibraryRules, quarantinedLibraryRules, removeLibraryRule, upsertLibraryRule } from "../src/rule-library.js";
 import { SqliteRuleStore } from "../src/rule-store.js";
 import { readStoredCodeRule } from "../src/rule-quarantine.js";
+import { libraryRules, ruleCatalogIdentities } from "../src/schema.js";
+import { conversation } from "./support/rule-configuration-fixture.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -87,6 +94,92 @@ describe("reading stored rows", () => {
       expect(reopened.quarantined()).toMatchObject([{ ruleId: "broken", kind: "code", owner: "repository" }]);
     } finally {
       reopened.close();
+    }
+  });
+});
+
+describe("a stored library row with an unknown rule kind", () => {
+  // A database written before the kind checks can hold any kind, since the DDL does not add a check to a table that
+  // already exists; the check is set aside here to write one.
+  it("is quarantined as an unknown rule kind, under a kind the library_rules_list contract allows, and every other rule still loads", async () => {
+    const path = join(await temporaryRoot(), "rerail.sqlite");
+    const stores = new DatabaseApiStores(path, {
+      health: () => ({ pid: process.pid, database: { path, exists: true }, native: { ok: true } }),
+      origin: () => "http://127.0.0.1:4737",
+    });
+    try {
+      const database = stores.database();
+      const bundle = loadBundledCatalog();
+      for (const id of ["kept", "code-file", "all-file"]) upsertLibraryRule(database, bundle, cleanRule(id), "code");
+      upsertLibraryRule(database, bundle, conversation("conversation-file"), "conversation");
+      database.run(sql`PRAGMA ignore_check_constraints = ON`);
+      // The code rule kind's legacy kind name; all-file's stored document records it too.
+      database.run(sql`UPDATE library_rules SET kind = 'file' WHERE rule_id IN ('code-file', 'all-file', 'conversation-file')`);
+      database.run(sql`UPDATE library_rules SET document_json = json_set(document_json, '$.kind', kind) WHERE rule_id = 'all-file'`);
+      database.run(sql`PRAGMA ignore_check_constraints = OFF`);
+      const response = await createRerailApi(stores, operations, { version: "0.0.0-test" }).request("/api/library-rules");
+      const listed: unknown = await response.json();
+      const contract = operations.find(operation => operation.id === "library_rules_list")!.output;
+      const reason = "unknown rule kind file";
+      expect({
+        status: response.status,
+        rules: listLibraryRules(database).map(rule => rule.document.rule.id),
+        quarantined: quarantinedLibraryRules(database),
+        contractIssues: contract.safeParse(listed).error?.issues ?? [],
+      }).toEqual({
+        status: 200,
+        rules: ["kept"],
+        quarantined: [
+          { ruleId: "all-file", kind: "code", owner: "library", reason },
+          { ruleId: "code-file", kind: "code", owner: "library", reason },
+          { ruleId: "conversation-file", kind: "conversation", owner: "library", reason },
+        ],
+        contractIssues: [],
+      });
+    } finally {
+      stores.close();
+    }
+  });
+});
+
+describe("a rule id's stored kind", () => {
+  // A database from before the library table keeps rule ids' kinds with no library row; the check is set aside here
+  // to write the code rule kind's old name.
+  it("binds no id when it has an unknown kind and no library row, and a known kind or a library row still binds it", async () => {
+    const database = openRerailDatabase(join(await temporaryRoot(), "rerail.sqlite"));
+    try {
+      const bundle = loadBundledCatalog();
+      upsertLibraryRule(database, bundle, cleanRule("stored-file"), "code");
+      database.run(sql`PRAGMA ignore_check_constraints = ON`);
+      // The code rule kind's legacy kind name with no library row, and a known kind with none.
+      database.run(sql`INSERT INTO rule_catalog_identities (rule_id, kind) VALUES ('orphan-file', 'file'), ('orphan-conversation', 'conversation')`);
+      for (const table of [libraryRules, ruleCatalogIdentities]) {
+        // The legacy kind name on both of stored-file's rows.
+        database.run(sql`UPDATE ${table} SET kind = 'file' WHERE rule_id = 'stored-file'`);
+      }
+      database.run(sql`PRAGMA ignore_check_constraints = OFF`);
+
+      upsertLibraryRule(database, bundle, cleanRule("orphan-file"), "code");
+      expect(() => upsertLibraryRule(database, bundle, cleanRule("orphan-conversation"), "code"))
+        .toThrow("rule orphan-conversation exists with kind conversation; remove it before storing code");
+      expect(() => upsertLibraryRule(database, bundle, cleanRule("stored-file"), "code"))
+        .toThrow("rule stored-file exists with kind file; remove it before storing code");
+      expect(removeLibraryRule(database, "stored-file")).toBe(true);
+      upsertLibraryRule(database, bundle, cleanRule("stored-file"), "code");
+
+      expect({
+        kinds: database.$client.prepare("SELECT rule_id, kind FROM rule_catalog_identities ORDER BY rule_id").all(),
+        rules: listLibraryRules(database).map(rule => rule.document.rule.id),
+      }).toEqual({
+        kinds: [
+          { rule_id: "orphan-conversation", kind: "conversation" },
+          { rule_id: "orphan-file", kind: "code" },
+          { rule_id: "stored-file", kind: "code" },
+        ],
+        rules: ["orphan-file", "stored-file"],
+      });
+    } finally {
+      database.$client.close();
     }
   });
 });
