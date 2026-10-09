@@ -5,6 +5,9 @@ use super::ast_rule::{compile_ast_rule, validate_ast_rule};
 use super::parse::{capture_name, compile_sub_rule, validate_sub_rule};
 use super::utils::{UtilIds, UtilScope};
 use crate::code_rule_dsl::json::{invalid, non_empty_str, object, reject_unknown};
+use crate::code_rule_dsl::language::adapter::{
+    Adapter, FormatArgFeature, FormatArgRules, gate, with_adapter,
+};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::matcher::Semantic;
 use crate::code_rule_dsl::matcher::{
@@ -29,33 +32,14 @@ fn style(value: &Value, path: &str) -> Result<Style> {
     }
 }
 
-/// Why a family does not read a style's format calls: the style is another family's.
-fn foreign_style(family: Family, style: Style) -> Option<&'static str> {
-    match (family, style) {
-        (Family::Python, Style::Brace | Style::Percent)
-        | (Family::Php, Style::Printf | Style::Scanf)
-        // Blade's format calls are those of the PHP its template embeds (`blade::view`).
-        | (Family::Blade, Style::Printf | Style::Scanf) => None,
-        (Family::Python, Style::Printf) => Some(
-            "`printf` reads PHP's printf-family calls; Python's printf formats are style `percent`",
-        ),
-        (Family::Python, Style::Scanf) => {
-            Some("`scanf` reads PHP's sscanf and fscanf calls; Python has no scanf formats")
-        }
-        (Family::Php, Style::Percent) => Some(
-            "`percent` reads Python's `%` formats; PHP's printf-family calls are style `printf`",
-        ),
-        (Family::Php, Style::Brace) => Some(
-            "`brace` reads Python's `str.format` calls; PHP has no such templates (its printf-family calls are style `printf`)",
-        ),
-        (Family::Blade, Style::Percent) => Some(
-            "`percent` reads Python's `%` formats; blade embeds PHP, whose printf-family calls are style `printf`",
-        ),
-        (Family::Blade, Style::Brace) => Some(
-            "`brace` reads Python's `str.format` calls; blade embeds PHP, which has no such templates (its printf-family calls are style `printf`)",
-        ),
-        (Family::Ecma, _) => Some("formatArgs reads Python and PHP format calls"),
-    }
+/// Whether `A`'s format strings follow their bindings (`FormatArgRules::FOLLOWS_STRINGS`), once
+/// `A` reads `style`'s format calls.
+fn follows_strings<A: Adapter>(path: &str, style: Style) -> Result<bool> {
+    gate(
+        &format!("{path}/style"),
+        <A::FormatArgs as FormatArgRules>::feature(FormatArgFeature::Style(style)),
+    )?;
+    Ok(<A::FormatArgs as FormatArgRules>::FOLLOWS_STRINGS)
 }
 
 /// The grammar-independent checks of a `formatArgs` object.
@@ -102,9 +86,7 @@ pub(super) fn compile_format_args(
     utils: &UtilScope,
 ) -> Result<AstMatcher> {
     let style = style(value, path)?;
-    if let Some(reason) = foreign_style(Family::of(language), style) {
-        return Err(invalid(format!("{path}/style: {reason}")));
-    }
+    let follows = with_adapter!(Family::of(language), A => follows_strings::<A>(path, style))?;
     let unused = value
         .get("unused")
         .map(|unused| compile_ast_rule(unused, language, &format!("{path}/unused"), gaps, utils))
@@ -136,14 +118,8 @@ pub(super) fn compile_format_args(
             .unwrap_or_default()
             .to_owned()
     };
-    // PHP's formats (and those of the PHP a Blade template embeds) are read as PHPStan reads a
-    // constant string: through concatenation, casts and the one binding that reaches a variable.
-    let reading = match Family::of(language) {
-        Family::Php | Family::Blade => {
-            Some(Reading::new(language, utils.options.clone(), utils.python.clone()).following())
-        }
-        Family::Python | Family::Ecma => None,
-    };
+    let reading = follows
+        .then(|| Reading::new(language, utils.options.clone(), utils.python.clone()).following());
     Ok(AstMatcher::Semantic(Semantic::FormatArgs(Box::new(
         FormatArgs {
             style,
