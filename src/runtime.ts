@@ -14,21 +14,21 @@ import {
 import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState } from "./host-runtime.js";
 import { autostartDaemon } from "./daemon-control.js";
 import { CodeRuleBridge, generatedEditPaths, type SourceObservationCache } from "./code-rule-bridge.js";
-import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
-import type { CodeRuleAuditor, AuditSettings, RuleSteerDelivery } from "./code-rule.js";
+import type { CodeRuleAuditor, AuditSettings, RuleSteerDelivery, RepositoryAuditHooks } from "./code-rule.js";
 import type { AuditRecorder, AuditRecord } from "./audit.js";
 import { SqliteAuditStore } from "./audit-store.js";
 import { DEFAULT_AUDIT_SETTINGS, SqliteAuditControlStore, type PolicyOwnerClaim } from "./audit-control.js";
-import { bootstrapCodeRuleDslCatalog, type CodeRuleDslCatalog } from "./code-rule-dsl-catalog.js";
-import { loadBundledRules } from "./rule-bootstrap.js";
+import { CheckoutCatalogs, configurationSignatureOf, startingCheckout } from "./code-rule-dsl-catalog.js";
+import { realpathSync } from "node:fs";
+import { CheckoutOwners } from "./checkout-owner.js";
+import { CheckoutCodeRuleRouter } from "./checkout-code-rule-router.js";
 import { defaultRerailDatabasePath } from "./database.js";
-import { resolveRepositoryContext, ScopedRuleCatalog, type RepositoryContext } from "./scoped-rule-catalog.js";
-import { contextStartState, RepositoryStartWatch } from "./repository-start.js";
+import { lookupCheckout, recordCheckout } from "./repository-registry.js";
+import { RepositoryStartWatch } from "./repository-start.js";
 import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "./semantic-primitives.js";
 import { ConversationRuleRegistry, type RuleMatch } from "./registry.js";
 import { LiveConversationRules } from "./conversation-rule-sync.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "./rule-schema.js";
-import { conversationRuleLoader } from "./rule-sources.js";
 import { RULE_MODES } from "./rule-mode.js";
 import { restorableRule, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
@@ -50,13 +50,6 @@ import type {
   WatermarkSnapshot,
   WatermarkStore,
 } from "./semantic-types.js";
-
-const RULE_DIRECTORIES: Readonly<Partial<Record<RerailHost, string>>> = {
-  "claude-code": ".claude",
-  cursor: ".cursor",
-  omp: ".omp",
-  pi: ".pi",
-};
 
 function assertEventHost(host: RerailHost): void {
   if (Object.hasOwn(ADAPTER_CAPABILITIES, host)) return;
@@ -290,8 +283,18 @@ interface PendingSteer {
   scope: string[];
 }
 
+/** The checkout a session started in (physical root), the session folder relative to it, and that folder resolved once. */
+interface StartingCheckout {
+  root: string;
+  folder: string;
+  /** The session's folder, resolved once at open; every later use reads this, never the folder name again. */
+  cwd: string;
+}
+
 interface RuntimeSessionState {
   descriptor: AdapterSession;
+  /** Decides the session's conversation rules, coverage and repository attribution. */
+  checkout: StartingCheckout;
   startedAt: number;
   processed: Set<string>;
   source: MutableContentSource;
@@ -413,9 +416,13 @@ export interface RerailRuntimeOptions {
   modelPath?: string;
   /** Defaults to `$RERAIL_HOME/rerail.sqlite`, which holds the rules and every repository's history. */
   databasePath?: string;
-  /** Checkout root and stable repository identity used to resolve project rules. */
+  /** The folder whose start state gates this runtime (`startGate`); each session's own folder decides its rules. */
   workspaceRoot: string;
-  repositoryContext?: RepositoryContext;
+  /**
+   * False for callers without the daemon token: their sessions only attach to checkouts already recorded, and
+   * nothing is recorded, set up or imported for them. Defaults to true.
+   */
+  trusted?: boolean;
   auditSettings?: AuditSettings;
   /** Delivers a completed background code-rule result without waiting for another host event. */
   deliverBackground?: (delivery: AdapterDelivery) => Promise<void> | void;
@@ -443,12 +450,13 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #sessionStore: SqliteSessionStore;
   readonly #audits: SqliteAuditStore;
   readonly #steersInFlight = new Set<Promise<AdapterDelivery | undefined>>();
-  readonly #codeRuleCatalog: CodeRuleDslCatalog;
-  readonly #ruleCatalog: ScopedRuleCatalog;
-  /** Attribution for every session this runtime records, kept past disposal for late receipts. */
-  readonly #repositoryId: string;
+  /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
+  readonly #catalogs: CheckoutCatalogs;
+  readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
+  readonly #trusted: boolean;
   readonly #sessions = new Map<string, RuntimeSessionState>();
-  readonly #closedSessions = new Map<string, { descriptor: AdapterSession; startedAt: number; endedAt: number }>();
+  /** Kept past disposal for late receipts, with the repository each session was attributed to. */
+  readonly #closedSessions = new Map<string, { descriptor: AdapterSession; startedAt: number; endedAt: number; repositoryKey: string | null }>();
   #sessionStoreClosed = false;
   readonly #routers = new Map<RerailHost, RerailHostRuntime>();
   readonly #nativeSession: RerailRuntimeOptions["nativeSession"];
@@ -471,40 +479,32 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#beforeSessionPublish = options.beforeSessionPublish;
     this.#auditSettings = { ...DEFAULT_AUDIT_SETTINGS, ...options.auditSettings };
     this.#autostart = options.autostart ?? true;
-    this.#createAuditor = options.createAuditor ?? ((auditorOptions) => new NativeCodeRuleEnforcer(
-      this.#codeRuleCatalog,
-      auditorOptions,
-    ));
+    this.#trusted = options.trusted ?? true;
+    this.#createAuditor = options.createAuditor ?? ((auditorOptions) => new CheckoutCodeRuleRouter({
+      ...auditorOptions,
+      // `workspaceRoot` is the session folder `openSession` resolved once.
+      sessionRoot: auditorOptions.workspaceRoot,
+      startingCheckout: startingCheckout(this.#owners, auditorOptions.workspaceRoot).checkoutRoot,
+      owners: this.#owners,
+      catalogs: this.#catalogs,
+    }));
     if (options.embedder !== undefined) this.#embedder = options.embedder;
     else if (options.modelPath !== undefined) this.#embedder = new NativeSemanticEmbedder(options.modelPath);
     else throw new Error("RerailRuntime requires embedder or modelPath");
     const databasePath = options.databasePath ?? defaultRerailDatabasePath();
     const workspaceRoot = resolve(options.workspaceRoot);
+    let catalogs: CheckoutCatalogs | undefined;
     let sessionStore: SqliteSessionStore | undefined;
     let audits: SqliteAuditStore | undefined;
     let controls: SqliteAuditControlStore | undefined;
-    let ruleCatalog: ScopedRuleCatalog | undefined;
-    let codeRuleCatalog: CodeRuleDslCatalog | undefined;
     let startWatch: RepositoryStartWatch | undefined;
     try {
-      const catalog = ScopedRuleCatalog.open(
-        databasePath,
-        options.repositoryContext ?? resolveRepositoryContext(workspaceRoot),
-      );
-      ruleCatalog = catalog;
-      // Bundled rules arrive only where Rerail is started; `rerail start` seeds a new repository.
-      if (contextStartState(catalog.path, catalog.context()) === "started") catalog.seed(loadBundledRules());
-      startWatch = options.startGate === true ? new RepositoryStartWatch(catalog.path, catalog.context()) : undefined;
-      codeRuleCatalog = bootstrapCodeRuleDslCatalog({
-        databasePath: catalog.path, store: catalog,
-        onRefresh: () => { for (const sessionId of this.#sessions.keys()) this.recordRuleCoverage(sessionId); },
-      });
-      this.#repositoryId = catalog.context().repositoryId;
-      sessionStore = new SqliteSessionStore(databasePath, { repositoryId: this.#repositoryId });
+      catalogs = new CheckoutCatalogs(databasePath);
+      startWatch = options.startGate === true ? new RepositoryStartWatch(databasePath, workspaceRoot) : undefined;
+      sessionStore = new SqliteSessionStore(databasePath);
       audits = new SqliteAuditStore(databasePath);
       controls = new SqliteAuditControlStore(databasePath);
-      this.#ruleCatalog = catalog;
-      this.#codeRuleCatalog = codeRuleCatalog;
+      this.#catalogs = catalogs;
       this.#sessionStore = sessionStore;
       this.#audits = audits;
       this.#controls = controls;
@@ -514,8 +514,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       audits?.close();
       controls?.close();
       startWatch?.close();
-      if (codeRuleCatalog !== undefined) codeRuleCatalog.close();
-      else ruleCatalog?.close();
+      catalogs?.close();
       throw error;
     }
     this.#controlTimer = setInterval(() => {
@@ -711,13 +710,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const descriptor = state?.descriptor ?? closed?.descriptor;
     if (descriptor === undefined) throw new Error(`Unknown session: ${sessionId}`);
     // An awaited native send may finish after switching/disposal; its receipt still belongs to this session.
-    const sessionStore = this.#sessionStoreClosed
-      ? new SqliteSessionStore(this.#sessionStore.path, { repositoryId: this.#repositoryId })
-      : this.#sessionStore;
+    const sessionStore = this.#sessionStoreClosed ? new SqliteSessionStore(this.#sessionStore.path) : this.#sessionStore;
     try {
       sessionStore.recordSteer(descriptor, receiptId, ruleIds, {
         startedAt: state?.startedAt ?? closed!.startedAt,
         endedAt: closed?.endedAt ?? null,
+        repositoryKey: state === undefined ? closed!.repositoryKey : this.#repositoryKey(state.checkout),
       });
     } finally {
       if (this.#sessionStoreClosed) sessionStore.close();
@@ -730,16 +728,28 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // Unpublished sessions have no session row yet; the session-start ingest records coverage once they do.
     if (state === undefined || state.closed || state.ownerClaim === undefined) return;
     try {
+      const { root } = state.checkout;
+      const repositoryId = this.#repositoryKey(state.checkout);
+      if (repositoryId === null) return;
+      const catalog = this.#catalogs.catalog(root);
+      const loaded = catalog.status.sourceSignature;
+      // Current only while the file and conversation rules were loaded from the same configuration.
+      const synchronized = state.ruleSync === undefined || state.ruleSync.sourceSignature === loaded;
       this.#sessionStore.recordRuleCoverage(state.descriptor, {
-        repositoryId: this.#ruleCatalog.context().repositoryId,
-        activeRuleCount: (state.registry?.count ?? 0) + this.#codeRuleCatalog.status.ruleCount,
-        conversationRuleSignature: state.ruleSync?.sourceSignature ?? "",
-        fileRuleSignature: this.#codeRuleCatalog.status.sourceSignature,
+        repositoryId,
+        ownerCheckoutPaths: this.#catalogs.ownerCheckoutPaths(root),
+        activeRuleCount: (state.registry?.count ?? 0) + catalog.status.ruleCount,
+        ruleSignature: (synchronized ? configurationSignatureOf(loaded) : undefined) ?? "",
       });
     } catch (error) {
       console.error("rerail rule coverage:", error);
     }
   }
+
+  #repositoryKey(checkout: StartingCheckout): string | null {
+    return this.#catalogs.checkout(checkout.root)?.repositoryKey ?? null;
+  }
+
   async dispose(): Promise<void> {
     clearInterval(this.#controlTimer);
     await Promise.all([...this.#sessions.keys()].map(sessionId => this.closeSession(sessionId)));
@@ -748,7 +758,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#audits.close();
     this.#sessionStore.close();
     this.#sessionStoreClosed = true;
-    this.#codeRuleCatalog.close();
+    this.#catalogs.close();
     this.#startWatch?.close();
   }
 
@@ -770,12 +780,14 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       await appendJsonLine(ledgerPath, { type: "hud-tracking-start" }, appendState);
     }
     const processed = processedEventIds(ledger);
-    const { registry, turn, ruleSync } = this.#restoreRegistry(session, ledger);
+    const checkout = this.#startingCheckout(session);
+    const { registry, turn, ruleSync } = await this.#restoreRegistry(session, ledger, checkout);
     const items = ledger.flatMap((entry) => (entry.type === "sample" ? [entry.item] : []));
     const source = new MutableContentSource(items);
     const watermarks = await JsonlWatermarkStore.open(join(directory, "watermarks.jsonl"));
     const opened: RuntimeSessionState = {
       descriptor: session,
+      checkout,
       startedAt,
       processed,
       source,
@@ -799,7 +811,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       closed: false,
     };
     let ready = false;
-    const auditSettings = this.#controls.getWorkspaceSettings(session.cwd);
+    const auditSettings = this.#controls.getWorkspaceSettings(checkout.cwd);
     const steerDelivery: RuleSteerDelivery = {
       requestSteer: async (sessionId, requested, content, metadata) => {
         const activeState = this.#sessions.get(sessionId);
@@ -832,13 +844,13 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#sessions.set(session.sessionId, opened);
     try {
       auditor = this.#createAuditor({
-        workspaceRoot: session.cwd,
+        workspaceRoot: checkout.cwd,
         steerDelivery,
         audits: this.#audits,
         ...this.#auditSettings,
         ...auditSettings,
       });
-      opened.codeRuleBridge = new CodeRuleBridge(session.cwd, auditor, {
+      opened.codeRuleBridge = new CodeRuleBridge(checkout.cwd, auditor, {
         observations: this.#sourceObservations,
         onRevision: (sessionId, revision, paths) => {
           const current = this.#sessions.get(sessionId);
@@ -855,13 +867,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         await opened.codeRuleBridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {});
       }
       await this.#beforeSessionPublish?.(session);
-      this.#sessionStore.openSession(session, startedAt);
+      this.#sessionStore.openSession(session, startedAt, this.#repositoryKey(checkout));
       this.#closedSessions.delete(session.sessionId);
       this.#sessionStore.startHudTracking(session, completeTracking);
       opened.ownerClaim = this.#controls.registerOwner(session.sessionId, this.#deliverBackground === undefined ? "next-event" : "background");
-      if (this.#controls.claimRepositoryAudit(session.sessionId)) {
-        opened.repositoryAudit = this.#runRepositoryAudit(session.sessionId, opened);
-      }
+      if (auditor.audit !== undefined) opened.repositoryAudit = this.#runRepositoryAudit(session.sessionId, opened);
       ready = true;
       if (this.#deliverBackground !== undefined) {
         // Delivery removes entries from the list, so iterate a snapshot.
@@ -906,7 +916,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (state !== undefined) {
       state.closed = true;
       state.pendingSteers = [];
-      this.#closedSessions.set(sessionId, { descriptor: state.descriptor, startedAt: state.startedAt, endedAt: Date.now() });
+      this.#closedSessions.set(sessionId, {
+        descriptor: state.descriptor, startedAt: state.startedAt, endedAt: Date.now(), repositoryKey: this.#repositoryKey(state.checkout),
+      });
       if (state.ownerClaim !== undefined) {
         this.#controls.interrupt(sessionId);
         this.#controls.interruptRepositoryAudit(sessionId);
@@ -930,27 +942,35 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
+  /** The audit at session start: one repository audit per checkout it reaches, each claimed before it starts. */
   async #runRepositoryAudit(sessionId: string, state: RuntimeSessionState): Promise<void> {
+    const claimed = new Set<string>();
+    const audit: RepositoryAuditHooks = {
+      claim: checkoutRoot => {
+        const won = this.#controls.claimRepositoryAudit(sessionId, checkoutRoot);
+        if (won) claimed.add(checkoutRoot);
+        return won;
+      },
+      finish: (checkoutRoot, auditId) => {
+        claimed.delete(checkoutRoot);
+        const audit = auditId === undefined ? undefined : this.#audits.get(auditId);
+        if (audit?.status === "completed") {
+          this.#controls.finishRepositoryAudit(sessionId, checkoutRoot, audit.auditId, "completed");
+          return;
+        }
+        const status = audit?.status === "interrupted" ? "interrupted" : "failed";
+        const error = audit === undefined
+          ? "Repository diagnostic completed without a policy run"
+          : audit.failures.map(failure => failure.message).join("; ") || `Repository diagnostic ${audit.status}`;
+        this.#controls.finishRepositoryAudit(sessionId, checkoutRoot, auditId ?? null, status, error);
+      },
+    };
     try {
-      const auditIds = await state.codeRuleBridge!.audit({ scope: "repository", mode: "log" });
-      const auditId = auditIds[0] ?? null;
-      const audit = auditId === null ? undefined : this.#audits.get(auditId);
-      if (audit?.status === "completed") {
-        this.#controls.finishRepositoryAudit(sessionId, auditId, "completed");
-        return;
-      }
-      const status = audit?.status === "interrupted" ? "interrupted" : "failed";
-      const error = audit === undefined
-        ? "Repository diagnostic completed without a policy run"
-        : audit.failures.map(failure => failure.message).join("; ") || `Repository diagnostic ${audit.status}`;
-      this.#controls.finishRepositoryAudit(sessionId, auditId, status, error);
+      await state.codeRuleBridge!.audit({ scope: "repository", mode: "log", audit });
     } catch (error) {
-      this.#controls.finishRepositoryAudit(
-        sessionId,
-        null,
-        "failed",
-        error instanceof Error ? error.message : String(error),
-      );
+      for (const checkoutRoot of claimed) {
+        this.#controls.finishRepositoryAudit(sessionId, checkoutRoot, null, "failed", error instanceof Error ? error.message : String(error));
+      }
     }
   }
 
@@ -1135,21 +1155,41 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return { active, descriptor };
   }
 
-  #restoreRegistry(
+  /**
+   * The checkout the session starts in, from its folder resolved once here. A trusted caller records it. A caller
+   * without the daemon token is refused unless that resolved folder is in a recorded,
+   * started checkout: the check and every later use share one resolution, so a folder swapped after a caller's own
+   * check gains nothing.
+   */
+  #startingCheckout(session: AdapterSession): StartingCheckout {
+    // A folder that does not exist fails here (ENOENT), before anything is recorded or created for it.
+    const cwd = realpathSync(session.cwd);
+    const { database } = this.#catalogs;
+    const known = this.#trusted ? recordCheckout(database, cwd) : lookupCheckout(database, cwd);
+    if (known !== undefined && !known.git) this.#owners.addPlainRoot(known.checkoutPath);
+    const start = startingCheckout(this.#owners, cwd);
+    const eligibility = this.#catalogs.refresh(start.checkoutRoot);
+    if (!this.#trusted && (eligibility === "unrecorded" || eligibility === "stopped")) {
+      throw new RangeError("session cwd is not in a started checkout");
+    }
+    return { root: start.checkoutRoot, folder: start.path, cwd };
+  }
+
+  async #restoreRegistry(
     session: AdapterSession,
     ledger: readonly LedgerEntry[],
-  ): {
+    checkout: StartingCheckout,
+  ): Promise<{
     registry: ConversationRuleRegistry | undefined;
     turn: number;
     ruleSync?: LiveConversationRules | undefined;
-  } {
+  }> {
     if (this.#nativeSession !== undefined) return this.#nativeSession;
     const registry = this.#modelPath === undefined ? undefined : new ConversationRuleRegistry({ modelPath: this.#modelPath });
     if (registry === undefined) {
       return { registry, turn: 0, ruleSync: undefined };
     }
-    const directory = RULE_DIRECTORIES[session.host] ?? ".codex";
-    const ruleSync = new LiveConversationRules(this.#ruleCatalog, registry, conversationRuleLoader({}, session.cwd, join(directory, "conversation-rules.json")));
+    const ruleSync = new LiveConversationRules(this.#catalogs.conversationRules(checkout.root, checkout.folder), registry);
     ruleSync.prime();
     return {
       registry,

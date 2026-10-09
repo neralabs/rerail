@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DefaultResourceLoader, SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isRerailStarted } from "../src/repository-start.js";
+import { setUpTestRepository } from "../test/support/repository-rules.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 
 const temporaryDirectories: string[] = [];
@@ -87,25 +88,22 @@ describe("installed Pi extension", () => {
     await extension.handlers.get("session_shutdown")![0]!({ type: "session_shutdown", reason: "quit" }, context);
   }, 30_000); // `/rerail-stop` runs the real CLI, a Node process of its own.
 
-  test("loads default rule files at session start through the packaged extension's registered tool", async () => {
+  test("loads the repository's conversation rules at session start through the packaged extension's registered tool", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "rerail-pi-rules-"));
     temporaryDirectories.push(cwd);
-    startTestRepository(cwd);
-    await mkdir(join(cwd, ".pi"), { recursive: true });
-    await writeFile(
-      join(cwd, ".pi", "conversation-rules.json"),
-      JSON.stringify({
-        version: 1,
-        rules: [{
+    setUpTestRepository(cwd, {
+      library: [{
+        kind: "conversation",
+        rule: {
           id: "checkout",
           mode: "log",
           reference: "Guest checkout remains available.",
           match: { operator: "gte", threshold: 0.99 },
           sample: { source: "assistant-text", boundary: "message", minimumTokens: 1 },
           action: { content: "Check checkout requirements." },
-        }],
-      }),
-    );
+        },
+      }],
+    });
     const loader = new DefaultResourceLoader({
       cwd,
       agentDir: join(cwd, ".pi", "agent"),
@@ -148,29 +146,5 @@ describe("installed Pi extension", () => {
     } finally {
       if (started) await sessionShutdown!({ type: "session_shutdown", reason: "quit" }, context);
     }
-  });
-
-  test("rejects malformed configured rule documents when Pi starts the session", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "rerail-pi-invalid-rules-"));
-    temporaryDirectories.push(cwd);
-    startTestRepository(cwd);
-    await mkdir(join(cwd, ".pi"), { recursive: true });
-    await writeFile(join(cwd, ".pi", "conversation-rules.json"), "{\"version\":1,\"rules\":\"not-an-array\"}");
-    const loader = new DefaultResourceLoader({
-      cwd,
-      agentDir: join(cwd, ".pi", "agent"),
-      additionalExtensionPaths: [resolve("dist/pi-extension.js")],
-      noSkills: true,
-      noPromptTemplates: true,
-      noThemes: true,
-      noContextFiles: true,
-    });
-
-    await loader.reload();
-    const extension = loader.getExtensions().extensions[0]!;
-    await expect(Promise.resolve().then(() => extension.handlers.get("session_start")![0]!(
-      { type: "session_start", reason: "startup" },
-      { cwd, sessionManager: { getBranch: () => [], getSessionId: () => "pi-invalid-rules" } },
-    ))).rejects.toThrow("rule document.rules must be an array");
   });
 });

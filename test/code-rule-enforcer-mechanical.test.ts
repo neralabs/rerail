@@ -17,12 +17,12 @@ import { defaultRerailDatabasePath } from "../src/database.js";
 import { SqliteAuditStore } from "../src/audit-store.js";
 import type { SteerMetadata } from "../src/code-rule.js";
 import { modulePath, NativeCodeRuleEnforcer, SOURCE_LANGUAGES } from "../src/code-rule-enforcer.js";
-import { bootstrapCodeRuleDslCatalog, bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
-import { codeRuleSchema } from "../src/code-rule-schema.js";
+import { bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
+import { type CodeRule, codeRuleSchema } from "../src/code-rule-schema.js";
 import type { RuleMode } from "../src/rule-mode.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
 import { steerBlock } from "../src/rerail-steer.js";
 import { rerailOraclesDirectory } from "./oracles.js";
+import { testCodeRuleCatalog } from "./support/repository-rules.js";
 import { gateStorageAttachments } from "./storage-attach-gate.js";
 import * as native from "../src/native.js";
 import type { NativeBinding, NativeCodeRuleDslWorkspace, NativeRepositoryIndexOptions } from "../src/native.js";
@@ -87,29 +87,35 @@ function consoleCodeRule(revision: number) {
   });
 }
 
+/** The code rules a test catalog serves; `upsert` replaces a code rule by id, as a library edit would. */
+function editableCodeRules(initial: readonly CodeRule[]) {
+  let current = [...initial];
+  return {
+    list: (): readonly CodeRule[] => current,
+    upsert(codeRule: CodeRule) { current = [...current.filter(existing => existing.id !== codeRule.id), codeRule]; },
+  };
+}
+
 async function fixture({ codeRules = [needleCodeRule(1)], ...options }: {
   scope?: "repository" | "touched-files" | "ai-output";
   mode?: "steer" | "log";
   audits?: AuditRecorder;
-  codeRules?: readonly ReturnType<typeof codeRuleSchema.parse>[];
+  codeRules?: readonly CodeRule[];
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "rerail-enforcer-"));
   roots.push(root);
   await mkdir(join(root, "api"));
   const capabilitiesPath = join(root, "capabilities.json");
   await writeFile(capabilitiesPath, await readFile(join(bundledCodeRuleDslDirectory(), "capabilities.json")));
-  const databasePath = join(root, ".rerail", "code-rules.sqlite");
-  const store = new SqliteRuleStore(databasePath);
-  for (const codeRule of codeRules) store.upsertCodeRule(codeRule);
-  store.close();
-  const catalog = bootstrapCodeRuleDslCatalog({ capabilitiesPath, databasePath });
+  const rules = editableCodeRules(codeRules);
+  const catalog = testCodeRuleCatalog(rules.list, capabilitiesPath);
   const requestSteer = vi.fn(async (_sessionId: string, _delivery: "steer", _content: string, _metadata?: SteerMetadata) => undefined);
   const enforcer = new NativeCodeRuleEnforcer(catalog, {
     workspaceRoot: root,
     steerDelivery: { requestSteer },
     ...options,
   });
-  return { root, catalog, enforcer, requestSteer: requestSteer, databasePath };
+  return { root, catalog, enforcer, requestSteer, rules };
 }
 
 
@@ -160,11 +166,7 @@ async function repositoryAudit(workspaceRoot: string): Promise<{ status: string 
   roots.push(home);
   const capabilitiesPath = join(home, "capabilities.json");
   await writeFile(capabilitiesPath, await readFile(join(bundledCodeRuleDslDirectory(), "capabilities.json")));
-  const databasePath = join(home, "code-rules.sqlite");
-  const store = new SqliteRuleStore(databasePath);
-  store.upsertCodeRule(needleCodeRule(1));
-  store.close();
-  const catalog = bootstrapCodeRuleDslCatalog({ capabilitiesPath, databasePath });
+  const catalog = testCodeRuleCatalog([needleCodeRule(1)], capabilitiesPath);
   const { recorder, audits } = recordingAudits();
   const enforcer = new NativeCodeRuleEnforcer(catalog, {
     workspaceRoot,
@@ -182,7 +184,6 @@ async function repositoryAudit(workspaceRoot: string): Promise<{ status: string 
     };
   } finally {
     await enforcer.close();
-    catalog.close();
   }
 }
 
@@ -361,7 +362,7 @@ describe("Python module paths", () => {
 
 describe("mechanical code rule regressions", () => {
   it("reads each repository source once without spawning an initial index worker", async () => {
-    const { root, enforcer, catalog } = await fixture();
+    const { root, enforcer } = await fixture();
     // The walk reads below the resolved root (the temporary directory may sit behind a symlink).
     const source = join(await realpath(root), "api", "once.py");
     await writeFile(source, "safe()\n");
@@ -384,7 +385,6 @@ describe("mechanical code rule regressions", () => {
       vi.mocked(fork).mockReset();
       vi.mocked(existsSync).mockReset();
       await enforcer.close();
-      catalog.close();
     }
   });
 
@@ -399,7 +399,7 @@ describe("mechanical code rule regressions", () => {
         forbid: { ast: { language: "python", rule: { kind: "identifier", resolves: { import: ["api.pkg.contextlib.suppress"] } } } },
       }],
     });
-    const { root, catalog, enforcer } = await fixture({ audits: recorder, codeRules: [codeRule] });
+    const { root, enforcer } = await fixture({ audits: recorder, codeRules: [codeRule] });
     try {
       await mkdir(join(root, "api/pkg"));
       await writeFile(join(root, "api/__init__.py"), "");
@@ -417,11 +417,11 @@ describe("mechanical code rule regressions", () => {
         violations: [expect.objectContaining({ code: "SUPPRESS", span: expect.objectContaining({ startLine: 1 }) })],
         failures: [],
       });
-    } finally { await enforcer.close(); catalog.close(); }
+    } finally { await enforcer.close(); }
   });
 
   it("retains interruption when closure overlaps writing accepted source to disk", async () => {
-    const { root, enforcer, catalog } = await fixture();
+    const { root, enforcer } = await fixture();
     const written = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
@@ -454,14 +454,13 @@ describe("mechanical code rule regressions", () => {
       await accepted;
       await closing;
       await enforcer.close();
-      catalog.close();
       vi.mocked(writeFile).mockReset();
     }
   });
 
   it("records a failed audit when retained source cannot be loaded", async () => {
     const { recorder, audits } = recordingAudits();
-    const { enforcer, catalog } = await fixture({ audits: recorder });
+    const { enforcer } = await fixture({ audits: recorder });
     try {
       await enforcer.openWorkspace("lost-retained-source");
       await settled(enforcer);
@@ -477,23 +476,22 @@ describe("mechanical code rule regressions", () => {
     } finally {
       vi.mocked(readFile).mockReset();
       await enforcer.close();
-      catalog.close();
     }
   });
 
   it("coalesces successive generated edits to the latest source without diagnostic interference", async () => {
-    const { root, catalog, enforcer } = await fixture();
+    const { root, enforcer } = await fixture();
     try {
       await enforcer.openWorkspace("coalesce");
       await enforcer.auditGeneratedEdits("coalesce", { revision: 1, checkpoints: ["edit"], edits: [{ path: "api/a.py", language: "python", generatedText: "safe()\n" }] });
       await enforcer.auditGeneratedEdits("coalesce", { revision: 2, checkpoints: ["edit"], edits: [{ path: "api/a.py", language: "python", generatedText: "NEEDLE\n" }] });
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
       expect((await settled(enforcer)).violations).toEqual([expect.objectContaining({ path: "api/a.py", code: "NEEDLE" })]);
-    } finally { await enforcer.close(); catalog.close(); }
+    } finally { await enforcer.close(); }
   });
 
   it("delivers violations only for the source scope that changed", async () => {
-    const { root, catalog, enforcer, requestSteer: requestSteer } = await fixture();
+    const { root, enforcer, requestSteer } = await fixture();
     try {
       await writeFile(join(root, "api", "a.py"), "safe()\n");
       await writeFile(join(root, "api", "b.py"), "safe()\n");
@@ -523,11 +521,11 @@ describe("mechanical code rule regressions", () => {
         expect.stringContaining("api/a.py"),
         expect.stringContaining("api/a.py"),
       ]);
-    } finally { await enforcer.close(); catalog.close(); }
+    } finally { await enforcer.close(); }
   });
 
   it("credits a steer to the distinct rules whose steer and block violations it rendered", async () => {
-    const { root, catalog, enforcer, requestSteer: requestSteer } = await fixture({
+    const { root, enforcer, requestSteer } = await fixture({
       codeRules: [
         modeCodeRule("test:alpha", "ALPHA", "block"),
         modeCodeRule("test:beta", "BETA", "steer"),
@@ -553,11 +551,11 @@ describe("mechanical code rule regressions", () => {
       expect(content).toContain("ALPHA");
       expect(content).toContain("BETA");
       expect(content).not.toContain("GAMMA");
-    } finally { await enforcer.close(); catalog.close(); }
+    } finally { await enforcer.close(); }
   });
 
   it("records a log rule's violations without a steer", async () => {
-    const { root, catalog, enforcer, requestSteer: requestSteer } = await fixture({ codeRules: [modeCodeRule("test:gamma", "GAMMA", "log")] });
+    const { root, enforcer, requestSteer } = await fixture({ codeRules: [modeCodeRule("test:gamma", "GAMMA", "log")] });
     try {
       await writeFile(join(root, "api", "a.py"), "GAMMA\n");
       await enforcer.openWorkspace("log-only");
@@ -571,11 +569,11 @@ describe("mechanical code rule regressions", () => {
       expect(status.violations).toEqual([expect.objectContaining({ ruleId: "test:gamma", mode: "log" })]);
       expect(status.disposition).toBe("continue");
       expect(requestSteer).not.toHaveBeenCalled();
-    } finally { await enforcer.close(); catalog.close(); }
+    } finally { await enforcer.close(); }
   });
 
   it("limits AI-output reporting to disjoint changed ranges with UTF-8 byte offsets", async () => {
-    const { catalog, enforcer, requestSteer: requestSteer } = await fixture({ scope: "ai-output" });
+    const { enforcer, requestSteer } = await fixture({ scope: "ai-output" });
     try {
       await enforcer.openWorkspace("ranges");
       await enforcer.auditGeneratedEdits("ranges", {
@@ -590,11 +588,11 @@ describe("mechanical code rule regressions", () => {
       });
       expect((await settled(enforcer)).violations.map(violation => violation.span?.startLine)).toEqual([1, 3]);
       expect(requestSteer).toHaveBeenCalledTimes(1);
-    } finally { await enforcer.close(); catalog.close(); }
+    } finally { await enforcer.close(); }
   });
 
   it("settles a repository-scope audit triggered by a generated edit", async () => {
-    const { root, catalog, enforcer, requestSteer: requestSteer } = await fixture({ scope: "repository", mode: "steer" });
+    const { root, enforcer, requestSteer } = await fixture({ scope: "repository", mode: "steer" });
     try {
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
       await enforcer.openWorkspace("repository-edit");
@@ -610,12 +608,12 @@ describe("mechanical code rule regressions", () => {
         expect.stringContaining("NEEDLE"),
         expect.objectContaining({ revision: 1, generatedEdit: true }),
       );
-    } finally { await enforcer.close(); catalog.close(); }
+    } finally { await enforcer.close(); }
   });
 
   it("audits a Git checkout through the native repository index and records its clean directories for reuse", async () => {
     const { recorder, audits } = recordingAudits();
-    const { root, catalog, enforcer } = await fixture({ audits: recorder });
+    const { root, enforcer } = await fixture({ audits: recorder });
     try {
       await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\napi/ignored.py\n");
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
@@ -636,7 +634,7 @@ describe("mechanical code rule regressions", () => {
         failures: [expect.objectContaining({ path: "api/binary.py", code: "source-incomplete", stage: "read" })],
       });
       expect(completedDirectories()).toBeGreaterThan(before);
-    } finally { await enforcer.close(); catalog.close(); }
+    } finally { await enforcer.close(); }
   });
 
   it("indexes a Git checkout's files of every source language an audit evaluates", async () => {
@@ -647,7 +645,7 @@ describe("mechanical code rule regressions", () => {
       scope: { include: ["src/**/*"], exclude: [] },
       clauses: [{ id: "needle", violation: { code: "NEEDLE", anchor: "witness.span", message: "No NEEDLE" }, forbid: { regex: { pattern: "NEEDLE", source: "file.content" } } }],
     });
-    const { root, catalog, enforcer } = await fixture({ audits: recorder, codeRules: [anywhere] });
+    const { root, enforcer } = await fixture({ audits: recorder, codeRules: [anywhere] });
     const paths = [...SOURCE_LANGUAGES.keys()].map((extension) => `src/file${extension}`).toSorted();
     try {
       await mkdir(join(root, "src"));
@@ -658,7 +656,7 @@ describe("mechanical code rule regressions", () => {
       await enforcer.openWorkspace("all-languages");
       const [auditId] = await enforcer.audit("all-languages", { scope: "repository", mode: "log" });
       expect(audits.get(auditId!)?.result?.violations?.map((violation) => violation.path).toSorted()).toEqual(paths);
-    } finally { await enforcer.close(); catalog.close(); }
+    } finally { await enforcer.close(); }
   });
 
   it("records as failed each audit whose native repository index throws", async () => {
@@ -680,7 +678,7 @@ describe("mechanical code rule regressions", () => {
     const binding = vi
       .spyOn(native, "loadNativeBinding")
       .mockReturnValue(Object.assign(Object.create(real) as NativeBinding, { CodeRuleDslWorkspace: Workspace }));
-    const { root, catalog, enforcer } = await fixture({ audits: recorder });
+    const { root, enforcer } = await fixture({ audits: recorder });
     try {
       await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
@@ -704,12 +702,11 @@ describe("mechanical code rule regressions", () => {
     } finally {
       binding.mockRestore();
       await enforcer.close();
-      catalog.close();
     }
   });
 
   it("spools oversized pending batches and reclaims the spool directory", async () => {
-    const { catalog, enforcer } = await fixture();
+    const { enforcer } = await fixture();
     try {
       await enforcer.openWorkspace("spool");
       const source = `NEEDLE\n${"x".repeat(850_000)}`;
@@ -717,12 +714,12 @@ describe("mechanical code rule regressions", () => {
       await enforcer.auditGeneratedEdits("spool", { revision: 1, checkpoints: ["edit"], edits });
       await settled(enforcer);
       expect((await settled(enforcer)).violations).toHaveLength(12);
-    } finally { await enforcer.close(); catalog.close(); }
+    } finally { await enforcer.close(); }
   }, 60_000);
 
   it("evaluates TypeScript AST rules against React files with the JSX grammar", async () => {
     const { recorder, audits } = recordingAudits();
-    const { catalog, enforcer } = await fixture({ audits: recorder, codeRules: [consoleCodeRule(1)] });
+    const { enforcer } = await fixture({ audits: recorder, codeRules: [consoleCodeRule(1)] });
     try {
       await enforcer.openWorkspace("jsx-grammar");
       await settled(enforcer);
@@ -741,7 +738,7 @@ describe("mechanical code rule regressions", () => {
         violations: [expect.objectContaining({ code: "CONSOLE", path: "web/App.tsx" })],
         failures: [],
       });
-    } finally { await enforcer.close(); catalog.close(); }
+    } finally { await enforcer.close(); }
   });
 
   it("steers with the anchored location, interpolated message, and suggested fix", async () => {
@@ -755,7 +752,7 @@ describe("mechanical code rule regressions", () => {
         forbid: { ast: { language: "typescript", rule: { pattern: "console.log($ARG)" } } },
       }],
     });
-    const { root, catalog, enforcer, requestSteer: requestSteer } = await fixture({ audits: recorder, codeRules: [fixing] });
+    const { root, enforcer, requestSteer } = await fixture({ audits: recorder, codeRules: [fixing] });
     try {
       const source = "export function App() {\n  console.log(user);\n  return <main />;\n}\n";
       await mkdir(join(root, "web"));
@@ -779,12 +776,12 @@ describe("mechanical code rule regressions", () => {
       });
       // The fix is a suggestion only: the source on disk is untouched.
       expect(await readFile(join(root, "web", "App.tsx"), "utf8")).toBe(source);
-    } finally { await enforcer.close(); catalog.close(); }
+    } finally { await enforcer.close(); }
   });
 
   it("records the replacement catalog that evaluates a queued edit", async () => {
     const { recorder, audits } = recordingAudits();
-    const { catalog, databasePath, enforcer } = await fixture({ audits: recorder });
+    const { catalog, enforcer, rules } = await fixture({ audits: recorder });
     try {
       await enforcer.openWorkspace("catalog-provenance");
       await settled(enforcer);
@@ -794,9 +791,7 @@ describe("mechanical code rule regressions", () => {
         checkpoints: ["edit"],
         edits: [{ path: "api/queued.py", language: "python", generatedText: "FRESH\n" }],
       });
-      const writer = new SqliteRuleStore(databasePath);
-      writer.upsertCodeRule(needleCodeRule(2, "FRESH", "FRESH"));
-      writer.close();
+            rules.upsert(needleCodeRule(2, "FRESH", "FRESH"));
       await enforcer.auditGeneratedEdits("catalog-provenance", {
         revision: 2,
         checkpoints: ["edit"],
@@ -810,24 +805,22 @@ describe("mechanical code rule regressions", () => {
         ruleRevisions: [{ ruleId: "test:needle", revision: 2 }],
         result: { status: "completed", violations: [expect.objectContaining({ code: "FRESH", path: "api/queued.py" })] },
       });
-    } finally { await enforcer.close(); catalog.close(); }
+    } finally { await enforcer.close(); }
   });
 
   it("installs the newest catalog when an older replacement finishes attaching storage last", async () => {
     const { recorder, audits } = recordingAudits();
-    const { catalog, databasePath, enforcer } = await fixture({ audits: recorder });
+    const { catalog, enforcer, rules } = await fixture({ audits: recorder });
     const attachments = gateStorageAttachments();
     try {
       attachments.gated = false;
       await enforcer.openWorkspace("newest-catalog");
       await settled(enforcer);
       attachments.gated = true;
-      const writer = new SqliteRuleStore(databasePath);
-      writer.upsertCodeRule(needleCodeRule(2, "TWO", "TWO"));
+            rules.upsert(needleCodeRule(2, "TWO", "TWO"));
       const older = enforcer.refreshCodeRules();
-      writer.upsertCodeRule(needleCodeRule(3, "THREE", "THREE"));
+      rules.upsert(needleCodeRule(3, "THREE", "THREE"));
       const newer = enforcer.refreshCodeRules();
-      writer.close();
       const [, olderWorkspace, newerWorkspace] = attachments.workspaces;
       newerWorkspace!.release();
       await newerWorkspace!.attached;
@@ -851,12 +844,11 @@ describe("mechanical code rule regressions", () => {
       for (const workspace of attachments.workspaces) workspace.release();
       attachments.restore();
       await enforcer.close();
-      catalog.close();
     }
   });
 
   it("closes a workspace still attaching storage when the session closes during open", async () => {
-    const { catalog, enforcer } = await fixture();
+    const { enforcer } = await fixture();
     const attachments = gateStorageAttachments();
     try {
       const opening = enforcer.openWorkspace("close-during-open");
@@ -869,20 +861,17 @@ describe("mechanical code rule regressions", () => {
       for (const workspace of attachments.workspaces) workspace.release();
       attachments.restore();
       await enforcer.close();
-      catalog.close();
     }
   });
 
   it("closes a replacement still attaching storage when the session closes during a code rule refresh", async () => {
-    const { catalog, databasePath, enforcer } = await fixture();
+    const { enforcer, rules } = await fixture();
     const attachments = gateStorageAttachments();
     try {
       attachments.gated = false;
       await enforcer.openWorkspace("close-during-refresh");
       attachments.gated = true;
-      const writer = new SqliteRuleStore(databasePath);
-      writer.upsertCodeRule(needleCodeRule(2, "FRESH", "FRESH"));
-      writer.close();
+            rules.upsert(needleCodeRule(2, "FRESH", "FRESH"));
       const refreshing = enforcer.refreshCodeRules();
       await enforcer.close();
       for (const workspace of attachments.workspaces) workspace.release();
@@ -893,13 +882,12 @@ describe("mechanical code rule regressions", () => {
       for (const workspace of attachments.workspaces) workspace.release();
       attachments.restore();
       await enforcer.close();
-      catalog.close();
     }
   });
 
   it("reads no Git checkout source in JavaScript during repository audits", async () => {
     const { recorder, audits } = recordingAudits();
-    const { root, catalog, enforcer } = await fixture({ audits: recorder });
+    const { root, enforcer } = await fixture({ audits: recorder });
     const source = join(await realpath(root), "api", "once.py");
     await writeFile(source, "NEEDLE\n");
     execFileSync("git", ["init", "--quiet"], { cwd: root });
@@ -914,7 +902,6 @@ describe("mechanical code rule regressions", () => {
     } finally {
       reads.mockRestore();
       await enforcer.close();
-      catalog.close();
     }
   });
 
@@ -926,6 +913,7 @@ describe("mechanical code rule regressions", () => {
     await writeAuditTree(checkout, true);
     const walked = await repositoryAuditPaths(plain);
     expect(walked).toEqual(["api/a.py", "api/gen/c.py", "api/nested/d.py", "api/nested/e.py", "api/skip/f.py", "api/tmp/b.py"]);
+    // `api/nested` holds its own repository in the Git tree; only the lane's owner can make it a checkout apart.
     expect(await repositoryAuditPaths(checkout)).toEqual(walked);
     for (const workspace of ["tmp/ws", "out/ws"]) {
       expect(await repositoryAuditPaths(join(plain, workspace))).toEqual(["api/a.py"]);
@@ -979,7 +967,7 @@ describe("mechanical code rule regressions", () => {
 
   it("evaluates generated edits in a Git checkout holding an unreadable untracked directory", async () => {
     const { recorder, audits } = recordingAudits();
-    const { root, catalog, enforcer } = await fixture({ audits: recorder });
+    const { root, enforcer } = await fixture({ audits: recorder });
     let restore: () => Promise<void> = async () => undefined;
     try {
       await writeFile(join(root, "api", "a.py"), "safe()\n");
@@ -999,13 +987,12 @@ describe("mechanical code rule regressions", () => {
     } finally {
       await restore();
       await enforcer.close();
-      catalog.close();
     }
   });
 
   it("records a Git checkout's clean directories while another process holds the store writer", async () => {
     const { recorder, audits } = recordingAudits();
-    const { root, catalog, enforcer } = await fixture({ audits: recorder });
+    const { root, enforcer } = await fixture({ audits: recorder });
     const holder = await storeWriterHolder(process.env.RERAIL_CONTENT_STORE_PATH!);
     // Only a JavaScript thread left free while the reuse-cache write waits can hand the lock back.
     const binding = holdStoreWriterForCompletion(holder, () =>
@@ -1029,13 +1016,12 @@ describe("mechanical code rule regressions", () => {
       binding.mockRestore();
       holder.close();
       await enforcer.close();
-      catalog.close();
     }
   }, 30_000);
 
   it("keeps a finished audit's violations when its reuse-cache write fails", async () => {
     const { recorder, audits } = recordingAudits();
-    const { root, catalog, enforcer } = await fixture({ audits: recorder });
+    const { root, enforcer } = await fixture({ audits: recorder });
     const holder = await storeWriterHolder(process.env.RERAIL_CONTENT_STORE_PATH!);
     const binding = holdStoreWriterForCompletion(holder, () => undefined);
     try {
@@ -1058,12 +1044,11 @@ describe("mechanical code rule regressions", () => {
       binding.mockRestore();
       holder.close();
       await enforcer.close();
-      catalog.close();
     }
   }, 30_000);
 
   it("closes a workspace whose storage attach throws before it starts", async () => {
-    const { catalog, enforcer } = await fixture();
+    const { enforcer } = await fixture();
     let closed = false;
     const workspace = Object.assign(pagingWorkspace(() => { throw new Error("the workspace is never paged"); }), {
       enableStorageAsync: () => { throw new Error("content store path is required"); },
@@ -1076,13 +1061,12 @@ describe("mechanical code rule regressions", () => {
     } finally {
       binding.mockRestore();
       await enforcer.close();
-      catalog.close();
     }
   });
 
   it("reports once why repository reuse is disabled when the storage attach says why", async () => {
     const { recorder, audits } = recordingAudits();
-    const { catalog, enforcer } = await fixture({ audits: recorder });
+    const { enforcer } = await fixture({ audits: recorder });
     const reason = "cannot read .rerailignore: Is a directory (os error 21)";
     const unattached = () => Object.assign(pagingWorkspace((cursor) => openPage(cursor, 1)), {
       enableStorageAsync: async () => ({ attached: false, reason }),
@@ -1101,12 +1085,11 @@ describe("mechanical code rule regressions", () => {
       stderr.mockRestore();
       binding.mockRestore();
       await enforcer.close();
-      catalog.close();
     }
   });
 
   it("never applies to a replacement that a newer catalog superseded while it replayed", async () => {
-    const { catalog, databasePath, enforcer } = await fixture();
+    const { enforcer, rules } = await fixture();
     const unpaged = () => { throw new Error("the workspace is never paged"); };
     let supersededClosed = false;
     let appliesAfterClose = 0;
@@ -1117,9 +1100,7 @@ describe("mechanical code rule regressions", () => {
         else if (!superseding) {
           // The first replayed edit lands while a newer catalog arrives.
           superseding = true;
-          const writer = new SqliteRuleStore(databasePath);
-          writer.upsertCodeRule(needleCodeRule(3, "THREE", "THREE"));
-          writer.close();
+                    rules.upsert(needleCodeRule(3, "THREE", "THREE"));
           enforcer.refreshCodeRules();
         }
         return completedApply;
@@ -1134,9 +1115,7 @@ describe("mechanical code rule regressions", () => {
         edits: [{ path: "api/a.py", language: "python", generatedText: "safe()\n" }],
       });
       await settled(enforcer);
-      const writer = new SqliteRuleStore(databasePath);
-      writer.upsertCodeRule(needleCodeRule(2, "TWO", "TWO"));
-      writer.close();
+            rules.upsert(needleCodeRule(2, "TWO", "TWO"));
       await enforcer.auditGeneratedEdits("superseded-replay", {
         revision: 2, checkpoints: ["edit"],
         edits: [{ path: "api/b.py", language: "python", generatedText: "safe()\n" }],
@@ -1148,7 +1127,6 @@ describe("mechanical code rule regressions", () => {
     } finally {
       binding.mockRestore();
       await enforcer.close();
-      catalog.close();
     }
   });
 });
@@ -1194,7 +1172,7 @@ function openPage(cursor: number, limit: number, done = false): string {
 describe("result paging", () => {
   it("applies session edits while an audit pages its private workspace", async () => {
     const { recorder, audits } = recordingAudits();
-    const { root, catalog, enforcer } = await fixture({ audits: recorder });
+    const { root, enforcer } = await fixture({ audits: recorder });
     const limit = 50;
     const pages: number[] = [];
     let requested = false;
@@ -1231,12 +1209,11 @@ describe("result paging", () => {
     } finally {
       binding.mockRestore();
       await enforcer.close();
-      catalog.close();
     }
   });
 
   it("stops paging once the enforcer is interrupted", async () => {
-    const { root, catalog, enforcer } = await fixture({ audits: recordingAudits().recorder });
+    const { root, enforcer } = await fixture({ audits: recordingAudits().recorder });
     const pages: number[] = [];
     const session = pagingWorkspace(() => { throw new Error("the session workspace is never paged"); });
     const scan = pagingWorkspace((cursor) => {
@@ -1253,13 +1230,12 @@ describe("result paging", () => {
     } finally {
       binding.mockRestore();
       await enforcer.close();
-      catalog.close();
     }
   });
 
   it("yields to the host before fetching the next result page", async () => {
     const { recorder, audits } = recordingAudits();
-    const { root, catalog, enforcer } = await fixture({ audits: recorder });
+    const { root, enforcer } = await fixture({ audits: recorder });
     const pages: number[] = [];
     let hostTurn = false;
     const session = pagingWorkspace(() => { throw new Error("the session workspace is never paged"); });
@@ -1279,13 +1255,12 @@ describe("result paging", () => {
     } finally {
       binding.mockRestore();
       await enforcer.close();
-      catalog.close();
     }
   });
 
   it("rejects an audit whose later result page holds a malformed violation", async () => {
     const { recorder, audits } = recordingAudits();
-    const { root, catalog, enforcer } = await fixture({ audits: recorder });
+    const { root, enforcer } = await fixture({ audits: recorder });
     const violation = {
       id: "violation-1", ruleId: "test:needle", clauseId: "needle", code: "NEEDLE", mode: "steer",
       message: "needle", path: "api/page.py", captures: {}, variables: {},
@@ -1309,7 +1284,6 @@ describe("result paging", () => {
     } finally {
       binding.mockRestore();
       await enforcer.close();
-      catalog.close();
     }
   });
 });

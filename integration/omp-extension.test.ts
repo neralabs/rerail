@@ -1,17 +1,20 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { NativeSemanticEmbedder, SemanticWorkspace } from "../src/semantic-primitives.js";
 import { OmpMessageContentSource, OmpWatermarkStore } from "../src/omp-semantic.js";
-import { defaultRerailDatabasePath } from "../src/database.js";
-import { openScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
+import { loadBundledCatalog } from "../src/bundled-rules.js";
+import { defaultRerailDatabasePath, openRerailDatabase } from "../src/database.js";
+import { addAttachment } from "../src/rule-configuration.js";
+import { upsertLibraryRule } from "../src/rule-library.js";
 import type { ConversationRule } from "../src/rule-schema.js";
 import { SqlitePresentationPreferenceStore } from "../src/presentation-preference-store.js";
 import { OmpHost } from "./omp-host.js";
 import type { HostEvidence } from "./omp-host.js";
+import { setUpTestRepository } from "../test/support/repository-rules.js";
 
 const originalRerailHome = process.env.RERAIL_HOME;
 const temporaryDirectories: string[] = [];
@@ -47,8 +50,7 @@ describe("installed OMP extension in standalone host", () => {
       const preferences = new SqlitePresentationPreferenceStore(defaultRerailDatabasePath());
       preferences.upsert({ repository: cwd, host: "omp", presence });
       preferences.close();
-      await mkdir(join(cwd, ".omp"));
-      await writeFile(join(cwd, ".omp", "conversation-rules.json"), JSON.stringify({ version: 1, rules: [checkoutRule("checkout")] }));
+      setUpTestRepository(cwd, { library: [{ kind: "conversation", rule: checkoutRule("checkout") }] });
     const host = await OmpHost.start(cwd, [
       { content: ["Guest checkout remains available. Next"] }, { content: ["Requirement acknowledged."] },
     ]);
@@ -89,10 +91,12 @@ describe("installed OMP extension in standalone host", () => {
     90_000,
   );
 
-  test("steers on a conversation rule enabled in the catalog after the session started", async () => {
+  test("steers on a conversation rule added to the repository after the session started", async () => {
     const cwd = await isolate();
-    const store = openScopedRuleCatalog(cwd);
-    store.upsertConversationRule(checkoutRule("db:checkout"), { enabled: false });
+    // In the library and the repository is set up, but the rule is not added anywhere yet.
+    const repositoryKey = setUpTestRepository(cwd);
+    const store = openRerailDatabase(defaultRerailDatabasePath());
+    upsertLibraryRule(store, loadBundledCatalog(), checkoutRule("db:checkout"), "conversation");
     let host: OmpHost | undefined;
     try {
       host = await OmpHost.start(cwd, [
@@ -104,14 +108,14 @@ describe("installed OMP extension in standalone host", () => {
       expectNoExtensionErrors(host);
       expect(before.calls).toHaveLength(1);
       expect(matches(before)).toHaveLength(0);
-      expect(store.setEnabled({ ids: ["db:checkout"] }, true)).toBe(1);
+      addAttachment(store, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: "db:checkout" });
       await host.prompt("Describe it again.");
       const after = await host.snapshot();
       expectNoExtensionErrors(host);
       expect(after.calls).toHaveLength(3);
       expect(matches(after)).toHaveLength(1);
       expect(JSON.stringify(after.calls[2]?.context.messages)).toContain("Check checkout requirements.");
-    } finally { try { await host?.close(); } finally { store.close(); } }
+    } finally { try { await host?.close(); } finally { store.$client.close(); } }
   }, 90_000);
 
   test("survives a rerail reset run underneath it and keeps recording", async () => {

@@ -1,11 +1,12 @@
-import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
-import { resolve } from "node:path";
-import { and, asc, eq } from "drizzle-orm";
+import { lstatSync, realpathSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
+import { physicalPath } from "./checkout-control.js";
 import { openRerailDatabase, type RerailDatabase } from "./database.js";
-import { repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions } from "./schema.js";
+import { runGit } from "./git.js";
+import { checkouts, repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions } from "./schema.js";
 
 import {
   auditSettingsSchema, auditSettingsPatchSchema, repositoryAuditSchema, auditRequestInputSchema, auditRequestSchema,
@@ -15,29 +16,57 @@ export interface PolicyOwnerClaim { readonly token: string; }
 
 export const DEFAULT_AUDIT_SETTINGS: Readonly<AuditSettings> = { scope: "touched-files", mode: "steer" };
 const GIT_OUTPUT_LIMIT = 10 * 1024 * 1024;
-const GIT_EXECUTABLE = (
-  process.platform === "win32"
-    ? [String.raw`C:\Program Files\Git\cmd\git.exe`, String.raw`C:\Program Files (x86)\Git\cmd\git.exe`]
-    : ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git"]
-).find(existsSync);
 
 function gitPaths(workspaceRoot: string, args: readonly string[]): string[] {
-  if (GIT_EXECUTABLE === undefined) throw new Error("Git is not installed in a supported system location");
-  const result = spawnSync(GIT_EXECUTABLE, ["-C", workspaceRoot, ...args], {
-    encoding: "utf8",
-    maxBuffer: GIT_OUTPUT_LIMIT,
-  });
+  const result = runGit(workspaceRoot, args, { maxBuffer: GIT_OUTPUT_LIMIT });
   if (result.error !== undefined) throw result.error;
   if (result.status !== 0) throw new Error(result.stderr.trim() || `git exited with code ${result.status ?? "unknown"}`);
   return result.stdout.split("\0").filter(Boolean);
 }
 
-function gitDiffPaths(workspaceRoot: string): string[] {
-  return [...new Set([
-    ...gitPaths(workspaceRoot, ["diff", "--name-only", "--relative", "--diff-filter=ACMRTUXB", "-z", "--"]),
-    ...gitPaths(workspaceRoot, ["diff", "--cached", "--name-only", "--relative", "--diff-filter=ACMRTUXB", "-z", "--"]),
+function isDirectory(path: string): boolean {
+  try {
+    return lstatSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** Which of `folders` (relative to `workspaceRoot`) are submodules its index declares: gitlinks, mode 160000. */
+function declaredSubmodules(workspaceRoot: string, folders: readonly string[]): Set<string> {
+  if (folders.length === 0) return new Set();
+  return new Set(gitPaths(workspaceRoot, ["--literal-pathspecs", "ls-files", "--stage", "-z", "--", ...folders])
+    .filter(entry => entry.startsWith("160000 "))
+    .map(entry => entry.slice(entry.indexOf("\t") + 1)));
+}
+
+/**
+ * Changed, staged and untracked files under `workspaceRoot`, relative to it. A dirty submodule the checkout declares,
+ * or a recorded checkout inside it, appears as its folder; Git lists that checkout's own changed files in its place,
+ * so each is judged by its owner. Git is never run in any other nested repository: such a folder stays a folder,
+ * which the audit walks as part of this checkout.
+ */
+function gitDiffPaths(workspaceRoot: string, isRecordedCheckout: (path: string) => boolean, prefix = ""): string[] {
+  const entries = new Set([
+    ...gitPaths(workspaceRoot, ["diff", "--name-only", "--relative", "--ignore-submodules=none", "--diff-filter=ACMRTUXB", "-z", "--"]),
+    ...gitPaths(workspaceRoot, ["diff", "--cached", "--name-only", "--relative", "--ignore-submodules=none", "--diff-filter=ACMRTUXB", "-z", "--"]),
     ...gitPaths(workspaceRoot, ["ls-files", "--others", "--exclude-standard", "-z", "--"]),
-  ])].sort((left, right) => left.localeCompare(right));
+  ].map(entry => entry.endsWith("/") ? entry.slice(0, -1) : entry));
+  const folders = [...entries].filter(path => isDirectory(join(workspaceRoot, path)));
+  const submodules = declaredSubmodules(workspaceRoot, folders);
+  const paths = [...entries].flatMap(path => {
+    const absolute = join(workspaceRoot, path);
+    const ownCheckout = folders.includes(path) && (submodules.has(path) || isRecordedCheckout(physicalPath(absolute)));
+    return ownCheckout ? gitDiffPaths(absolute, isRecordedCheckout, `${prefix}${path}/`) : [`${prefix}${path}`];
+  });
+  return [...new Set(paths)].sort((left, right) => left.localeCompare(right));
+}
+
+/** The folder and every folder above it, nearest first. */
+function ancestors(path: string): string[] {
+  const folders = [path];
+  for (let folder = dirname(path); folder !== folders.at(-1); folder = dirname(folder)) folders.push(folder);
+  return folders;
 }
 function canonicalWorkspace(path: string): string { try { return realpathSync(path); } catch { return resolve(path); } }
 function controls(
@@ -104,14 +133,19 @@ export class SqliteAuditControlStore {
   getSettings(sessionId: string): AuditControls {
     const session = requireSession(this.#database, sessionId);
     const workspaceRoot = canonicalWorkspace(session.cwd);
+    // The audit of the checkout the session is in: the repository audit of the nearest folder at or above it.
+    const folders = ancestors(workspaceRoot);
     const repositoryAudit = this.#database.select({
+      workspaceRoot: repositoryAudits.workspaceRoot,
       sessionId: repositoryAudits.sessionId,
       auditId: repositoryAudits.auditId,
       status: repositoryAudits.status,
       startedAt: repositoryAudits.startedAt,
       finishedAt: repositoryAudits.finishedAt,
       error: repositoryAudits.error,
-    }).from(repositoryAudits).where(eq(repositoryAudits.workspaceRoot, workspaceRoot)).get();
+    }).from(repositoryAudits).where(inArray(repositoryAudits.workspaceRoot, folders)).all()
+      .sort((left, right) => folders.indexOf(left.workspaceRoot) - folders.indexOf(right.workspaceRoot))
+      .map(({ workspaceRoot: _root, ...row }) => row)[0];
     const owner = this.#owner(sessionId);
     return controls(
       this.path,
@@ -137,10 +171,11 @@ export class SqliteAuditControlStore {
     });
     return this.getSettings(sessionId);
   }
-  claimRepositoryAudit(sessionId: string): boolean {
+  /** Claim the audit of one checkout for this session; false while another live session audits it. */
+  claimRepositoryAudit(sessionId: string, checkoutRoot: string): boolean {
     return this.#database.transaction(() => {
-      const session = requireSession(this.#database, sessionId);
-      const workspaceRoot = canonicalWorkspace(session.cwd);
+      requireSession(this.#database, sessionId);
+      const workspaceRoot = canonicalWorkspace(checkoutRoot);
       const repositoryAudit = {
         workspaceRoot,
         sessionId,
@@ -169,25 +204,24 @@ export class SqliteAuditControlStore {
   }
   finishRepositoryAudit(
     sessionId: string,
+    checkoutRoot: string,
     auditId: string | null,
     status: "completed" | "failed" | "interrupted",
     error: string | null = null,
   ): void {
-    const session = requireSession(this.#database, sessionId);
     this.#database.update(repositoryAudits).set({
       auditId: auditId, status, error, finishedAt: Date.now(),
     }).where(and(
-      eq(repositoryAudits.workspaceRoot, canonicalWorkspace(session.cwd)),
+      eq(repositoryAudits.workspaceRoot, canonicalWorkspace(checkoutRoot)),
       eq(repositoryAudits.sessionId, sessionId),
       eq(repositoryAudits.status, "running"),
     )).run();
   }
+  /** Every checkout audit the session still runs ends interrupted. */
   interruptRepositoryAudit(sessionId: string): void {
-    const session = requireSession(this.#database, sessionId);
     this.#database.update(repositoryAudits).set({
       status: "interrupted", finishedAt: Date.now(), error: "Session closed before repository diagnostic completed",
     }).where(and(
-      eq(repositoryAudits.workspaceRoot, canonicalWorkspace(session.cwd)),
       eq(repositoryAudits.sessionId, sessionId),
       eq(repositoryAudits.status, "running"),
     )).run();
@@ -219,7 +253,8 @@ export class SqliteAuditControlStore {
     let selectionError: string | null = null;
     if (requestedScope === "git-diff") {
       try {
-        paths = gitDiffPaths(current.workspaceRoot);
+        paths = gitDiffPaths(current.workspaceRoot, path =>
+          this.#database.select({ path: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.checkoutPath, path)).get() !== undefined);
         if (paths.length === 0) selectionError = "Git diff contains no changed files";
       } catch (error) {
         selectionError = `Could not read git diff: ${error instanceof Error ? error.message : String(error)}`;

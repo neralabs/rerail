@@ -28,7 +28,7 @@ use crate::git_workspace;
 use napi::{Env, Result, Task};
 use napi_derive::napi;
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -64,6 +64,10 @@ pub struct RepositoryIndexOptions {
     /// The file label of each extension the host evaluates (`.py` → `python`, `.md` →
     /// `markdown`), keyed lowercase with its dot; files with other extensions are not indexed.
     pub source_languages: HashMap<String, String>,
+    /// Folders below the workspace root, workspace-relative, that are checkouts judged by their
+    /// own rules: the walk neither lists nor reads them, and reports the ones it reached. Any
+    /// other folder is walked, whether or not it holds a `.git` entry.
+    pub nested_checkouts: Vec<String>,
 }
 
 pub struct WorkspaceIndexTask {
@@ -96,6 +100,7 @@ impl WorkspaceIndexTask {
                 .into_iter()
                 .map(|(extension, label)| (extension.to_owned(), label.to_owned()))
                 .collect(),
+                nested_checkouts: Vec::new(),
             },
         }
     }
@@ -113,6 +118,9 @@ pub(super) struct RepositoryIndex {
     over_budget: bool,
     /// Directories the plan could not list, reported by the next chunk.
     failures: Vec<Value>,
+    /// The host's nested checkouts the walk reached, sorted: each is a separate checkout judged by
+    /// its own rules, so this index neither lists nor reads them.
+    nested_checkouts: Vec<String>,
 }
 
 struct PendingFile {
@@ -265,23 +273,31 @@ impl WorkspaceIndexTask {
     /// the workspace root with a host source language and a code-rule scope, outside the host's
     /// ignored directories and never through a symlink, sorted by path. Git, `.rerailignore` and
     /// Rerail's built-in ignores play no part here; they decide only which of these files the store
-    /// may restore. Directories it cannot list become read failures. Also returns whether the
-    /// files exceed `max_files`, in which case it stops listing.
+    /// may restore. Directories it cannot list become read failures. A directory the host names as
+    /// a nested checkout is not descended into, only reported. Also returns whether the files
+    /// exceed `max_files`, in which case it stops listing.
     fn walk(
         &self,
         repository: &git_workspace::GitWorkspace,
         prefix: &str,
         scoped: impl Fn(&str) -> bool,
         failures: &mut Vec<Value>,
-    ) -> Result<(Vec<PendingFile>, bool)> {
+    ) -> Result<(Vec<PendingFile>, Vec<String>, bool)> {
         let ignored = self
             .options
             .ignored_directories
             .iter()
             .map(String::as_str)
             .collect::<HashSet<_>>();
+        let pruned = self
+            .options
+            .nested_checkouts
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
         let max_files = self.options.max_files as usize;
         let mut files = Vec::new();
+        let mut nested_checkouts = BTreeSet::new();
         let mut over_budget = false;
         let mut directories = vec![(repository.worktree_root.join(prefix), String::new())];
         'walk: while let Some((directory, relative)) = directories.pop() {
@@ -339,6 +355,9 @@ impl WorkspaceIndexTask {
                     continue;
                 }
                 match language {
+                    None if pruned.contains(path.as_str()) => {
+                        nested_checkouts.insert(path);
+                    }
                     None => directories.push((entry.path(), path)),
                     Some(_) if files.len() == max_files => {
                         over_budget = true;
@@ -353,7 +372,7 @@ impl WorkspaceIndexTask {
             }
         }
         files.sort_unstable_by(|left, right| left.path.cmp(&right.path));
-        Ok((files, over_budget))
+        Ok((files, nested_checkouts.into_iter().collect(), over_budget))
     }
 
     /// The scoped files under the workspace root, with every completed clean directory restored
@@ -368,7 +387,7 @@ impl WorkspaceIndexTask {
         let code_rules = self.lock()?.code_rules.clone();
         let prefix = storage.repository_prefix.as_str();
         let mut failures = Vec::new();
-        let (accepted, over_budget) = self.walk(
+        let (accepted, nested_checkouts, over_budget) = self.walk(
             repository,
             prefix,
             |path| {
@@ -410,6 +429,7 @@ impl WorkspaceIndexTask {
             read_bytes: 0,
             over_budget,
             failures,
+            nested_checkouts,
         })
     }
 
@@ -623,6 +643,7 @@ impl Task for WorkspaceIndexTask {
             "readFiles": index.read_files,
             "readBytes": index.read_bytes,
             "reusableDirectories": index.reusable_directories,
+            "nestedCheckouts": index.nested_checkouts,
         });
         state.repository_index = Some(index);
         serde_json::to_string(&response).map_err(json_error)

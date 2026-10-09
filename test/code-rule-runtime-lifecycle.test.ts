@@ -5,12 +5,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery, RerailHost } from "../src/adapter-contract.js";
 import type { CodeRuleAuditor, RuleSteerDelivery } from "../src/code-rule.js";
 import { NativeCodeRuleEnforcer } from "../src/code-rule-enforcer.js";
-import { bootstrapCodeRuleDslCatalog } from "../src/code-rule-dsl-catalog.js";
 import { SqliteAuditStore } from "../src/audit-store.js";
 import { codeRuleSchema } from "../src/code-rule-schema.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
 import { RerailRuntime } from "../src/runtime.js";
 import { temporaryDirectories, testEmbedder } from "./hook-fixtures.js";
+import { testCodeRuleCatalog } from "./support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
 import { gateStorageAttachments } from "./storage-attach-gate.js";
 
@@ -68,8 +67,7 @@ describe("source-scoped steers", () => {
     await writeFile(join(root, "broken.py"), Buffer.from([0]));
     await writeFile(join(root, "edited.py"), "before\n");
     const databasePath = join(root, "rerail.sqlite");
-    const rules = new SqliteRuleStore(databasePath);
-    rules.upsertCodeRule(codeRuleSchema.parse({
+    const catalog = testCodeRuleCatalog([codeRuleSchema.parse({
       format: "rerail.policy/v1", id: "test:startup", revision: 1, mode: "block",
       scope: { include: ["**/*.py"], exclude: [] },
       clauses: [{
@@ -77,9 +75,7 @@ describe("source-scoped steers", () => {
         violation: { code: "NEEDLE", anchor: "witness.span", message: "No needle" },
         forbid: { regex: { pattern: "NEEDLE", source: "file.content" } },
       }],
-    }));
-    rules.close();
-    const catalog = bootstrapCodeRuleDslCatalog({ databasePath });
+    })]);
     const gate = Promise.withResolvers<void>();
     const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
     vi.mocked(opendir).mockImplementation(async (...args) => {
@@ -144,7 +140,6 @@ describe("source-scoped steers", () => {
       await start;
       await runtime.dispose();
       audits.close();
-      catalog.close();
       vi.mocked(opendir).mockRestore();
     }
   });
@@ -162,10 +157,8 @@ describe("source-scoped steers", () => {
         forbid: { regex: { pattern: "NEEDLE", source: "file.content" } },
       }],
     });
-    const rules = new SqliteRuleStore(databasePath);
-    rules.upsertCodeRule(needleIn(1, "api/**/*.py"));
-    rules.close();
-    const catalog = bootstrapCodeRuleDslCatalog({ databasePath });
+    let codeRules = [needleIn(1, "api/**/*.py")];
+    const catalog = testCodeRuleCatalog(() => codeRules);
     const attachments = gateStorageAttachments();
     attachments.gated = false;
     let result = false;
@@ -189,9 +182,7 @@ describe("source-scoped steers", () => {
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
       await enforcer!.settle();
       attachments.gated = true;
-      const widened = new SqliteRuleStore(databasePath);
-      widened.upsertCodeRule(needleIn(2, "**/*.py"));
-      widened.close();
+      codeRules = [needleIn(2, "**/*.py")];
       await runtime.ingest({
         kind: "call", eventId: "call", sessionId: session.sessionId,
         toolCallId: "write", toolName: "write", input: { path: "web/new.py" },
@@ -207,7 +198,6 @@ describe("source-scoped steers", () => {
       for (const workspace of attachments.workspaces) workspace.release();
       attachments.restore();
       await runtime.dispose();
-      catalog.close();
     }
   });
 

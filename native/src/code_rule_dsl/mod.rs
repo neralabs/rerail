@@ -11,6 +11,7 @@ mod literal;
 mod matcher;
 mod model;
 mod module_path;
+mod placement;
 #[cfg(feature = "code-rule-profile")]
 mod profile;
 mod query;

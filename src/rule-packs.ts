@@ -2,19 +2,20 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { z } from "zod";
 import { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
-import { corePackDirectories, readRuleDocument } from "./rule-bootstrap.js";
-import { globPattern, matchReason, scanRepository, type RulePackMatch, type RulePackSignal } from "./rule-pack-matcher.js";
-import { RULE_MODES, type RuleMode } from "./rule-mode.js";
+import { corePackDirectories, readRuleDocument } from "./bundled-rule-documents.js";
+import { loadBundledCatalog } from "./bundled-rules.js";
+import { globPattern, matchFolder, matchReason, scanRepository, type RulePackMatch, type RulePackSignal } from "./rule-pack-matcher.js";
 import type { RuleDocument } from "./rule-store.js";
+import { RULE_MODES, type RuleMode } from "./rule-mode.js";
 
 export type { RulePackMatch, RulePackSignal } from "./rule-pack-matcher.js";
 
 /**
- * Rule packs: named sets of rules. A pack's optional match definition says which repositories it fits and why; a pack
- * without one is never recommended and is chosen by hand. A pack is a `packs/<id>/` directory (`docs/pack-format.md`):
- * `pack.json` lists each rule with the document in the pack's `rules/` that defines it. Core ships the packs in
- * `CORE_RULE_PACKS` inside its own package. Attaching packs to repositories, and so seeding their rules, is not built
- * yet; this module defines, validates and recommends.
+ * Rule packs: named sets of rules that come with Rerail. A pack's optional match definition says which repositories
+ * it fits and why; a pack without one is never recommended and is chosen by hand. A pack is a `packs/<id>/` directory
+ * (`docs/pack-format.md`): `pack.json` lists each rule with the document in the pack's `rules/` that defines it. Core
+ * ships the packs in `CORE_RULE_PACKS` inside its own package. A pack's rules run only in repositories that add it
+ * (`repository_attachments_set`); this module defines, validates and recommends.
  */
 export const RULE_PACK_FORMAT = "rerail.rule-pack/v1" as const;
 export const RULE_PACK_CATEGORIES = ["language", "framework", "repository"] as const;
@@ -132,6 +133,11 @@ export interface RulePackRecommendation {
   readonly ruleCount: number;
   /** What was found in this repository, e.g. "matches the react dependency in web/package.json". */
   readonly reason: string;
+  /**
+   * Where the pack is added, relative to the repository (`''` is the whole repository): the folder holding all of
+   * what matched, or the whole repository for a pack of category `repository`, which covers it all.
+   */
+  readonly folder: string;
 }
 
 const CATEGORY_ORDER: Record<RulePackCategory, number> = { language: 0, framework: 1, repository: 2 };
@@ -184,7 +190,7 @@ let shipped: readonly RulePack[] | undefined;
 
 /** The packs that come with Rerail: languages, then frameworks, then repository packs. Read once per process. */
 export function loadRulePacks(): readonly RulePack[] {
-  shipped ??= readRulePacks();
+  shipped ??= [...loadBundledCatalog().packs.values()];
   return shipped;
 }
 
@@ -196,13 +202,17 @@ export function rulePackIdOf(ruleId: string, packs: readonly RulePack[] = loadRu
 /**
  * The packs that fit the repository at `repositoryRoot`, from its files and `package.json` dependencies alone:
  * no model, no network, and no list of what does not fit. A pack without a match definition never fits.
- * Languages come first, then frameworks, then repository packs.
+ * Languages come first, then frameworks, then repository packs. Each comes with the folder it belongs in (see
+ * `RulePackRecommendation.folder`).
  */
 export function recommendRulePacks(repositoryRoot: string, packs: readonly RulePack[] = loadRulePacks()): RulePackRecommendation[] {
   const scan = scanRepository(repositoryRoot);
   return packs.flatMap(pack => {
-    const reason = pack.match === undefined ? undefined : matchReason(pack.match, scan);
-    return reason === undefined ? [] : [{ pack, ruleCount: pack.rules.length, reason }];
+    if (pack.match === undefined) return [];
+    const reason = matchReason(pack.match, scan);
+    if (reason === undefined) return [];
+    const folder = pack.category === "repository" ? "" : matchFolder(pack.match, scan);
+    return [{ pack, ruleCount: pack.rules.length, reason, folder }];
   });
 }
 

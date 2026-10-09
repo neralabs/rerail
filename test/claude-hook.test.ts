@@ -7,7 +7,7 @@ import { claudeHookOutput, handleClaudeEvent, runClaudeHook } from "../src/claud
 import type { HookOptions } from "../src/hook-host.js";
 import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "./hook-fixtures.js";
 import { sessionStartNote, steerBlock } from "../src/rerail-steer.js";
-import { dashboardOrigin } from "../src/session-presentation.js";
+import { dashboardOrigin, presentedSessionNoteRules } from "../src/session-presentation.js";
 import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-claude-hook-");
@@ -22,7 +22,7 @@ describe("Claude Code one-shot hook", () => {
     const options = hookOptions(root);
     const common = { session_id: "claude-session", cwd: root, transcript_path: "/tmp/transcript.jsonl", permission_mode: "default" };
 
-    const note = sessionStartNote(await dashboardOrigin(root), "claude-code", "claude-session");
+    const note = sessionStartNote(await dashboardOrigin(root), "claude-code", "claude-session", await presentedSessionNoteRules({ host: "claude-code", sessionId: "claude-session", cwd: root }));
     expect(await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, options)).toEqual({
       hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: note },
     });
@@ -144,7 +144,7 @@ describe("Claude Code one-shot hook", () => {
     expect(await handleClaudeEvent({ ...common, hook_event_name: "SessionStart", source: "startup" }, startLoop, storageRoot)).toEqual({
       hookSpecificOutput: {
         hookEventName: "SessionStart",
-        additionalContext: `${sessionStartNote(await dashboardOrigin(root), "claude-code", "claude-session")}\n\nRead the conventions.`,
+        additionalContext: `${sessionStartNote(await dashboardOrigin(root), "claude-code", "claude-session", await presentedSessionNoteRules({ host: "claude-code", sessionId: "claude-session", cwd: root }))}\n\nRead the conventions.`,
       },
     });
 

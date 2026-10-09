@@ -77,8 +77,6 @@ export interface NativeSessionHost<Context> {
 export interface NativeSessionInitializationOptions {
   maxInputTokens?: number;
   maxRules?: number;
-  rules?: readonly unknown[];
-  ruleFiles?: readonly string[];
   modelPath?: string;
   databasePath?: string;
   storageRoot?: string;

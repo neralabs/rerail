@@ -61,16 +61,30 @@ export function sessionPageUrl(origin: string, host: string, sessionId: string):
 /** The `customType` OMP and Pi record the hidden session-start note under. */
 export const SESSION_NOTE_MESSAGE_TYPE = "rerail.session-note";
 
+/** What the session-start note says about the repository's rules: how many are on, or that it is not set up yet. */
+export type SessionNoteRules = { setUp: true; ruleCount: number | null } | { setUp: false };
+
+const rulesOn = (count: number): string => `${count} ${count === 1 ? "rule is" : "rules are"} on`;
+
 /**
  * What the coding agent is told when a session starts in a repository where Rerail is started (design
- * A1): that Rerail is there, what a steer looks like, and the session link. The person sees nothing.
+ * A1): that Rerail is there, what a steer looks like, and the session link; or, where the repository is
+ * not set up yet, that no rules run until the person sets it up. The person sees nothing.
  */
-export function sessionStartNote(origin: string | undefined, host: RerailHost, sessionId: string): string {
+export function sessionStartNote(origin: string | undefined, host: RerailHost, sessionId: string, rules: SessionNoteRules): string {
   const sigil = host === "codex" ? "$" : "/";
+  const sessionLink = origin === undefined ? [] : [`This session in the Rerail dashboard: ${sessionPageUrl(origin, host, sessionId)}`];
+  if (!rules.setUp) {
+    return [
+      "Rerail is on here, but this repo is not set up yet, so no rules are checked.",
+      `The person can set it up with ${sigil}rerail-start, and type ${sigil}rerail to see every Rerail command.`,
+      ...sessionLink,
+    ].join("\n");
+  }
   return [
-    "Rerail is on in this repo. It checks your work against this repo's rules. When one is broken it tells you in a",
+    `Rerail is on in this repo${rules.ruleCount === null ? "" : `: ${rulesOn(rules.ruleCount)}`}. It checks your work against this repo's rules. When one is broken it tells you in a`,
     "message starting \"▲ Rerail\": fix it and carry on. If the person asks why, answer from that message and its Why? link.",
-    ...(origin === undefined ? [] : [`This session in the Rerail dashboard: ${sessionPageUrl(origin, host, sessionId)}`]),
+    ...sessionLink,
     `The person can type ${sigil}rerail to see what Rerail is doing and every Rerail command.`,
   ].join("\n");
 }

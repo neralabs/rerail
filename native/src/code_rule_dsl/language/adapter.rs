@@ -74,6 +74,9 @@ pub(crate) trait Adapter: 'static {
     /// Whether the family names a file's module from the package markers around it (Python's
     /// `__init__.py`): a file without a host module gets the markers' module.
     const PACKAGES: bool;
+    /// Whether an ast query's `file` may ask for declaration files (`declaration`,
+    /// typescript-eslint's `.d.ts` predicate). Python has stubs instead and refuses it.
+    const DECLARATION_FILES: bool;
     type Scope: ScopeRules;
     type Value: ValueRules;
     type Arguments: ArgumentRules;
@@ -104,6 +107,7 @@ impl Adapter for Python {
     const LABEL: &'static str = "python";
     const TERMINATORS: Terminators = Terminators::Newlines;
     const PACKAGES: bool = true;
+    const DECLARATION_FILES: bool = false;
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -143,6 +147,7 @@ impl Adapter for Ecma {
     const LABEL: &'static str = "typescript";
     const TERMINATORS: Terminators = Terminators::Eslint;
     const PACKAGES: bool = false;
+    const DECLARATION_FILES: bool = true;
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -181,6 +186,7 @@ impl Adapter for Php {
     const LABEL: &'static str = "php";
     const TERMINATORS: Terminators = Terminators::Newlines;
     const PACKAGES: bool = false;
+    const DECLARATION_FILES: bool = true;
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -228,6 +234,7 @@ impl Adapter for Blade {
     const LABEL: &'static str = "blade";
     const TERMINATORS: Terminators = Terminators::Newlines;
     const PACKAGES: bool = false;
+    const DECLARATION_FILES: bool = true;
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;

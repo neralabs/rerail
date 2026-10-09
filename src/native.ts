@@ -118,7 +118,11 @@ export interface NativeCodeRuleDslWorkspace {
    * binding never chooses a store itself and refuses an empty path.
    */
   enableStorageAsync(root: string, storePath: string): Promise<NativeStorageAttachment>;
-  addCodeRule(compiled: NativeCompiledCodeRuleDsl): void;
+  /**
+   * `placement`, when given, is a JSON `CodeRulePlacement` (repository-model.ts): this workspace runs the code rule per folder
+   * at the entry's mode (`null` is off there); omitted, the code rule runs wherever its scope matches at its own mode.
+   */
+  addCodeRule(compiled: NativeCompiledCodeRuleDsl, placement?: string): void;
   acceptsPath(path: string): boolean;
   tryApply(requestJson: string): string | null;
   applyAsync(requestJson: string): Promise<string>;
@@ -148,6 +152,8 @@ export interface NativeRepositoryIndexOptions {
   ignoredDirectories: string[];
   /** The file label of each evaluated extension, keyed lowercase with its dot (`.py` → `python`). */
   sourceLanguages: Record<string, string>;
+  /** Folders below the workspace root that are checkouts judged by their own rules: not walked, only reported. */
+  nestedCheckouts: string[];
 }
 
 export function encodeCodeRuleWorkspaceRequest(request: {

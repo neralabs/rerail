@@ -41,7 +41,6 @@ export interface RegistrationOptions {
   home?: string;
   nodePath?: string;
   harnesses?: readonly Harness[];
-  projectDir?: string;
   /** Native project settings context; omitted for global-only programmatic registration. */
   workspaceDir?: string;
   dryRun?: boolean;
@@ -100,14 +99,6 @@ const CONFIG_DIRS: Record<Harness, string> = {
   cursor: ".cursor",
 };
 
-const PROJECT_DIRS: Record<Harness, string> = {
-  omp: ".omp",
-  pi: ".pi",
-  "claude-code": ".claude",
-  codex: ".codex",
-  cursor: ".cursor",
-};
-
 export const CLAUDE_HOOK_EVENTS: readonly string[] = [
   "SessionStart",
   "SessionEnd",
@@ -144,8 +135,6 @@ export const CURSOR_HOOK_EVENTS: readonly string[] = [
 
 /** The `dist` entry exec-form hooks start; see src/hook-launcher.ts. */
 const HOOK_LAUNCHER = "hook-launcher.js";
-
-const EMPTY_RULES_DOCUMENT: JsonObject = { version: 1, rules: [] };
 
 function isObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -814,14 +803,6 @@ function planHarness(harness: Harness, context: Context): Promise<Plan> {
   }
 }
 
-function planProjectRules(harness: Harness, projectDir: string, context: Context): Plan {
-  const path = join(projectDir, PROJECT_DIRS[harness], "conversation-rules.json");
-  assertInside(path, projectDir, "project directory");
-  if (existsSync(path)) return { change: { harness, path, action: "unchanged", detail: "existing rules file kept" } };
-  return planMutation(context, harness, path, "created", "seed empty conversation-rules.json",
-    () => writeTextFile(path, `${JSON.stringify(EMPTY_RULES_DOCUMENT, null, 2)}\n`, { exists: false, mode: 0o644 }));
-}
-
 /** Harnesses whose user config directory exists under `home`. */
 export function detectHarnesses(home: string = homedir()): Harness[] {
   const base = resolve(home);
@@ -841,7 +822,6 @@ async function run(options: RegistrationOptions, mode: Mode): Promise<Registrati
     platform: options.platform ?? process.platform,
   };
   const selected = new Set(options.harnesses ?? detectHarnesses(home));
-  const projectDir = options.projectDir === undefined ? undefined : resolve(options.projectDir);
   const plans: Plan[] = [];
 
   // Plan every harness before touching anything so a malformed config aborts with nothing written.
@@ -873,7 +853,6 @@ async function run(options: RegistrationOptions, mode: Mode): Promise<Registrati
       }
     }
     if (harness === "codex" || harness === "claude-code" || harness === "cursor") plans.push(...await planAgentCommands(context, harness));
-    if (mode === "register" && projectDir !== undefined) plans.push(planProjectRules(harness, projectDir, context));
   }
   for (const plan of plans) await plan.apply?.();
   const changes = plans.map((plan) => plan.change);

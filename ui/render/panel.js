@@ -1,6 +1,6 @@
 import { h, setAttr, setText, setContent } from "../dom.js";
-import { fmt, plural, whenLabel, stamp } from "../format.js";
-import { originOf, ruleTitle, kindLabel, modeLabel, isLog, scopeText, technical } from "../derive.js";
+import { fmt, plural, whenLabel } from "../format.js";
+import { originOf, ruleTitle, kindLabel, modeLabel, isLog, scopeText, technical, sourceText, folderText, deciderText } from "../derive.js";
 import { data, ui, rangeLabel, fires, allFires, rerails, isMeasured, activityAllOf, ruleFindings } from "../state.js";
 
 export const ASK = [["ask", "Ask about it"], ["check", "Change what it checks"], ["scope", "Change where it applies"], ["mode", "Change what happens"], ["delete", "Delete it"]];
@@ -41,7 +41,6 @@ function build(root) {
   el.happens = h("p");
   el.techRows = h("dl.kv", { style: "margin-top:8px" });
   el.techPre = h("pre");
-  el.stamp = h("p.stamp");
   root.replaceChildren(
     h("div.phead", null,
       h("div.ptop", null, h("div", null, el.back, el.eyebrow, el.title), el.close),
@@ -50,8 +49,7 @@ function build(root) {
       h("section.psec", null, h("h3", null, "Where it came from"), el.from),
       h("section.psec", null, h("h3", null, "Where it applies"), el.applies),
       h("section.psec", null, h("h3", null, "What happens when it triggers"), el.happens),
-      h("details", null, h("summary", null, "Technical"), h("div.in", null, el.techRows, el.techPre)),
-      el.stamp));
+      h("details", null, h("summary", null, "Technical"), h("div.in", null, el.techRows, el.techPre))));
   el.body = root.querySelector(".pbody");
   p = el;
 }
@@ -83,10 +81,21 @@ function lastTriggered(all, lastSeen, measured) {
   return measured ? "never" : "—";
 }
 
-function renderOrigin(stored, id, ob) {
-  setContent(p.from, `${id}|${ob.label}|${stored.applicability}`, () => kv([
-    ["Origin", ob.label],
-    ["Applies", stored.applicability === "project" ? "This project" : "Every project"],
+function renderOrigin(stored, id) {
+  const checkoutPath = data.checkout?.checkoutPath;
+  // Folders that disagree each show their own on and mode; switching the rule then sets it in every folder.
+  const on = stored.mixed
+    ? stored.folderStates.map(state => `${state.on ? "On" : "Off"} in ${folderText(state.folder)}`).join(", ")
+    : `${stored.enabled ? "On" : "Off"} · ${deciderText(stored.onSource, checkoutPath)}`;
+  const mode = stored.mixed
+    ? stored.folderStates.map(state => `${state.mode} in ${folderText(state.folder)}`).join(", ")
+    : `${stored.rule.mode} · ${deciderText(stored.modeSource, checkoutPath)}`;
+  const folders = stored.folders.map(folderText).join(", ");
+  setContent(p.from, `${id}|${sourceText(stored)}|${folders}|${on}|${mode}`, () => kv([
+    ["Origin", sourceText(stored)],
+    ["Folder", folders],
+    ["On", on],
+    ["Mode", mode],
     ["Rule id", id, "mono"],
   ]));
 }
@@ -103,10 +112,9 @@ function renderHappens(stored, id, rr) {
 
 function renderTechnical(stored, id) {
   const tech = technical(stored);
-  setContent(p.techRows, `${id}|${stored.revision}|${stored.updatedAt}`, () => kv(tech.rows));
+  setContent(p.techRows, `${id}|${stored.revision}|${stored.rule.mode}`, () => kv(tech.rows));
   setText(p.techPre, tech.pattern);
   setAttr(p.techPre, "hidden", tech.pattern === "");
-  setContent(p.stamp, `${stored.createdAt}|${stored.updatedAt}`, () => [`Created ${stamp(stored.createdAt)}`, h("br"), `Updated ${stamp(stored.updatedAt)}`]);
 }
 
 export function renderPanel(root) {
@@ -129,7 +137,7 @@ export function renderPanel(root) {
   setText(mode, modeLabel(stored));
   setText(p.lead, `${title}.`);
   renderStats(id, isMeasured(id), rr);
-  renderOrigin(stored, id, ob);
+  renderOrigin(stored, id);
   setText(p.applies, scopeText(stored));
   renderHappens(stored, id, rr);
   renderTechnical(stored, id);
