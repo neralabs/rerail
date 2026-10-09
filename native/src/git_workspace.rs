@@ -26,8 +26,8 @@ const BUILTIN_IGNORE: &[u8] = b".git/\nnode_modules/\ntarget/\ntmp/\n__pycache__
 /// code-rule-enforcer.ts): dialect sources and the text files regex clauses read.
 const SOURCE_SUFFIXES: &[&str] = &[
     "bash", "cjs", "css", "cts", "html", "js", "json", "jsx", "md", "mdx", "mjs", "mts", "php",
-    "py", "pyi", "rs", "rst", "scss", "sh", "sql", "toml", "ts", "tsx", "txt", "yaml", "yml",
-    "zsh",
+    "py", "pyi", "rs", "rst", "scss", "sh", "sql", "toml", "ts", "tsx", "txt", "vue", "yaml",
+    "yml", "zsh",
 ];
 const STATUS_EXCLUDES: &[&str] = &[
     ":(glob,exclude)**/.git/**",
