@@ -11,8 +11,10 @@ To run Rerail from a source checkout instead, see "Developing from a checkout".
 npx @neralabs/rerail setup
 ```
 
-Run it again at any time: setup is idempotent, so it doubles as "upgrade and
-re-register".
+Run it again at any time: setup is idempotent, so it doubles as "upgrade". In a
+repository that is set up already it changes nothing there and connects no
+coding agent installed since; name one to connect it, for example
+`npx @neralabs/rerail setup --agents codex`.
 
 ## What setup does
 
@@ -92,13 +94,16 @@ in every other repository until you start it there (see "Starting and stopping
 Rerail" below); starting a repository that is not set up runs steps 2 to 6
 for it.
 
-**Without a terminal** (stdout is not a TTY, as when a coding agent runs it),
-each run prints the next question for the coding agent to relay, as written,
-with one command per answer, and exits 0. The coding agent runs set-up again
-with the person's answer: `--answer <yes|other-folder|pick-myself|start|review|other|skip>`,
+**Without a terminal** (stdin or stdout is not a TTY, as when a coding agent
+runs it), or with `--relay`, each run prints the next question for the coding
+agent to relay, as written, with one command per answer, and exits 0. The
+coding agent runs set-up again with the person's answer: `--answer <yes|other-folder|pick-myself|start|review|other|skip>`,
 `--repo <folder>` and `--agents <ids>` (`omp,pi,claude-code,codex,cursor`).
 Each answer run starts from what it is told, so running one twice repeats no
-earlier step's side effect.
+earlier step's side effect. Claude Code's, Cursor's and Codex's `/rerail-start`
+runs `rerail start --relay`, and every answer command carries `--relay`, so a
+coding agent that runs commands in a terminal still gets these questions
+instead of a prompt waiting on input.
 
 **In a coding agent's own UI**, `--json` on `rerail setup` and on `rerail
 start` prints one JSON object per run and nothing else on stdout:
@@ -155,7 +160,7 @@ The following commands describe the managed installation, once `~/.rerail/bin`
 is on `PATH`:
 
 ```sh
-rerail start             # start Rerail in this checkout (first time: sets the repository up with its recommended rule packs)
+rerail start             # start Rerail in this checkout (first time: runs set-up's questions for the repository)
 rerail stop              # stop Rerail in this checkout; the daemon keeps serving others
 rerail daemon start      # start the background daemon (--port, --host, --open, --dev, ...)
 rerail daemon stop       # stop the background daemon

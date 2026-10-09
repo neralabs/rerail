@@ -71,6 +71,43 @@ export async function sendInScope(scope, method, path, body) {
   return inScope(scope);
 }
 
+/**
+ * The last attachment write queued on this page: the scope `token` it was clicked in, whether it is still
+ * `pending`, whether it was sent and answered OK (`clear`), and `settled` once those are known.
+ */
+let lastAttachmentWrite = { token: generation, pending: false, clear: true, settled: Promise.resolve() };
+
+/**
+ * `sendInScope` for attachment writes, in click order. The place is taken at the call, while `body` (the body, or a
+ * promise of it, `null` to send nothing) may still be loading. A write called while an earlier one in the same
+ * scope is still pending is sent once that one is answered OK, and dropped (resolves `false`, nothing sent) when it
+ * failed or was dropped. Each was clicked against the state the earlier ones would make: a pack added behind a
+ * set-up that failed would set the repository up with that pack alone. Rejects when its own body fails to load,
+ * as when its send fails. A scope switch starts a new queue.
+ */
+export function queueInScope(scope, method, path, body) {
+  const before = lastAttachmentWrite;
+  const waits = before.pending && before.token === scope.token;
+  const ready = Promise.resolve(body);
+  // Read only once the writes before it went out OK; a dropped write's failing body is nobody's error.
+  ready.catch(() => {});
+  const sending = (async () => {
+    if (waits) {
+      await before.settled;
+      if (!before.clear) return false;
+    }
+    const loaded = await ready;
+    return loaded === null ? false : sendInScope(scope, method, path, loaded);
+  })();
+  const write = { token: scope.token, pending: true, clear: false, settled: null };
+  write.settled = sending.then(
+    sent => { write.pending = false; write.clear = sent; },
+    () => { write.pending = false; },
+  );
+  lastAttachmentWrite = write;
+  return sending;
+}
+
 const scopeQuery = () => new URLSearchParams(scopeTarget()).toString();
 
 /** `&repository=<key>` for the machine-wide reads (activity, violations, sessions), once the key is known. */

@@ -58,6 +58,8 @@ declare module "*/ui/poll.js" {
   export function captureScope(): Scope;
   export function inScope(scope: Scope): boolean;
   export function sendInScope(scope: Scope, method: string, path: string, body: object): Promise<boolean>;
+  /** `body` may be a promise of the body; `null` sends nothing. */
+  export function queueInScope(scope: Scope, method: string, path: string, body: object | Promise<object | null> | null): Promise<boolean>;
   export function recommendationsFor(scope: Scope): Promise<Array<{ packId: string; folder: string }>>;
   export function changeScope(scope: { repository?: string; checkout?: string } | null): void;
 }

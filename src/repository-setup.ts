@@ -20,10 +20,10 @@ import {
   workspaceStartState,
   type RepositorySetupIo,
 } from "./repository-start.js";
-import { removeAttachment, setUpRepository as configureRepository } from "./rule-configuration.js";
+import { recordSetUp, removeAttachment } from "./rule-configuration.js";
 import { loadRulePacks, recommendRulePacks, type RulePackRecommendation } from "./rule-packs.js";
 import { ruleAttachments } from "./schema.js";
-import { offerSetupReview } from "./setup-review.js";
+import { offerSetupReview, setupReviewOffered } from "./setup-review.js";
 import {
   CONFIRM_PACKS_ANSWERS,
   NO_REPO_ANSWERS,
@@ -72,6 +72,20 @@ export function parseCodingAgents(list: string): Harness[] {
   }))];
 }
 
+/**
+ * `--agents` as set-up takes it. A fresh run fails on a bad list before anything changes. An answer's bad list
+ * (`--answer`, relayed from a person's typing) becomes `agentsError`, and set-up asks its confirm question again.
+ */
+export function setupAgents(list: string | undefined, answer: string | undefined): Pick<RepositorySetupOptions, "agents" | "agentsError"> {
+  if (list === undefined) return {};
+  try {
+    return { agents: parseCodingAgents(list) };
+  } catch (error) {
+    if (answer === undefined) throw error;
+    return { agentsError: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export type DashboardPage = "rules" | "review";
 
 /** What set-up needs from the machine; the CLI builds it (`setupEnvironment`), tests fake it. */
@@ -93,6 +107,8 @@ export interface RepositorySetupOptions {
   databasePath?: string;
   /** `--agents`: the coding agents to connect. Those found on this computer when absent. */
   agents?: readonly Harness[];
+  /** An answer's `--agents` that `parseCodingAgents` rejected: set-up asks its confirm question again, with this error. */
+  agentsError?: string;
   /** `rerail start --repository`: start every checkout of the repository, not just this one and those inside it. */
   repository?: boolean;
   /** `--answer`: the person's answer, relayed by the coding agent. */
@@ -238,11 +254,15 @@ function readDatabase<T>(run: Run, read: (database: RerailDatabase) => T): T | u
   }
 }
 
-/** The database for set-up's writes, with the repository's checkout recorded: only after the person said yes. */
+/**
+ * The database for set-up's writes, with the repository's checkout recorded: only after the person said yes. Every
+ * write, the checkout's included, is one immediate transaction, so a failure partway leaves nothing behind and no other
+ * process sees half of it. The writes inside nest as savepoints.
+ */
 function withCheckout<T>(run: Run, repository: Repository, action: (database: RerailDatabase, checkout: CheckoutContext) => T): T {
   const database = openRerailDatabase(run.databasePath);
   try {
-    return action(database, recordCheckout(database, repository.root));
+    return database.transaction(() => action(database, recordCheckout(database, repository.root)), { behavior: "immediate" });
   } finally {
     database.$client.close();
   }
@@ -275,17 +295,19 @@ function otherStartedRepositories(database: RerailDatabase, repositoryKey: Repos
 }
 
 /**
- * Where set-up finds the repository at `root`, read-only, like `workspaceStartState`. `awaiting-start`: set-up offered
- * the dashboard's review, the person set the repository up there (the first change adds the kept packs), and nobody
- * has started or stopped it yet, so set-up goes on to its confirm question. A repository set up any other way and
- * never started (`rerail rules add`, a coding agent, `rules import`) is `set-up`: `rerail start` just starts it.
+ * Where set-up finds the repository at `root`, read-only, like `workspaceStartState`. `review-offered`: set-up offered
+ * the dashboard's review and the person has changed nothing there yet. `awaiting-start`: set-up offered the review,
+ * the person set the repository up there (the first change adds the kept packs), and nobody has started or stopped it
+ * yet. Either way set-up goes on to its confirm question. A repository set up any other way and never started
+ * (`rerail rules add`, a coding agent, `rules import`) is `set-up`: `rerail start` just starts it.
  */
-function setUpState(root: string, databasePath: string): "not-set-up" | "awaiting-start" | "set-up" {
+function setUpState(root: string, databasePath: string): "not-set-up" | "review-offered" | "awaiting-start" | "set-up" {
   if (!existsSync(databasePath)) return "not-set-up";
   const database = openRerailDatabase(databasePath, { readonly: true });
   try {
     const checkout = lookupCheckout(database, root);
-    if (checkout === undefined || !checkoutStatus(database, checkout).setUp) return "not-set-up";
+    if (checkout === undefined) return "not-set-up";
+    if (!checkoutStatus(database, checkout).setUp) return setupReviewOffered(database, checkout.repositoryKey) ? "review-offered" : "not-set-up";
     return awaitingStartAfterReview(database, checkout.repositoryKey) ? "awaiting-start" : "set-up";
   } finally {
     database.$client.close();
@@ -340,7 +362,7 @@ function turnOn(run: Run, repository: Repository, packs: readonly RulePackRecomm
   return withCheckout(run, repository, (database, checkout) => {
     const { repositoryKey } = checkout;
     if (!checkoutStatus(database, checkout).setUp) {
-      configureRepository(database, repositoryKey, {
+      recordSetUp(database, repositoryKey, {
         packs: packs === "none" ? [] : packs.map(({ pack, folder }) => ({ packId: pack.id, folder })),
       });
     } else if (!awaitingStartAfterReview(database, repositoryKey)) {
@@ -416,7 +438,7 @@ function packsInput(run: Run, repository: Repository, recommendations: readonly 
 /**
  * The review link, then the confirm question. The checkout and the offer of the review are recorded first, so the
  * dashboard can add packs there and set-up later knows the review set the repository up. `open`: try a browser;
- * false once the review has set the repository up, so a re-run shows the link alone.
+ * false once set-up has offered the review here, so a re-run shows the link alone.
  */
 async function reviewQuestion(run: Run, repository: Repository, input: RecommendedPacksInput, open: boolean): Promise<QuestionForm> {
   const scope = withCheckout(run, repository, (database, checkout) => {
@@ -429,9 +451,14 @@ async function reviewQuestion(run: Run, repository: Repository, input: Recommend
 /** Steps 4 and 5: the recommended packs, then the confirm question until the person starts Rerail or picks packs themselves. */
 async function confirm(run: Run, repository: Repository, answer: string | undefined, reviewed = false): Promise<SetupOutcome> {
   const recommendations = recommendRulePacks(repository.root);
-  if (answer === "start" || (answer === "other" && run.request.agents !== undefined)) return start(run, repository, recommendations);
+  const { agentsError } = run.request;
+  if (agentsError === undefined && (answer === "start" || (answer === "other" && run.request.agents !== undefined))) {
+    return start(run, repository, recommendations);
+  }
   const input = packsInput(run, repository, recommendations);
   let question = answer === "review" ? await reviewQuestion(run, repository, input, !reviewed) : recommendedPacksQuestion(input, run.io.lane);
+  // A bad answer's coding agents: the same question again, as the terminal asks again after one (`askAgents`).
+  if (agentsError !== undefined) say(run.io, agentsError);
   for (;;) {
     const picked = await choose(run, question, CONFIRM_PACKS_ANSWERS);
     if (picked === undefined) return halted(run.io);
@@ -451,9 +478,11 @@ async function confirm(run: Run, repository: Repository, answer: string | undefi
 async function setUpOneRepository(run: Run, repository: Repository, chosen: boolean, answer: string | undefined): Promise<SetupOutcome> {
   const state = setUpState(repository.root, run.databasePath);
   if (state === "set-up") return alreadySetUp(run, repository);
+  // The review was offered here: its link again, but no second browser, and never back to the read-repo question.
+  const reviewing = state === "awaiting-start" || state === "review-offered";
+  if (run.request.agentsError !== undefined) return confirm(run, repository, reviewing ? "review" : undefined, reviewing);
   if (answer === "pick-myself") return pickMyself(run, repository);
-  // The review set the repository up: carry on at its confirm question, with the review link but no second browser.
-  if (state === "awaiting-start") return confirm(run, repository, answer === "start" || answer === "other" ? answer : "review", true);
+  if (reviewing) return confirm(run, repository, answer === "start" || answer === "other" ? answer : "review", true);
   if (chosen || answer === "yes" || answer === "start" || answer === "review" || answer === "other") return confirm(run, repository, answer);
   const picked = await choose(run, readRepoQuestion({
     repoName: repository.name,
@@ -575,7 +604,24 @@ export function runSetupStep(request: SetupRequest): Promise<SetupStep> {
   return collectStep(async (io, onQuestion) => (await runSetup(io, { ...request, onQuestion })).status);
 }
 
-/** `rerail start --json`: the set-up's step where the repository is not set up, `done` with one line otherwise. */
+/**
+ * `rerail start --json`: the set-up's step where the repository is not set up. Otherwise `done` with one line and
+ * the rules dashboard's link, as the text path ends, shown without opening a browser.
+ */
 export function startRerailStep(workspace: string, options: RepositorySetupOptions): Promise<SetupStep> {
-  return collectStep(async (io, onQuestion) => (await startRerail(workspace, io, { ...options, onQuestion })).status);
+  return collectStep(async (io, onQuestion) => {
+    const report = await startRerail(workspace, io, { ...options, onQuestion });
+    if (report.setUpRan) return report.status;
+    const database = openRerailDatabase(options.databasePath ?? defaultRerailDatabasePath(), { readonly: true });
+    let checkout: CheckoutContext | undefined;
+    try {
+      checkout = lookupCheckout(database, workspace);
+    } finally {
+      database.$client.close();
+    }
+    if (checkout === undefined) throw new Error(`Rerail has not recorded ${workspace}.`);
+    const scope = { repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath };
+    io.say(`  ${(await options.environment.dashboard(scope, "rules", false)).url}`);
+    return report.status;
+  });
 }

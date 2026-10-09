@@ -149,7 +149,7 @@ describe("T4 / C4 recommended rule packs", () => {
     expect(text).toContain("Nothing is on until you say yes.");
     expect(text).toContain("1. Yes, start Rerail");
     expect(text).toContain("2. Review them first  opens the dashboard");
-    expect(text).toContain("3. Type something else…  for example “only Claude Code”");
+    expect(text).toContain("3. Type something else…  only some coding agents, by id");
     expect(text).toContain("4. I’ll pick rule packs myself");
     expect(text).not.toMatch(/not covered|not relevant/i);
   });

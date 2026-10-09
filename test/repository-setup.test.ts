@@ -102,6 +102,16 @@ function expectUntouched(fixture: Fixture, repo = fixture.repo): void {
   expect(execFileSync("git", ["status", "--porcelain", "--ignored"], { cwd: repo, encoding: "utf8" })).toBe("");
 }
 
+/** Every start of a repository fails from now on, as a write that fails partway through set-up's would. */
+function failStarts(databasePath: string): void {
+  const database = openRerailDatabase(databasePath);
+  try {
+    database.$client.exec("CREATE TRIGGER fail_start BEFORE UPDATE OF started ON repositories WHEN NEW.started = 1 BEGIN SELECT RAISE(ABORT, 'disk full'); END");
+  } finally {
+    database.$client.close();
+  }
+}
+
 /** Each test sets real Git repositories up against SQLite; a loaded full-suite run needs more than the default 5 s. */
 const SETUP_TIMEOUT_MS = 30_000;
 
@@ -344,6 +354,70 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
   it("rejects an answer set-up does not know", async () => {
     const setup = await fixture();
     await expect(runSetup(agentIo(), request(setup, fakeSetupEnvironment(), { answer: "maybe" }))).rejects.toThrow("Unknown answer: maybe");
+  });
+
+  it("shows the review link again on a re-run before the review changed anything, opening the browser once", async () => {
+    const setup = await fixture();
+    const environment = fakeSetupEnvironment();
+    await runSetup(agentIo(), request(setup, environment, { answer: "review", repo: setup.repo }));
+
+    const plain = agentIo();
+    expect(await runSetup(plain, request(setup, environment))).toEqual({ status: "waiting" });
+    expect(plain.text()).not.toContain("Can Rerail read it");
+    expect(plain.text()).toContain("http://127.0.0.1:4737/#rule-packs?review=1");
+
+    const reviewAgain = agentIo();
+    expect(await runSetup(reviewAgain, request(setup, environment, { answer: "review", repo: setup.repo }))).toEqual({ status: "waiting" });
+    expect(reviewAgain.text()).toContain("http://127.0.0.1:4737/#rule-packs?review=1");
+
+    expect(environment.pages.map(({ page, open }) => ({ page, open }))).toEqual([
+      { page: "review", open: true },
+      { page: "review", open: false },
+      { page: "review", open: false },
+    ]);
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
+  });
+
+  it("asks the confirm question again, with the error, for an answer's coding agents it does not know", async () => {
+    const setup = await fixture();
+    const environment = fakeSetupEnvironment();
+    const asked = agentIo();
+    expect(await runSetup(asked, request(setup, environment, { answer: "start", repo: setup.repo, agentsError: "Unknown coding agent: only Claude Code." })))
+      .toEqual({ status: "waiting" });
+    expect(asked.text()).toContain("Unknown coding agent: only Claude Code.");
+    expect(asked.text()).toContain("Start Rerail in acme-api with this rule pack?");
+    expect(environment.connections).toEqual([]);
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
+  });
+
+  it("writes nothing when starting fails partway", async () => {
+    const setup = await fixture();
+    failStarts(setup.databasePath);
+    const before = startRows(setup);
+
+    // A fresh start: the checkout, the set-up and its packs are written before the start fails.
+    await expect(runSetup(agentIo(), request(setup, fakeSetupEnvironment(), { answer: "start", repo: setup.repo }))).rejects.toThrow("disk full");
+    expect(startRows(setup)).toEqual(before);
+    const reader = openRerailDatabase(setup.databasePath, { readonly: true });
+    try {
+      expect(reader.$client.prepare("SELECT count(*) AS count FROM rule_attachments").get()).toEqual({ count: 0 });
+    } finally {
+      reader.$client.close();
+    }
+  });
+
+  it("keeps the review's packs when picking packs myself fails at the start", async () => {
+    const setup = await fixture();
+    const environment = fakeSetupEnvironment({
+      onPage: (scope, page) => (page === "review" ? attachPacks(setup.databasePath, scope, ["tslint", "complexity"]) : undefined),
+    });
+    await runSetup(agentIo(), request(setup, environment, { answer: "review", repo: setup.repo }));
+    failStarts(setup.databasePath);
+
+    // Each pack is removed before the start fails; none of it stands.
+    await expect(runSetup(agentIo(), request(setup, environment, { answer: "pick-myself", repo: setup.repo }))).rejects.toThrow("disk full");
+    expect(selected(setup)).toEqual(["complexity", "tslint"]);
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
   });
 });
 

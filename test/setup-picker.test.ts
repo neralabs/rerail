@@ -223,7 +223,7 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     vi.stubEnv("HOME", join(setup.root, "user"));
     const io = { lane: "agent" as const, say: (text: string) => { said.push(text); }, close: () => {} };
     expect(await runSetupCommand(["--repository", "--database", other, "--repo", worktree], setup.context, io)).toBe(0);
-    expect(said.join("\n")).toContain(`setup --database ${other} --repository --answer start --repo ${worktree}`);
+    expect(said.join("\n")).toContain(`setup --relay --database ${other} --repository --answer start --repo ${worktree}`);
   });
 
   it("carries `start --agents` through every answer, so set-up connects only the coding agents named", async () => {

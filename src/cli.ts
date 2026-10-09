@@ -25,7 +25,7 @@ import {
 } from "./repository-start.js";
 import type { RepositoryStartState } from "./repository-model.js";
 import { repositoryName } from "./repository-identity.js";
-import { checkSetupAnswer, parseCodingAgents, startRerail } from "./repository-setup.js";
+import { checkSetupAnswer, setupAgents, startRerail } from "./repository-setup.js";
 import { isPreSetupHealthCheck, startForPreSetupHealthCheck } from "./pre-setup-health-check.js";
 import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "./daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "./database.js";
@@ -48,6 +48,7 @@ import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./
 import { runAuditCommand } from "./audit-cli.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
 import { JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
+import { SETUP_FLAGS } from "./setup-screens.js";
 import { defaultRerailHome } from "./rerail-home.js";
 import {
   ManagedUpdater,
@@ -110,9 +111,9 @@ function selectedChannel(args: readonly string[]): string | undefined {
 function usage(): string {
   return [
     "Usage:",
-    "  rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--repository] [--port <n>] [--json] [--database <file>]",
+    "  rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--repository] [--port <n>] [--json] [--relay] [--database <file>]",
     "  rerail install [--root <package>] [--agents <list>] [--remove] [--dry-run]",
-    "  rerail start [--repo <dir>] [--repository] [--agents <list>] [--answer <answer>] [--json] [--database <file>]",
+    "  rerail start [--repo <dir>] [--repository] [--agents <list>] [--answer <answer>] [--json] [--relay] [--database <file>]",
     "  rerail stop [--repo <dir>] [--repository] [--database <file>]",
     "  rerail state [--set-up] [--repo <dir>] [--database <file>]",
     "  rerail status",
@@ -364,12 +365,13 @@ async function runDaemonCommand(command: string, args: readonly string[], home: 
 /**
  * `rerail start` / `rerail stop` act on the checkout of `--repo` or the current directory and the worktrees inside
  * it, or with `--repository` on every checkout of its repository. Starting a repository that is not set up runs
- * set-up there: its questions are answered with `--answer`, then `rerail setup`. Without a terminal the caller is a
- * coding agent relaying the output, so the text names its slash commands. `--json` prints one set-up step.
+ * set-up there: its questions are answered with `--answer`, then `rerail setup`. Without a terminal, or with `--relay`,
+ * the caller is a coding agent relaying the output, so the text names its slash commands and every answer carries
+ * `--relay`. `--json` prints one set-up step.
  * `--database` names the database an extension was configured with, as `rerail state` takes it.
  */
 async function runRepositoryCommand(command: "start" | "stop", args: readonly string[], context: SetupContext): Promise<number> {
-  const io = setupIo();
+  const io = setupIo(args);
   try {
     if (command === "start" && args.includes(JSON_FLAG)) {
       const step = await startStep(args, context, machinePlace(context));
@@ -379,7 +381,7 @@ async function runRepositoryCommand(command: "start" | "stop", args: readonly st
     const { flags, options } = parseArguments(
       args,
       {
-        flags: ["--repository"],
+        flags: command === "start" ? ["--repository", SETUP_FLAGS.relay] : ["--repository"],
         options: command === "start" ? ["--repo", "--agents", "--answer", "--database"] : ["--repo", "--database"],
       },
       argument => `Unknown ${command} option: ${argument}\n\n${usage()}`,
@@ -397,17 +399,18 @@ async function runRepositoryCommand(command: "start" | "stop", args: readonly st
       startForPreSetupHealthCheck(workspace, io);
       return 0;
     }
-    const agentList = options.get("--agents");
-    const agents = agentList === undefined ? undefined : parseCodingAgents(agentList);
     const answer = checkSetupAnswer(options.get("--answer"));
+    const { agents, agentsError } = setupAgents(options.get("--agents"), answer);
     const setupCommand = setupAnswerCommand(context, {
       ...(databasePath === undefined ? {} : { databasePath }),
       repository,
+      ...(io.lane === "agent" ? { relay: true } : {}),
       ...(agents === undefined ? {} : { agents }),
     });
     const report = await startRerail(workspace, io, {
       ...(databasePath === undefined ? {} : { databasePath }),
       ...(agents === undefined ? {} : { agents }),
+      ...(agentsError === undefined ? {} : { agentsError }),
       ...(answer === undefined ? {} : { answer }),
       ...(setupCommand === undefined ? {} : { setupCommand }),
       repository,

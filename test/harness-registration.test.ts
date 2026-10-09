@@ -23,7 +23,7 @@ import {
 } from "../src/claude-status-store.js";
 import { MANAGED_SKILL_MARKER } from "../src/rerail-command-files.js";
 import { RERAIL_COMMANDS } from "../src/rerail-commands.js";
-import { runInstallCommand } from "../src/setup-cli.js";
+import { runInstallCommand, setupAnswerCommand } from "../src/setup-cli.js";
 import { ManagedUpdater } from "../src/updater.js";
 import { readRepoQuestion, renderQuestion, shellQuote } from "../src/setup-screens.js";
 
@@ -599,7 +599,7 @@ describe("Claude Code commands", () => {
       expect(body).toContain(`\n${command} ${action}\n`);
     }
     const start = await read("rerail-start");
-    expect(start).toContain(`\n${command} start\n`);
+    expect(start).toContain(`\n${command} start --relay\n`);
     expect(start).not.toContain("recommended rule packs");
     const ui = await read("rerail-ui");
     expect(ui).toContain(`allowed-tools: Bash(${command} ui --print), Bash(${command} ui)\n`);
@@ -633,23 +633,41 @@ describe("Claude Code commands", () => {
     // Claude Code's `Bash(<prefix> *)` grants every command that starts with the prefix and a space.
     const granted = (line: string): boolean => allowed.some(pattern =>
       pattern.endsWith(" *") ? line.startsWith(pattern.slice(0, -1)) : line === pattern);
-    // What `rerail start` prints with no TTY: the question, then one numbered command per answer.
-    const answers = (setupCommand: string | undefined): string[] => renderQuestion(readRepoQuestion({
+    // What set-up prints in the agent lane: the question, then one numbered command per answer, each run as set-up prints it.
+    const context = { home: rerailHome, packageRoot: root, updater: new ManagedUpdater({ home: rerailHome, packageRoot: root, packageVersion: "1.0.0" }) };
+    const answers = (): string[] => renderQuestion(readRepoQuestion({
       repoName: "acme-web",
       repoPath: "/code/acme-web",
-      ...(setupCommand === undefined ? {} : { setupCommand }),
+      setupCommand: setupAnswerCommand(context, { relay: true })!,
     }), "agent").split("\n").filter(line => /^\d+\. .* setup /u.test(line)).map(line => line.replace(/^\d+\. /u, ""));
 
-    const launcherAnswers = answers(`${shellQuote(join(rerailHome, "bin", "rerail"))} setup`);
-    const bareAnswers = answers(undefined);
+    const bareAnswers = answers();
+    await mkdir(dirname(context.updater.launcherPath), { recursive: true });
+    await writeFile(context.updater.launcherPath, "");
+    const launcherAnswers = answers();
     expect(launcherAnswers).toHaveLength(3);
     expect(bareAnswers).toHaveLength(3);
     for (const line of [...launcherAnswers, ...bareAnswers]) expect(granted(line), line).toBe(true);
-    expect(granted(`${nodePath} ${join(root, "dist", "cli.js")} start`)).toBe(true);
+    expect(granted(`${nodePath} ${join(root, "dist", "cli.js")} start --relay`)).toBe(true);
     expect(granted(`${shellQuote(join(rerailHome, "bin", "rerail"))} daemon stop`)).toBe(false);
 
     expect(start).toContain("relay it to the person as written and wait for their reply");
     expect(start).toContain("run only the one command the output gives for that answer");
+  });
+
+  it("has every coding agent's /rerail-start select the agent lane, even from a terminal", async () => {
+    const { home, root, nodePath } = await fixture();
+    await registerHarnesses({ root, home, nodePath, harnesses: ["claude-code", "cursor", "codex"] });
+    const files = [
+      join(home, ".claude", "commands", "rerail-start.md"),
+      join(home, ".cursor", "commands", "rerail-start.md"),
+      join(home, ".codex", "skills", "rerail-start", "SKILL.md"),
+    ];
+    for (const file of files) {
+      const body = await readFile(file, "utf8");
+      const run = body.match(/```sh\n(.*)\n```/u)?.[1];
+      expect(run, file).toBe(`${nodePath} ${join(root, "dist", "cli.js")} start --relay`);
+    }
   });
 
   it("removes this package's retired commands and leaves anyone else's", async () => {

@@ -34,7 +34,10 @@ export const data = {
   unavailable: [],
   /** id → stored rule, insertion order = catalog order. */
   rules: new Map(),
-  /** Pack id → the folders it is attached at in the scoped repository: the packs added here. */
+  /**
+   * Pack id → the folders it is attached at in the scoped repository: the packs added here. A pack shown added by a
+   * write still waiting for the recommendations has a promise of its folder until they arrive or the poll reads it back.
+   */
   attachedPacks: new Map(),
   /** id → activity for the selected range, and for all time (`since=0`). */
   activity: {},

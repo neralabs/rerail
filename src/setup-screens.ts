@@ -41,8 +41,11 @@ export interface DashboardLink {
 /** The command a coding agent runs to answer a question; set-up's own invocation. */
 export const SETUP_COMMAND = "rerail setup";
 
-/** The flags the agent lane's answer commands use; set-up's argument parser reads the same ones. */
-export const SETUP_FLAGS = { answer: "--answer", repo: "--repo", agents: "--agents" } as const;
+/**
+ * The flags the agent lane's answer commands use; set-up's argument parser reads the same ones. `relay` picks the
+ * agent lane even when a coding agent runs commands in a terminal: `/rerail-start` and every answer pass it.
+ */
+export const SETUP_FLAGS = { answer: "--answer", repo: "--repo", agents: "--agents", relay: "--relay" } as const;
 
 /** Answer keys in the order each question numbers its answers (answer 1 is index 0). */
 export const READ_REPO_ANSWERS = ["yes", "other-folder", "pick-myself"] as const;
@@ -308,7 +311,7 @@ function confirmQuestion(input: RecommendedPacksInput, prompt: string, lead: rea
       {
         answer: "other",
         label: "Type something else…",
-        hint: "for example “only Claude Code”",
+        hint: "only some coding agents, by id",
         // Only some coding agents is what set-up can do with an answer of their own.
         args: [SETUP_FLAGS.answer, "start", ...repoFlag],
         input: { flag: SETUP_FLAGS.agents, prompt: "Which coding agents should Rerail connect to?", hint: `comma-separated ids from: ${idList}`, placeholder: "<ids>" },

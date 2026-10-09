@@ -5,6 +5,7 @@ import {
   type RerailCommand,
   type RerailCommandName,
 } from "./rerail-commands.js";
+import { SETUP_FLAGS } from "./setup-screens.js";
 
 /** Coding agents that read Rerail commands from files: slash commands (Claude Code, Cursor) or skills (Codex). */
 export type CommandFileAgent = "claude-code" | "cursor" | "codex";
@@ -43,8 +44,13 @@ function runOne(command: string, lead: string): string {
   return [lead, "", "Run exactly this and report its output verbatim:", "", "```sh", command, "```", "", REPORT_VERBATIM].join("\n");
 }
 
-/** `/rerail-start`: where the repo is not set up, `start` prints set-up's next question; the agent relays it and runs the answer's command. */
+/**
+ * `/rerail-start`: where the repo is not set up, `start` prints set-up's next question; the agent relays it and runs the
+ * answer's command. `--relay` keeps set-up in the agent lane even where the coding agent runs commands in a terminal, and
+ * every answer command set-up prints carries it.
+ */
 function startBody(cli: string, setupLauncher: string): CommandBody {
+  const start = `${cli} start ${SETUP_FLAGS.relay}`;
   return {
     text: [
       "Start Rerail in this checkout and the worktrees inside it, setting the repo up the first time.",
@@ -52,7 +58,7 @@ function startBody(cli: string, setupLauncher: string): CommandBody {
       "Run exactly this:",
       "",
       "```sh",
-      `${cli} start`,
+      start,
       "```",
       "",
       "If the output asks a set-up question, relay it to the person as written and wait for their reply. Do not choose for them.",
@@ -61,7 +67,7 @@ function startBody(cli: string, setupLauncher: string): CommandBody {
       "",
       "Do not run anything else. If a command fails, show the error and stop.",
     ].join("\n"),
-    allowed: [`${cli} start`, `${setupLauncher} setup *`, "rerail setup *"],
+    allowed: [start, `${setupLauncher} setup ${SETUP_FLAGS.relay} *`, `rerail setup ${SETUP_FLAGS.relay} *`],
   };
 }
 

@@ -18,9 +18,9 @@ import {
   type RegistrationReport,
 } from "./harness-registration.js";
 import { checkNodeVersion } from "./node-version.js";
-import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
+import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
 import { workspaceStartState, type RepositorySetupIo } from "./repository-start.js";
-import { renderInstalled, shellQuote, type DashboardLink, type SetupLane } from "./setup-screens.js";
+import { renderInstalled, SETUP_FLAGS, shellQuote, type DashboardLink, type SetupLane } from "./setup-screens.js";
 import type { SetupStep } from "./setup-step.js";
 import type { ManagedUpdater } from "./updater.js";
 
@@ -187,17 +187,21 @@ export async function runInstallCommand(args: readonly string[], context: SetupC
   return 0;
 }
 
-/** Where set-up talks: a terminal it can ask, or (no TTY) a coding agent that relays each question. */
+/** Where set-up talks: a terminal it can ask, or a coding agent that relays each question. */
 export interface SetupIo extends RepositorySetupIo {
   close(): void;
 }
 
-export function setupIo(): SetupIo {
+/**
+ * The terminal lane needs a TTY on both stdin and stdout, and no `--relay`: set-up never waits on input that a coding
+ * agent, or a pipe, will not type. `/rerail-start` and every answer printed for a coding agent pass `--relay`.
+ */
+export function setupIo(args: readonly string[] = []): SetupIo {
   const say = (text: string): void => {
     process.stdout.write(`${text}\n`);
   };
-  if (!process.stdout.isTTY) return { lane: "agent", say, close: () => {} };
-  // The iterator buffers lines typed (or piped) ahead of the next question; `question()` would drop them.
+  if (args.includes(SETUP_FLAGS.relay) || !process.stdin.isTTY || !process.stdout.isTTY) return { lane: "agent", say, close: () => {} };
+  // The iterator buffers lines typed ahead of the next question; `question()` would drop them.
   let input: Interface | undefined;
   let lines: AsyncIterator<string> | undefined;
   return {
@@ -288,7 +292,7 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
   };
 }
 
-/** What a set-up run carries into every answer it prints, so the next run acts on the same database, port, scope and coding agents. */
+/** What a set-up run carries into every answer it prints, so the next run acts on the same database, port, scope, coding agents and lane. */
 export interface SetupCarry {
   readonly port?: number;
   readonly databasePath?: string;
@@ -296,10 +300,13 @@ export interface SetupCarry {
   readonly repository?: boolean;
   /** `--agents`: connect only these coding agents, not every one found. */
   readonly agents?: readonly Harness[];
+  /** `--relay`: the agent lane's answers say so, so a coding agent that runs them in a terminal still gets the agent lane. */
+  readonly relay?: boolean;
 }
 
 function carriedArgs(carry: SetupCarry): string[] {
   return [
+    ...(carry.relay === true ? [SETUP_FLAGS.relay] : []),
     ...(carry.port === undefined ? [] : ["--port", String(carry.port)]),
     ...(carry.databasePath === undefined ? [] : ["--database", carry.databasePath]),
     ...(carry.repository === true ? ["--repository"] : []),
@@ -344,14 +351,14 @@ export function machinePlace(context: SetupContext, cwd: string = process.cwd())
 /**
  * `rerail setup` (`npx @neralabs/rerail setup`): the six steps of set-up. Install first (T2), which
  * makes this version the managed install and turns nothing on, then ask, recommend, confirm, start
- * in this repository only, and the summary. Without a TTY each run stops at the next question for the
- * coding agent, which runs set-up again with `--answer`, `--repo` and `--agents`. With `--json` the
+ * in this repository only, and the summary. Without a TTY, or with `--relay`, each run stops at the next question for
+ * the coding agent, which runs set-up again with `--answer`, `--repo` and `--agents`. With `--json` the
  * same run prints one `SetupStep` and nothing else, failures included.
  */
 export async function runSetupCommand(
   args: readonly string[],
   context: SetupContext,
-  io: SetupIo = setupIo(),
+  io: SetupIo = setupIo(args),
   nodeVersion: string = process.versions.node,
 ): Promise<number> {
   try {
@@ -369,13 +376,14 @@ export async function runSetupCommand(
 interface SetupArguments extends SetupCarry {
   answer?: string;
   repo?: string;
+  agentsError?: string;
 }
 
 /** Checked before the install, so a typo changes nothing. */
 function setupArguments(args: readonly string[]): SetupArguments {
   const { flags, options } = parseArguments(
     args,
-    { flags: [JSON_FLAG, "--repository"], options: ["--answer", "--repo", "--agents", "--port", "--database"] },
+    { flags: [JSON_FLAG, SETUP_FLAGS.relay, "--repository"], options: ["--answer", "--repo", "--agents", "--port", "--database"] },
     argument => `Unknown setup option: ${argument}`,
   );
   const port = options.get("--port");
@@ -389,7 +397,7 @@ function setupArguments(args: readonly string[]): SetupArguments {
     ...(flags.has("--repository") ? { repository: true } : {}),
     ...(answer === undefined ? {} : { answer }),
     ...(repo === undefined ? {} : { repo }),
-    ...(agents === undefined ? {} : { agents: parseCodingAgents(agents) }),
+    ...setupAgents(agents, answer),
   };
 }
 
@@ -429,8 +437,9 @@ function carryOf(parsed: SetupArguments, place: SetupPlace): SetupCarry {
   };
 }
 
-function setupRequest(context: SetupContext, parsed: SetupArguments, place: SetupPlace): SetupRequest {
-  const carry = carryOf(parsed, place);
+/** The agent lane's request carries `--relay` into every answer it prints. */
+function setupRequest(context: SetupContext, parsed: SetupArguments, place: SetupPlace, lane: SetupLane): SetupRequest {
+  const carry = { ...carryOf(parsed, place), ...(lane === "agent" ? { relay: true } : {}) };
   const setupCommand = setupAnswerCommand(context, carry);
   return {
     cwd: place.cwd,
@@ -439,6 +448,7 @@ function setupRequest(context: SetupContext, parsed: SetupArguments, place: Setu
     ...(parsed.repo === undefined ? {} : { repo: parsed.repo }),
     ...(parsed.answer === undefined ? {} : { answer: parsed.answer }),
     ...(parsed.agents === undefined ? {} : { agents: parsed.agents }),
+    ...(parsed.agentsError === undefined ? {} : { agentsError: parsed.agentsError }),
     ...(setupCommand === undefined ? {} : { setupCommand }),
     environment: place.environment(parsed.port),
   };
@@ -455,7 +465,7 @@ async function setupText(args: readonly string[], context: SetupContext, io: Set
   const place = machinePlace(context);
   const installedLine = await install(context, parsed, place.cwd, io.lane, "setup");
   if (installedLine !== undefined) io.say(installedLine);
-  const outcome = await runSetup(io, setupRequest(context, parsed, place));
+  const outcome = await runSetup(io, setupRequest(context, parsed, place, io.lane));
   return outcome.status === "cancelled" ? 1 : 0;
 }
 
@@ -470,7 +480,7 @@ async function jsonSetupStep(args: readonly string[], context: SetupContext, pla
     if (!node.ok) return errorStep(node.message.replace(/\n$/u, ""));
     const parsed = setupArguments(args);
     const installedLine = await install(context, parsed, place.cwd, "json", origin);
-    const step = await runSetupStep({ ...setupRequest(context, parsed, place), nextArgs: jsonNextArgs(carryOf(parsed, place)) });
+    const step = await runSetupStep({ ...setupRequest(context, parsed, place, "json"), nextArgs: jsonNextArgs(carryOf(parsed, place)) });
     return installedLine === undefined ? step : { ...step, screen: `${installedLine}\n${step.screen}` };
   } catch (error) {
     return errorStep(messageOf(error));
@@ -501,14 +511,16 @@ export async function startStep(args: readonly string[], context: SetupContext, 
       ];
       return await jsonSetupStep([JSON_FLAG, ...passed], context, { ...place, cwd: workspace }, process.versions.node, "start");
     }
+    const { agentsError, ...chosen } = setupAgents(agents, answer);
     const carry: SetupCarry = {
       ...(databasePath === undefined ? {} : { databasePath }),
       ...(repository ? { repository } : {}),
-      ...(agents === undefined ? {} : { agents: parseCodingAgents(agents) }),
+      ...chosen,
     };
     const setupCommand = setupAnswerCommand(context, carry);
     return await startRerailStep(workspace, {
       ...carry,
+      ...(agentsError === undefined ? {} : { agentsError }),
       ...(answer === undefined ? {} : { answer }),
       ...(setupCommand === undefined ? {} : { setupCommand }),
       nextArgs: jsonNextArgs(carry),

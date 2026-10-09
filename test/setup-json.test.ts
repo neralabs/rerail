@@ -3,6 +3,7 @@ import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable, Writable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runSetup, runSetupStep, startRerailStep, type SetupRequest } from "../src/repository-setup.js";
 import { workspaceStartState, type RepositorySetupIo } from "../src/repository-start.js";
@@ -183,7 +184,19 @@ describe("rerail start --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     await runSetup({ lane: "agent", say: () => {} }, request(setup, environment, { answer: "start", repo: setup.repo }));
     const again = await startRerailStep(setup.repo, { databasePath: setup.databasePath, environment });
     expect(again).toMatchObject({ step: "done", question: null });
-    expect(again.screen).toMatch(/^● Rerail is already on in acme api\. \d+ rules are on\.$/u);
+    expect(again.screen.split("\n")[0]).toMatch(/^● Rerail is already on in acme api\. \d+ rules are on\.$/u);
+  });
+
+  it("ends on the rules dashboard's link, scoped to the repository, where it is set up already", async () => {
+    const setup = await fixture();
+    const environment = fakeSetupEnvironment();
+    await runSetup({ lane: "agent", say: () => {} }, request(setup, environment, { answer: "start", repo: setup.repo }));
+    const { repositoryKey } = environment.pages.at(-1)!;
+
+    const step = await startRerailStep(setup.repo, { databasePath: setup.databasePath, environment });
+    expect(step).toMatchObject({ step: "done", question: null });
+    expect(step.screen.split("\n").at(-1)).toBe("  http://127.0.0.1:4737/#rules");
+    expect(environment.pages.at(-1)).toEqual({ repoRoot: setup.repo, repositoryKey, page: "rules", open: false });
   });
 });
 
@@ -244,7 +257,7 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(await runSetupCommand(["--agents", "Cursor", "--answer", "yes", "--repo", setup.repo], context, io)).toBe(0);
     const { commands } = agentQuestion(said.join("\n"));
     expect(commands).toHaveLength(4);
-    for (const command of commands) expect(command).toContain("setup --agents cursor --answer ");
+    for (const command of commands) expect(command).toContain("setup --relay --agents cursor --answer ");
 
     said.length = 0;
     expect(await runSetupCommand(["--json", "--agents", "cursor", "--answer", "yes", "--repo", setup.repo], context, io)).toBe(0);
@@ -252,6 +265,72 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(step.question!.options.map(option => option.next.args.slice(0, 4))).toEqual(Array(4).fill(["setup", "--agents", "cursor", "--json"]));
     expect(step.question!.options.find(option => option.answer === "other")!.input!.hint).toBe("comma-separated ids from: cursor (Cursor)");
     expect(step.screen).toMatch(/^ {2}Connected to +Cursor\b/mu);
+  });
+
+  it("asks the confirm question again for an answer's unknown coding agents, in both lanes", async () => {
+    const { context, said, io, setup } = await commandFixture();
+    await context.updater.activateRoot(context.packageRoot);
+    const answer = ["--agents", "only Claude Code", "--answer", "start", "--repo", setup.repo];
+    expect(await runSetupCommand(answer, context, io)).toBe(0);
+    expect(said.join("\n")).toContain("Unknown coding agent: only Claude Code.");
+    expect(said.join("\n")).toContain("Start Rerail in acme api with this rule pack?");
+
+    said.length = 0;
+    expect(await runSetupCommand(["--json", ...answer], context, io)).toBe(0);
+    const step = JSON.parse(said[0]!) as SetupStep;
+    expect(step.step).toBe("confirm-packs");
+    expect(step.screen).toContain("Unknown coding agent: only Claude Code.");
+    // The next answer carries no rejected agents.
+    expect(step.question!.options[0]!.next.args).not.toContain("--agents");
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
+  });
+
+  /** A coding agent's pseudo-terminal, or a person's terminal: a TTY on stdout and (unless piped) stdin, which reaches its end at once. */
+  function terminal(stdinIsTTY = true): { output: () => string; listenedToStdin: () => boolean } {
+    const written: string[] = [];
+    const stdin = Object.assign(Readable.from([]), { isTTY: stdinIsTTY });
+    const listen = vi.spyOn(stdin, "on");
+    const stdout = Object.assign(new Writable({ write(chunk, _encoding, done) { written.push(String(chunk)); done(); } }), { isTTY: true });
+    vi.spyOn(process, "stdin", "get").mockReturnValue(stdin as unknown as typeof process.stdin);
+    vi.spyOn(process, "stdout", "get").mockReturnValue(stdout as unknown as typeof process.stdout);
+    return { output: () => written.join(""), listenedToStdin: () => listen.mock.calls.length > 0 };
+  }
+
+  it("with `--relay`, asks for a coding agent to relay from a terminal, never reads stdin, and every answer keeps `--relay`", async () => {
+    const { context, setup } = await commandFixture();
+    await context.updater.activateRoot(context.packageRoot);
+    const tty = terminal();
+    expect(await runSetupCommand(["--relay"], context)).toBe(0);
+    const asked = agentQuestion(tty.output());
+    expect(tty.output()).toContain("Ask them this, as written");
+    expect(asked.commands).toHaveLength(3);
+    for (const command of asked.commands) expect(command).toContain("setup --relay --");
+
+    // The coding agent runs the answer as printed: the next question is the agent lane's too.
+    const next = terminal();
+    expect(await runSetupCommand(["--relay", "--answer", "yes", "--repo", setup.repo], context)).toBe(0);
+    const confirm = agentQuestion(next.output());
+    expect(confirm.commands).toHaveLength(4);
+    for (const command of confirm.commands) expect(command).toContain("setup --relay --answer ");
+    expect(tty.listenedToStdin() || next.listenedToStdin()).toBe(false);
+  });
+
+  it("asks a person at a terminal there, and a piped stdin gets the coding agent's questions instead", async () => {
+    const { context } = await commandFixture();
+    await context.updater.activateRoot(context.packageRoot);
+    const person = terminal();
+    // The terminal lane waits on stdin; this one ends at once, so set-up stops at its first question.
+    expect(await runSetupCommand([], context)).toBe(1);
+    expect(person.listenedToStdin()).toBe(true);
+    expect(person.output()).toContain("Can Rerail read it");
+    expect(person.output()).not.toContain("Ask them this");
+
+    const piped = terminal(false);
+    expect(await runSetupCommand([], context)).toBe(0);
+    expect(piped.listenedToStdin()).toBe(false);
+    const relayed = agentQuestion(piped.output()).commands;
+    expect(relayed).toHaveLength(3);
+    for (const command of relayed) expect(command).toContain("setup --relay --");
   });
 
   it("installs over another active version on a fresh run only, never on an answer", async () => {
