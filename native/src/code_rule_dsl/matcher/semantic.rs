@@ -62,14 +62,12 @@ impl Semantic {
             | Self::Binds(_) => true,
             Self::Host(test) => super::reads_values(&test.rule, seen),
             // PHP's run-time fallback of a function or constant name may be unknown.
-            Self::Resolves(resolves) => {
-                crate::code_rule_dsl::language::Family::of(resolves.language).reads_php()
-            }
+            Self::Resolves(resolves) => flow(resolves.language),
             Self::Capture(_) | Self::Layout(_) => false,
             // PHP's flow may leave a read's binding, `latest` and `outer` unknown.
             Self::Binding(test) => {
                 test.filter.reads_usage()
-                    || crate::code_rule_dsl::language::Family::of(test.language).reads_php()
+                    || flow(test.language)
                     || test.sub_rules().any(|rule| super::reads_values(rule, seen))
             }
         }
@@ -111,4 +109,11 @@ impl Semantic {
             },
         }
     }
+}
+
+/// Whether `language`'s family reads the file's flow, which may leave a read unknown
+/// (`ScopeRules::FLOW`).
+fn flow(language: crate::code_rule_dsl::language::GrammarDialect) -> bool {
+    use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
+    with_adapter!(crate::code_rule_dsl::language::Family::of(language), A => <<A as Adapter>::Scope as ScopeRules>::FLOW)
 }

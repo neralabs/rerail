@@ -2,6 +2,7 @@ use super::AstMatcher;
 use super::binding::{match_binding_nodes, match_occurrence};
 use super::resolve::{file_table, file_usage, table_reading};
 use super::util::{THREE_VALUED, UNKNOWN};
+use crate::code_rule_dsl::language::adapter::{Adapter, Globals, ScopeRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::scope::options::{DEFAULT_JSX_PRAGMA, LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::usage::{BindingId, PrivateMember, Usage};
@@ -140,17 +141,19 @@ impl BindingFilter {
             || self.exported.is_some()
     }
 
-    fn typescript(&self) -> bool {
+    /// Whether the filter reads ESLint's globals (`Globals::Eslint`): its top level may be the
+    /// global scope, and a JSX pragma may read a variable.
+    fn eslint(&self) -> bool {
         self.language.is_some_and(|language| {
-            crate::code_rule_dsl::language::Family::of(language)
-                == crate::code_rule_dsl::language::Family::Ecma
+            with_adapter!(Family::of(language), A => <<A as Adapter>::Scope as ScopeRules>::GLOBALS)
+                == Globals::Eslint
         })
     }
 
     /// The name a filter gives the scope at `index`.
     pub(crate) fn scope_name(&self, table: &ScopeTable, index: u32) -> ScopeName {
         let kind = table.scopes[index as usize].kind;
-        let global = self.typescript()
+        let global = self.eslint()
             && index == 0
             && self
                 .options
@@ -181,7 +184,7 @@ impl BindingFilter {
     /// Whether typescript-eslint's JSX pragma (or, for fragments, fragment name) reads the variable
     /// `id` belongs to: the first JSX element whose scope sees a variable of that name reads it.
     fn pragma_reads(&self, table: &ScopeTable, id: BindingId<'_>) -> bool {
-        if !self.typescript() || table.jsx.is_empty() {
+        if !self.eslint() || table.jsx.is_empty() {
             return false;
         }
         let pragma = match self.options.as_deref() {
@@ -247,9 +250,8 @@ impl BindingFilter {
             |wanted: Option<bool>, actual: bool| wanted.is_none_or(|wanted| wanted == actual);
         // The flow keys a binding by where it is made: its name node, or a Blade marker.
         let php = table.php.as_deref().filter(|_| {
-            self.language.is_some_and(|language| {
-                crate::code_rule_dsl::language::Family::of(language).reads_php()
-            })
+            self.language
+                .is_some_and(|language| flow(Family::of(language)))
         });
         let (latest, outer) = match php {
             Some(flow) => {
@@ -436,7 +438,7 @@ impl Binds {
         table: &'t ScopeTable,
         id: BindingId<'t>,
     ) -> Option<(Vec<(BindingId<'t>, bool)>, bool)> {
-        if Family::of(table.language).reads_php() {
+        if flow(table.family) {
             let start = table.binding_of(id).offset as u32;
             let reach = table.php.as_deref()?.reach(start)?;
             if reach.bindings.is_empty() && !reach.unknown {
@@ -670,8 +672,8 @@ impl Binds {
                     continue;
                 }
             }
-            let python = self.language == GrammarDialect::Python;
-            let shadowed = match self.redefines.as_deref().filter(|_| python) {
+            let shadowed_only = with_adapter!(table.family, A => <<A as Adapter>::Scope as ScopeRules>::REDEFINES_SHADOWED);
+            let shadowed = match self.redefines.as_deref().filter(|_| shadowed_only) {
                 None => None,
                 Some(redefines) => match Self::shadowed(redefines, &table, &usage, id, &region) {
                     Some(Some(shadowed)) => Some((redefines, shadowed)),
@@ -708,7 +710,7 @@ impl Binds {
                     continue;
                 }
             }
-            if let Some(redefines) = self.redefines.as_deref().filter(|_| !python) {
+            if let Some(redefines) = self.redefines.as_deref().filter(|_| !shadowed_only) {
                 let verdict = Self::redefines_others(
                     redefines, &table, &usage, id, &node, &mut trial, &region,
                 );
@@ -734,4 +736,9 @@ impl Binds {
         }
         None
     }
+}
+
+/// Whether `family` reads the file's flow (`ScopeRules::FLOW`).
+fn flow(family: Family) -> bool {
+    with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::FLOW)
 }

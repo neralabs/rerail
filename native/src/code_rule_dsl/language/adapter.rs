@@ -19,7 +19,7 @@ pub(crate) use super::with_adapter;
 pub(crate) use arguments::ArgumentRules;
 pub(crate) use calls::CallRules;
 pub(crate) use format_args::FormatArgRules;
-pub(crate) use scope::ScopeRules;
+pub(crate) use scope::{Globals, ScopeFeature, ScopeRules};
 pub(crate) use value::ValueRules;
 
 use super::{Family, language_not_supported};

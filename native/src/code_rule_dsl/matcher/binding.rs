@@ -5,10 +5,10 @@ use super::resolve::{file_table, file_usage, table_reading, unparenthesized};
 use super::spend_util_step;
 use super::util::{THREE_VALUED, UNKNOWN};
 use crate::code_rule_dsl::identifier::name_in;
-use crate::code_rule_dsl::language::{Family, GrammarDialect};
+use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
 use crate::code_rule_dsl::scope::Lookup;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
-use crate::code_rule_dsl::scope::php::Defined;
 use crate::code_rule_dsl::scope::{Reference, ScopeTable};
 use crate::code_rule_dsl::value::NodeRef;
 use ast_grep_core::matcher::Matcher;
@@ -86,7 +86,7 @@ impl BindingTest {
         )?;
         let found = table.reference(&reference.range())?;
         let name = name_in(self.language, reference.text());
-        if php_undecided(&table, found) {
+        if undecided(&table, found) {
             UNKNOWN.set(true);
             return None;
         }
@@ -221,27 +221,13 @@ fn resolved_index(
     name: &str,
     lookup: Lookup,
 ) -> Option<(u32, usize)> {
-    match Family::of(table.language) {
-        Family::Python if lookup == Lookup::default() => {
-            table.resolve_python_index(reference, name)
-        }
-        Family::Python => table.python_index_by(reference, name, lookup),
-        Family::Php | Family::Blade => table.php_index(reference),
-        Family::Ecma => table.resolve_lexical_index(reference, name),
-    }
+    with_adapter!(table.family, A => <<A as Adapter>::Scope as ScopeRules>::index(table, reference, name, lookup))
 }
 
-/// PHP: whether a read's binding is not known, though some binding may reach it: several may, a
-/// path may reach none, or PHP's dynamic symbol table may decide. A read no binding reaches is
-/// decided (it resolves to none).
-fn php_undecided(table: &ScopeTable, reference: &Reference) -> bool {
-    Family::of(table.language).reads_php()
-        && table.php_index(reference).is_none()
-        && table
-            .php
-            .as_deref()
-            .and_then(|flow| flow.read(reference.start))
-            .is_some_and(|read| !read.bindings.is_empty() || read.defined == Defined::Unknown)
+/// Whether a read's binding is not known, though some binding may reach it (PHP's flow: several
+/// may, a path may reach none, or PHP's dynamic symbol table may decide).
+fn undecided(table: &ScopeTable, reference: &Reference) -> bool {
+    with_adapter!(table.family, A => <<A as Adapter>::Scope as ScopeRules>::undecided(table, reference))
 }
 
 /// Matches `rule` at the first of `occurrences` (nodes of `anchor`'s file) where it matches,
