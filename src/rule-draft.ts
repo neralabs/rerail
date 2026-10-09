@@ -14,7 +14,6 @@ import {
   type NativeCompiledCodeRuleDsl,
 } from "./native.js";
 import { bundledCodeRuleDslDirectory, CodeRuleCompileError, EngineUnavailableError } from "./code-rule-compile.js";
-import { CODE_RULE_DIALECTS } from "./code-rule-languages.js";
 import type { CodeRule } from "./code-rule-schema.js";
 import { ConversationRuleRegistry } from "./registry.js";
 import { repositoryIdentityLocation, repositoryName } from "./repository-identity.js";
@@ -194,8 +193,7 @@ async function evaluate(binding: NativeBinding, compiled: NativeCompiledCodeRule
 }
 
 function moduleFor(binding: NativeBinding, root: string, path: string, language: string): { module?: string | string[] } {
-  if (language !== CODE_RULE_DIALECTS.python.label) return {};
-  const module = binding.pythonModulePath(resolve(root, path));
+  const module = binding.modulePath(language, resolve(root, path));
   return module === null ? {} : { module };
 }
 
