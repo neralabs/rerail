@@ -370,3 +370,96 @@ impl CallRules for Refused {
         Link::default()
     }
 }
+
+#[cfg(test)]
+pub(super) mod kit {
+    use super::{CallFeature, CallRules};
+    use crate::code_rule_dsl::calls::names::Name;
+    use crate::code_rule_dsl::language::GrammarDialect;
+    use crate::code_rule_dsl::language::adapter::{Adapter, Refusal};
+    use crate::code_rule_dsl::module_path::ModulePath;
+    use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
+    use ast_grep_core::AstGrep;
+    use ast_grep_core::tree_sitter::StrDoc;
+    use std::sync::Arc;
+
+    /// What one family's calls answer.
+    pub(crate) struct Calls {
+        pub(crate) call_kinds: &'static [&'static str],
+        pub(crate) function_kinds: &'static [&'static str],
+        /// `CallFeature::Calls`'s refusal, if the family refuses it.
+        pub(crate) refusal: Option<&'static str>,
+        pub(crate) seed_language: Option<&'static str>,
+        pub(crate) taped: bool,
+        pub(crate) subclasses: bool,
+        /// A source in the family's dialect, and the names of the definitions its regions'
+        /// summaries record.
+        pub(crate) summary: (&'static str, &'static [&'static str]),
+        /// The module an unread file of module `pkg.mod` names.
+        pub(crate) unread: Option<&'static str>,
+        /// A definition's name and its label.
+        pub(crate) label: (&'static str, &'static str),
+        /// Definitions' names and flags, and the keys each is linked by where its spellings are
+        /// itself and `alt.f`.
+        pub(crate) keys: &'static [(&'static str, u8, &'static [&'static str])],
+    }
+
+    /// Checks `A`'s calls against `expect`, its documents read in `dialect`.
+    pub(crate) fn check<A: Adapter>(expect: &Calls, dialect: GrammarDialect) {
+        type C<A> = <A as Adapter>::Calls;
+        assert_eq!(<C<A> as CallRules>::CALL_KINDS, expect.call_kinds);
+        assert_eq!(<C<A> as CallRules>::FUNCTION_KINDS, expect.function_kinds);
+        let refusal = match <C<A> as CallRules>::feature(CallFeature::Calls) {
+            Ok(()) => None,
+            Err(Refusal::Refused(message)) => Some(message.into_owned()),
+            Err(Refusal::NotSupportedYet(message)) => panic!("not supported yet: {message}"),
+        };
+        assert_eq!(refusal.as_deref(), expect.refusal);
+        assert_eq!(<C<A> as CallRules>::SEED_LANGUAGE, expect.seed_language);
+        assert_eq!(<C<A> as CallRules>::TAPED, expect.taped);
+        assert_eq!(<C<A> as CallRules>::SUBCLASSES, expect.subclasses);
+
+        let (source, defs) = expect.summary;
+        let grammar = Grammar::new(dialect).expect("grammar");
+        let native = StrDoc::new(source, dialect);
+        let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false)
+            .expect("encodes");
+        let doc = AstGrep::doc(
+            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
+                .expect("restores"),
+        );
+        let root = doc.root();
+        let read = A::regions(&root)
+            .flat_map(|region| {
+                let summary = <C<A> as CallRules>::summary(&region.root, "kit", None, None, false);
+                summary
+                    .defs
+                    .iter()
+                    .map(|def| summary.name(def.name).to_owned())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(read, defs, "{source:?}");
+
+        let module = ModulePath::dotted("pkg.mod").expect("module");
+        let unread = <C<A> as CallRules>::unread(Some(&module));
+        assert_eq!(
+            unread.module.map(|module| unread.name(module)),
+            expect.unread
+        );
+
+        let (name, label) = expect.label;
+        assert_eq!(<C<A> as CallRules>::label(&Name::new(name)), label);
+
+        for (name, flags, keys) in expect.keys {
+            let mut read = Vec::new();
+            <C<A> as CallRules>::definition_keys(
+                &Name::new(name),
+                *flags,
+                |name| [name.clone(), Name::new("alt.f")].into_iter(),
+                |key| read.push(key.text().to_owned()),
+            );
+            assert_eq!(read, *keys, "{name} {flags}");
+        }
+    }
+}
