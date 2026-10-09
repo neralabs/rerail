@@ -1,6 +1,7 @@
 // Builds the Next pack's policies: packs/next/rules/next-<rule>.json (ported rules) and the `rules` lists of
 // packs/next/conformance.json and packs/next/pack.json; packs/next/candidates/rules/next-<rule>.json (rules that cannot
-// pass their fixtures today) and packs/next/candidates/conformance.json, a runnable pack scoring the
+// pass their fixtures today, or that fail the V1 rule validation gates) and packs/next/candidates/conformance.json, a
+// runnable pack scoring the
 // candidates against the main pack's recordings and corpora. The JSON files are the committed artifacts; this script is
 // their source: it spells the shared JSX/import/path pieces once (notably the plugin's `split('pages')` filename tests as
 // regexes) and keeps the documents consistent. Run offline by a maintainer, never in CI; the output is deterministic.
@@ -180,7 +181,9 @@ policy("no-head-element", "a <head> opening element, unless the file's path cont
     ast: { file: { path: { notRegex: "app/" } }, rule: { all: [OPEN, named("head")] } },
     message: `Do not use \`<head>\` element. Use \`<Head />\` from \`next/head\` instead. See: ${DOCS}/no-head-element`,
   },
-]);
+// A candidate although it passes its fixtures here: the V1 gates (nera-rule-validation#9, ADR 0006) evaluate the
+// plugin's invalid[1] at its file name, pages/index.ts, where the engine reads its JSX as TypeScript and reports nothing.
+], { candidate: true });
 
 policy("no-sync-scripts", "a <script> opening element with a src attribute and neither async nor defer.", [
   {
@@ -586,11 +589,17 @@ policy(
       message: LOCATION_MESSAGE,
     },
   ],
+  // A candidate although it passes its fixtures here: the V1 gates (nera-rule-validation#9, ADR 0006) drop the browser
+  // globals the plugin's RuleTester declares, so upstream reports none of the 29 findings this port reproduces.
+  { candidate: true },
 );
 
 const ported = WRITTEN.filter(entry => !entry.candidate);
+// A pack declares exactly the capabilities its rules exercise: check 4 fails a declared capability no rule covers.
+const declared = entries => ["syntax", "scope", "value", "suppression"].filter(capability => entries.some(entry => entry.capabilities.includes(capability)));
 const manifestPath = join(PACK, "conformance.json");
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+manifest.capabilities = declared(ported);
 manifest.rules = ported.map(({ rule, capabilities }) => ({ id: `next-${rule}`, upstream: { tool: "eslint-plugin-next", rule: `@next/next/${rule}` }, policy: `rules/next-${rule}.json`, capabilities, match: "line+column" }));
 writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 // The shipped pack lists the ported rules in the same order; a rule's hand-written fields (examples, mode, on) are kept.
@@ -614,6 +623,7 @@ writeFileSync(
     {
       ...manifest,
       pack: "next-candidates",
+      capabilities: declared(candidates),
       oracles: "../upstream",
       rules: candidates.map(({ rule, capabilities }) => ({ id: `next-${rule}`, upstream: { tool: "eslint-plugin-next", rule: `@next/next/${rule}` }, policy: `rules/next-${rule}.json`, capabilities, match: "line+column" })),
     },
