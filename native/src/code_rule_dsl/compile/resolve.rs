@@ -1,7 +1,10 @@
-use super::binds::{FILTER_KEYS, compile_filter, name_kinds, validate_filter};
+use super::binds::{FILTER_KEYS, compile_filter, validate_filter};
 use super::utils::UtilScope;
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
-use crate::code_rule_dsl::language::{Family, GrammarDialect};
+use crate::code_rule_dsl::language::adapter::{
+    Adapter, Globals, Refusal, ScopeFeature, ScopeRules, gate, with_adapter,
+};
+use crate::code_rule_dsl::language::{Family, GrammarDialect, language_not_supported};
 use crate::code_rule_dsl::language::{SourceType, kind_ids};
 use crate::code_rule_dsl::matcher::Semantic;
 use crate::code_rule_dsl::matcher::{AstMatcher, BindingTest, Resolves, Unresolved};
@@ -344,62 +347,33 @@ pub(super) fn validate_resolves(value: &Value, path: &str) -> Result<()> {
     Ok(())
 }
 
-/// The kinds a reference has in a grammar: what `global` and `binding` resolve.
-fn reference_kinds(language: GrammarDialect) -> BTreeSet<u16> {
-    match Family::of(language) {
-        Family::Python => kind_ids(language, &["identifier"]),
-        Family::Php | Family::Blade => kind_ids(language, &["variable_name"]),
-        Family::Ecma => kind_ids(
-            language,
-            &[
-                "identifier",
-                "type_identifier",
-                "shorthand_property_identifier",
-                "shorthand_property_identifier_pattern",
-                "undefined",
-            ],
-        ),
-    }
+/// The refusal at `{at} {message}` of a family's verdict whose message runs on from its key.
+fn gate_run_on(at: &str, verdict: std::result::Result<(), Refusal>) -> Result<()> {
+    verdict.map_err(|refusal| match refusal {
+        Refusal::Refused(message) => invalid(format!("{at} {message}")),
+        Refusal::NotSupportedYet(message) => language_not_supported(format!("{at} {message}")),
+    })
 }
 
-/// A family as refusals name it.
-fn family_name(family: Family) -> &'static str {
-    match family {
-        Family::Python => "Python",
-        Family::Ecma => "TypeScript",
-        Family::Php => "php",
-        Family::Blade => "blade",
-    }
-}
-
-/// How a validated `resolves.binding` object reads the binding, for one grammar.
-fn binding_lookup(binding: &Value, language: GrammarDialect, path: &str) -> Result<Lookup> {
+/// How a validated `resolves.binding` object reads the binding, for the family `S` reads.
+fn binding_lookup<S: ScopeRules>(binding: &Value, path: &str) -> Result<Lookup> {
     let flag = |name: &str| binding.get(name).and_then(Value::as_bool) == Some(true);
     let lookup = Lookup {
         stop_at_global: flag("stopAtGlobal"),
         only: flag("only"),
     };
-    let family = Family::of(language);
-    match family {
-        Family::Python => {}
-        // Blade's `@php` blocks run inside the view's function as PHP's do inside a function.
-        Family::Php | Family::Blade => {
-            // PHP's flow already stops at a `global` statement: the read's binding is the
-            // statement's. Which top-level binding the global variable holds depends on when the
-            // function runs, so reading through it is refused.
-            if binding.get("stopAtGlobal") == Some(&Value::Bool(false)) {
-                let family = family_name(family);
-                return Err(invalid(format!(
-                    "{path}/stopAtGlobal: a {family} read after `global $x` reads that statement's binding; which top-level binding the global variable then holds depends on when the function runs, so {family} has no lookup through it"
-                )));
-            }
-        }
-        Family::Ecma if lookup.stop_at_global => {
-            return Err(invalid(format!(
-                "{path}/stopAtGlobal: `global` statements are Python's; TypeScript has none"
-            )));
-        }
-        Family::Ecma => {}
+    // Blade's `@php` blocks run inside the view's function as PHP's do inside a function.
+    if binding.get("stopAtGlobal") == Some(&Value::Bool(false)) {
+        gate(
+            &format!("{path}/stopAtGlobal"),
+            S::feature(ScopeFeature::ThroughGlobal),
+        )?;
+    }
+    if lookup.stop_at_global {
+        gate(
+            &format!("{path}/stopAtGlobal"),
+            S::feature(ScopeFeature::StopAtGlobal),
+        )?;
     }
     Ok(lookup)
 }
@@ -410,40 +384,48 @@ pub(super) fn compile_binding(
     binding: &Value,
     path: &str,
     language: GrammarDialect,
+    rules: [Option<AstMatcher>; 3],
+    occurrence: Option<AstMatcher>,
+    utils: &UtilScope,
+    write: bool,
+) -> Result<AstMatcher> {
+    with_adapter!(Family::of(language), A => compile_binding_in::<<A as Adapter>::Scope>(
+        binding, path, language, rules, occurrence, utils, write,
+    ))
+}
+
+/// `compile_binding`, for the family `S` reads.
+fn compile_binding_in<S: ScopeRules>(
+    binding: &Value,
+    path: &str,
+    language: GrammarDialect,
     [site, value, annotation]: [Option<AstMatcher>; 3],
     occurrence: Option<AstMatcher>,
     utils: &UtilScope,
     write: bool,
 ) -> Result<AstMatcher> {
-    let family = Family::of(language);
-    if occurrence.is_some() && family == Family::Python {
-        return Err(invalid(format!(
-            "{path}/occurrence: a variable's occurrences are TypeScript's; Python has none"
-        )));
+    if occurrence.is_some() {
+        gate(
+            &format!("{path}/occurrence"),
+            S::feature(ScopeFeature::Occurrence),
+        )?;
     }
-    if write && family != Family::Ecma {
+    if write {
         let resolves = path.strip_suffix("/binding").unwrap_or(path);
-        let detail = match family {
-            Family::Php => {
-                "ESLint reports an unused variable once, at its last write; php's usage oracle, Psalm, reports each unused assignment, which `binds: { used: false }` matches"
-            }
-            Family::Blade => {
-                "ESLint reports an unused variable once, at its last write; blade reads its embedded PHP, whose usage oracle, Psalm, reports each unused assignment, which `binds: { used: false }` matches"
-            }
-            Family::Python | Family::Ecma => {
-                "where ESLint reports a variable is TypeScript's; Python has none"
-            }
-        };
-        return Err(invalid(format!("{resolves}/write: {detail}")));
+        gate(
+            &format!("{resolves}/write"),
+            S::feature(ScopeFeature::LastWrite),
+        )?;
     }
-    let lookup = binding_lookup(binding, language, path)?;
+    let lookup = binding_lookup::<S>(binding, path)?;
     let destructured_value = binding.get("destructuredValue").and_then(Value::as_bool);
-    if destructured_value.is_some() && family == Family::Python {
-        return Err(invalid(format!(
-            "{path}/destructuredValue: destructured values are TypeScript's; a Python unpacked name keeps its element"
-        )));
+    if destructured_value.is_some() {
+        gate(
+            &format!("{path}/destructuredValue"),
+            S::feature(ScopeFeature::DestructuredValue),
+        )?;
     }
-    let filter = compile_filter(object(binding, path)?, language, path, utils)?;
+    let filter = compile_filter::<S>(object(binding, path)?, language, path, utils)?;
     Ok(AstMatcher::Semantic(Semantic::Binding(Box::new(
         BindingTest {
             lookup,
@@ -451,11 +433,11 @@ pub(super) fn compile_binding(
             destructured_value: destructured_value.unwrap_or(true),
             write_last: write,
             name_kinds: if write {
-                name_kinds(language)
+                kind_ids(language, S::NAME_KINDS)
             } else {
                 BTreeSet::new()
             },
-            reference_kinds: reference_kinds(language),
+            reference_kinds: kind_ids(language, S::REFERENCE_KINDS),
             paren_kinds: kind_ids(language, &["parenthesized_expression"]),
             options: utils.options.clone(),
             python: utils.python.clone(),
@@ -476,9 +458,24 @@ pub(super) fn compile_resolves(
     options: Option<&Arc<LanguageOptions>>,
     python: Option<&Arc<PythonOptions>>,
 ) -> Result<AstMatcher> {
-    if Family::of(language).reads_php() {
-        return compile_php_resolves(value, language, path);
-    }
+    with_adapter!(Family::of(language), A => {
+        type S = <A as Adapter>::Scope;
+        if <S as ScopeRules>::FLOW {
+            compile_php_resolves::<S>(value, language, path)
+        } else {
+            compile_lexical_resolves::<S>(value, language, path, options, python)
+        }
+    })
+}
+
+/// Compiles a validated `resolves` for a family whose reads a lexical scope resolves.
+fn compile_lexical_resolves<S: ScopeRules>(
+    value: &Value,
+    language: GrammarDialect,
+    path: &str,
+    options: Option<&Arc<LanguageOptions>>,
+    python: Option<&Arc<PythonOptions>>,
+) -> Result<AstMatcher> {
     let directives = value.get("directives").is_some();
     let this_global = value.get("this").is_some();
     let global_any = value.get("global") == Some(&Value::Bool(true));
@@ -489,23 +486,25 @@ pub(super) fn compile_resolves(
         None => None,
     };
     let before_local = value.get("beforeLocal").is_some();
-    if before_local && language != GrammarDialect::Python {
-        return Err(invalid(format!(
-            "{path}/beforeLocal reads Python's binding order; TypeScript has none"
-        )));
+    if before_local {
+        gate_run_on(
+            &format!("{path}/beforeLocal"),
+            S::feature(ScopeFeature::BeforeLocal),
+        )?;
     }
-    if unresolved == Some(Unresolved::Star) && language != GrammarDialect::Python {
-        return Err(invalid(format!(
-            "{path}/unresolved: \"star\" asks whether a Python star import binds the name; TypeScript has none"
-        )));
+    if unresolved == Some(Unresolved::Star) {
+        gate(
+            &format!("{path}/unresolved"),
+            S::feature(ScopeFeature::StarImports),
+        )?;
     }
     // Asking about every name needs the declared set: the query's options or their defaults.
     let defaults = global_any || unresolved.is_some();
-    let default_python = (defaults && language == GrammarDialect::Python && python.is_none())
+    let default_python = (defaults && S::GLOBALS == Globals::Ruff && python.is_none())
         .then(|| Arc::new(PythonOptions::new(DEFAULT_PYTHON_MINOR)));
     let python = python.or(default_python.as_ref());
-    let default_options = (defaults && language != GrammarDialect::Python && options.is_none())
-        .then(|| {
+    let default_options =
+        (defaults && S::GLOBALS == Globals::Eslint && options.is_none()).then(|| {
             Arc::new(LanguageOptions::new(
                 EsGlobals::get().latest,
                 SourceType::Module,
@@ -513,10 +512,8 @@ pub(super) fn compile_resolves(
             ))
         });
     let options = options.or(default_options.as_ref());
-    if this_global && language == GrammarDialect::Python {
-        return Err(invalid(format!(
-            "{path}/this: `this` is TypeScript's; Python has none"
-        )));
+    if this_global {
+        gate(&format!("{path}/this"), S::feature(ScopeFeature::This))?;
     }
     if this_global && options.is_none() {
         return Err(invalid(format!(
@@ -530,30 +527,28 @@ pub(super) fn compile_resolves(
         )));
     }
     let script_declarations = value.get("scriptDeclarations").is_some();
-    if script_declarations && language == GrammarDialect::Python {
-        return Err(invalid(format!(
-            "{path}/scriptDeclarations: scripts are ESLint's; Python has none"
-        )));
+    if script_declarations {
+        gate(
+            &format!("{path}/scriptDeclarations"),
+            S::feature(ScopeFeature::ScriptDeclarations),
+        )?;
     }
     if script_declarations && options.is_none() {
         return Err(invalid(format!(
             "{path}/scriptDeclarations: whether a file is a script comes from languageOptions.sourceType; declare languageOptions"
         )));
     }
-    if directives && language == GrammarDialect::Python {
-        return Err(invalid(format!(
-            "{path}/directives: /* global */ comments are ESLint's; Python has none"
-        )));
+    if directives {
+        gate(
+            &format!("{path}/directives"),
+            S::feature(ScopeFeature::GlobalComments),
+        )?;
     }
     for key in ["import", "imported"] {
         let Some(listed) = value.get(key) else {
             continue;
         };
-        if language != GrammarDialect::Python {
-            return Err(invalid(format!(
-                "{path}/{key}: import resolution is Python-only for now; TypeScript rules can use `global`"
-            )));
-        }
+        gate(&format!("{path}/{key}"), S::feature(ScopeFeature::Imports))?;
         if let Some((index, name)) = listed
             .as_array()
             .into_iter()
@@ -599,13 +594,12 @@ pub(super) fn compile_resolves(
         .into_iter()
         .map(str::to_owned)
         .collect::<BTreeSet<_>>();
-    let reference_kinds = match language {
-        GrammarDialect::Python if !imports.is_empty() || import_any => {
-            kind_ids(language, &["identifier", "attribute"])
-        }
-        _ => reference_kinds(language),
-    };
     let attribute_kinds = kind_ids(language, &["attribute"]);
+    // An import resolves a read's attribute chain too.
+    let mut reference_kinds = kind_ids(language, S::REFERENCE_KINDS);
+    if !imports.is_empty() || import_any {
+        reference_kinds.extend(attribute_kinds.iter().copied());
+    }
     let paren_kinds = kind_ids(language, &["parenthesized_expression"]);
     let this_kinds = if this_global {
         kind_ids(language, &["this"])
@@ -636,8 +630,8 @@ pub(super) fn compile_resolves(
             global_any,
             import_any,
             unresolved,
-            string_kinds: if unresolved.is_some() && language == GrammarDialect::Python {
-                kind_ids(language, &["string", "concatenated_string"])
+            string_kinds: if unresolved.is_some() {
+                kind_ids(language, S::ANNOTATION_STRING_KINDS)
             } else {
                 BTreeSet::new()
             },
@@ -653,40 +647,17 @@ const PHP_SUPERGLOBALS: &[&str] = &[
     "GLOBALS", "_SERVER", "_GET", "_POST", "_FILES", "_COOKIE", "_SESSION", "_REQUEST", "_ENV",
 ];
 
-/// The `resolves` keys PHP has no counterpart for, each with why.
-const PHP_REFUSED_RESOLVES: &[(&str, &str)] = &[
-    (
-        "this",
-        "`this` asks whether JavaScript's `this` is the global object; PHP's `$this` never is: outside an object context it is undefined, which `unresolved: true` reports",
-    ),
-    (
-        "sloppyFunctions",
-        "sloppy-mode functions are JavaScript's; PHP has no strict and sloppy modes",
-    ),
-    (
-        "directives",
-        "/* global */ comments are ESLint's; PHP's superglobals are fixed, and a function declares a global with a `global` statement, which `binding` reads",
-    ),
-    (
-        "declared",
-        "declared globals come from ESLint's and Ruff's configuration; PHP's superglobals are always declared, and no languageOptions configure others",
-    ),
-    (
-        "scriptDeclarations",
-        "scripts are ESLint's; a PHP file has no script mode, and a superglobal is never a file's declaration",
-    ),
-    (
-        "relative",
-        "a `use` statement names what it imports fully qualified (`use namespace\\A;` does not parse); `import` resolves a `namespace\\A` reference",
-    ),
-    (
-        "seenBefore",
-        "Ruff's `seen_module` asks whether a module was imported before; a PHP `use` only aliases a name for the rest of its namespace and loads nothing",
-    ),
-    (
-        "beforeLocal",
-        "a PHP function sees no variable of an enclosing scope, so a read before the function binds the name is undefined, which `unresolved: true` reports",
-    ),
+/// The `resolves` keys a family whose reads follow the file's flow checks, in order, each the
+/// feature it asks for.
+const FLOW_RESOLVES_FEATURES: &[(&str, ScopeFeature)] = &[
+    ("this", ScopeFeature::This),
+    ("sloppyFunctions", ScopeFeature::SloppyFunctions),
+    ("directives", ScopeFeature::GlobalComments),
+    ("declared", ScopeFeature::Declared),
+    ("scriptDeclarations", ScopeFeature::ScriptDeclarations),
+    ("relative", ScopeFeature::Relative),
+    ("seenBefore", ScopeFeature::SeenBefore),
+    ("beforeLocal", ScopeFeature::BeforeLocal),
 ];
 
 /// Compiles a validated `resolves` for PHP. Over class, function and constant names (`import`,
@@ -694,16 +665,17 @@ const PHP_REFUSED_RESOLVES: &[(&str, &str)] = &[
 /// the names `use` clauses write (`imported`, `prefix`): what each imports. Over variables:
 /// `global`, a superglobal; `unresolved: true`, a read no path defines, as PHPStan's
 /// `variable.undefined` reports it (`scope/php.rs`). `binding` compiles apart
-/// (`compile_binding`).
-fn compile_php_resolves(value: &Value, language: GrammarDialect, path: &str) -> Result<AstMatcher> {
-    // Blade resolves the names and variables of the PHP its template embeds.
-    let family = family_name(Family::of(language));
+/// (`compile_binding`). Blade resolves the names and variables of the PHP its template embeds.
+fn compile_php_resolves<S: ScopeRules>(
+    value: &Value,
+    language: GrammarDialect,
+    path: &str,
+) -> Result<AstMatcher> {
     let keys = object(value, path)?;
-    if let Some((key, why)) = PHP_REFUSED_RESOLVES
-        .iter()
-        .find(|(key, _)| keys.contains_key(*key))
-    {
-        return Err(invalid(format!("{path}/{key}: {why}; {family} has none")));
+    for (key, feature) in FLOW_RESOLVES_FEATURES {
+        if keys.contains_key(*key) {
+            gate(&format!("{path}/{key}"), S::feature(*feature))?;
+        }
     }
     let names_asked = keys.contains_key("import") || keys.contains_key("imported");
     let variables_asked = keys.contains_key("global") || keys.contains_key("unresolved");
@@ -715,9 +687,11 @@ fn compile_php_resolves(value: &Value, language: GrammarDialect, path: &str) -> 
     let unresolved = match value.get("unresolved") {
         Some(Value::Bool(true)) => Some(Unresolved::Unbound),
         Some(_) => {
-            return Err(invalid(format!(
-                "{path}/unresolved: {family} policies ask `unresolved: true`"
-            )));
+            gate(
+                &format!("{path}/unresolved"),
+                S::feature(ScopeFeature::StarImports),
+            )?;
+            Some(Unresolved::Star)
         }
         None => None,
     };

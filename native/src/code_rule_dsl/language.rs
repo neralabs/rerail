@@ -659,17 +659,6 @@ pub(crate) enum Suppression {
     Phpcs,
 }
 
-impl Family {
-    /// Whether the family's values, arguments and variables are PHP's: PHP's, and Blade's, whose
-    /// semantics are those of the PHP its template embeds (`blade::view`).
-    pub(crate) const fn reads_php(self) -> bool {
-        match self {
-            Self::Php | Self::Blade => true,
-            Self::Python | Self::Ecma => false,
-        }
-    }
-}
-
 /// The ECMAScript source form that structural `when` gates and scope construction read.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum SourceType {
