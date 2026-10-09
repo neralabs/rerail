@@ -2,23 +2,24 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OpenAPIHono } from "@hono/zod-openapi";
-import Database from "better-sqlite3";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRerailApi } from "../src/api/http.js";
-import { operations, type RerailApiStores } from "../src/api/operations.js";
+import { operations } from "../src/api/operations.js";
+import { DatabaseApiStores } from "../src/api/stores.js";
+import { loadBundledCatalog } from "../src/bundled-rules.js";
 import { openRerailDatabase, type RerailDatabase } from "../src/database.js";
-import { startStateReader } from "../src/repository-start.js";
 import type { CodeRuleViolation } from "../src/code-rule.js";
-import { SqliteAuditReader, SqliteAuditStore } from "../src/audit-store.js";
-import { SqlitePresentationPreferenceStore } from "../src/presentation-preference-store.js";
-import { SqliteAuditControlStore } from "../src/audit-control.js";
-import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
-import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../src/seed.js";
-import { SqliteSessionReader, SqliteSessionStore } from "../src/session-store.js";
+import { SqliteAuditStore } from "../src/audit-store.js";
+import { upsertLibraryRule } from "../src/rule-library.js";
+import { audits, checkouts, repositories } from "../src/schema.js";
+import { MOCK_CODE_RULES, MOCK_CONVERSATION_RULES } from "../src/seed.js";
+import { SqliteSessionStore } from "../src/session-store.js";
 
 /** The host a browser addressed the page to through a container port mapping; the fixture never binds it. */
 const PAGE_HOST = "localhost:35831";
 const SESSION = { host: "codex" as const, sessionId: "session-a", cwd: "/workspace" };
+const WEB = "remote:github.com/acme/web";
 
 const flagged: CodeRuleViolation = {
   id: "violation-1",
@@ -37,46 +38,30 @@ describe("Rerail API over HTTP", () => {
   let root: string;
   let databasePath: string;
   let app: OpenAPIHono;
-  let stores: RerailApiStores;
-  let catalog: ScopedRuleCatalog;
-  let audits: SqliteAuditStore;
+  let stores: DatabaseApiStores;
+  let auditStore: SqliteAuditStore;
   let sessionStore: SqliteSessionStore;
-  let raw: Database.Database;
   let database: RerailDatabase;
-  let closeables: Array<{ close(): void }>;
   const originalRerailHome = process.env.RERAIL_HOME;
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-api-"));
     process.env.RERAIL_HOME = join(root, "home");
-    databasePath = join(root, ".rerail", "rerail.sqlite");
-    catalog = ScopedRuleCatalog.open(join(root, "rules.sqlite"), { repositoryId: "test-repository", workspaceRoot: root });
-    audits = new SqliteAuditStore(databasePath);
-    sessionStore = new SqliteSessionStore(databasePath);
-    const reader = new SqliteSessionReader(databasePath);
-    const auditReader = new SqliteAuditReader(databasePath);
-    const preferences = new SqlitePresentationPreferenceStore(databasePath);
-    const auditControls = new SqliteAuditControlStore(databasePath);
-    raw = new Database(databasePath);
+    databasePath = join(root, "rerail.sqlite");
     database = openRerailDatabase(databasePath);
-    closeables = [catalog, audits, sessionStore, reader, auditReader, preferences, auditControls, raw, database.$client];
-    stores = {
-      reader,
-      audits: auditReader,
-      rules: () => catalog,
-      sessionStore: () => sessionStore,
-      auditControls: () => auditControls,
-      preferences: () => preferences,
-      database: () => database,
-      repositoryState: startStateReader(database),
+    auditStore = new SqliteAuditStore(databasePath);
+    sessionStore = new SqliteSessionStore(databasePath);
+    stores = new DatabaseApiStores(databasePath, {
       health: () => ({ pid: process.pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
-    };
+      origin: () => "http://127.0.0.1:4737",
+    });
     app = createRerailApi(stores, operations, { version: "0.0.0-test" });
     sessionStore.openSession(SESSION);
   });
 
   afterEach(async () => {
-    for (const closeable of closeables) closeable.close();
+    for (const closeable of [stores, auditStore, sessionStore]) closeable.close();
+    database.$client.close();
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
     await rm(root, { recursive: true, force: true });
@@ -84,7 +69,7 @@ describe("Rerail API over HTTP", () => {
 
   /** A completed run with an explicit start time, which is what every range query is bounded by. */
   function seedAudit(audit: { sessionId?: string; at: number; violations?: CodeRuleViolation[]; audited?: string[] }): string {
-    const auditId = audits.start({
+    const auditId = auditStore.start({
       sessionId: audit.sessionId ?? SESSION.sessionId,
       workspaceRoot: root,
       scope: "touched-files",
@@ -95,9 +80,30 @@ describe("Rerail API over HTTP", () => {
       paths: ["web/src/x.ts"],
       ruleProvenance: [],
     });
-    audits.finish(auditId, { status: "completed", violations: audit.violations ?? [], failures: [] });
-    raw.prepare("UPDATE audits SET started_at = ? WHERE audit_id = ?").run(audit.at, auditId);
+    auditStore.finish(auditId, { status: "completed", violations: audit.violations ?? [], failures: [] });
+    database.update(audits).set({ startedAt: audit.at }).where(eq(audits.auditId, auditId)).run();
     return auditId;
+  }
+
+  function addLibraryRules(): void {
+    const bundle = loadBundledCatalog();
+    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, bundle, rule, "code");
+    for (const rule of MOCK_CONVERSATION_RULES) upsertLibraryRule(database, bundle, rule, "conversation", { revision: 1 });
+  }
+
+  function addRepository(key: string, options: { name?: string; configuredAt?: number | null; started?: boolean | null } = {}): void {
+    database.insert(repositories).values({
+      repositoryKey: key,
+      displayName: options.name ?? key,
+      configuredAt: options.configuredAt ?? null,
+      started: options.started ?? null,
+      createdAt: 1,
+      updatedAt: 1,
+    }).run();
+  }
+
+  function addCheckout(checkoutPath: string, repositoryKey: string, cloneId: string, started: boolean | null = null): void {
+    database.insert(checkouts).values({ checkoutPath, repositoryKey, cloneId, started, createdAt: 1, lastSeenAt: 1 }).run();
   }
 
   async function getJson<T>(path: string): Promise<T> {
@@ -107,12 +113,14 @@ describe("Rerail API over HTTP", () => {
     return await response.json() as T;
   }
 
+  async function putJson(path: string, body: unknown, headers: Record<string, string> = {}): Promise<Response> {
+    return await app.request(path, { method: "PUT", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+  }
+
   it("counts one unfixed violation once however many audits report it", async () => {
+    addLibraryRules();
     const [codeRule, otherCodeRule] = [MOCK_CODE_RULES[0]!, MOCK_CODE_RULES[1]!];
     const conversationRule = MOCK_CONVERSATION_RULES[0]!;
-    catalog.upsertCodeRule(codeRule);
-    catalog.upsertCodeRule(otherCodeRule);
-    catalog.upsertConversationRule(conversationRule, { revision: 1 });
     seedAudit({ at: 500, violations: [flagged], audited: [codeRule.id] });
     seedAudit({ at: 2_000, violations: [flagged], audited: [codeRule.id, otherCodeRule.id] });
     seedAudit({ at: 3_000, violations: [{ ...flagged, id: "violation-2" }], audited: [codeRule.id] });
@@ -121,36 +129,18 @@ describe("Rerail API over HTTP", () => {
 
     expect(body.since).toBe(1000);
     // Evaluated by the two runs in range; the run at 500 is before the range and counts for nothing.
-    expect(body.rules[codeRule.id]).toEqual({
-      measured: true,
-      distinctViolations: 1,
-      sessions: 1,
-      lastSeenAt: 3_000,
-      audits: 2,
-      rerails: 0,
-    });
+    expect(body.rules[codeRule.id]).toEqual({ measured: true, distinctViolations: 1, sessions: 1, lastSeenAt: 3_000, audits: 2, rerails: 0 });
     // Compiled into a run but never flagged: a zero backed by evidence rather than by silence.
     expect(body.rules[otherCodeRule.id]).toMatchObject({ measured: true, distinctViolations: 0, audits: 1, lastSeenAt: null });
     // Conversation rules never write an audit, so there is nothing to report either way.
-    expect(body.rules[conversationRule.id]).toEqual({
-      measured: false,
-      distinctViolations: 0,
-      sessions: 0,
-      lastSeenAt: null,
-      audits: 0,
-      rerails: 0,
-    });
+    expect(body.rules[conversationRule.id]).toEqual({ measured: false, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, rerails: 0 });
   });
 
   it("separates violations by path, span, and session, and excludes audits before the range", async () => {
+    addLibraryRules();
     const codeRule = MOCK_CODE_RULES[0]!;
-    catalog.upsertCodeRule(codeRule);
     seedAudit({ at: 500, violations: [{ ...flagged, path: "web/src/old.ts" }] });
-    seedAudit({
-      at: 2_000,
-      sessionId: "session-b",
-      violations: [flagged, { ...flagged, id: "violation-2", path: "web/src/y.ts" }],
-    });
+    seedAudit({ at: 2_000, sessionId: "session-b", violations: [flagged, { ...flagged, id: "violation-2", path: "web/src/y.ts" }] });
     sessionStore.openSession({ ...SESSION, sessionId: "session-b" });
     seedAudit({ at: 2_500, violations: [flagged] });
 
@@ -163,8 +153,8 @@ describe("Rerail API over HTTP", () => {
   });
 
   it("attributes steers to the rules each steer named", async () => {
+    addLibraryRules();
     const codeRule = MOCK_CODE_RULES[0]!;
-    catalog.upsertCodeRule(codeRule);
     sessionStore.append({ sessionId: SESSION.sessionId, kind: "steering-delivered", observedAt: 2_000, payload: { ruleIds: [codeRule.id] } });
     // Deliveries recorded before rule attribution existed carry an empty payload and count for nothing.
     sessionStore.append({ sessionId: SESSION.sessionId, kind: "steering-delivered", observedAt: 2_100, payload: {} });
@@ -185,26 +175,16 @@ describe("Rerail API over HTTP", () => {
 
     const page = await getJson<{ total: number; violations: Array<Record<string, unknown>> }>("/api/violations?since=0&limit=2");
     expect(page.total).toBe(3);
-    expect(page.violations).toHaveLength(2);
     expect(page.violations.map(violation => violation.at)).toEqual([4_000, 4_000]);
     expect(page.violations[0]).toMatchObject({
-      id: flagged.id,
-      ruleId: flagged.ruleId,
-      clauseId: flagged.clauseId,
-      code: flagged.code,
-      mode: "block",
-      path: "web/src/x.ts",
-      span: flagged.span,
-      sessionId: SESSION.sessionId,
-      auditId: newest,
-      at: 4_000,
+      id: flagged.id, ruleId: flagged.ruleId, clauseId: flagged.clauseId, code: flagged.code, mode: "block",
+      path: "web/src/x.ts", span: flagged.span, sessionId: SESSION.sessionId, auditId: newest, at: 4_000,
     });
     expect((await getJson<{ violations: Array<{ at: number }> }>("/api/violations?since=0&limit=2&offset=2")).violations)
       .toMatchObject([{ at: 1_000 }]);
     // A page past the end still reports how many violations exist.
     expect(await getJson<{ total: number; violations: unknown[] }>("/api/violations?since=0&limit=2&offset=3"))
       .toEqual({ total: 3, violations: [] });
-
     const filtered = await getJson<{ total: number; violations: Array<{ ruleId: string }> }>(`/api/violations?since=0&ruleId=${other.ruleId}`);
     expect(filtered).toMatchObject({ total: 1, violations: [{ ruleId: other.ruleId }] });
     expect((await getJson<{ total: number }>("/api/violations?since=2000")).total).toBe(2);
@@ -220,31 +200,45 @@ describe("Rerail API over HTTP", () => {
     expect((await getJson<{ sessions: unknown[] }>("/api/sessions")).sessions).toHaveLength(3);
   });
 
-  it("answers an unchanged catalog read with 304 and mints a new tag after a write", async () => {
-    catalog.upsertCodeRule(MOCK_CODE_RULES[0]!);
-    const first = await app.request("/api/rules");
+  it("narrows history to one repository: its key, its aliases, and its checkouts' clone ids", async () => {
+    database.insert(repositories).values({ repositoryKey: WEB, displayName: "web", aliases: ["clone:adopted"], createdAt: 1, updatedAt: 1 }).run();
+    addCheckout("/code/web", WEB, "clone-web");
+    sessionStore.openSession({ ...SESSION, sessionId: "by-key" }, 1_000, WEB);
+    sessionStore.openSession({ ...SESSION, sessionId: "by-clone-id" }, 1_100, "clone-web");
+    sessionStore.openSession({ ...SESSION, sessionId: "by-alias" }, 1_200, "clone:adopted");
+    sessionStore.openSession({ ...SESSION, sessionId: "elsewhere" }, 1_300, "remote:github.com/acme/other");
+    seedAudit({ sessionId: "by-clone-id", at: 1_500, violations: [flagged] });
+    seedAudit({ sessionId: "elsewhere", at: 1_600, violations: [{ ...flagged, id: "violation-elsewhere" }] });
+
+    const query = `repository=${encodeURIComponent(WEB)}`;
+    expect((await getJson<{ sessions: Array<{ sessionId: string }> }>(`/api/sessions?${query}`)).sessions.map(session => session.sessionId))
+      .toEqual(["by-key", "by-clone-id", "by-alias"]);
+    expect((await getJson<{ violations: Array<{ sessionId: string }> }>(`/api/violations?since=0&${query}`)).violations)
+      .toMatchObject([{ sessionId: "by-clone-id" }]);
+    expect((await getJson<{ audits: Array<{ sessionId: string }> }>(`/api/audits?${query}`)).audits).toMatchObject([{ sessionId: "by-clone-id" }]);
+    // Without a repository the listing is machine-wide.
+    expect((await getJson<{ total: number }>("/api/violations?since=0")).total).toBe(2);
+  });
+
+  it("answers an unchanged rules read with 304 and mints a new tag after a settings write", async () => {
+    addRepository(WEB, { configuredAt: 5, started: true });
+    const path = `/api/repository/rules?repository=${encodeURIComponent(WEB)}`;
+    const first = await app.request(path);
     const tag = first.headers.get("etag");
     expect(tag).toMatch(/^"[0-9a-f]{32}"$/);
 
-    const repeated = await app.request("/api/rules", { headers: { "if-none-match": tag! } });
+    const repeated = await app.request(path, { headers: { "if-none-match": tag! } });
     expect(repeated.status).toBe(304);
-    expect(repeated.headers.get("etag")).toBe(tag);
     expect(await repeated.text()).toBe("");
-    // A different filter is a different response, so it must not reuse the tag.
-    expect((await app.request("/api/rules?kind=conversation", { headers: { "if-none-match": tag! } })).status).toBe(200);
 
-    const upsert = await app.request(`/api/rules/${MOCK_CODE_RULES[1]!.id}`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "code", rule: MOCK_CODE_RULES[1]! }),
-    });
-    expect(upsert.status).toBe(200);
-    const refreshed = await app.request("/api/rules", { headers: { "if-none-match": tag! } });
+    const written = await putJson("/api/repository/settings", { repository: WEB, owner: "repository", targets: [{ kind: "pack", id: "tslint" }], on: false });
+    expect(written.status).toBe(200);
+    const refreshed = await app.request(path, { headers: { "if-none-match": tag! } });
     expect(refreshed.status).toBe(200);
     expect(refreshed.headers.get("etag")).not.toBe(tag);
   });
 
-  it("stores a structural tool-call rule and rejects a regex the engine cannot compile", async () => {
+  it("stores a structural tool-call rule in the library and rejects a regex the engine cannot compile", async () => {
     const id = "no-force-push";
     const rule = (regex: string) => ({
       id,
@@ -253,11 +247,7 @@ describe("Rerail API over HTTP", () => {
       sample: { source: "tool:Bash", boundary: "tool-call" },
       action: { content: "Do not force-push." },
     });
-    const put = (regex: string) => app.request(`/api/rules/${id}`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "conversation", rule: rule(regex) }),
-    });
+    const put = (regex: string) => putJson(`/api/library-rules/${id}`, { kind: "conversation", rule: rule(regex) });
 
     const rejected = await put("(?!main)");
     expect(rejected.status).toBe(400);
@@ -265,37 +255,14 @@ describe("Rerail API over HTTP", () => {
       error: "invalid-request",
       issues: [{ path: ["rule", "match", "all", 1, "regex"], message: expect.stringMatching(/^is not a valid regex: .*look-around/su) }],
     });
-    expect(catalog.get(id)).toBeUndefined();
+    expect((await app.request(`/api/library-rules/${id}`)).status).toBe(404);
 
     expect((await put("\\bgit\\s+push\\b[^\\n]*--force\\b")).status).toBe(200);
-    expect(catalog.get(id)?.rule).toEqual(rule("\\bgit\\s+push\\b[^\\n]*--force\\b"));
-  });
-
-  it("reports a quarantined inherited global toggle as a rule conflict", async () => {
-    const id = "quarantined-global";
-    catalog.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id }, { applicability: "global" });
-    const catalogDatabase = new Database(catalog.path);
-    catalogDatabase.prepare("UPDATE catalog_rules SET document_json = ? WHERE rule_id = ?").run(
-      JSON.stringify({ kind: "conversation", rule: { id, unknown: true } }),
-      id,
-    );
-    catalogDatabase.close();
-
-    const response = await app.request("/api/rules", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabled: false, ids: [id] }),
-    });
-
-    expect(response.status).toBe(409);
-    expect(await response.json()).toEqual({
-      error: "rule-conflict",
-      message: `cannot toggle quarantined global rule ${id}`,
-    });
+    expect((await getJson<{ rule: { rule: unknown } }>(`/api/library-rules/${id}`)).rule.rule).toEqual(rule("\\bgit\\s+push\\b[^\\n]*--force\\b"));
   });
 
   it("dates activity, violations, and sessions by their own result", async () => {
-    catalog.upsertCodeRule(MOCK_CODE_RULES[0]!);
+    addLibraryRules();
     for (const path of ["/api/rules/activity?since=0", "/api/violations?since=0", "/api/sessions"]) {
       const first = await app.request(path);
       const tag = first.headers.get("etag")!;
@@ -310,101 +277,102 @@ describe("Rerail API over HTTP", () => {
   });
 
   it("admits a write whose Origin is an allowlisted host on the requested port and rejects every other", async () => {
-    const patch = async (headers: Record<string, string>, api = app): Promise<Response> => await api.request("/api/rules", {
-      method: "PATCH",
+    addRepository(WEB);
+    const write = async (headers: Record<string, string>, api = app): Promise<Response> => await api.request("/api/repository/settings", {
+      method: "PUT",
       headers: { "content-type": "application/json", ...headers },
-      body: JSON.stringify({ enabled: true, ids: ["mock-no-console-log"] }),
+      body: JSON.stringify({ repository: WEB, owner: "repository", targets: [{ kind: "rule", id: "mock-no-console-log" }], on: true }),
     });
 
     // The page is reached through a container port mapping: Host names a port the daemon never bound.
-    expect((await patch({ origin: "http://localhost:35831", host: PAGE_HOST })).status).toBe(200);
-    expect((await patch({ origin: "http://127.0.0.1:35831", host: "127.0.0.1:35831" })).status).toBe(200);
+    expect((await write({ origin: "http://localhost:35831", host: PAGE_HOST })).status).toBe(200);
+    expect((await write({ origin: "http://127.0.0.1:35831", host: "127.0.0.1:35831" })).status).toBe(200);
     // `URL` keeps the brackets around an IPv6 literal, exactly as `Host` carries them.
-    expect((await patch({ origin: "http://[::1]:35831", host: "[::1]:35831" })).status).toBe(200);
-    expect((await patch({ origin: "http://LOCALHOST:35831", host: PAGE_HOST })).status).toBe(200);
-    expect((await patch({ origin: "http://localhost", host: "localhost" })).status).toBe(200);
-    expect((await patch({ origin: "http://localhost", host: "localhost:80" })).status).toBe(200);
+    expect((await write({ origin: "http://[::1]:35831", host: "[::1]:35831" })).status).toBe(200);
+    expect((await write({ origin: "http://LOCALHOST:35831", host: PAGE_HOST })).status).toBe(200);
+    expect((await write({ origin: "http://localhost", host: "localhost" })).status).toBe(200);
+    expect((await write({ origin: "http://localhost", host: "localhost:80" })).status).toBe(200);
 
-    const forbidden = await patch({ origin: "http://127.0.0.1:9999", host: "127.0.0.1:53831" });
+    const forbidden = await write({ origin: "http://127.0.0.1:9999", host: "127.0.0.1:53831" });
     expect(forbidden.status).toBe(403);
     expect(await forbidden.json()).toEqual({ error: "api-origin-forbidden" });
-    expect((await patch({ origin: "https://evil.example", host: PAGE_HOST })).status).toBe(403);
+    expect((await write({ origin: "https://evil.example", host: PAGE_HOST })).status).toBe(403);
     // A rebinding page's own name is the only host it can put in both headers; agreeing headers are not enough.
-    expect((await patch({ origin: "https://rerail.example", host: "rerail.example:443" })).status).toBe(403);
-    expect((await patch({ origin: "http://[::1]:35831", host: "::1:35831" })).status).toBe(403);
-    expect((await patch({ origin: "http://localhost", host: "localhost:443" })).status).toBe(403);
-    expect((await patch({ origin: "null", host: PAGE_HOST })).status).toBe(403);
-    expect((await patch({ origin: "file:///index.html", host: "" })).status).toBe(403);
-    expect((await patch({ origin: "http://localhost:35831" })).status).toBe(403);
+    expect((await write({ origin: "https://rerail.example", host: "rerail.example:443" })).status).toBe(403);
+    expect((await write({ origin: "http://[::1]:35831", host: "::1:35831" })).status).toBe(403);
+    expect((await write({ origin: "http://localhost", host: "localhost:443" })).status).toBe(403);
+    expect((await write({ origin: "null", host: PAGE_HOST })).status).toBe(403);
+    expect((await write({ origin: "file:///index.html", host: "" })).status).toBe(403);
+    expect((await write({ origin: "http://localhost:35831" })).status).toBe(403);
 
     // `--public-host` admits that name, on the requested port, alongside loopback.
     const published = createRerailApi(stores, operations, { version: "0.0.0-test", publicHosts: new Set(["rerail.example"]) });
-    expect((await patch({ origin: "https://rerail.example", host: "rerail.example:443" }, published)).status).toBe(200);
-    expect((await patch({ origin: "https://Rerail.Example:8443", host: "rerail.example:8443" }, published)).status).toBe(200);
-    expect((await patch({ origin: "http://localhost:35831", host: PAGE_HOST }, published)).status).toBe(200);
-    expect((await patch({ origin: "https://rerail.example", host: "rerail.example:8443" }, published)).status).toBe(403);
-    expect((await patch({ origin: "https://evil.example", host: "rerail.example:443" }, published)).status).toBe(403);
+    expect((await write({ origin: "https://rerail.example", host: "rerail.example:443" }, published)).status).toBe(200);
+    expect((await write({ origin: "https://Rerail.Example:8443", host: "rerail.example:8443" }, published)).status).toBe(200);
+    expect((await write({ origin: "http://localhost:35831", host: PAGE_HOST }, published)).status).toBe(200);
+    expect((await write({ origin: "https://rerail.example", host: "rerail.example:8443" }, published)).status).toBe(403);
+    expect((await write({ origin: "https://evil.example", host: "rerail.example:443" }, published)).status).toBe(403);
 
     // CLI, curl, and MCP clients send no Origin at all.
-    expect((await patch({ host: PAGE_HOST })).status).toBe(200);
-    expect((await patch({})).status).toBe(200);
+    expect((await write({ host: PAGE_HOST })).status).toBe(200);
+    expect((await write({})).status).toBe(200);
     // Reads are not writes: a foreign page can already only read what its own daemon serves.
-    expect((await app.request("/api/rules", { headers: { origin: "https://evil.example", host: PAGE_HOST } })).status).toBe(200);
+    expect((await app.request("/api/repositories", { headers: { origin: "https://evil.example", host: PAGE_HOST } })).status).toBe(200);
   });
 
-  it("documents the new operations and their conditional responses", async () => {
+  it("documents conditional responses and the agent refusal", async () => {
     const document = await getJson<{ paths: Record<string, Record<string, { operationId: string; responses: Record<string, unknown> }>> }>("/openapi.json");
 
-    expect(document.paths["/api/rules/activity"]?.get?.operationId).toBe("rules_activity");
-    expect(document.paths["/api/violations"]?.get?.operationId).toBe("violations_list");
-    for (const path of ["/api/rules", "/api/rules/{id}", "/api/rules/activity", "/api/violations", "/api/sessions"]) {
+    expect(document.paths["/api/repository/rules"]?.get?.operationId).toBe("repository_rules_get");
+    for (const path of ["/api/repositories", "/api/repository/rules", "/api/library-rules", "/api/library-rules/{id}", "/api/rules/activity", "/api/sessions"]) {
       expect(document.paths[path]?.get?.responses["304"]).toBeDefined();
     }
-    expect(document.paths["/api/rules"]?.patch?.responses["304"]).toBeUndefined();
+    expect(document.paths["/api/repository/settings"]?.put?.responses["304"]).toBeUndefined();
+    expect(document.paths["/api/repository/settings"]?.put?.responses["403"]).toBeDefined();
+    for (const removed of ["/api/rules", "/api/rules/{id}", "/api/rule-context"]) expect(document.paths[removed]).toBeUndefined();
   });
 
-  it("lists repositories by start state and starts or stops only ones that were set up", async () => {
-    const post = (path: string): Promise<Response> => Promise.resolve(app.request(path, { method: "POST" }));
-    raw.prepare("INSERT INTO rule_repositories (repository_id, last_known_path, created_at, updated_at) VALUES (?, ?, 1, 1)")
-      .run("repo-a", "/code/acme-web");
-    raw.prepare("INSERT INTO rule_repositories (repository_id, last_known_path, created_at, updated_at) VALUES (?, ?, 1, 1)")
-      .run("repo-b", "/code/landing-page");
-    raw.prepare("INSERT INTO repository_starts (repository_id, state, started_at, updated_at) VALUES ('repo-a', 'started', 10, 10)").run();
+  it("lists repositories, and starts or stops one as a whole, set up or not", async () => {
+    const post = (repository: string, action: string): Promise<Response> => Promise.resolve(app.request(`/api/repository/${action}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ repository, scope: "repository" }),
+    }));
+    addRepository(WEB, { name: "acme-web", configuredAt: 5, started: true });
+    addRepository("clone:landing", { name: "landing-page", started: true });
+    addCheckout("/code/acme-web", WEB, "a");
+    addCheckout("/code/acme-web-feature", WEB, "a", false);
 
     expect((await getJson<{ repositories: unknown[] }>("/api/repositories")).repositories).toEqual([
-      { repositoryId: "repo-a", name: "acme-web", root: "/code/acme-web", state: "started", startedAt: 10, stoppedAt: null },
-      { repositoryId: "repo-b", name: "landing-page", root: "/code/landing-page", state: "never", startedAt: null, stoppedAt: null },
+      { repositoryKey: WEB, name: "acme-web", aliases: [], setUp: true, configuredAt: 5, started: true, state: "started", checkoutCount: 2 },
+      { repositoryKey: "clone:landing", name: "landing-page", aliases: [], setUp: false, configuredAt: null, started: true, state: "not-set-up", checkoutCount: 0 },
     ]);
 
-    const stopped = await post("/api/repositories/repo-a/stop");
+    // Stopping and starting act on the repository as a whole: a checkout's own value follows it again.
+    const stopped = await post(WEB, "stop");
     expect(stopped.status).toBe(200);
-    expect(await stopped.json()).toMatchObject({ repository: { state: "stopped", startedAt: 10 } });
-    const started = await post("/api/repositories/repo-a/start");
-    expect(await started.json()).toMatchObject({ repository: { state: "started" } });
+    expect(await stopped.json()).toMatchObject({ repository: { state: "stopped" }, checkout: null });
+    expect(database.select({ started: checkouts.started }).from(checkouts).all()).toEqual([{ started: null }, { started: null }]);
+    expect(await (await post(WEB, "start")).json()).toMatchObject({ repository: { state: "started" } });
 
-    // Set-up needs a session in the repository; the dashboard cannot do it.
-    const unset = await post("/api/repositories/repo-b/start");
-    expect(unset.status).toBe(409);
-    expect((await post("/api/repositories/repo-b/stop")).status).toBe(200);
-    expect((await getJson<{ repositories: Array<{ state: string }> }>("/api/repositories")).repositories[1]?.state).toBe("never");
-    expect((await post("/api/repositories/unknown/stop")).status).toBe(404);
+    // A repository that is not set up is started and stopped the same way.
+    expect(await (await post("clone:landing", "stop")).json()).toMatchObject({ repository: { state: "stopped" } });
+    expect(await (await post("clone:landing", "start")).json()).toMatchObject({ repository: { state: "not-set-up" } });
+    expect((await post("clone:unknown", "stop")).status).toBe(404);
   });
 
-  it("lists a repository set up only in a worktree as stopped, and starts and stops its main checkout", async () => {
-    const post = (path: string): Promise<Response> => Promise.resolve(app.request(path, { method: "POST" }));
-    raw.prepare("INSERT INTO rule_repositories (repository_id, last_known_path, created_at, updated_at) VALUES (?, ?, 1, 1)")
-      .run("repo-c", "/code/acme-web");
-    raw.prepare("INSERT INTO checkout_starts (repository_id, checkout_path, state, started_at, updated_at) VALUES ('repo-c', '/code/acme-web-feature', 'started', 5, 5)").run();
+  it("sets a repository up with its first attachments, and refuses an unknown source", async () => {
+    addRepository(WEB);
+    const missing = await putJson("/api/repository/attachments", { repository: WEB, add: [{ sourceKind: "pack", sourceId: "no-such-pack" }] });
+    expect(missing.status).toBe(404);
+    expect((await getJson<{ repositories: Array<{ setUp: boolean }> }>("/api/repositories")).repositories[0]!.setUp).toBe(false);
 
-    expect((await getJson<{ repositories: unknown[] }>("/api/repositories")).repositories).toEqual([
-      { repositoryId: "repo-c", name: "acme-web", root: "/code/acme-web", state: "stopped", startedAt: null, stoppedAt: null },
-    ]);
-    const started = await post("/api/repositories/repo-c/start");
-    expect(started.status).toBe(200);
-    expect(await started.json()).toMatchObject({ repository: { state: "started" } });
-    const stopped = await post("/api/repositories/repo-c/stop");
-    expect(await stopped.json()).toMatchObject({ repository: { state: "stopped" } });
-    // The worktree's own setting is untouched by the main checkout's.
-    expect(raw.prepare("SELECT state FROM checkout_starts WHERE repository_id = 'repo-c'").pluck().get()).toBe("started");
+    // "I'll pick rule packs myself": set up, nothing added.
+    const configured = await putJson("/api/repository/attachments", { repository: WEB, configure: true });
+    expect(await configured.json()).toMatchObject({ repository: { setUp: true }, attachments: [] });
+    const pack = [...loadBundledCatalog().packs.keys()][0]!;
+    const added = await putJson("/api/repository/attachments", { repository: WEB, add: [{ sourceKind: "pack", sourceId: pack, folder: "web/" }] });
+    expect(await added.json()).toMatchObject({ attachments: [{ folder: "web", sourceKind: "pack", sourceId: pack }] });
+    expect((await putJson("/api/repository/attachments", { repository: WEB, add: [{ sourceKind: "pack", sourceId: pack, folder: "../x" }] })).status).toBe(400);
   });
 });

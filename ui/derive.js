@@ -1,19 +1,39 @@
 /**
- * Page-side derivations from a stored rule (`GET /api/rules` row shape). Nothing here is
- * persisted; the rule document and `catalogOrigin` are the only inputs.
+ * Page-side derivations from a rule as `poll.js` maps it from `GET /api/repository/rules`. Nothing
+ * here is persisted; the rule document, its effective `mode`, `origin` and the deciders are the inputs.
  */
 import { collapse } from "./format.js";
 
-/**
- * `catalogOrigin` enum in schema.ts is ["user", "rerail"]: rules the user wrote or imported,
- * and rules shipped with Rerail.
- */
+/** `origin`: "user" for rules created by you (the library), "rerail" for rules that come with Rerail. */
 export const ORIGIN = {
-  user: { cls: "mine", label: "Added by you", chip: "added" },
-  rerail: { cls: "preset", label: "Nera preset", chip: "preset" },
+  user: { cls: "mine", label: "Created by you", chip: "added" },
+  rerail: { cls: "preset", label: "By Rerail", chip: "preset" },
 };
-export const originOf = stored => ORIGIN[stored.catalogOrigin] ?? { cls: "", label: stored.catalogOrigin, chip: null };
-export const isPreset = stored => stored.catalogOrigin === "rerail";
+export const originOf = stored => ORIGIN[stored.origin] ?? { cls: "", label: stored.origin, chip: null };
+export const isPreset = stored => stored.origin === "rerail";
+
+/** Where a rule comes from, as the panel names it: By Rerail with its rule pack, or Created by you. */
+export function sourceText(stored) {
+  const { packId } = stored.source;
+  return packId === null ? originOf(stored).label : `${originOf(stored).label} · rule pack ${packId}`;
+}
+
+export const folderText = folder => (folder === "" ? "Whole repository" : folder);
+
+/**
+ * What decided a rule's on or mode, in words (`Decider` from the API). `checkoutPath` is the page's own
+ * checkout, which reads as "this worktree".
+ */
+export function deciderText(decider, checkoutPath) {
+  const at = "folder" in decider && decider.folder !== "" ? ` at ${decider.folder}` : "";
+  const forPack = decider.target === "pack" ? " for its rule pack" : "";
+  switch (decider.by) {
+    case "checkout": return `Set in ${decider.checkoutPath === checkoutPath ? "this worktree" : decider.checkoutPath}${at}${forPack}`;
+    case "repository": return `Set for the repository${at}${forPack}`;
+    case "pack-start": return `Rule pack ${decider.packId} default`;
+    default: return "The rule's default";
+  }
+}
 
 const titles = new WeakMap();
 /** Sentence the row leads with: conversation → reference; file → first clause's message, else its id. */
@@ -115,6 +135,3 @@ export function searchText(stored) {
   }
   return hay;
 }
-
-const NEW_WINDOW = 7 * 86_400_000;
-export const isNew = stored => Date.now() - stored.createdAt < NEW_WINDOW;

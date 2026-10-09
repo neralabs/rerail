@@ -7,7 +7,7 @@
  * must be inside the scope and produce none. A rule without a fixture file fails: a default that nothing
  * proves can fire is exactly what this guards against.
  *
- * The TSLint pack (packs/tslint/rules/, shipped in core and seeded disabled) is the golden set: the conformance harness proves it
+ * The TSLint pack (packs/tslint/rules/, shipped in core) is the golden set: the conformance harness proves it
  * against TSLint's own fixtures and gates it with conformance.json instead. Here each doc must compile and scope TypeScript
  * sources only, the pack must agree with conformance.json and the audit (`conformance/tslint/promote.ts --check`), and the
  * harness must score golden rules with the pack's docs. Rules TSLint cannot run without configuration
@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../src/native.js";
-import { bundledRulesDirectory, corePackDirectories, loadBundledRules } from "../src/rule-bootstrap.js";
+import { bundledRulesDirectory, corePackDirectories, loadBundledRules } from "../src/bundled-rule-documents.js";
 import { evaluateExample } from "../conformance/pack-validation.js";
 import { PASS_AUDIT } from "../conformance/tslint/audit.js";
 import { emptyGoldenManifest, goldenRules, loadGoldenManifest, PACK_DIRECTORY } from "../conformance/tslint/golden.js";
@@ -41,8 +41,11 @@ function violations(compiled: NativeCompiledCodeRuleDsl, path: string, source: s
 }
 
 const bundled = loadBundledRules(bundledRulesDirectory());
-const documents = bundled.filter(document => document.enabledByDefault !== false);
-const optIn = bundled.filter(document => document.enabledByDefault === false && document.rule.id.startsWith("tslint:"));
+const packRules = loadBundledRules(join(bundledRulesDirectory(), "absent"), corePackDirectories());
+const packIds = new Set(packRules.map(document => document.rule.id));
+/** Core's own rules; rules in the packs core ships are proven by their own tests. */
+const documents = bundled.filter(document => !packIds.has(document.rule.id));
+const optIn = packRules.filter(document => document.rule.id.startsWith("tslint:"));
 /** Rule id -> rule file stem; the fixture file shares the stem. Core ships no rules of its own today, so the directory may be absent. */
 const stemByRuleId: Record<string, string> = Object.fromEntries(
   (existsSync(bundledRulesDirectory()) ? readdirSync(bundledRulesDirectory()) : [])

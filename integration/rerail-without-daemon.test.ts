@@ -6,7 +6,9 @@ import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, test } from "vitest";
 import { openRerailDatabase } from "../src/database.js";
-import { resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
+import { resolveCloneId } from "../src/repository-identity.js";
+import { workspaceStartState } from "../src/repository-start.js";
+import { setUpRepository } from "../src/rule-configuration.js";
 import { startTestRepository, stopTestRepository } from "../test/support/started-repository.js";
 
 const run = promisify(execFile);
@@ -39,8 +41,19 @@ async function claudeStatus(root: string, env: NodeJS.ProcessEnv): Promise<strin
   return output.replaceAll(/\u001b\[[0-9;]*m|\u001b\]8;;[^\u0007]*\u0007/gu, "").trim();
 }
 
+/** Start `root`'s repository and set it up with no rules, so rules would run there. */
+function startSetUp(root: string, databasePath: string): void {
+  const repositoryKey = startTestRepository(root, databasePath);
+  const database = openRerailDatabase(databasePath);
+  try {
+    setUpRepository(database, repositoryKey, { packs: [] });
+  } finally {
+    database.$client.close();
+  }
+}
+
 describe("Rerail with no daemon running", () => {
-  test("says not on here, with /rerail-start, in a checkout never started or stopped", async () => {
+  test("says not on here, with /rerail-start, in a checkout not yet started or stopped", async () => {
     const { root, env } = await checkout();
     const notOn = `○ Rerail is not on in ${basename(root)}.\n  Start it with /rerail-start.`;
     expect(await rerailSession(root, env, ["cursor"])).toBe(notOn);
@@ -53,9 +66,18 @@ describe("Rerail with no daemon running", () => {
     expect(await claudeStatus(root, env)).toBe("Rerail ○ not on here");
   }, 30_000);
 
-  test("says not running only where the checkout is started", async () => {
+  test("says not set up, with /rerail-start, in a started checkout whose repository is not set up", async () => {
     const { root, env } = await checkout();
     startTestRepository(root, join(env.RERAIL_HOME!, "rerail.sqlite"));
+    const notSetUp = `○ Rerail is on in ${basename(root)}, which is not set up yet: no rules are checked.\n  Set it up with /rerail-start (rerail start).`;
+    expect(await rerailSession(root, env, ["cursor"])).toBe(notSetUp);
+    expect(await rerailSession(root, env, ["claude-code", "abc"])).toBe(notSetUp);
+    expect(await claudeStatus(root, env)).toBe("Rerail ○ not set up  ·  rerail start");
+  }, 30_000);
+
+  test("says not running only where the checkout is started and set up", async () => {
+    const { root, env } = await checkout();
+    startSetUp(root, join(env.RERAIL_HOME!, "rerail.sqlite"));
     const notRunning = "✕ Rerail is not running.\n  Start it with `rerail daemon start` in a terminal.";
     expect(await rerailSession(root, env, ["cursor"])).toBe(notRunning);
     expect(await rerailSession(root, env, ["claude-code", "abc"])).toBe(notRunning);
@@ -67,21 +89,22 @@ describe("Rerail's frequent readers", () => {
   test("never write the database", async () => {
     const { root, env } = await checkout();
     const databasePath = join(env.RERAIL_HOME!, "rerail.sqlite");
-    resolveRepositoryContext(root);
+    // The checkout has its clone identity, but was never recorded: Rerail is stopped there.
+    resolveCloneId(root);
     openRerailDatabase(databasePath).$client.close();
     const before = await readFile(databasePath);
+    expect(workspaceStartState(root, databasePath)).toBe("stopped");
 
-    const notOn = `○ Rerail is not on in ${basename(root)}.\n  Start it with /rerail-start.`;
     expect(await claudeStatus(root, env)).toBe("Rerail ○ not on here");
-    expect(await rerailSession(root, env, ["claude-code", "abc"])).toBe(notOn);
-    expect(await rerailSession(root, env, ["cursor"])).toBe(notOn);
+    expect(await rerailSession(root, env, ["claude-code", "abc"])).toBe(`○ Rerail is not on in ${basename(root)}.\n  Start it with /rerail-start.`);
+    expect(await rerailSession(root, env, ["cursor"])).toContain("○ Rerail is not on in");
     expect(await readFile(databasePath)).toEqual(before);
   }, 30_000);
 
   test("never write the database, and say not running where only a writable open could tell", async () => {
     const { root, env } = await checkout();
     const databasePath = join(env.RERAIL_HOME!, "rerail.sqlite");
-    resolveRepositoryContext(root);
+    resolveCloneId(root);
     // A database another process is still creating has no schema yet; only a writable open waits for it.
     await mkdir(env.RERAIL_HOME!, { recursive: true });
     await writeFile(databasePath, "");

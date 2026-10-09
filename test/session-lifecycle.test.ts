@@ -11,14 +11,13 @@ import { CodeRuleBridge } from "../src/code-rule-bridge.js";
 import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../src/session-state.js";
 import type { ConversationRule } from "../src/rule-schema.js";
 import { linkSteers, steerBlock } from "../src/rerail-steer.js";
-import { dashboardOrigin } from "../src/session-presentation.js";
+import { steerDashboard } from "../src/session-presentation.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "./native-daemon-fixture.js";
-import { startTestRepository } from "./support/started-repository.js";
+import { setUpTestRepository } from "./support/repository-rules.js";
 
 async function checkoutSteer(cwd: string): Promise<string> {
-  return linkSteers(steerBlock("checkout", "Check checkout requirements."), await dashboardOrigin(cwd));
+  return linkSteers(steerBlock("checkout", "Check checkout requirements."), await steerDashboard(cwd));
 }
-
 type Context = OmpContext & PiContext;
 type Handler = (event: unknown, context: Context) => unknown;
 const directories: string[] = [];
@@ -38,7 +37,6 @@ async function harness(host: "omp" | "pi") {
   const cwd = mkdtempSync(join(tmpdir(), `rerail-${host}-startup-`));
   directories.push(cwd);
   vi.stubEnv("RERAIL_HOME", join(cwd, "home"));
-  startTestRepository(cwd);
   if (host === "omp") await startNativeTestDaemon(cwd);
   const handlers = new Map<string, Handler>();
   const commands = new Map<string, { handler(args: string, context: Context): unknown }>();
@@ -67,8 +65,10 @@ async function harness(host: "omp" | "pi") {
     action: { content: "Check checkout requirements." },
     repeat: { mode: "always" },
   };
+  // Only rules a repository adds run.
+  setUpTestRepository(cwd, { library: [{ kind: "conversation", rule }] });
   const createExtension = host === "omp" ? createConversationRulesExtension : createPiConversationRulesExtension;
-  createExtension({ modelPath: resolve("model"), rules: [rule], registerTool: false })(api);
+  createExtension({ modelPath: resolve("model"), registerTool: false })(api);
   let tornDown = false;
   const live = (run: () => unknown): Promise<unknown> => tornDown
     ? Promise.reject(new Error("session-lifecycle harness used after its test was torn down"))

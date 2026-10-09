@@ -1,64 +1,98 @@
 # Rule Scoping
 
-Rerail keeps rule definitions and execution history in one user-level SQLite database, `$RERAIL_HOME/rerail.sqlite` (`~/.rerail/rerail.sqlite` when `RERAIL_HOME` is unset). Rules are resolved for a repository through its project; sessions, events, work links, and audits are attributed to the repository identity of the checkout that recorded them.
+Rerail keeps rule configuration and execution history in one user-level SQLite database, `$RERAIL_HOME/rerail.sqlite` (`~/.rerail/rerail.sqlite` when `RERAIL_HOME` is unset). A **repository** owns its rule configuration; each **checkout** of it decides whether Rerail is on there and may change rules for itself. Sessions, events, work links and audits are attributed to the repository of the checkout that recorded them.
 
-## Identities
+## Repositories and checkouts
 
-A **project** is a machine-local stable identity grouping an explicit set of repositories. A **repository** is a stable local identity. A **checkout** is one working copy of that repository, including a linked Git worktree. A **session** is execution history recorded by one checkout and attributed to its repository.
+A **repository** is keyed by the normalised address of its `origin` remote (or its only remote): `remote:<host>/<path>`, lower-case, without scheme, user, port, trailing `/` or `.git`, so the https, ssh and scp forms of one address give one key. A clone without a remote is keyed `clone:<clone id>`, the id Rerail keeps in `rerail-repository-id` in Git's common directory (a folder outside Git keeps one in `.rerail/repository-id`). A repository also has **aliases**: other keys that resolve to it, such as a rename, an ssh host alias or a mirror. A person links one with `repository_link`; an address that already belongs to another set-up repository is refused.
 
-For Git repositories, Rerail atomically creates `rerail-repository-id` in Git's common metadata directory. Linked worktrees therefore inherit the same identity after path moves, while each clone or fork receives a random identity even when a filesystem path is reused. Non-Git workspaces store an equivalent private identity in `.rerail/repository-id`.
+A **checkout** is one working copy: a clone's main checkout or a linked worktree, recorded once under its physical (symlink-resolved) Git top level. When Rerail first records a checkout it joins the repository of another recorded checkout of the same clone, else the repository its remote names (by key or alias), else a new repository. A clone-keyed repository whose checkout later has a remote is adopted into the remote's repository: when that one is not set up the two merge and the old key becomes an alias; when it is set up only the checkouts move. Checkouts whose folder is gone or that Git no longer lists are forgotten with their own settings.
 
-Repository membership is explicit. Rerail never infers shared ownership from a remote URL, directory ancestry, repository name, or account. A repository belongs to exactly one project at a time; assigning it to another project moves the membership. A newly discovered repository starts in a private default project named from its checkout. Project membership is local catalog data and is not written into the repository.
+Two clones of one remote are one repository and share its configuration. A fork has its own remote and is its own repository.
 
-## Applicability and precedence
+## Start and stop
 
-Rule applicability is independent from evaluation semantics:
+Rerail is off until it is started. Each repository and each checkout has a start value; a checkout's own value wins, else the nearest recorded checkout of the same repository that contains it and has one, else the repository's. The state of a checkout is one of:
 
-- `global`: applies to every repository on the machine.
-- `project`: applies to every repository explicitly assigned to the current project.
+- **started**: rules run;
+- **stopped**: nothing is recorded, evaluated or delivered, and hooks don't contact the daemon;
+- **not-set-up**: started, but the repository has no configuration yet, so sessions are recorded and no rule runs.
 
-Audit `scope` and `mode`, and conversation-rule sample `source` and `boundary`, continue to determine what and when a rule evaluates. They do not determine where the rule is installed.
+`/rerail-start` and `/rerail-stop` (or `rerail start` and `rerail stop`) act on this checkout and the checkouts nested in it, which follow it again. `rerail start --repository` and `rerail stop --repository` act on every checkout of the repository, clearing their own values. Stopping keeps rules and history.
 
-**Where it applies** is the set of repository-relative `scope.include` and `scope.exclude` patterns on a code rule. They filter candidate paths after the rule's applicability has selected it; excludes win. They are distinct from applicability, and from audit `scope` and `mode`.
+## Set-up
 
-The effective rule set contains one definition per logical rule ID:
+A repository is **Not set up** until its first configuration. Starting Rerail in a repository that is not set up sets it up: the rule packs recommended for this checkout are added, and the repository is started. A language or framework pack is added at the folder holding everything that matched it (for example `web` when only `web/` has TypeScript); a repository pack is added for the whole repository. `rerail start --no-packs` (in the dashboard, "I'll pick rule packs myself") sets the repository up with no packs. Set-up never adds rules created by you; you add them yourself.
 
-1. A project definition overrides a global definition with the same ID.
-2. A disabled project definition masks an enabled inherited global definition.
-3. Deleting the project definition reveals the global definition again.
-4. Deleting the global definition removes it for every project that does not override it.
+A repository that is set up runs only what is attached to it. The rules that ship with Rerail run only in repositories that add them. Nothing else runs: there are no rule files in the working tree.
 
-A logical ID cannot change rule kind while any global or project definition with that ID exists. Remove the existing definition before changing between `code` and `conversation`.
+## Rules: attachments and settings
 
-## Propagation and concurrency
+Rules come from two places:
 
-Every daemon, extension, and hook opens the shared catalog and resolves its effective rules from its repository identity. SQLite transactions serialize edits. Live code-rule and conversation-rule catalogs use change tokens combining SQLite `data_version` with connection-local revisions, so commits through the same process or another connection become effective on the next refresh or event without restarting. Restarting reconstructs the same effective set from the catalog.
+- **By Rerail**: the rules and rule packs that ship with Rerail. They are read from the package, never copied into the database.
+- **Created by you**: the library, rules people wrote, stored once per machine. A library rule can't take a By Rerail rule's id, and one id keeps one kind (`code` or `conversation`). If a later release ships a rule with a library rule's id, the library rule wins and the By Rerail rule is reported as unavailable.
 
-A write records applicability, owner, revision, creation/update timestamps, a deterministic payload hash, and catalog origin (`user` or `rerail`). These fields make local provenance explicit; Rerail itself has no cloud transport.
+A **rule attachment** adds a rule pack, a By Rerail rule or a library rule to a repository, in a folder (`""` is the whole repository; folders are relative to the repository root, POSIX, without `.` or `..`). A rule that is in an attached pack belongs to that pack even if it is also attached on its own. An attachment whose target no longer exists is reported as unavailable, never thrown.
 
-Each audit snapshots the effective rule ID, revision, payload hash, applicability, project identity when relevant, and catalog origin from the compiled workspace that performed the evaluation. Later edits or deletions do not rewrite historical audits.
+A **rule setting** changes the `on` and/or `mode` (Log, Steer or Block) of one rule or one whole pack in a folder. It belongs to the repository (the default for every checkout) or to one checkout (this worktree only). A null field leaves it to the next owner.
 
-## Export, import, and reset
+**Rule Path Criteria** (`scope.include`, `scope.exclude` on a code rule, excludes winning) still narrow the paths a present rule evaluates. Execution `scope` and run mode still decide when it evaluates.
 
-`rerail rules export` writes a version 1 dump containing both global definitions and current-project definitions, including shadowed global rows; `rerail rules import` accepts only that format. `rerail rules import` preserves applicability and provenance, attaching project definitions to the destination repository's current project. `rerail reset` deletes only the current repository's execution history and leaves the catalog untouched.
+## Precedence
+
+For a file at path `p`, the rules present are those attached in a folder that contains `p` (`web` contains `web/x`, not `web2/x`). Each field (`on`, `mode`) of each rule is then decided separately, first value wins:
+
+1. by owner: this checkout, then the checkouts that contain it (nearest first), then the repository;
+2. within one owner, the deepest folder that contains `p`;
+3. within one folder, the rule's own setting before its pack's;
+4. without a setting, the value the pack starts the rule with, then the rule's own default (on, in its document's mode).
+
+Every effective rule reports what decided each field: `repository_rules_get` returns it as `onSource` and `modeSource` (this checkout's or a containing checkout's setting, the repository's setting, the pack's starting value, or the rule's default).
+
+Conversation rules are resolved the same way for the folder the session started in.
+
+## Which checkout judges a file
+
+Each file is judged by the checkout that owns it, with that checkout's configuration. The owner is the nearest folder above the file that holds a `.git` entry Git confirms as a checkout's top level, found from both the file's lexical and real paths (a symlink into another checkout or out of its owner is not evaluated). A nested checkout owns its files when it is a submodule the checkout around it declares, or a checkout Rerail has recorded (such as a worktree kept inside the main checkout); while it is stopped or not set up it runs nothing, and the checkout around it does not judge its files either. Only a nested repository Rerail never recorded (an untracked `git init`, a stray `.git`) is judged with the checkout around it. Only checkouts that are recorded, started and set up evaluate files; a session that starts in a stopped or unrecorded checkout judges nothing.
+
+## Coding agents
+
+The HTTP API (`/api`) is for people; MCP callers (`/mcp`) are coding agents. The distinction is advisory, not a security boundary. A coding agent may:
+
+- start, stop and change settings in its own checkout and the checkouts inside it, at any time;
+- change the repository's attachments and settings only while it is not set up;
+- add a rule it creates in the same call, or the copy of a By Rerail rule it edits, to a set-up repository.
+
+Anything else is refused with `403 agent-not-permitted` and the dashboard URL where a person can make the change. Only a person links repository addresses, or starts and stops a whole repository.
+
+**Copy on edit.** Writing a By Rerail rule's id through `library_rules_upsert` stores an edited copy in the library (`<id>-copy`, `-copy-2`, …) instead. The copy is attached wherever the original is present in the target repository, at the same folders, and a repository setting switches the original off there. The original stays a reference to the package.
 
 ## Management surfaces
 
-The HTTP/OpenAPI and MCP operation registry exposes:
+The same operation definitions drive HTTP/OpenAPI and MCP. Every operation names its target in the query or body, never the path: `repository` (key or alias), `checkout` (an absolute path in a checkout) and `folder`. A checkout wins, then the repository, then the calling agent's checkout; a repository that does not match the checkout is `target-mismatch`. Reads never record a checkout, and writes default to the whole repository.
 
-- `rule_context_get`: current repository and project identity.
-- `project_repository_assign`: assign or move an explicit repository identity into a project.
-- `project_repository_remove`: remove membership; removing the current repository places it in its private default project.
-- Existing rule list/get/upsert/enable/remove operations, with `applicability` and origin/provenance in rule responses.
+| Operation | Route | Purpose |
+|---|---|---|
+| `repositories_list` | `GET /api/repositories` | Every repository: key, name, aliases, set up, started, checkout count. |
+| `repository_context_get` | `GET /api/repository` | One repository with its clones and checkouts (own and effective state), and the caller's checkout and folder. |
+| `repository_rules_get` | `GET /api/repository/rules` | Effective rules with on, mode and what decided each, and unavailable references. |
+| `repository_settings_set` | `PUT /api/repository/settings` | Owner `repository` or `checkout`, folder, targets (rule or pack), `on` and `mode` (null clears). |
+| `repository_attachments_set` | `PUT /api/repository/attachments` | Add or remove packs and rules per folder, with optional repository settings. The first addition, or `configure: true`, sets the repository up. |
+| `repository_start`, `repository_stop` | `POST /api/repository/start`, `/stop` | Scope `checkout` (with the checkouts inside it) or `repository`. |
+| `repository_link` | `POST /api/repository/aliases` | Make another remote address resolve to this repository. People only. |
+| `rule_packs_recommend` | `GET /api/rule-packs/recommendations` | The packs that fit a checkout, each with the folder to add it in. |
+| `rerail_rules_list` | `GET /api/rerail-rules` | By Rerail rules, each with its pack. |
+| `library_rules_list`, `library_rules_get`, `library_rules_upsert`, `library_rules_remove` | `/api/library-rules[/{id}]` | Rules created by you. Upsert can attach a new rule (`attach: true`) and copies a By Rerail rule on edit. |
 
-The same operation definitions drive HTTP and MCP, so filters and writes have one contract. CLI import, export, seed, and reset always use `$RERAIL_HOME/rerail.sqlite`.
+`rules_activity`, `sessions_list`, `violations_list`, `audits_list` and `repository_audits_list` take an optional `repository`; without it they cover the whole machine.
 
-## Operational scenarios
+**MCP caller.** The MCP bridge sends `x-rerail-caller-cwd` on every request: the URI-encoded real path of the folder its session started in. The daemon resolves it to the caller's checkout and folder; a malformed header is a JSON-RPC `-32602` error. A direct MCP client without the header must name a target.
 
-- Two linked worktrees resolve the same repository ID and therefore the same project rules.
-- Two unrelated repositories assigned to one project share project edits, disables, and deletions.
-- A third unassigned repository receives global rules but no rules from that project.
-- Removing a repository from a multi-repository project immediately removes that project's rules and assigns the repository to its private default project.
-- Moving a checkout path updates only `last_known_path`; rule identity and history location semantics remain unchanged.
-- Clone and fork identities are isolated until explicitly assigned.
-- A catalog edit survives daemon and host restarts because applicability is catalog state, not process state.
+**Dashboard.** The rules page for a repository is `<origin>/?repository=<key>&checkout=<path>#rules`; `rerail ui`, `/rerail-ui` and the status line build it. Without a scope the dashboard lists repositories to pick from.
+
+## Export and import
+
+`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. Checkout settings and start state belong to this machine and are not exported. `rerail rules import` accepts only that format and is all-or-nothing after every code rule compiles. `rerail reset` deletes only the current repository's execution history.
+
+Each audit records, per rule, its revision, payload hash, source (pack, By Rerail rule or library rule), repository key, checkout, and a `placement` array with `on`, `mode`, `onFrom` and `modeFrom` for each folder. Later edits don't rewrite past audits.

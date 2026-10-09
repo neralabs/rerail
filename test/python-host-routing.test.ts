@@ -7,10 +7,10 @@ import { CodeRuleBridge, generatedEditPaths } from "../src/code-rule-bridge.js";
 import type { CodeRuleEditBatch, CodeRuleAuditor } from "../src/code-rule.js";
 import { languageFor, NativeCodeRuleEnforcer } from "../src/code-rule-enforcer.js";
 import type { AuditRecorder, AuditInput, AuditResult } from "../src/audit.js";
-import { bootstrapCodeRuleDslCatalog, bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
+import { bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
 import { codeRuleDialectForPath } from "../src/code-rule-languages.js";
 import { codeRuleSchema } from "../src/code-rule-schema.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
+import { testCodeRuleCatalog } from "./support/repository-rules.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -71,11 +71,7 @@ async function auditRouting(workspaceRoot: string) {
   const home = await directory("rerail-py-routing-catalog-");
   const capabilitiesPath = join(home, "capabilities.json");
   await writeFile(capabilitiesPath, await readFile(join(bundledCodeRuleDslDirectory(), "capabilities.json")));
-  const databasePath = join(home, "code-rules.sqlite");
-  const store = new SqliteRuleStore(databasePath);
-  store.upsertCodeRule(routedCodeRule());
-  store.close();
-  const catalog = bootstrapCodeRuleDslCatalog({ capabilitiesPath, databasePath });
+  const catalog = testCodeRuleCatalog([routedCodeRule()], capabilitiesPath);
   const audits = new Map<string, AuditInput & { result?: AuditResult }>();
   const recorder: AuditRecorder = {
     start(input) { const auditId = `run-${audits.size + 1}`; audits.set(auditId, { ...input }); return auditId; },
@@ -93,7 +89,6 @@ async function auditRouting(workspaceRoot: string) {
     return { status: result?.status, routed, failures: (result?.failures ?? []).map(failure => `${failure.path ?? ""} ${failure.code}`) };
   } finally {
     await enforcer.close();
-    catalog.close();
   }
 }
 

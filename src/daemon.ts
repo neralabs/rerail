@@ -13,23 +13,12 @@ import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
 import { createRerailApi, hostAllowlist, publicHostSet } from "./api/http.js";
 import { createRerailMcpHandler } from "./api/mcp.js";
-import { operations, type RerailApiStores } from "./api/operations.js";
+import { operations } from "./api/operations.js";
+import { DatabaseApiStores } from "./api/stores.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "./native.js";
-import { loadBundledRules } from "./rule-bootstrap.js";
-import { contextStartState, startStateReader, workspaceStartState, type RepositoryStartState } from "./repository-start.js";
-import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "./database.js";
-import {
-  openScopedRuleCatalog,
-  resolveRepositoryContext,
-  ScopedRuleCatalog,
-  type RepositoryContext,
-} from "./scoped-rule-catalog.js";
-import { SqliteAuditReader } from "./audit-store.js";
-import { SqliteAuditControlStore } from "./audit-control.js";
-import { SqliteSessionReader, SqliteSessionStore } from "./session-store.js";
+import { defaultRerailDatabasePath } from "./database.js";
 import { acquireMainInstance } from "./main-instance.js";
 import { currentRerailBuild, isMainRerailBuild } from "./rerail-build.js";
-import { SqlitePresentationPreferenceStore } from "./presentation-preference-store.js";
 
 export const DEFAULT_DAEMON_HOST = "127.0.0.1";
 export const DEFAULT_DAEMON_PORT = 4737;
@@ -67,18 +56,14 @@ export interface DaemonHealth extends Pick<DaemonState, "version" | "pid" | "ui"
   native: NativeStatus;
   /** Absolute checkout path native sessions address. */
   workspaceRoot: string;
-  /** Stable identity of the repository the page, listings, and rule context are scoped to. */
-  repositoryId: string;
 }
 
 export interface RerailDaemonOptions {
   version: string;
   /** Defaults to `$RERAIL_HOME/rerail.sqlite`; embedding and tests pass their own. */
   databasePath?: string;
-  /** Checkout whose repository the page and API are scoped to; defaults to the current directory. */
+  /** Checkout native sessions address; defaults to the current directory. The API serves every repository. */
   workspaceRoot?: string;
-  /** Stable identity override for embedding and tests. */
-  repositoryContext?: RepositoryContext;
   host?: string;
   /** Hostnames besides loopback that requests may be addressed to; anything else is answered 421. */
   publicHosts?: readonly string[];
@@ -118,80 +103,6 @@ function readNativeStatus(probe: () => NativeHealth): NativeStatus {
       : { ok: false, error: `Native kernel ${health.kernelVersion} reported unhealthy` };
   } catch (error) {
     return { ok: false, error: (error as Error).message };
-  }
-}
-
-/**
- * The daemon is the one process that writes rules, work links, and presentation settings; host
- * extensions only read. Every store opens the one Rerail database; listings are scoped to the
- * daemon's repository. Writable handles open on first use so a daemon with no sessions yet
- * does not create the database until asked to.
- */
-class DaemonStores implements RerailApiStores {
-  readonly reader: SqliteSessionReader;
-  readonly audits: SqliteAuditReader;
-  readonly #path: string;
-  readonly #repository: RepositoryContext;
-  #rules: ScopedRuleCatalog | undefined;
-  #sessionStore: SqliteSessionStore | undefined;
-  #preferences: SqlitePresentationPreferenceStore | undefined;
-  #auditControls: SqliteAuditControlStore | undefined;
-  #database: RerailDatabase | undefined;
-  #startStates: ((workspace: string) => RepositoryStartState) | undefined;
-
-  get repositoryId(): string {
-    return this.#repository.repositoryId;
-  }
-
-  constructor(path: string, repository: RepositoryContext, readonly health: () => DaemonHealth) {
-    this.#path = path;
-    this.#repository = repository;
-    // The read-only views never upgrade, so bring an existing database to the current schema first.
-    if (existsSync(path)) openRerailDatabase(path).$client.close();
-    this.reader = new SqliteSessionReader(path, { repositoryId: repository.repositoryId });
-    this.audits = new SqliteAuditReader(path, { repositoryId: repository.repositoryId });
-  }
-
-  rules(): ScopedRuleCatalog {
-    this.#rules ??= ScopedRuleCatalog.open(this.#path, this.#repository);
-    return this.#rules;
-  }
-
-  sessionStore(): SqliteSessionStore {
-    this.#sessionStore ??= new SqliteSessionStore(this.#path, { repositoryId: this.#repository.repositoryId });
-    return this.#sessionStore;
-  }
-
-  preferences(): SqlitePresentationPreferenceStore {
-    this.#preferences ??= new SqlitePresentationPreferenceStore(this.#path);
-    return this.#preferences;
-  }
-
-  auditControls(): SqliteAuditControlStore {
-    this.#auditControls ??= new SqliteAuditControlStore(this.#path);
-    return this.#auditControls;
-  }
-
-  database(): RerailDatabase {
-    this.#database ??= openRerailDatabase(this.#path);
-    return this.#database;
-  }
-
-  repositoryState(workspace: string): RepositoryStartState {
-    // A daemon with no sessions yet must not create the database to answer that nothing is started.
-    if (!existsSync(this.#path)) return workspaceStartState(workspace, this.#path);
-    this.#startStates ??= startStateReader(this.database());
-    return this.#startStates(workspace);
-  }
-
-  close(): void {
-    this.reader.close();
-    this.#rules?.close();
-    this.#sessionStore?.close();
-    this.#auditControls?.close();
-    this.audits.close();
-    this.#preferences?.close();
-    this.#database?.$client.close();
   }
 }
 
@@ -253,7 +164,7 @@ export class RerailDaemon {
   readonly startedAt: number;
   readonly #server: Server;
   readonly #engineService: EngineService;
-  readonly #stores: DaemonStores;
+  readonly #stores: DatabaseApiStores;
   readonly #ui: DaemonState["ui"];
   readonly #native: NativeStatus;
   readonly #options: RerailDaemonOptions;
@@ -270,7 +181,7 @@ export class RerailDaemon {
     server: Server;
     engineService: EngineService;
     kernelSocketPath: string;
-    stores: DaemonStores;
+    stores: DatabaseApiStores;
     options: RerailDaemonOptions;
     databasePath: string;
     native: NativeStatus;
@@ -313,7 +224,6 @@ export class RerailDaemon {
     const kernelSocketPath = options.kernelSocketPath ?? defaultEngineSocketPath(databasePath);
     const workspaceRoot = resolve(options.workspaceRoot ?? process.cwd());
     const storageRoot = join(workspaceRoot, ".rerail", "sessions");
-    const repository = options.repositoryContext ?? resolveRepositoryContext(workspaceRoot);
     const modelPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "model");
     const engineService = await startEngineService({
       socketPath: kernelSocketPath,
@@ -321,12 +231,14 @@ export class RerailDaemon {
       modelPath,
       databasePath,
       workspaceRoot,
-      repositoryContext: repository,
     });
     const nativeToken = randomBytes(32).toString("hex");
     const nativeServer = new NativeSessionServer({ workspaceRoot, modelPath, databasePath });
     let daemon: RerailDaemon | undefined;
-    const stores = new DaemonStores(databasePath, repository, () => daemon!.health());
+    const stores = new DatabaseApiStores(databasePath, {
+      health: () => daemon!.health(),
+      origin: () => new URL(daemon!.url).origin,
+    });
     const mcp = createRerailMcpHandler(stores, operations, { version: options.version, publicHosts });
     const app = new Hono();
     app.use("*", hostAllowlist(publicHosts));
@@ -432,7 +344,6 @@ export class RerailDaemon {
       native: this.#native,
       ui: this.#ui,
       workspaceRoot: this.#workspaceRoot,
-      repositoryId: this.#stores.repositoryId,
     };
   }
 
@@ -597,18 +508,10 @@ export async function runRerailDaemon(argv: readonly string[]): Promise<void> {
   }
   const workspaceRoot = process.cwd();
   const databasePath = defaultRerailDatabasePath();
-  const catalog = openScopedRuleCatalog(workspaceRoot, databasePath);
-  const repository = catalog.context();
-  // The daemon is shared by every repository; it seeds bundled rules only where Rerail is started.
-  const bootstrap = contextStartState(databasePath, repository) === "started"
-    ? catalog.seed(loadBundledRules())
-    : undefined;
-  catalog.close();
   const daemon = await RerailDaemon.start({
     version: await packageVersion(),
     databasePath,
     workspaceRoot,
-    repositoryContext: repository,
     host: arguments_.host,
     publicHosts: arguments_.publicHosts,
     ...(arguments_.port === undefined ? {} : { port: arguments_.port }),
@@ -619,7 +522,6 @@ export async function runRerailDaemon(argv: readonly string[]): Promise<void> {
   const health = daemon.health();
   process.stdout.write(`rerail daemon ${health.version} listening at ${daemon.url} (pid ${process.pid})\n`);
   process.stdout.write(`database: ${health.database.path}\n`);
-  if (bootstrap !== undefined) process.stdout.write(`rules: ${bootstrap.inserted} seeded, ${bootstrap.refreshed} refreshed, ${bootstrap.kept} kept\n`);
   process.stdout.write(
     health.native.ok
       ? `native kernel: ok (version ${health.native.kernelVersion})\n`

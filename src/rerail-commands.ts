@@ -26,8 +26,8 @@ export const RERAIL_COMMANDS: readonly RerailCommand[] = [
   { name: "rerail", description: "What Rerail is doing in this repo, and every Rerail command", summary: "what Rerail is doing here" },
   { name: "rerail-ui", description: "Open the Rerail dashboard", summary: "open the dashboard" },
   { name: "rerail-create", description: "Create a rule for this repo, in your own words", summary: "create a rule, in your own words" },
-  { name: "rerail-stop", description: "Stop Rerail in this checkout; rules and history are kept", summary: "stop Rerail in this repo" },
-  { name: "rerail-start", description: "Start Rerail in this checkout, setting the repo up the first time", summary: "start Rerail in this repo" },
+  { name: "rerail-stop", description: "Stop Rerail in this checkout and the worktrees inside it; rules and history are kept", summary: "stop Rerail in this repo" },
+  { name: "rerail-start", description: "Start Rerail in this checkout and the worktrees inside it, setting the repo up the first time", summary: "start Rerail in this repo" },
   { name: "rerail-update", description: "Update Rerail to the newest version", summary: "get the newest version" },
   { name: "rerail-rage-quit", description: "Remove Rerail from this computer; rules and history are kept in a backup", summary: "remove Rerail from this computer" },
 ];

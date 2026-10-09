@@ -191,7 +191,7 @@ fn stored_workspace(
         owner,
         _maintenance: None,
     });
-    workspace.add_code_rule(code_rule).unwrap();
+    workspace.add_code_rule(code_rule, None).unwrap();
     workspace
 }
 
@@ -323,7 +323,7 @@ fn scenario(
     let resident = stored_workspace(&store, &format!("/{tag}-resident"), code_rule);
     let evicted = stored_workspace(&store, &format!("/{tag}-evicted"), code_rule);
     let mut unstored = CodeRuleDslWorkspace::new();
-    unstored.add_code_rule(code_rule).unwrap();
+    unstored.add_code_rule(code_rule, None).unwrap();
     let mut tree = BTreeMap::<String, Value>::new();
     let pathless = |outcome: &Outcome| {
         outcome
@@ -347,7 +347,7 @@ fn scenario(
             tree.remove(*path);
         }
         let mut fresh = CodeRuleDslWorkspace::new();
-        fresh.add_code_rule(code_rule).unwrap();
+        fresh.add_code_rule(code_rule, None).unwrap();
         let whole = tree.values().cloned().collect::<Vec<_>>();
         let full = outcome(&apply(&fresh, 1, &whole, &[]));
         fresh.close();
@@ -492,7 +492,7 @@ fn a_global_evaluation_that_finishes_past_an_unobserved_deadline_is_kept() {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace
-        .add_code_rule(&component_story_code_rule())
+        .add_code_rule(&component_story_code_rule(), None)
         .unwrap();
     TEST_DEADLINE_PASSES_AT.set(Some("global-done"));
     let evaluation = apply(&workspace, 1, &[file("ui/Card.tsx", CARD)], &[]);
@@ -1313,7 +1313,7 @@ fn e10_a_calls_pass_keeps_the_other_clauses_partial_on_a_broken_file() {
     let store = StdArc::new(ContentStore::open(&directory.0.join("content.sqlite")).unwrap());
     let evicted = stored_workspace(&store, "/e10-evicted", &code_rule);
     let mut unstored = CodeRuleDslWorkspace::new();
-    unstored.add_code_rule(&code_rule).unwrap();
+    unstored.add_code_rule(&code_rule, None).unwrap();
     let revisions = [
         (
             vec![helpers.clone(), caller.clone(), broken.clone()],
@@ -1456,7 +1456,7 @@ fn e13_an_edit_after_eviction_updates_the_kept_call_graph() {
                 tree.remove(*path);
             }
             let mut whole = CodeRuleDslWorkspace::new();
-            whole.add_code_rule(&code_rule).unwrap();
+            whole.add_code_rule(&code_rule, None).unwrap();
             let expected = outcome(&apply(
                 &whole,
                 1,

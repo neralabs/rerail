@@ -56,6 +56,6 @@ export function renderOverview(root, sum) {
   setTile(t3, "Rules triggered", fmt(sum.firedN), ` of ${fmt(sum.on.length)} on`,
     sum.firedN ? `${label} · ${fmt(sum.on.length - sum.firedOn)} on and quiet` : `none ${label}`);
   setTile(t4, "Rules on", fmt(sum.on.length), ` of ${fmt(sum.rules.length)}`,
-    `${sum.presetsOff} ${plural(sum.presetsOff, "preset")} off · ${fmt(sum.neverTriggered)} never triggered`);
+    `${sum.presetsOff} By Rerail off · ${fmt(sum.neverTriggered)} never triggered`);
   setClass(root, "is-empty", empty);
 }

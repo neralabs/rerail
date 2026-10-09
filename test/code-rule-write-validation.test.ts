@@ -1,14 +1,16 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { loadBundledCatalog } from "../src/bundled-rules.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRerailApi } from "../src/api/http.js";
-import { operations, type RerailApiStores } from "../src/api/operations.js";
+import { operations } from "../src/api/operations.js";
+import { DatabaseApiStores } from "../src/api/stores.js";
 import type { CodeRule } from "../src/code-rule-schema.js";
-import { exportScopedRules, importScopedRules } from "../src/rule-bootstrap.js";
+import { openRerailDatabase, type RerailDatabase } from "../src/database.js";
+import { exportRulesDump, importRulesDump, type RulesDump } from "../src/rule-bootstrap.js";
 import { SqliteRuleStore } from "../src/rule-store.js";
-import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
+import { getLibraryRule, listLibraryRules, upsertLibraryRule } from "../src/rule-library.js";
 import { MOCK_CODE_RULES } from "../src/seed.js";
 
 /** Zod accepts it; the engine rejects it because `$TYPO` names no capture of the query. */
@@ -38,20 +40,21 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-function scopedCatalog(name = "catalog.sqlite"): ScopedRuleCatalog {
-  return ScopedRuleCatalog.open(join(root, name), { repositoryId: `repo-${name}`, workspaceRoot: root });
+function library(name = "rerail.sqlite"): RerailDatabase {
+  return openRerailDatabase(join(root, name));
 }
 
 describe("code rule writes compile in the engine", () => {
-  it("rejects a rule the engine cannot compile at ScopedRuleCatalog.upsertCodeRule, with the engine's reason", () => {
-    const catalog = scopedCatalog();
+  it("rejects a rule the engine cannot compile at upsertLibraryRule, with the engine's reason", () => {
+    const database = library();
+    const bundle = loadBundledCatalog();
     try {
-      expect(() => catalog.upsertCodeRule(unboundMessage)).toThrow(ENGINE_REASON);
-      expect(() => catalog.upsertCodeRule(unboundMessage)).toThrow(/policy rule test:unbound-message does not compile/);
-      expect(catalog.get(unboundMessage.id)).toBeUndefined();
-      expect(catalog.upsertCodeRule(MOCK_CODE_RULES[1]!).rule).toEqual(MOCK_CODE_RULES[1]);
+      expect(() => upsertLibraryRule(database, bundle, unboundMessage, "code")).toThrow(ENGINE_REASON);
+      expect(() => upsertLibraryRule(database, bundle, unboundMessage, "code")).toThrow(/policy rule test:unbound-message does not compile/);
+      expect(getLibraryRule(database, unboundMessage.id)).toBeUndefined();
+      expect(upsertLibraryRule(database, bundle, MOCK_CODE_RULES[1]!, "code").document.rule).toEqual(MOCK_CODE_RULES[1]);
     } finally {
-      catalog.close();
+      database.$client.close();
     }
   });
 
@@ -67,34 +70,36 @@ describe("code rule writes compile in the engine", () => {
   });
 
   it("refuses to store a code rule it cannot validate when the native engine is unavailable", () => {
-    const catalog = scopedCatalog();
+    const database = library();
     try {
       process.env.RERAIL_ENGINE_PATH = join(root, "missing.node");
-      expect(() => catalog.upsertCodeRule(MOCK_CODE_RULES[0]!)).toThrow(/cannot validate policy rule mock-no-console-log: native kernel unavailable/);
-      expect(catalog.get(MOCK_CODE_RULES[0]!.id)).toBeUndefined();
+      expect(() => upsertLibraryRule(database, loadBundledCatalog(), MOCK_CODE_RULES[0]!, "code"))
+        .toThrow(/cannot validate policy rule mock-no-console-log: native kernel unavailable/);
+      expect(getLibraryRule(database, MOCK_CODE_RULES[0]!.id)).toBeUndefined();
     } finally {
-      catalog.close();
+      database.$client.close();
     }
   });
 
-  it("answers rules_upsert with 400 invalid-rule and the engine's reason", async () => {
-    const catalog = scopedCatalog();
-    const stores = { rules: () => catalog } as unknown as RerailApiStores;
+  it("answers library_rules_upsert with 400 invalid-rule and the engine's reason", async () => {
+    const databasePath = join(root, "rerail.sqlite");
+    const stores = new DatabaseApiStores(databasePath, {
+      health: () => ({ pid: process.pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
+      origin: () => "http://127.0.0.1:4737",
+    });
     const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
     try {
-      const rejected = await app.request(`/api/rules/${unboundMessage.id}`, {
+      const rejected = await app.request(`/api/library-rules/${unboundMessage.id}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ kind: "code", rule: unboundMessage }),
       });
       expect(rejected.status).toBe(400);
-      const body = await rejected.json() as { error: string; message: string };
-      expect(body.error).toBe("invalid-rule");
-      expect(body.message).toMatch(ENGINE_REASON);
-      expect(catalog.get(unboundMessage.id)).toBeUndefined();
+      expect(await rejected.json()).toMatchObject({ error: "invalid-rule", message: expect.stringMatching(ENGINE_REASON) });
+      expect(getLibraryRule(stores.database(), unboundMessage.id)).toBeUndefined();
 
       process.env.RERAIL_ENGINE_PATH = join(root, "missing.node");
-      const unavailable = await app.request(`/api/rules/${MOCK_CODE_RULES[0]!.id}`, {
+      const unavailable = await app.request(`/api/library-rules/${MOCK_CODE_RULES[0]!.id}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ kind: "code", rule: MOCK_CODE_RULES[0] }),
@@ -102,37 +107,36 @@ describe("code rule writes compile in the engine", () => {
       expect(unavailable.status).toBe(503);
       expect(await unavailable.json()).toMatchObject({ error: "kernel-unavailable" });
     } finally {
-      catalog.close();
+      stores.close();
     }
   });
 
   it("rejects a whole import that contains a rule the engine cannot compile, naming it", () => {
-    const source = scopedCatalog("source.sqlite");
-    const dumpPath = join(root, "rules.json");
+    const source = library("source.sqlite");
+    const bundle = loadBundledCatalog();
+    let dump: RulesDump;
     try {
-      source.upsertCodeRule(MOCK_CODE_RULES[0]!);
-      source.upsertCodeRule(MOCK_CODE_RULES[1]!);
-      exportScopedRules(source, dumpPath);
+      upsertLibraryRule(source, bundle, MOCK_CODE_RULES[0]!, "code");
+      upsertLibraryRule(source, bundle, MOCK_CODE_RULES[1]!, "code");
+      dump = exportRulesDump(source);
     } finally {
-      source.close();
+      source.$client.close();
     }
-    const dump = JSON.parse(readFileSync(dumpPath, "utf8")) as { rules: Array<{ rule: unknown }> };
-    dump.rules[1]!.rule = unboundMessage;
-    writeFileSync(dumpPath, JSON.stringify(dump));
+    const broken = { ...dump, library: dump.library.map((entry, index) => index === 1 ? { ...entry, rule: unboundMessage } : entry) };
 
-    const destination = scopedCatalog("destination.sqlite");
+    const destination = library("destination.sqlite");
     try {
       let error: unknown;
       try {
-        importScopedRules(destination, dumpPath);
+        importRulesDump(destination, bundle, broken);
       } catch (caught) {
         error = caught;
       }
       expect((error as Error).message).toMatch(/rules\[1\] \(test:unbound-message\)/);
       expect((error as Error).message).toMatch(ENGINE_REASON);
-      expect(destination.list()).toEqual([]);
+      expect(listLibraryRules(destination)).toEqual([]);
     } finally {
-      destination.close();
+      destination.$client.close();
     }
   });
 });

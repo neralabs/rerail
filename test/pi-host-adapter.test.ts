@@ -38,6 +38,7 @@ function lifecycleHarness(changeOwnerBeforeFailure: boolean) {
     conversationRulesCommand: {},
     packageRoot: "/package-root",
     started: () => true,
+    sessionNoteRules: async () => ({ setUp: false }),
   });
   return { context, handlers, ingested: () => ingested };
 }

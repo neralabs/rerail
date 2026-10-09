@@ -101,6 +101,7 @@ pub(super) fn compile_relation(
             Ok(CodeRuleScope {
                 include: compile_glob_set(&include, &format!("{at}/include"))?,
                 exclude: compile_glob_set(&exclude, &format!("{at}/exclude"))?,
+                placement: None,
             })
         })
         .transpose()?;

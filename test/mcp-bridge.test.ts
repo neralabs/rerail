@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
@@ -200,5 +200,37 @@ describe("Rerail MCP bridge", () => {
     });
     expect(run.endpoints).toEqual(["http://127.0.0.1:51234/mcp", "http://127.0.0.1:52345/mcp"]);
     expect(run.stdout).toEqual([JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: "fetch failed" } }), pong]);
+  });
+
+  it("names its caller on every relay by the URI-encoded real path it started in, without touching the body", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-bridge-caller-")));
+    try {
+      const checkout = join(root, "dépôt 項目");
+      await mkdir(checkout);
+      const link = join(root, "link");
+      await symlink(checkout, link);
+      const headers: string[] = [];
+      const bodies: string[] = [];
+      const request = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" });
+      const home = join(root, "home");
+      await recordDaemon(home, { pid: process.pid, port: 4321 });
+      await runRerailMcpBridge({
+        cwd: link,
+        home,
+        input: Readable.from([`${request}\n`, `${request}\n`]),
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        fetch: async (_endpoint, init) => {
+          headers.push(new Headers(init.headers).get("x-rerail-caller-cwd") ?? "");
+          bodies.push(String(init.body));
+          return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), { status: 200 });
+        },
+      });
+      expect(headers).toEqual([encodeURIComponent(checkout), encodeURIComponent(checkout)]);
+      expect(decodeURIComponent(headers[0]!)).toBe(checkout);
+      expect(bodies).toEqual([request, request]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

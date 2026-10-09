@@ -1,0 +1,103 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach } from "vitest";
+import { openRerailDatabase, type RerailDatabase } from "../../src/database.js";
+import { codeRuleSchema, type CodeRule } from "../../src/code-rule-schema.js";
+import type { BundledCatalog, CheckoutContext, RepositoryStatus } from "../../src/repository-model.js";
+import type { RuleMode } from "../../src/rule-mode.js";
+import type { RulePack } from "../../src/rule-packs.js";
+import type { ConversationRule } from "../../src/rule-schema.js";
+import type { RuleDocument } from "../../src/rule-store.js";
+import { repositories } from "../../src/schema.js";
+
+const directories: string[] = [];
+const databases: RerailDatabase[] = [];
+
+afterEach(async () => {
+  for (const database of databases.splice(0)) database.$client.close();
+  await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+});
+
+export async function temporaryDirectory(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "rerail-rule-config-"));
+  directories.push(root);
+  return root;
+}
+
+export async function temporaryDatabase(): Promise<RerailDatabase> {
+  const database = openRerailDatabase(join(await temporaryDirectory(), "rerail.sqlite"));
+  databases.push(database);
+  return database;
+}
+
+export function codeRule(id: string, options: { revision?: number; mode?: RuleMode; message?: string } = {}): CodeRule {
+  return codeRuleSchema.parse({
+    clauses: [{
+      id: `${id}:check`,
+      violation: { anchor: "witness.span", code: "FORBIDDEN_PRINT", message: options.message ?? "No print" },
+      forbid: { regex: { pattern: "\\bprint\\(", source: "file.content" } },
+    }],
+    format: "rerail.policy/v1",
+    id,
+    revision: options.revision ?? 1,
+    mode: options.mode ?? "block",
+  });
+}
+
+export function conversation(id: string): ConversationRule {
+  return {
+    id,
+    mode: "steer",
+    reference: "Editing a database migration or altering a table schema.",
+    match: { operator: "gte", threshold: 0.6 },
+    sample: { source: "user-input", boundary: "message" },
+    action: { content: "Schema changes need a migration note." },
+    repeat: { mode: "once" },
+  };
+}
+
+/**
+ * A small bundle: pack `tslint` (`no-console` starts on in Steer, `no-var` starts off in Log), a By Rerail rule
+ * `loose`, and a By Rerail conversation rule `talk`. Documents are Block unless the pack says otherwise.
+ */
+export function testBundle(overrides: { noConsoleRevision?: number } = {}): BundledCatalog {
+  const documents: RuleDocument[] = [
+    { kind: "code", rule: codeRule("no-console", { revision: overrides.noConsoleRevision ?? 1 }) },
+    { kind: "code", rule: codeRule("no-var") },
+    { kind: "code", rule: codeRule("loose") },
+    { kind: "conversation", rule: conversation("talk") },
+  ];
+  const pack: RulePack = {
+    id: "tslint",
+    name: "TSLint",
+    category: "language",
+    covers: "TypeScript",
+    reason: "TypeScript files",
+    match: { any: [{ files: ["**/*.ts"], label: "TypeScript" }] },
+    honourSuppressionComments: true,
+    rules: [
+      { id: "no-console", kind: "code", title: "No console", group: "TSLint", mode: "steer", on: true },
+      { id: "no-var", kind: "code", title: "No var", group: "TSLint", mode: "log", on: false },
+    ],
+  };
+  return {
+    documents: new Map(documents.map(document => [document.rule.id, document])),
+    packs: new Map([[pack.id, pack]]),
+    packOf: new Map(pack.rules.map(rule => [rule.id, pack.id])),
+    digest: `test:${overrides.noConsoleRevision ?? 1}`,
+  };
+}
+
+export const REPOSITORY = "remote:github.com/acme/app";
+export const OTHER_REPOSITORY = "remote:github.com/acme/other";
+
+export function addRepository(db: RerailDatabase, repositoryKey: string, configuredAt: number | null = null): void {
+  db.insert(repositories).values({ repositoryKey, displayName: repositoryKey, configuredAt, createdAt: 1, updatedAt: 1 }).run();
+}
+
+export function checkout(checkoutPath: string, repositoryKey = REPOSITORY): CheckoutContext {
+  return { checkoutPath, repositoryKey, cloneId: "clone", git: true, main: true };
+}
+
+export const RUNNING: RepositoryStatus = { started: true, setUp: true, startedBy: "repository" };

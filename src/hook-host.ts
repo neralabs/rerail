@@ -12,23 +12,31 @@ import {
 } from "./hook-adapter.js";
 import type { SemanticEmbedder } from "./semantic-types.js";
 import { SqliteSessionStore } from "./session-store.js";
-import { defaultRerailDatabasePath } from "./database.js";
-import { readRepositoryId } from "./repository-identity.js";
+import { defaultRerailDatabasePath, openRerailDatabase } from "./database.js";
+import { lookupCheckout } from "./repository-registry.js";
 
 export * from "./hook-adapter.js";
+
+/** The repository key of the checkout `cwd` is in, read without recording anything; undefined when unknown. */
+function repositoryKeyOf(cwd: string, databasePath: string): string | undefined {
+  let database;
+  try {
+    database = openRerailDatabase(databasePath, { readonly: true });
+    return lookupCheckout(database, cwd)?.repositoryKey;
+  } catch {
+    return undefined;
+  } finally {
+    database?.$client.close();
+  }
+}
 
 function recordLocalReceipt(session: AdapterSession, databasePath: string): (receiptId: string, ruleIds: readonly string[]) => void {
   return (receiptId, ruleIds) => {
     // Attribution matters only when a reset removed the session row and this receipt restores it.
-    let repositoryId: string | undefined;
+    const repositoryKey = repositoryKeyOf(session.cwd, databasePath);
+    const store = new SqliteSessionStore(databasePath);
     try {
-      repositoryId = readRepositoryId(session.cwd);
-    } catch {
-      repositoryId = undefined;
-    }
-    const store = new SqliteSessionStore(databasePath, { repositoryId });
-    try {
-      store.recordSteer(session, receiptId, ruleIds);
+      store.recordSteer(session, receiptId, ruleIds, repositoryKey === undefined ? {} : { repositoryKey });
     } finally {
       store.close();
     }

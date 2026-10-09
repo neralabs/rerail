@@ -37,8 +37,11 @@ import { z } from "zod";
 import { RULE_MESSAGE_TYPE } from "../src/adapter-contract.js";
 import { CODE_RULE_FORMAT } from "../src/code-rule-schema.js";
 import { openRerailDatabase } from "../src/database.js";
-import { startRepository } from "../src/repository-start.js";
-import { openScopedRuleCatalog, resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
+import { recordCheckout } from "../src/repository-registry.js";
+import { setRepositoryStarted } from "../src/repository-start.js";
+import { loadBundledCatalog } from "../src/bundled-rules.js";
+import { setUpRepository } from "../src/rule-configuration.js";
+import { upsertLibraryRule } from "../src/rule-library.js";
 import { SqliteSessionReader, type SessionEventRecord } from "../src/session-store.js";
 
 type Host = "omp" | "pi";
@@ -242,18 +245,17 @@ async function project(): Promise<Workspace> {
   const root = await mkdtemp(join(tmpdir(), "rerail-lifecycle-"));
   await mkdir(join(root, "api"), { recursive: true });
   await writeFile(join(root, "api", "existing.py"), "def existing():\n    return 1\n");
+  // A private Rerail home keeps the run's rules and history out of the user's.
   const rerailHome = join(root, ".rerail-home");
   const databasePath = join(rerailHome, "rerail.sqlite");
-  const catalog = openScopedRuleCatalog(root, databasePath);
-  try {
-    catalog.upsertCodeRule(CODE_RULE, { applicability: "project", enabled: true });
-  } finally {
-    catalog.close();
-  }
-  // Rerail is off until started; start the project as `rerail start` would.
+  // The project runs the one inline rule from the library, set up and started as `rerail start` would leave it.
   const database = openRerailDatabase(databasePath);
   try {
-    startRepository(database, resolveRepositoryContext(root).repositoryId);
+    const bundle = loadBundledCatalog();
+    upsertLibraryRule(database, bundle, CODE_RULE, "code");
+    const { repositoryKey } = recordCheckout(database, root);
+    setUpRepository(database, repositoryKey, { packs: [], rules: [{ sourceKind: "library_rule", sourceId: CODE_RULE.id, folder: "" }] });
+    setRepositoryStarted(database, repositoryKey, true);
   } finally {
     database.$client.close();
   }

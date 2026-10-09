@@ -61,7 +61,6 @@ function registrationOptions(root: string, home: string, parsed: RegistrationArg
     home,
     workspaceDir: process.cwd(),
     ...(parsed.hosts === undefined ? {} : { harnesses: parsed.hosts }),
-    ...(parsed.projectDir === undefined ? {} : { projectDir: parsed.projectDir }),
     dryRun: parsed.dryRun,
   };
 }
@@ -173,7 +172,7 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
 export async function runInstallCommand(args: readonly string[], context: SetupContext): Promise<number> {
   const { flags, options } = parseArguments(
     args,
-    { flags: ["--dry-run", "--remove"], options: ["--root", "--project", "--harness"] },
+    { flags: ["--dry-run", "--remove"], options: ["--root", "--harness"] },
     argument => `Unknown install option: ${argument}`,
   );
   const parsed = registrationArguments(options, flags);
@@ -252,7 +251,7 @@ export async function runSetupCommand(args: readonly string[], context: SetupCon
       { home, packageRoot: activeRoot },
       {
         dev: false,
-        // The daemon's page lists the repository it starts in: the project, when one was named.
+        // The daemon serves every repository; it starts in the project, when one was named.
         ...(parsed.projectDir === undefined ? {} : { cwd: parsed.projectDir }),
         ...(port === undefined ? {} : { port }),
       },
@@ -264,7 +263,6 @@ export async function runSetupCommand(args: readonly string[], context: SetupCon
     "",
     "Next:",
     ...nextSteps(home),
-    "  drop rules into <project>/.<harness>/conversation-rules.json (setup seeded empty ones when --project was given)",
     "",
   ].join("\n"));
   return 0;

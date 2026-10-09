@@ -1,13 +1,17 @@
 import { once } from "node:events";
+import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import { DAEMON_STATE_FILE, processAlive, readDaemonState } from "./daemon-control.js";
+import { CALLER_CWD_HEADER } from "./repository-model.js";
 import { defaultRerailHome } from "./rerail-home.js";
 
 export type RerailMcpBridgeFetch = (endpoint: URL, init: RequestInit) => Promise<Response>;
 
 export interface RerailMcpBridgeOptions {
+  /** The folder the coding agent runs in; defaults to the process cwd. */
+  cwd?: string;
   input?: Readable;
   stdout?: Writable;
   stderr?: Writable;
@@ -78,10 +82,15 @@ async function daemonEndpoint(home: string): Promise<URL> {
 }
 
 /** Relays one request; returns the line to answer with, or undefined when the server answered with no body. */
-async function relay(endpoint: URL, request: string, fetchImpl: RerailMcpBridgeFetch): Promise<string | undefined> {
+async function relay(
+  endpoint: URL,
+  request: string,
+  callerHeaders: Readonly<Record<string, string>>,
+  fetchImpl: RerailMcpBridgeFetch,
+): Promise<string | undefined> {
   const response = await fetchImpl(endpoint, {
     method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+    headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...callerHeaders },
     body: request,
     signal: AbortSignal.timeout(30_000),
   });
@@ -95,12 +104,13 @@ async function relay(endpoint: URL, request: string, fetchImpl: RerailMcpBridgeF
 async function relayRequest(
   request: string,
   home: string,
+  callerHeaders: Readonly<Record<string, string>>,
   stdout: Writable,
   stderr: Writable,
   fetchImpl: RerailMcpBridgeFetch,
 ): Promise<void> {
   try {
-    const body = await relay(await daemonEndpoint(home), request, fetchImpl);
+    const body = await relay(await daemonEndpoint(home), request, callerHeaders, fetchImpl);
     if (body !== undefined) await writeLine(stdout, body);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -112,9 +122,14 @@ async function relayRequest(
 
 /**
  * Stdio MCP bridge to the machine's Rerail daemon, found for each request through the Rerail home's daemon state.
+ * It names its caller: every relay carries the real path of the folder the bridge started in, URI-encoded, in
+ * `CALLER_CWD_HEADER`, so a tool called without a target acts on the agent's own checkout. The JSON-RPC body is
+ * never rewritten.
  * A failed request answers its own ids with a JSON-RPC error; only stdin EOF ends the bridge.
  */
 export async function runRerailMcpBridge(options: RerailMcpBridgeOptions = {}): Promise<void> {
+  const callerCwd = await realpath(options.cwd ?? process.cwd()).catch(() => undefined);
+  const callerHeaders: Record<string, string> = callerCwd === undefined ? {} : { [CALLER_CWD_HEADER]: encodeURIComponent(callerCwd) };
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
   const fetchImpl = options.fetch ?? fetch;
@@ -122,6 +137,6 @@ export async function runRerailMcpBridge(options: RerailMcpBridgeOptions = {}): 
   const lines = createInterface({ input: options.input ?? process.stdin, crlfDelay: Infinity });
   for await (const request of lines) {
     if (request.trim() === "") continue;
-    await relayRequest(request, home, stdout, stderr, fetchImpl);
+    await relayRequest(request, home, callerHeaders, stdout, stderr, fetchImpl);
   }
 }

@@ -4,10 +4,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { defaultRerailDatabasePath } from "../src/database.js";
-import { loadBundledRules } from "../src/rule-bootstrap.js";
+import { loadBundledCatalog } from "../src/bundled-rules.js";
+import { defaultRerailDatabasePath, openRerailDatabase } from "../src/database.js";
+import { recordCheckout } from "../src/repository-registry.js";
+import { checkoutStatus } from "../src/repository-start.js";
+import { listRepositoryRules, setUpRepository } from "../src/rule-configuration.js";
 import { runRuleDraftCommand, type RuleDraftReport } from "../src/rule-draft.js";
-import { resolveRepositoryContext, ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
+import { listLibraryRules } from "../src/rule-library.js";
 import { stableJsonText } from "../src/stable-json.js";
 
 const directories: string[] = [];
@@ -64,8 +67,30 @@ async function testReport(file: string, repo: string): Promise<{ exit: number; r
   return { exit, report: JSON.parse(stdout) as RuleDraftReport };
 }
 
-function catalogFor(repo: string): ScopedRuleCatalog {
-  return ScopedRuleCatalog.open(defaultRerailDatabasePath(), resolveRepositoryContext(repo));
+/** Your library, and `repo`'s repository: whether it is set up and the rules added to it, by id and folder. */
+function rulesOf(repo: string) {
+  const database = openRerailDatabase(defaultRerailDatabasePath());
+  try {
+    const checkout = recordCheckout(database, repo);
+    return {
+      library: listLibraryRules(database).map(rule => rule.document.rule.id),
+      setUp: checkoutStatus(database, checkout).setUp,
+      repository: listRepositoryRules(database, loadBundledCatalog(), checkout.repositoryKey).rules
+        .map(rule => ({ id: rule.source.id, kind: rule.source.kind, folder: rule.attachmentFolder, on: rule.on })),
+    };
+  } finally {
+    database.$client.close();
+  }
+}
+
+/** Set `repo`'s repository up with nothing in it. */
+function setUpEmpty(repo: string): void {
+  const database = openRerailDatabase(defaultRerailDatabasePath());
+  try {
+    setUpRepository(database, recordCheckout(database, repo).repositoryKey, { packs: [] });
+  } finally {
+    database.$client.close();
+  }
 }
 
 describe("rerail rules test", () => {
@@ -150,22 +175,15 @@ describe("rerail rules test", () => {
     });
   });
 
-  it("leaves the catalog unchanged", async () => {
+  it("writes nothing: no library rule, and the repository is left as it was", async () => {
     const repo = await repository({ "src/a.ts": "console.log(1);\n" });
-    const before = catalogFor(repo);
-    const rulesBefore = stableJsonText(before.list());
-    before.close();
+    const before = stableJsonText(rulesOf(repo));
     const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy() });
 
     await testReport(file, repo);
 
-    const after = catalogFor(repo);
-    try {
-      expect(after.get("acme:no-console-log")).toBeUndefined();
-      expect(stableJsonText(after.list())).toBe(rulesBefore);
-    } finally {
-      after.close();
-    }
+    expect(stableJsonText(rulesOf(repo))).toBe(before);
+    expect(rulesOf(repo).library).not.toContain("acme:no-console-log");
   });
 
   it("runs a tool-call rule's cases and skips the repo pass", async () => {
@@ -195,8 +213,9 @@ describe("rerail rules test", () => {
 });
 
 describe("rerail rules add", () => {
-  it("stores the rule as an enabled project rule of the repo", async () => {
+  it("stores the rule in the library and adds it, on, to the whole of a set-up repository", async () => {
     const repo = await repository();
+    setUpEmpty(repo);
     const file = writeDraft(repo, {
       kind: "code",
       rule: noConsolePolicy(),
@@ -207,29 +226,55 @@ describe("rerail rules add", () => {
 
     expect(exit).toBe(0);
     expect(stdout).toMatch(/^● Added acme:no-console-log to rerail-rule-draft-\w+\.\n$/);
-    const catalog = catalogFor(repo);
-    try {
-      expect(catalog.list({ applicability: "project" }).find(rule => rule.rule.id === "acme:no-console-log")).toMatchObject({
-        kind: "code",
-        enabled: true,
-        applicability: "project",
-        catalogOrigin: "user",
-      });
-    } finally {
-      catalog.close();
-    }
+    const after = rulesOf(repo);
+    expect(after.library).toContain("acme:no-console-log");
+    expect(after).toMatchObject({
+      setUp: true,
+      repository: [{ id: "acme:no-console-log", kind: "library_rule", folder: "", on: true }],
+    });
+  });
+
+  it("adds the rule at the folder the draft names", async () => {
+    const repo = await repository();
+    setUpEmpty(repo);
+    const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy(), folder: "web" });
+
+    const { exit, stdout } = await run("add", [file, "--repo", repo]);
+
+    expect(exit).toBe(0);
+    expect(stdout).toContain("● Added acme:no-console-log to rerail-rule-draft-");
+    expect(stdout).toContain("/web.\n");
+    expect(rulesOf(repo).repository).toEqual([{ id: "acme:no-console-log", kind: "library_rule", folder: "web", on: true }]);
+  });
+
+  it("sets a repository that is not set up up with only the new rule", async () => {
+    const repo = await repository();
+    const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy() });
+
+    const { exit, stdout } = await run("add", [file, "--repo", repo]);
+
+    expect(exit).toBe(0);
+    expect(stdout).toContain("was not set up, so it is now set up with this rule.");
+    expect(rulesOf(repo)).toMatchObject({
+      setUp: true,
+      repository: [{ id: "acme:no-console-log", kind: "library_rule", folder: "", on: true }],
+    });
+  });
+
+  it("refuses a draft that names a repository other than the checkout's", async () => {
+    const repo = await repository();
+    const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy(), repository: "remote:github.com/acme/other" });
+
+    const { exit, stderr } = await run("add", [file, "--repo", repo]);
+
+    expect(exit).toBe(1);
+    expect(stderr).toContain("cannot name repository");
+    expect(rulesOf(repo)).toMatchObject({ setUp: false, repository: [] });
   });
 
   it("refuses to replace a rule by Rerail with the same id", async () => {
     const repo = await repository();
-    const seeded = catalogFor(repo);
-    let bundled;
-    try {
-      seeded.seed(loadBundledRules());
-      bundled = seeded.list().find(rule => rule.catalogOrigin === "rerail" && rule.kind === "code");
-    } finally {
-      seeded.close();
-    }
+    const bundled = [...loadBundledCatalog().documents.values()].find(document => document.kind === "code");
     if (bundled === undefined) throw new Error("expected a code rule by Rerail");
     const file = writeDraft(repo, { kind: "code", rule: { ...noConsolePolicy(), id: bundled.rule.id } });
 
@@ -237,12 +282,9 @@ describe("rerail rules add", () => {
 
     expect(exit).toBe(1);
     expect(stdout).toBe("");
-    expect(stderr).toContain(`${bundled.rule.id} is a rule by Rerail`);
-    const catalog = catalogFor(repo);
-    try {
-      expect(catalog.get(bundled.rule.id)).toMatchObject({ catalogOrigin: "rerail", payloadHash: bundled.payloadHash });
-    } finally {
-      catalog.close();
-    }
+    expect(stderr).toContain(`${bundled.rule.id} is a rule by Rerail, so it was not replaced`);
+    const after = rulesOf(repo);
+    expect(after.library).not.toContain(bundled.rule.id);
+    expect(after).toMatchObject({ setUp: false, repository: [] });
   });
 });
