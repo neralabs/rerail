@@ -955,6 +955,27 @@ describe("legacy package-root cutover", () => {
     expect(await readlink(join(extensions, "scoped"))).toBe(scoped);
     expect((await readJson(piPath)).packages).toEqual([...packages, options.root]);
   });
+
+  // Pi loads a package folder that holds only extensions/, or a single file, so a `current` path that still exists is
+  // someone's package however little it holds.
+  it("keeps a Pi package and extension link at a `current` path that still exists without a package.json or dist/", async () => {
+    const options = { ...await fixture(), harnesses: ["omp", "pi"] as const };
+    const folder = join(dirname(options.home), "pkgs", "mytool", "current");
+    await mkdir(join(folder, "extensions"), { recursive: true });
+    await writeFile(join(folder, "extensions", "hello.ts"), "export default function hello() {}\n");
+    const file = join(dirname(options.home), "pkgs", "single", "current");
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, "export default function single() {}\n");
+    const extensions = join(options.home, ".omp", "agent", "extensions");
+    await mkdir(extensions, { recursive: true });
+    await symlink(folder, join(extensions, "mytool"));
+    const piPath = join(options.home, ".pi", "agent", "settings.json");
+    await seed(piPath, { packages: [folder, file] });
+
+    await registerHarnesses(options);
+    expect((await readdir(extensions)).sort()).toEqual(["mytool", "rerail"]);
+    expect((await readJson(piPath)).packages).toEqual([folder, file, options.root]);
+  });
 });
 
 describe("Codex Rerail skills", () => {

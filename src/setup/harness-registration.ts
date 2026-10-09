@@ -209,16 +209,28 @@ async function isReplaceableScript(context: Context, script: string, executable:
   return !(await pathExists(script)) && !(await pathExists(join(root, "package.json")));
 }
 
+/** Whether `path` resolves to something on disk, following symlinks: a dangling link does not. */
+async function resolves(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    return !isAbsent(error);
+  }
+}
+
 /**
  * Whether an extension link or Pi package names an install of this package that is gone. Nothing is left on disk to
  * identify it, so only the path does: a root of the shape setup registers (a Rerail home's `current`, under `~/.rerail`
- * or any `$RERAIL_HOME`, or an npm install at `node_modules/@neralabs/rerail`) with neither a package.json nor dist/ in
- * it. A gone root of any other shape, such as a tool on an unmounted volume or a gone checkout, stays.
+ * or any `$RERAIL_HOME`, or an npm install at `node_modules/@neralabs/rerail`) that no longer resolves, as after its
+ * home was deleted or its `current` link outlived its versions. A root that still resolves stays whatever it holds,
+ * since Pi also loads a folder of only extensions/ or a single file; so does a gone root of any other shape, such as a
+ * tool on an unmounted volume or a gone checkout.
  */
 async function isGoneInstallRoot(root: string): Promise<boolean> {
   const segments = root.split(/[\\/]/u);
   if (segments.at(-1) !== "current" && segments.slice(-3).join("/") !== "node_modules/@neralabs/rerail") return false;
-  return !(await pathExists(join(root, "package.json"))) && !(await pathExists(join(root, "dist")));
+  return !(await resolves(root));
 }
 
 function unquoteShellWord(word: string, windows = false): string {
