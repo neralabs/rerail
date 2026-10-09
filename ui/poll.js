@@ -70,8 +70,9 @@ async function loadContext() {
 }
 
 /**
- * One row per rule id, in the renderers' shape: the effective `on` as `enabled`, the effective mode on the rule,
- * and every folder the rule is added at (a change is written at each).
+ * One row per rule id, in the renderers' shape: on (`enabled`) only where it is on in every folder it is added at,
+ * the first folder's mode on the rule, and each folder's own on and mode (`folderStates`; `mixed` when they differ).
+ * A change from the row is written at every folder.
  */
 function toStoredRules(entries) {
   const rules = new Map();
@@ -79,7 +80,12 @@ function toStoredRules(entries) {
     const id = entry.rule.id;
     const known = rules.get(id);
     if (known !== undefined) {
-      if (!known.folders.includes(entry.folder)) known.folders.push(entry.folder);
+      if (!known.folders.includes(entry.folder)) {
+        known.folders.push(entry.folder);
+        known.folderStates.push({ folder: entry.folder, on: entry.on, mode: entry.mode });
+        known.enabled = known.enabled && entry.on;
+        known.mixed = known.folderStates.some(state => state.on !== entry.on || state.mode !== entry.mode) || known.mixed;
+      }
       continue;
     }
     rules.set(id, {
@@ -89,6 +95,8 @@ function toStoredRules(entries) {
       origin: entry.source.kind === "library_rule" ? "user" : "rerail",
       source: entry.source,
       folders: [entry.folder],
+      folderStates: [{ folder: entry.folder, on: entry.on, mode: entry.mode }],
+      mixed: false,
       onSource: entry.onSource,
       modeSource: entry.modeSource,
       revision: entry.revision,

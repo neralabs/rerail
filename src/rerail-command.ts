@@ -89,6 +89,19 @@ async function launcherStartState(options: RerailCommandOptions): Promise<Reposi
   return known;
 }
 
+/**
+ * Whether this checkout's repository is set up (`rerail state --set-up`), read apart from its start state: a repository
+ * Rerail has never seen reads as stopped, and is not set up either.
+ */
+async function launcherSetUp(options: RerailCommandOptions): Promise<boolean> {
+  const result = await runLauncher(options, ["state", "--set-up"], databaseArgs(options));
+  const answer = result.stdout.trim();
+  if (result.code !== 0 || (answer !== "set-up" && answer !== "not-set-up")) {
+    throw new Error(`rerail state --set-up failed: ${(result.stdout + result.stderr).trim()}`);
+  }
+  return answer === "set-up";
+}
+
 function notifyResult(ctx: RerailCommandContext, name: string, result: LauncherResult): void {
   ctx.ui.notify((result.stdout + result.stderr).trim() || `/${name} exited with code ${result.code}.`, result.code === 0 ? "info" : "error");
 }
@@ -177,9 +190,9 @@ export function registerRerailCommands(pi: RerailCommandHost, options: RerailCom
   // Start and stop run the launcher, so the CLI owns the wording; without a terminal it addresses the coding agent's user.
   // Re-attaching attaches the runtime where Rerail is started, and leaves only the "not on here" footer where it is not.
   register("rerail-start", async ctx => {
-    const result = await launcherStartState(options) === "not-set-up"
-      ? await setUpFromCommand(options, ctx)
-      : await runLauncher(options, ["start"], databaseArgs(options));
+    const result = await launcherSetUp(options)
+      ? await runLauncher(options, ["start"], databaseArgs(options))
+      : await setUpFromCommand(options, ctx);
     if (result.code === 0) await options.reattach?.();
     notifyResult(ctx, "rerail-start", result);
   });

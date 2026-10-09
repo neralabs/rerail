@@ -85,7 +85,7 @@ The complexity pack flags a function whose cyclomatic complexity is above 6: one
 
 It reproduces the complexity feedback of the Metrics-in-the-Loop study (the C arm): the same tool semantics, the same limit, and only the functions the agent changed. To use it:
 
-1. Add the `complexity` pack to the repository with `repository_attachments_set` (`PUT /api/repository/attachments`, body `{ "add": [{ "sourceKind": "pack", "sourceId": "complexity" }] }`; the whole repository unless the entry names a `folder`). Set-up never adds it, because it has no match definition. A coding agent may make this call only before the repository is set up; after that a person makes it.
+1. Add the `complexity` pack to the repository with `repository_attachments_set` (`PUT /api/repository/attachments`, body `{ "checkout": "<absolute path of a checkout>", "add": [{ "sourceKind": "pack", "sourceId": "complexity" }] }`, or `"repository": "<repository key>"` in place of `checkout`; the whole repository unless the entry names a `folder`). Set-up never adds it, because it has no match definition. A coding agent may make this call only before the repository is set up; after that a person makes it.
 2. Report only the functions the agent changed: set the workspace's audit scope to `ai-output`, with `rerail settings --session <session-id> --scope ai-output`. A finding covers its whole function, so under `ai-output` a function is reported when an edit touches any of its lines. Under the default `touched-files` scope every function over the limit in an edited file is reported, including ones the agent never touched.
 
 It differs from the study in when and how often the agent hears about it:

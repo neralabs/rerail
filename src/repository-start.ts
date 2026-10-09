@@ -60,6 +60,20 @@ export function workspaceStartState(workspace: string, databasePath = defaultRer
 }
 
 /**
+ * Whether `workspace`'s repository is set up, read apart from its start state and without side effects: a repository
+ * Rerail never recorded is not set up.
+ */
+export function workspaceSetUp(workspace: string, databasePath = defaultRerailDatabasePath()): boolean {
+  if (!existsSync(databasePath)) return false;
+  const database = openRerailDatabase(databasePath, { readonly: true });
+  try {
+    return checkoutStatus(database, lookupCheckout(database, workspace)).setUp;
+  } finally {
+    database.$client.close();
+  }
+}
+
+/**
  * `workspaceStartState` for readers that refresh often and must never fail on a database they cannot read
  * (the status line, `/rerail`): undefined where the database cannot be opened.
  */

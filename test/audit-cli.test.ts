@@ -74,9 +74,11 @@ describe("rerail scan and settings CLI", () => {
       cwd: () => root,
       reattach: async () => { reattached += 1; },
     });
+    const selections: string[][] = [];
     const ui = {
       notify(message: string) { notices.push(message); },
-      select: async () => undefined,
+      // The first start asks how to set the repository up; the person takes the recommended rules.
+      select: async (_title: string, options: string[]) => { selections.push(options); return "Add the recommended rules"; },
       input: async () => undefined,
       confirm: async () => false,
     };
@@ -87,7 +89,9 @@ describe("rerail scan and settings CLI", () => {
     expect(workspaceStartState(root)).toBe("stopped");
 
     await commands.get("rerail-start")!.handler("", { ui });
-    // A repository Rerail never set up is set up on its first start, with the rule packs recommended for it (none here).
+    // A repository Rerail never set up asks how to set it up on its first start, though it reads as stopped, and is
+    // set up with the rule packs recommended for it (none here).
+    expect(selections).toEqual([["Add the recommended rules", "I'll pick rules myself"]]);
     expect(notices.at(-1)).toBe([
       `● Rerail is on in ${name}. 0 rules are on.`,
       "  No rule pack fits this repository yet. Add rules on the rules page (/rerail-ui).",

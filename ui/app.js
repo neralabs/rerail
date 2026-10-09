@@ -184,12 +184,15 @@ const ownerWords = () => (changeOwner() === "checkout" ? "in this worktree" : "f
  */
 async function setEnabled(ids, enabled, label) {
   if (ids.length === 0) return;
+  // The repository, owner and rows are fixed when the action starts: switching repository mid-save writes nothing there.
+  const target = scopeTarget();
+  const owner = changeOwner();
   const before = new Map();
   const byFolder = new Map();
   for (const id of ids) {
     const r = data.rules.get(id);
     if (!r) continue;
-    before.set(id, r.enabled);
+    before.set(r, r.enabled);
     r.enabled = enabled;
     for (const folder of r.folders) byFolder.set(folder, [...(byFolder.get(folder) ?? []), id]);
   }
@@ -197,12 +200,12 @@ async function setEnabled(ids, enabled, label) {
   try {
     for (const [folder, folderIds] of byFolder) {
       await send("PUT", "/api/repository/settings", {
-        ...scopeTarget(), folder, owner: changeOwner(), targets: folderIds.map(id => ({ kind: "rule", id })), on: enabled,
+        ...target, folder, owner, targets: folderIds.map(id => ({ kind: "rule", id })), on: enabled,
       });
     }
     toast(label);
   } catch (error) {
-    for (const [id, was] of before) { const r = data.rules.get(id); if (r) r.enabled = was; }
+    for (const [r, was] of before) r.enabled = was;
     toast(`Could not save: ${error.message}`);
   }
   invalidate();
@@ -223,10 +226,12 @@ async function setUpRecommended() {
   if (ui.settingUp) return;
   ui.settingUp = true;
   invalidate();
+  // Recommended for this repository, so added to this repository even if the person switches while the GET runs.
+  const target = scopeTarget();
   try {
-    const { body } = await get(`/api/rule-packs/recommendations?${new URLSearchParams(scopeTarget())}`);
+    const { body } = await get(`/api/rule-packs/recommendations?${new URLSearchParams(target)}`);
     const add = body.recommendations.map(({ packId, folder }) => ({ sourceKind: "pack", sourceId: packId, folder }));
-    await send("PUT", "/api/repository/attachments", { ...scopeTarget(), add, configure: true });
+    await send("PUT", "/api/repository/attachments", { ...target, add, configure: true });
     toast(add.length === 0
       ? "Set up with no rule packs: none fits this repository yet."
       : `Set up with ${add.map(({ sourceId, folder }) => (folder === "" ? sourceId : `${sourceId} in ${folder}`)).join(", ")}.`);

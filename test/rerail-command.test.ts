@@ -238,14 +238,21 @@ describe("/rerail-rage-quit", () => {
 });
 
 describe("/rerail-start", () => {
-  /** A launcher that answers `state` with `state` and echoes every other command's arguments. */
-  const launcher = (state: string) => launcherPackage(`if [ "$1" = state ]; then printf '${state}\\n'; else printf 'ran %s\\n' "$*"; fi`);
+  /**
+   * A launcher that answers `state --set-up` with `setUp`, `state` with `state`, and echoes every other command's
+   * arguments.
+   */
+  const launcher = (state: string, setUp = "set-up") => launcherPackage([
+    `if [ "$*" = "state --set-up" ]; then printf '${setUp}\\n'`,
+    `elif [ "$1" = state ]; then printf '${state}\\n'`,
+    `else printf 'ran %s\\n' "$*"; fi`,
+  ].join("\n"));
 
   it.each([
     { choice: "Add the recommended rules", ran: "ran start" },
     { choice: "I'll pick rules myself", ran: "ran start --no-packs" },
   ])("asks how to set up a repository that is not set up: $choice", async ({ choice, ran }) => {
-    const root = await launcher("not-set-up");
+    const root = await launcher("not-set-up", "not-set-up");
     const reattach = vi.fn();
     const { run, notices, selections } = commandHarness({ packageRoot: root, cwd: () => root, reattach }, choice);
     await run("rerail-start");
@@ -254,7 +261,15 @@ describe("/rerail-start", () => {
     expect(reattach).toHaveBeenCalledOnce();
   });
 
-  it("starts a stopped repository without asking", async () => {
+  it("asks how to set up a repository Rerail has never started, which reads as stopped", async () => {
+    const root = await launcher("stopped", "not-set-up");
+    const { run, notices, selections } = commandHarness({ packageRoot: root, cwd: () => root }, "I'll pick rules myself");
+    await run("rerail-start");
+    expect(selections).toEqual([["Add the recommended rules", "I'll pick rules myself"]]);
+    expect(notices).toEqual([{ message: "ran start --no-packs", level: "info" }]);
+  });
+
+  it("starts a stopped repository that is set up without asking", async () => {
     const root = await launcher("stopped");
     const { run, notices, selections } = commandHarness({ packageRoot: root, cwd: () => root });
     await run("rerail-start");

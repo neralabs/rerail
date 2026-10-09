@@ -15,6 +15,7 @@ import {
   startRerail,
   startStateReader,
   stopRerail,
+  workspaceSetUp,
   workspaceStartState,
   type RepositorySetupIo,
 } from "../src/repository-start.js";
@@ -390,6 +391,18 @@ describe("repository start state", () => {
     } finally {
       await runtime.dispose();
     }
+  });
+
+  it("reads whether a repository is set up apart from its start state", async () => {
+    const root = await temporary("rerail-set-up-");
+    const checkout = gitRepository(join(root, "landing-page"));
+    const databasePath = join(root, "rerail.sqlite");
+    expect(workspaceSetUp(checkout, databasePath)).toBe(false);
+    expect(existsSync(databasePath)).toBe(false);
+    await startRerail(checkout, recorder(), { databasePath, rulePacks: "none" });
+    stopRerail(checkout, recorder(), { databasePath });
+    expect(workspaceStartState(checkout, databasePath)).toBe("stopped");
+    expect(workspaceSetUp(checkout, databasePath)).toBe(true);
   });
 
   it("says there is nothing to stop where Rerail never recorded the checkout, naming the command for the lane", async () => {

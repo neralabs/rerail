@@ -83,8 +83,13 @@ function lastTriggered(all, lastSeen, measured) {
 
 function renderOrigin(stored, id) {
   const checkoutPath = data.checkout?.checkoutPath;
-  const on = `${stored.enabled ? "On" : "Off"} · ${deciderText(stored.onSource, checkoutPath)}`;
-  const mode = `${stored.rule.mode} · ${deciderText(stored.modeSource, checkoutPath)}`;
+  // Folders that disagree each show their own on and mode; switching the rule then sets it in every folder.
+  const on = stored.mixed
+    ? stored.folderStates.map(state => `${state.on ? "On" : "Off"} in ${folderText(state.folder)}`).join(", ")
+    : `${stored.enabled ? "On" : "Off"} · ${deciderText(stored.onSource, checkoutPath)}`;
+  const mode = stored.mixed
+    ? stored.folderStates.map(state => `${state.mode} in ${folderText(state.folder)}`).join(", ")
+    : `${stored.rule.mode} · ${deciderText(stored.modeSource, checkoutPath)}`;
   const folders = stored.folders.map(folderText).join(", ");
   setContent(p.from, `${id}|${sourceText(stored)}|${folders}|${on}|${mode}`, () => kv([
     ["Origin", sourceText(stored)],
