@@ -139,8 +139,9 @@ from the package and run only in repositories that add them (see
 your rules and each repository's configuration by hand. `rerail seed` fills the
 database with mock rules to work against. A JSON rule file in
 `<project>/.omp|.pi|.claude|.codex|.cursor/conversation-rules.json` (as
-`{"version": 1, "rules": []}` plus rules) is also read, but a rule the repository's
-configuration holds with the same id wins.
+`{"version": 1, "rules": []}` plus rules) is also read where Rerail is started and
+the repository is set up, but a rule the repository's configuration holds with the
+same id wins.
 
 Policy evaluation caches parsed files and results in a content store. Which
 one a Rerail uses depends on where its package lives, not on a flag: the

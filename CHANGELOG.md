@@ -43,7 +43,7 @@ First release of Rerail as `@neralabs/rerail`, licensed under Apache-2.0.
 - Rule settings turn a rule or pack on or off or change its mode for the repository or one checkout, per folder. Per field, this checkout wins, then the checkouts containing it, then the repository, then the deepest folder, the rule before its pack, the pack's starting value and the rule's default. Edits made through the daemon, the UI, or MCP apply to the next sample or tool call in every open session.
 - Each file is judged by the checkout that owns it: a declared submodule or a started, set-up recorded checkout judges its own files, and any other nested `.git` is judged with the checkout around it. Conversation rules come from the session's starting folder.
 - `rerail rules export` / `rerail rules import` move the library and each repository's configuration by hand; `rerail reset` deletes the current repository's history and keeps rules; `rerail seed` writes mock data. See `docs/rule-scoping.md`.
-- JSON `.<harness>/conversation-rules.json` files remain a secondary source; a database row with the same id wins.
+- JSON `.<harness>/conversation-rules.json` files remain a secondary source, applied only where Rerail is started and the repository is set up; a rule the repository's configuration holds with the same id, on or off, wins.
 
 ### Daemon, API, and UI
 

@@ -24,7 +24,7 @@ Rerail is off until it is started. Each repository and each checkout has a start
 
 A repository is **Not set up** until its first configuration. Starting Rerail in a repository that is not set up sets it up: the rule packs recommended for this checkout are added, and the repository is started. A language or framework pack is added at the folder holding everything that matched it (for example `web` when only `web/` has TypeScript); a repository pack is added for the whole repository. `rerail start --no-packs` (in the dashboard, "I'll pick rule packs myself") sets the repository up with no packs. Set-up never adds rules created by you; you add them yourself.
 
-A repository that is set up runs only what is attached to it. The rules that ship with Rerail run only in repositories that add them.
+A repository that is set up runs only what is attached to it. The rules that ship with Rerail run only in repositories that add them. The one other source is a coding agent's `.<harness>/conversation-rules.json` file (and rules an embedding host passes in): it is read from the folder the session starts in, only for the daemon's own callers, and applies only where the checkout is started and set up; a rule the repository's configuration holds with the same id, on or off, replaces the file's.
 
 ## Rules: attachments and settings
 
