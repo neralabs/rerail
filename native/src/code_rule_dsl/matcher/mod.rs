@@ -29,7 +29,7 @@ mod value;
 use super::budget;
 use crate::code_rule_dsl::language::GrammarDialect;
 pub(super) use anchors::{AnchorPlan, FileAnchorIndex, Selection};
-pub(super) use arguments::{Arguments, SlotKind};
+pub(super) use arguments::{Arguments, Passed, SlotKind};
 use ast_grep_core::matcher::Matcher;
 use ast_grep_core::matcher::{KindMatcher, Pattern};
 use ast_grep_core::matcher::{MatcherExt, NodeMatch};

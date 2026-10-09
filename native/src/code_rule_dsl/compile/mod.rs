@@ -608,34 +608,33 @@ fn compile_query_as(
                 .get("rule")
                 .ok_or_else(|| invalid(format!("{path}/ast/rule is required")))?;
             let (grammars, grammar) = language_capability(language_name, capabilities)?;
+            use super::language::adapter::{OptionKeys, SyntaxFeature, SyntaxRules, with_adapter};
+            let family = code_rule_language.family();
+            let keys = with_adapter!(family, A => <A as SyntaxRules>::OPTION_KEYS);
             let (options, python) = match ast.get("languageOptions") {
                 None => (None, None),
-                Some(value) => match code_rule_language.family() {
-                    super::language::Family::Python => (
-                        None,
-                        Some(Arc::new(options::compile_python_options(
-                            value,
-                            &format!("{path}/ast"),
-                        )?)),
-                    ),
-                    super::language::Family::Ecma => (
-                        Some(Arc::new(options::compile_language_options(
-                            value,
-                            &format!("{path}/ast"),
-                        )?)),
-                        None,
-                    ),
-                    super::language::Family::Php => {
-                        return Err(invalid(format!(
-                            "{path}/ast/languageOptions: `languageOptions` is not available for php policies"
-                        )));
+                Some(value) => {
+                    gate(
+                        &format!("{path}/ast/languageOptions"),
+                        with_adapter!(family, A => <A as SyntaxRules>::feature(SyntaxFeature::LanguageOptions)),
+                    )?;
+                    match keys {
+                        OptionKeys::Python => (
+                            None,
+                            Some(Arc::new(options::compile_python_options(
+                                value,
+                                &format!("{path}/ast"),
+                            )?)),
+                        ),
+                        OptionKeys::Ecma => (
+                            Some(Arc::new(options::compile_language_options(
+                                value,
+                                &format!("{path}/ast"),
+                            )?)),
+                            None,
+                        ),
                     }
-                    super::language::Family::Blade => {
-                        return Err(invalid(format!(
-                            "{path}/ast/languageOptions: `languageOptions` is not available for blade policies"
-                        )));
-                    }
-                },
+                }
             };
             let applies = ast
                 .get("when")
@@ -643,7 +642,7 @@ fn compile_query_as(
                     options::compile_when(
                         when,
                         &format!("{path}/ast"),
-                        matches!(code_rule_language.family(), super::language::Family::Python),
+                        keys == OptionKeys::Python,
                         options.as_deref(),
                         python.as_deref(),
                         &defines.options,
