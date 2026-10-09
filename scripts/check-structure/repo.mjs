@@ -15,7 +15,7 @@ function compare(a, b) {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-function makeRepo(root, files, readBytes) {
+function makeRepo(root, files, readBytes, sizeOf) {
   const tracked = new Set(files);
   const bytesCache = new Map();
   const textCache = new Map();
@@ -34,7 +34,7 @@ function makeRepo(root, files, readBytes) {
       if (!textCache.has(path)) textCache.set(path, bytes(path).toString("utf8"));
       return textCache.get(path);
     },
-    size: (path) => bytes(path)?.length ?? 0,
+    size: (path) => (tracked.has(path) ? sizeOf(path) : 0),
     isBinary(path) {
       const data = bytes(path);
       return data !== null && data.subarray(0, BINARY_SNIFF_BYTES).includes(0);
@@ -47,25 +47,27 @@ export function loadRepo(root) {
   const listed = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8", maxBuffer: 1 << 28 })
     .split("\0")
     .filter((path) => path !== "");
-  const files = [...new Set(listed)]
-    .filter((path) => {
-      try {
-        return statSync(join(root, path)).isFile();
-      } catch {
-        return false;
-      }
-    })
-    .sort(compare);
-  return makeRepo(root, files, (path) => readFileSync(join(root, path)));
+  const sizes = new Map();
+  for (const path of new Set(listed)) {
+    try {
+      const stat = statSync(join(root, path));
+      if (stat.isFile()) sizes.set(path, stat.size);
+    } catch {
+      // Deleted in the working tree: not part of the checkout being checked.
+    }
+  }
+  const files = [...sizes.keys()].sort(compare);
+  return makeRepo(root, files, (path) => readFileSync(join(root, path)), (path) => sizes.get(path));
 }
 
 /** A repo whose tracked files are the keys of `entries` (contents: string or Buffer). */
 export function memoryRepo(entries, root = "/memory") {
   const files = Object.keys(entries).sort(compare);
-  return makeRepo(root, files, (path) => {
+  const bytesOf = (path) => {
     const value = entries[path];
     return Buffer.isBuffer(value) ? value : Buffer.from(value, "utf8");
-  });
+  };
+  return makeRepo(root, files, bytesOf, (path) => bytesOf(path).length);
 }
 
 export { compare };

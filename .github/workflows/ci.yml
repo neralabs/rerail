@@ -62,8 +62,9 @@ jobs:
 
       - uses: ./.github/actions/node-deps
 
-      # The UI token reference check and the policy DSL reference grammar check.
-      - name: Type-check and check generated references
+      # `npm run check` type-checks and runs the structure gate (docs/repository-structure.md); then the UI
+      # token reference check and the policy DSL reference grammar check.
+      - name: Type-check, structure gate, and generated references
         run: |
           npm run check
           npm run check:ui-tokens
