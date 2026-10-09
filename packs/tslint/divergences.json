@@ -43,7 +43,7 @@
     },
     "no-reference-import": {
       "class": "genuine",
-      "note": "The directive is a `///` comment before the first statement (comments and a shebang may precede it, as the compiler reads pragmas from the leading comments), its `types` value is read out of the comment by a `transform` and compared with every static import's specifier (import declarations and import-equals, at the top level and in ambient modules: findImports(AllStaticImports)). Verified re-exports, dynamic imports, `path` references, unclosed directives and directives after the first statement are not flagged. Residual: a specifier written with escapes (`\"b\\u0061z\"`) compares by its source fragments, not its value."
+      "note": "The directive is a `///` comment before the first statement (comments and a shebang may precede it, as the compiler reads pragmas from the leading comments), its `types` value is read out of the comment by a `transform` and compared with every static import's specifier (import declarations and import-equals, at the top level and in ambient modules: findImports(AllStaticImports)). As the compiler's pragma regexes, the tag and argument names are case-insensitive (`<Reference TYPES=\"x\" />`) and the quotes must pair (`types=\"x'` is no directive). Verified re-exports, dynamic imports, `path` references, unclosed directives and directives after the first statement are not flagged. Residual: a specifier written with escapes (`\"b\\u0061z\"`) compares by its source fragments, not its value."
     },
     "no-var-requires": {
       "class": "fixture-fit",
