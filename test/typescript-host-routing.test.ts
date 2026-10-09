@@ -43,7 +43,6 @@ const ROUTES: ReadonlyArray<readonly [string, EcmaDialect | undefined]> = [
   ["src/.tsx", undefined],
   ["scripts/.js", undefined],
   ["src/view.ts.bak", undefined],
-  ["src/view.vue", undefined],
   ["src/view.coffee", undefined],
   ["src/old.es6", undefined],
 ];
