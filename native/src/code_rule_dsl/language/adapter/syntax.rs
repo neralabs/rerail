@@ -20,6 +20,9 @@ pub(crate) enum SyntaxFeature {
     LanguageOptions,
 }
 
+/// An ast query's compiled `languageOptions`: ESLint's settings, and Ruff's.
+pub(crate) type QueryOptions = (Option<Arc<LanguageOptions>>, Option<Arc<PythonOptions>>);
+
 /// A family's syntax.
 pub(crate) trait SyntaxRules: Adapter {
     /// Whether a pattern's `$`-prefixed leaf that is no metavariable is a name of the language
@@ -29,10 +32,7 @@ pub(crate) trait SyntaxRules: Adapter {
     fn feature(feature: SyntaxFeature) -> Result<(), Refusal>;
     /// The `languageOptions` (`value`) of the ast query at `path`, where `feature` reads them:
     /// ESLint's settings, or Ruff's.
-    fn compile_language_options(
-        value: &Value,
-        path: &str,
-    ) -> napi::Result<(Option<Arc<LanguageOptions>>, Option<Arc<PythonOptions>>)>;
+    fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions>;
     /// Whether the ast query at `path` applies, by its `when` (`value`) read against its
     /// compiled `languageOptions` (`options`, `python`) and the document's options.
     fn compile_when(
@@ -83,10 +83,7 @@ impl SyntaxRules for Python {
         }
     }
 
-    fn compile_language_options(
-        value: &Value,
-        path: &str,
-    ) -> napi::Result<(Option<Arc<LanguageOptions>>, Option<Arc<PythonOptions>>)> {
+    fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions> {
         let python = options::compile_python_options(value, path)?;
         Ok((None, Some(Arc::new(python))))
     }
@@ -126,10 +123,7 @@ impl SyntaxRules for Ecma {
         }
     }
 
-    fn compile_language_options(
-        value: &Value,
-        path: &str,
-    ) -> napi::Result<(Option<Arc<LanguageOptions>>, Option<Arc<PythonOptions>>)> {
+    fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions> {
         let options = options::compile_language_options(value, path)?;
         Ok((Some(Arc::new(options)), None))
     }
@@ -183,10 +177,7 @@ impl SyntaxRules for Php {
         }
     }
 
-    fn compile_language_options(
-        value: &Value,
-        path: &str,
-    ) -> napi::Result<(Option<Arc<LanguageOptions>>, Option<Arc<PythonOptions>>)> {
+    fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions> {
         <Ecma as SyntaxRules>::compile_language_options(value, path)
     }
 
@@ -241,10 +232,7 @@ impl SyntaxRules for Blade {
         }
     }
 
-    fn compile_language_options(
-        value: &Value,
-        path: &str,
-    ) -> napi::Result<(Option<Arc<LanguageOptions>>, Option<Arc<PythonOptions>>)> {
+    fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions> {
         <Php as SyntaxRules>::compile_language_options(value, path)
     }
 
