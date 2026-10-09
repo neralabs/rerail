@@ -8,7 +8,7 @@
 
 e.g. from the checkout root:
 
-    python3 fixtures/php/format_args/generate_corpus.py .rerail/tools/php .rerail/t3/format.input.json \
+    python3 fixtures/php/compile/format-args/generate_corpus.py .rerail/tools/php .rerail/t3/format.input.json \
         laravel=.rerail/corpora/php/laravel:src,tests symfony=.rerail/corpora/php/symfony:src
 
 Both rules are level 0 rules (`#[RegisteredRule(0)]`) and read the format through scope types,

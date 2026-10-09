@@ -1,4 +1,4 @@
-//! Agreement with the PHP compare oracle's structures (`fixtures/php/compare/generate_php.php`):
+//! Agreement with the PHP compare oracle's structures (`fixtures/php/value/compare/generate_php.php`):
 //! nikic/PHP-Parser 5.9.0's trees, attributes stripped, and PHP's array key identity.
 
 use super::*;
@@ -7,7 +7,7 @@ use crate::code_rule_dsl::oracle;
 use ast_grep_core::tree_sitter::LanguageExt;
 use serde_json::Value as Json;
 
-const ORACLE: &str = oracle!("php/compare/php.expected.json");
+const ORACLE: &str = oracle!("php/value/compare/php.expected.json");
 
 /// The structure of the one expression or statement `snippet` is.
 fn read(snippet: &str, statement: bool, equality: Equality) -> Option<Vec<Tok>> {

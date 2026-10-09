@@ -3,8 +3,9 @@
 use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value, json};
 
-const NO_UNUSED_VARS: &str = include_str!("examples/eslint-no-unused-vars.json");
-const A005: &str = include_str!("examples/ruff-A005.json");
+const NO_UNUSED_VARS: &str =
+    crate::code_rule_dsl::oracle!("ecma/compile/examples/eslint-no-unused-vars.json");
+const A005: &str = crate::code_rule_dsl::oracle!("python/compile/examples/ruff-A005.json");
 
 fn configured(source: &str, config: Value) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
     let mut document: Value = serde_json::from_str(source).expect("example");

@@ -1,9 +1,9 @@
 // Records what Vue's own compiler reads in a single-file component: the oracle for the Vue pack's embedded view
 // (template tree plus the TS/JS of `<script>`, `<script setup>` and template expressions). Run offline by a
-// maintainer, never in CI, with the tools of ../tools.mjs installed in `<checkout>/.rerail/tools/vue`:
+// maintainer, never in CI, with the tools of ../../tools.mjs installed in `<checkout>/.rerail/tools/vue`:
 //
 //   node generate.mjs fixtures                 # fixtures/*.vue → view.expected.json (T2, committed)
-//   node generate.mjs corpus [<name>...]       # corpora of ../corpora.json → <checkout>/.rerail/t3/vue/view-<name>.json
+//   node generate.mjs corpus [<name>...]       # corpora of ../../corpora.json → <checkout>/.rerail/t3/vue/view-<name>.json
 //
 // Pins (refused when different): @vue/compiler-sfc, @vue/compiler-dom and @vue/shared 3.5.43.
 //
@@ -35,7 +35,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSyn
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { corporaDirectory, load, toolList, toolsDirectory } from "../tools.mjs";
+import { corporaDirectory, load, toolList, toolsDirectory } from "../../tools.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOLS_DIR = toolsDirectory(HERE);
@@ -245,7 +245,7 @@ function vueFiles(root, paths) {
 }
 
 function corpus(names) {
-  const corpora = JSON.parse(readFileSync(join(HERE, "../corpora.json"), "utf8"));
+  const corpora = JSON.parse(readFileSync(join(HERE, "../../corpora.json"), "utf8"));
   const base = corporaDirectory(HERE);
   const outDir = resolve(TOOLS_DIR, "../../t3/vue");
   mkdirSync(outDir, { recursive: true });

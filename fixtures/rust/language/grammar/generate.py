@@ -44,7 +44,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = pathlib.Path(__file__).resolve().parent
-REPO = HERE.parents[2]
+REPO = HERE.parents[3]
 
 
 def checkout_root() -> pathlib.Path:

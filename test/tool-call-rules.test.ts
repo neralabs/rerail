@@ -5,12 +5,13 @@ import type { NativeSample } from "../src/native.js";
 import { ConversationRuleRegistry } from "../src/registry.js";
 import { parseConversationRuleDocument } from "../src/rule-schema.js";
 import { stableJsonText } from "../src/stable-json.js";
+import { fixturesPath } from "./oracles.js";
 
 const FORCE_PUSH = "oss:no-force-push";
 const SKIP_VERIFY = "oss:no-skip-verify";
 const GIT_INTERNALS = "oss:no-git-internals-write";
 
-const document: unknown = JSON.parse(readFileSync(resolve("test/fixtures/tool-call-rules.json"), "utf8"));
+const document: unknown = JSON.parse(readFileSync(fixturesPath("host", "tool-call-rules", "rules.json"), "utf8"));
 
 /** A tool-call sample as the host runtime builds it: the arguments are both the text and the structured input. */
 function call(toolName: string, input: Record<string, unknown>): NativeSample {

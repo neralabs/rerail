@@ -10,6 +10,7 @@ import { languageFor } from "../src/code-rule-enforcer.js";
 import { loadNativeBinding, resolveNativeBindingPath, type NativeBinding, type NativeCompiledCodeRuleDsl } from "../src/native.js";
 
 import { isSemanticWorkload, semanticWorkloads, type SemanticWorkload } from "./query-parity-semantic.js";
+import { fixturesPath } from "../test/oracles.js";
 
 const script = fileURLToPath(import.meta.url);
 const rerailRoot = resolve(dirname(script), "..");
@@ -127,7 +128,7 @@ function capabilities(): string {
   return JSON.stringify({ ...bundled, limits: { maxGraphDepth: 16, ...bundled.limits } });
 }
 
-/** `bundled` is every document a project is seeded with (the TSLint pack core ships; core has no rules of its own yet); semantic kinds read `benchmark/<kind>/with`. */
+/** `bundled` is every document a project is seeded with (the TSLint pack core ships; core has no rules of its own yet); semantic kinds read `fixtures/host/benchmark/<kind>`. */
 function catalog(kind: CatalogKind): { capabilities: string; documents: RuleDocument[] } {
   if (isSynthetic(kind)) {
     const { clauses } = synthetic[kind];
@@ -138,7 +139,7 @@ function catalog(kind: CatalogKind): { capabilities: string; documents: RuleDocu
       }) }],
     };
   }
-  const root = kind === "bundled" ? resolve(rerailRoot, "packs", "tslint", "rules") : resolve(rerailRoot, "benchmark", kind, "with");
+  const root = kind === "bundled" ? resolve(rerailRoot, "packs", "tslint", "rules") : fixturesPath("host", "benchmark", kind);
   return { capabilities: capabilities(), documents: readDocuments(root).sort((a, b) => compare(a.path, b.path)) };
 }
 export function coverage(documents: RuleDocument[], failures: readonly z.infer<typeof failureSchema>[]) {

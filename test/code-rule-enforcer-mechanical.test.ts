@@ -22,7 +22,7 @@ import { codeRuleSchema } from "../src/code-rule-schema.js";
 import type { RuleMode } from "../src/rule-mode.js";
 import { SqliteRuleStore } from "../src/rule-store.js";
 import { steerBlock } from "../src/rerail-steer.js";
-import { rerailOraclesDirectory } from "./oracles.js";
+import { fixturesPath } from "./oracles.js";
 import { gateStorageAttachments } from "./storage-attach-gate.js";
 import * as native from "../src/native.js";
 import type { NativeBinding, NativeCodeRuleDslWorkspace, NativeRepositoryIndexOptions } from "../src/native.js";
@@ -326,8 +326,7 @@ describe("Python module paths", () => {
   });
 
   it("agrees with the module paths of the engine's Ruff rules oracle", async () => {
-    const oracle = new URL("python/scope/", rerailOraclesDirectory());
-    const expected = JSON.parse(await readFile(new URL("ruff-rules.expected.json", oracle), "utf8")) as {
+    const expected = JSON.parse(await readFile(fixturesPath("python", "scope", "ruff-rules.expected.json"), "utf8")) as {
       cases: Array<{ files: Array<{ path: string; module: string | string[] | null }> }>;
     };
     let checked = 0;
@@ -347,10 +346,9 @@ describe("Python module paths", () => {
   });
 
   it("agrees with the module paths of the engine's Ruff oracle fixtures", async () => {
-    const oracle = new URL("python/scope/", rerailOraclesDirectory());
-    const expected = JSON.parse(await readFile(new URL("modules.expected.json", oracle), "utf8")) as { files: Array<{ path: string; module: string | null }> };
+    const expected = JSON.parse(await readFile(fixturesPath("python", "scope", "modules.expected.json"), "utf8")) as { files: Array<{ path: string; module: string | null }> };
     for (const file of expected.files) {
-      expect(pythonModulePath(new URL(`modules/${file.path}`, oracle).pathname) ?? null, file.path).toBe(file.module);
+      expect(pythonModulePath(fixturesPath("python", "scope", "modules", file.path)) ?? null, file.path).toBe(file.module);
     }
   });
 });

@@ -1,10 +1,10 @@
 // T1 candidate-grammar measurement for the Vue pack. Run offline by a maintainer, never in CI:
 //
-//   node fixtures/vue/grammar/measure.mjs [--tools <dir>] [--corpora <dir>] [--out <report.json>] [--date D]
+//   node fixtures/vue/language/grammar/measure.mjs [--tools <dir>] [--corpora <dir>] [--out <report.json>] [--date D]
 //
 // Pins (refused when different): @vue/compiler-sfc 3.5.43 and @vue/compiler-dom 3.5.43 (the reference: descriptor
 // blocks and the template AST, `parseMode: "sfc"`), vue-eslint-parser 10.4.1 with @typescript-eslint/parser 8.70.1 and
-// typescript 6.0.3 (the ESLint-compatible template AST eslint-plugin-vue reads), the corpora in ../corpora.json and the
+// typescript 6.0.3 (the ESLint-compatible template AST eslint-plugin-vue reads), the corpora in ../../corpora.json and the
 // grammars in grammars.json, each checked out by commit under `<tools>/grammars/<checkout>`. Each grammar is compiled
 // to a shared library and parsed through `dump/` with the tree-sitter 0.27.0 runtime Rerail's engine links.
 //
@@ -23,7 +23,7 @@ import { dirname, join, matchesGlob, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
-import { corporaDirectory, load, toolList, toolsDirectory } from "../tools.mjs";
+import { corporaDirectory, load, toolList, toolsDirectory } from "../../tools.mjs";
 import { agreement, CATEGORIES, compilerItems, eslintItems, firstError, grammarItems } from "./sfc.mjs";
 import { classify, mismatchClasses } from "./classify.mjs";
 
@@ -41,7 +41,7 @@ const OUT = resolve(flag("--out") ?? join(REPORTS, `vue-t1-grammar-${DATE}.json`
 const DETAIL = join(REPORTS, "vue-t1");
 const ONLY = flag("--corpus");
 
-const corpora = JSON.parse(readFileSync(join(HERE, "../corpora.json"), "utf8"));
+const corpora = JSON.parse(readFileSync(join(HERE, "../../corpora.json"), "utf8"));
 const grammars = JSON.parse(readFileSync(join(HERE, "grammars.json"), "utf8"));
 const sfc = await load(TOOLS, "@vue/compiler-sfc");
 await load(TOOLS, "@vue/compiler-dom");
@@ -271,7 +271,7 @@ const report = {
     { name: "tree-sitter (runtime)", version: "0.27.0" },
     ...grammars.map(grammar => ({ name: grammar.name, version: grammar.commit })),
   ],
-  benchmark: "candidate tree-sitter-vue grammars vs @vue/compiler-sfc and vue-eslint-parser (fixtures/vue/grammar/measure.mjs)",
+  benchmark: "candidate tree-sitter-vue grammars vs @vue/compiler-sfc and vue-eslint-parser (fixtures/vue/language/grammar/measure.mjs)",
   method: "Per file: @vue/compiler-sfc parse (descriptor + template AST) and vue-eslint-parser parseForESLint (TS parser); "
     + "per grammar: tree-sitter 0.27.0 parse, fastest of 3. Items (sfc.mjs): blocks by type and content range; template "
     + "elements by tag, start, end of end tag (or start tag) and parent; static attributes by name and value range; "

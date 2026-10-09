@@ -1,6 +1,6 @@
 """Writes phpstan.expected.json: where PHPStan 2.2.16's PrintfParametersRule and
 PrintfArrayParametersRule (`argument.sprintf`, `argument.printf`, `argument.vsprintf`,
-`argument.vprintf`) report on each format_args/phpstan fixture. Each report is [line, placeholders,
+`argument.vprintf`) report on each phpstan/ fixture beside it. Each report is [line, placeholders,
 values], the counts PHPStan's message names, or [line, "invalid"] for "contains an invalid
 placeholder". Run offline, never in CI:
 python3 generate_phpstan.py /tmp/rerail-php-tools/vendor/bin/phpstan

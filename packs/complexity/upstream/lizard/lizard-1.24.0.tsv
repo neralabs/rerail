@@ -1,4 +1,4 @@
-# Recorded by scripts/record-lizard-complexity.mjs with lizard==1.24.0; paths are relative to test/fixtures/complexity/.
+# Recorded by packs/complexity/upstream/lizard/generate.mjs with lizard==1.24.0; paths are relative to fixtures/ beside this file.
 path	function	line	ccn
 javascript/__tests__/excluded.js	testsFolderHelper	3	8
 javascript/branches.js	ifElseAtLimit	3	6

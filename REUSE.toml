@@ -98,7 +98,7 @@ SPDX-License-Identifier = "MIT"
 
 # bagisto 635cab68b3 + BookStack f585a7d910 + filament ca4f55bb5e + livewire 3.8.7 (blade/licenses/bagisto/UPSTREAM.md, blade/licenses/bookstack/UPSTREAM.md, blade/licenses/filament/UPSTREAM.md, blade/licenses/livewire/UPSTREAM.md): derived or excerpted
 [[annotations]]
-path = "fixtures/blade/view/directives.php"
+path = "fixtures/blade/blade/directives.php"
 precedence = "override"
 SPDX-FileCopyrightText = ["2010-2025 Webkul Software", "2015-2026 Dan Brown and the BookStack project contributors", "Filament", "Caleb Porzio", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"

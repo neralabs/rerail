@@ -297,7 +297,7 @@ quotes and line anchors. For anything command-shaped, read `input.command`.
 For each rule, list at least one command it must flag, one near-miss it must pass, and — if it reads
 the command line — a tool *result* that echoes the command and must pass.
 
-**2. Run them through the engine.** Add the rule to `test/fixtures/tool-call-rules.json` and its
+**2. Run them through the engine.** Add the rule to `fixtures/host/tool-call-rules/rules.json` and its
 cases to `test/tool-call-rules.test.ts`, or try it ad hoc:
 
 ```ts

@@ -33,8 +33,8 @@
 //     the search behind the reference's examples. `features` lists every feature with its count;
 //     `show SUITE:PATH[#PTR]` prints a document's clauses, or the value at a pointer.
 //
-// The TSLint pack's candidates and shipped rules (the bundled code rules) and the engine's worked examples are read
-// from this checkout.
+// The TSLint pack's candidates and shipped rules (the bundled code rules) are read from this checkout, and the engine's
+// worked examples from the fixtures (`fixtures/<family>/compile/examples/`).
 // Ruff and ESLint conformance ports are not part of this repository; `--ruff` and `--eslint` add
 // them as a directory of ports, or as a git ref of this repository that has them under
 // `conformance/<suite>/rules`. Regenerate in this order: fill, figures, coverage --write; then
@@ -44,6 +44,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fixturesPath } from "../test/oracles.ts";
 
 const RERAIL = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REFERENCE = join(RERAIL, "docs/code-rule-dsl-reference.html");
@@ -105,8 +106,9 @@ function gitJsonFiles(ref, path) {
  * The committed code-rule documents of a suite: JSON files whose `format` is the DSL's.
  */
 function documents(suite) {
-  const files =
-    suite.ref === undefined ? [...jsonFiles(suite.dir)].map(path => [path, readFileSync(path, "utf8")]) : gitJsonFiles(suite.ref, suite.dir);
+  const files = (
+    suite.ref === undefined ? [...jsonFiles(suite.dir)].map(path => [path, readFileSync(path, "utf8")]) : gitJsonFiles(suite.ref, suite.dir)
+  ).filter(([path]) => suite.within === undefined || path.split("\\").join("/").includes(`/${suite.within}/`));
   const docs = [];
   for (const [path, text] of files) {
     let doc;
@@ -136,7 +138,7 @@ function suites(options) {
     source("eslint", "ESLint", options.eslint),
     { id: "tslint", label: "TSLint", dir: join(RERAIL, "packs/tslint/candidates") },
     { id: "bundled", label: "Bundled", dir: join(RERAIL, "packs/tslint/rules") },
-    { id: "worked", label: "Worked", dir: join(RERAIL, "native/src/code_rule_dsl/compile/examples") },
+    { id: "worked", label: "Worked", dir: fixturesPath(), within: "compile/examples" },
   ].filter(suite => suite !== undefined);
   for (const suite of list) {
     if (suite.ref !== undefined) suite.commit = git("rev-parse", "--short=9", suite.ref).toString("utf8").trim();
@@ -620,7 +622,7 @@ function coverage(options) {
 
 function printCoverage({ rows, totals, walked }) {
   for (const suite of walked) {
-    const location = suite.ref === undefined ? suite.dir : `${suite.ref}@${suite.commit}:${suite.dir}`;
+    const location = suite.ref === undefined ? suiteDirectory(suite) : `${suite.ref}@${suite.commit}:${suite.dir}`;
     console.log(`${suite.label.padEnd(8)} ${String(suite.docs).padStart(5)} documents  ${location}`);
   }
   console.log();
@@ -673,8 +675,14 @@ function heatmap({ rows, totals, walked }) {
   return `<svg class="figure heatmap" viewBox="0 0 ${width} ${y + 8}" role="img" aria-label="Coverage heatmap: committed ports using each construct, per suite">${heads}${parts.join("")}</svg>`;
 }
 
-function suiteLocation(suite) {
+/** A suite's directory, as the reader sees it: `fixtures/*` + `within` for a suite read from every family. */
+function suiteDirectory(suite) {
   const dir = suite.dir.startsWith(RERAIL) ? relative(RERAIL, suite.dir) : suite.dir;
+  return suite.within === undefined ? dir : `${dir}/*/${suite.within}`;
+}
+
+function suiteLocation(suite) {
+  const dir = suiteDirectory(suite);
   if (suite.ref === undefined) return `<code>${htmlEscape(dir)}</code>`;
   return `<code>${htmlEscape(dir)}</code> on <code>${htmlEscape(suite.ref.replace(/^origin\//u, ""))}</code> @ <code>${suite.commit}</code>`;
 }

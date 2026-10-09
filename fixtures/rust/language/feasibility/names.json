@@ -1,5 +1,5 @@
 {
- "generator": "fixtures/rust/feasibility/generate.py",
+ "generator": "fixtures/rust/language/feasibility/generate.py",
  "tools": {
   "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
   "rust-analyzer": "rust-analyzer 1.99.0 (b940084d 2026-09-28)",

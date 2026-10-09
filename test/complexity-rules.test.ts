@@ -1,10 +1,11 @@
 /**
  * Parity of the complexity pack (packs/complexity/) with lizard 1.24.0. The corpus under
- * test/fixtures/complexity/<language>/ is scored by lizard once, by hand (scripts/record-lizard-complexity.mjs), into
- * lizard-1.24.0.tsv; lizard is never a test or runtime dependency. Each rule must report exactly the in-scope functions
- * lizard scores above 6, with lizard's number in the message, apart from the deviations listed here; a measuring variant
- * of each rule (same counting, no threshold) must give every function lizard's number, so functions at the limit and
- * below are checked too. Test files are out of scope even where lizard scores them over the limit.
+ * packs/complexity/upstream/lizard/fixtures/<language>/ is scored by lizard once, by hand (that directory's
+ * generate.mjs), into lizard-1.24.0.tsv beside it; lizard is never a test or runtime dependency. Each rule must report
+ * exactly the in-scope functions lizard scores above 6, with lizard's number in the message, apart from the deviations
+ * listed here; a measuring variant of each rule (same counting, no threshold) must give every function lizard's number,
+ * so functions at the limit and below are checked too. Test files are out of scope even where lizard scores them over
+ * the limit.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -14,9 +15,11 @@ import { describe, expect, it } from "vitest";
 import { languageFor } from "../src/code-rule-enforcer.js";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../src/native.js";
 import { loadBundledRules } from "../src/rule-bootstrap.js";
+import { repositoryPath } from "./oracles.js";
 
 const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../code-rule-dsl/", import.meta.url));
-const CORPUS = fileURLToPath(new URL("./fixtures/complexity/", import.meta.url));
+const LIZARD = repositoryPath("packs", "complexity", "upstream", "lizard");
+const CORPUS = join(LIZARD, "fixtures");
 const capabilities = readFileSync(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
 
@@ -59,7 +62,7 @@ const DEVIATIONS: ReadonlyArray<{ path: string; line: number; lizard: number | n
 ];
 
 const lizardRowSchema = z.object({ path: z.string().min(1), name: z.string().min(1), line: z.number().int().positive(), ccn: z.number().int().positive() });
-const lizardRows = readFileSync(join(CORPUS, "lizard-1.24.0.tsv"), "utf8")
+const lizardRows = readFileSync(join(LIZARD, "lizard-1.24.0.tsv"), "utf8")
   .split("\n")
   .filter(line => line !== "" && !line.startsWith("#"))
   .slice(1)

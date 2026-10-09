@@ -32,7 +32,7 @@ import sys
 import time
 
 HERE = pathlib.Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent))
+sys.path.insert(0, str(HERE.parents[1]))
 import common  # noqa: E402
 import reference  # noqa: E402
 
@@ -478,7 +478,7 @@ def main() -> None:
         + [{"name": f"tree-sitter-grammar:{name}", "version": f"{grammar['version']} ({grammar['commit']})"}
            for name, grammar in common.GRAMMARS.items()],
         "benchmark": "SQL candidate-grammar selection (pre-engine T1): grammar vs reference parser per dialect",
-        "generator": "fixtures/sql/t1/measure_grammars.py",
+        "generator": "fixtures/sql/language/grammar/measure_grammars.py",
         "method": __doc__.strip(),
         "maintenance": maintenance(),
         "results": summarize(rows, fluff, mysql),

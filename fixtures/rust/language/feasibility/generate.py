@@ -50,7 +50,7 @@ import shutil
 import subprocess
 
 HERE = pathlib.Path(__file__).resolve().parent
-REPO = HERE.parents[2]
+REPO = HERE.parents[3]
 
 
 def checkout_root() -> pathlib.Path:
@@ -738,7 +738,7 @@ def suppression(name: str, catalogue: dict[str, str]) -> dict:
 
 def header() -> dict:
     return {
-        "generator": "fixtures/rust/feasibility/generate.py",
+        "generator": "fixtures/rust/language/feasibility/generate.py",
         "tools": {**VERSIONS, "scanner": SCANNER, "rust-clippy": CLIPPY_COMMIT, "rust-analyzer-config": RA_CONFIG},
         "corpora": {n: {"repository": c["repository"], "commit": c["commit"]} for n, c in CORPORA.items()},
     }

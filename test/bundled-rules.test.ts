@@ -1,5 +1,5 @@
 /**
- * Every bundled rule ships with a flag/pass fixture pair in test/fixtures/bundled-rules/<rule-file>.json
+ * Every bundled rule ships with a flag/pass fixture pair in fixtures/host/bundled-rules/<rule-file>.json
  * ({ flag: { path, content }, pass: { path, content } }). Fixtures are stored as data, not as source
  * files at their scope paths, so the repository's language-wide scanners never see a deliberately
  * non-compliant snippet. For each rule: the flag content, evaluated at its path, must be inside the
@@ -25,9 +25,10 @@ import { PASS_AUDIT } from "../conformance/tslint/audit.js";
 import { emptyGoldenManifest, goldenRules, loadGoldenManifest, PACK_DIRECTORY } from "../conformance/tslint/golden.js";
 import { checkGolden, REQUIRES_CONFIGURATION } from "../conformance/tslint/promote.js";
 import { COMMITTED_PORTS_DIRECTORY, findPort, listPortedRules } from "../conformance/tslint/runner.js";
+import { fixturesPath } from "./oracles.js";
 
 const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../code-rule-dsl/", import.meta.url));
-const FIXTURES = fileURLToPath(new URL("./fixtures/bundled-rules/", import.meta.url));
+const FIXTURES = fixturesPath("host", "bundled-rules");
 const capabilities = readFileSync(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
 const ruleFileSchema = z.object({ id: z.string() });
