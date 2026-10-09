@@ -47,43 +47,12 @@
                     "kind": "parenthesized_expression"
                   },
                   "pattern": "$EARLIER",
-                  "all": [
-                    {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "kind": "string"
-                            },
-                            {
-                              "compare": {
-                                "left": "EARLIER",
-                                "op": "eq",
-                                "right": "KEY",
-                                "text": "unquoted"
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "all": [
-                            {
-                              "not": {
-                                "kind": "string"
-                              }
-                            },
-                            {
-                              "compare": {
-                                "left": "EARLIER",
-                                "op": "eq",
-                                "right": "KEY"
-                              }
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  ]
+                  "kind": "identifier",
+                  "compare": {
+                    "left": "EARLIER",
+                    "op": "eq",
+                    "right": "KEY"
+                  }
                 },
                 {
                   "kind": "parenthesized_expression",

@@ -26,6 +26,7 @@
                   {
                     "arguments": {
                       "signature": [
+                        "*",
                         "method"
                       ],
                       "bind": {
@@ -36,6 +37,7 @@
                   {
                     "arguments": {
                       "signature": [
+                        "*",
                         "ssl_version"
                       ],
                       "bind": {

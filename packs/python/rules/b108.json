@@ -17,7 +17,26 @@
         "ast": {
           "language": "python",
           "rule": {
-            "kind": "string",
+            "any": [
+              {
+                "kind": "string",
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "concatenated_string"
+                  }
+                }
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "not": {
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "expression_statement"
+              }
+            },
             "value": {
               "regex": "^(?:/tmp|/var/tmp|/dev/shm)"
             }

@@ -151,7 +151,9 @@
               },
               {
                 "inside": {
-                  "stopBy": "end",
+                  "stopBy": {
+                    "kind": "except_clause"
+                  },
                   "kind": "except_clause",
                   "follows": {
                     "stopBy": "end",

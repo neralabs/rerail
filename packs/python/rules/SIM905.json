@@ -314,10 +314,18 @@
                                   ]
                                 },
                                 "follows": {
-                                  "stopBy": "neighbor",
+                                  "stopBy": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  },
                                   "regex": "^,$",
                                   "follows": {
-                                    "stopBy": "neighbor",
+                                    "stopBy": {
+                                      "not": {
+                                        "kind": "comment"
+                                      }
+                                    },
                                     "not": {
                                       "any": [
                                         {
@@ -338,7 +346,11 @@
                                       ]
                                     },
                                     "follows": {
-                                      "stopBy": "neighbor",
+                                      "stopBy": {
+                                        "not": {
+                                          "kind": "comment"
+                                        }
+                                      },
                                       "regex": "^\\($"
                                     }
                                   }
@@ -374,10 +386,18 @@
                                     ]
                                   },
                                   "follows": {
-                                    "stopBy": "neighbor",
+                                    "stopBy": {
+                                      "not": {
+                                        "kind": "comment"
+                                      }
+                                    },
                                     "regex": "^,$",
                                     "follows": {
-                                      "stopBy": "neighbor",
+                                      "stopBy": {
+                                        "not": {
+                                          "kind": "comment"
+                                        }
+                                      },
                                       "not": {
                                         "any": [
                                           {
@@ -398,7 +418,11 @@
                                         ]
                                       },
                                       "follows": {
-                                        "stopBy": "neighbor",
+                                        "stopBy": {
+                                          "not": {
+                                            "kind": "comment"
+                                          }
+                                        },
                                         "regex": "^\\($"
                                       }
                                     }
@@ -479,7 +503,11 @@
                                   ]
                                 },
                                 "follows": {
-                                  "stopBy": "neighbor",
+                                  "stopBy": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  },
                                   "regex": "^\\($"
                                 },
                                 "all": [
@@ -513,7 +541,11 @@
                                     ]
                                   },
                                   "follows": {
-                                    "stopBy": "neighbor",
+                                    "stopBy": {
+                                      "not": {
+                                        "kind": "comment"
+                                      }
+                                    },
                                     "regex": "^\\($"
                                   }
                                 }
