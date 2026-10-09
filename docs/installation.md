@@ -55,9 +55,9 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
    disk, since it can never run again. So is an OMP extension link or Pi
    package that names a gone root of the shape setup registers (a Rerail
    home's `current`, such as `~/.rerail/current` or `$RERAIL_HOME/current`, or
-   `node_modules/@neralabs/rerail`) that no longer exists; a path that still
-   exists stays whatever it holds, and so does a missing path of any other
-   shape, such as a gone checkout. Setup's report names the target of each link it removes. The retired `/rerail-session`, `/rerail-disable` and
+   `node_modules/@neralabs/rerail`) that no longer resolves; a path that still
+   resolves stays unless it holds this package, and so does a missing path of
+   any other shape, such as a gone checkout. Setup's report names the target of each link it removes. The retired `/rerail-session`, `/rerail-disable` and
    `/rerail-enable` command files are removed when they run this install,
    another install of this package or one that is gone; anyone else's stay, and
    removing Rerail removes only this install's. A backup
