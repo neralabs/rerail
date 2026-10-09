@@ -50,7 +50,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F702",
-        "message": "`continue` not properly in loop"
+        "message": "`continue` not properly in loop",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F702"
+            ]
+          }
+        }
       }
     }
   ]

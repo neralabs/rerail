@@ -48,7 +48,14 @@
       "violation": {
         "code": "B304",
         "anchor": "witness.span",
-        "message": "Use of an insecure cipher. Replace it with a known secure cipher such as AES."
+        "message": "Use of an insecure cipher. Replace it with a known secure cipher such as AES.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B304"
+            ]
+          }
+        }
       }
     }
   ]

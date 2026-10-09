@@ -25,7 +25,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F406",
-        "message": "`from $MODULE import *` only allowed at module level"
+        "message": "`from $MODULE import *` only allowed at module level",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F406"
+            ]
+          }
+        }
       }
     }
   ]

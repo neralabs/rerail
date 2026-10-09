@@ -40,7 +40,14 @@
       "violation": {
         "code": "B408",
         "anchor": "witness.span",
-        "message": "xml.dom.minidom parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library."
+        "message": "xml.dom.minidom parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B408"
+            ]
+          }
+        }
       }
     }
   ]

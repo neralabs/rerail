@@ -191,7 +191,14 @@
         "anchor": "witness.span",
         "code": "SIM109",
         "message": "Use `$N in (...)` instead of multiple equality comparisons",
-        "each": "FIRST"
+        "each": "FIRST",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM109"
+            ]
+          }
+        }
       }
     }
   ]

@@ -140,7 +140,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F602",
-        "message": "Dictionary key `$KEY` repeated"
+        "message": "Dictionary key `$KEY` repeated",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F602"
+            ]
+          }
+        }
       }
     }
   ]

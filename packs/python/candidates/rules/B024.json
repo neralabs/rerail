@@ -260,7 +260,14 @@
       "violation": {
         "anchor": "capture.CLS",
         "code": "B024",
-        "message": "`$CLS` is an abstract base class, but it has no abstract methods or properties"
+        "message": "`$CLS` is an abstract base class, but it has no abstract methods or properties",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B024"
+            ]
+          }
+        }
       }
     }
   ]

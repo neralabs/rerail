@@ -147,7 +147,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC210",
-    "message": "Async functions should not call blocking HTTP methods"
+    "message": "Async functions should not call blocking HTTP methods",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC210"
+        ]
+      }
+    }
    }
   }
  ]

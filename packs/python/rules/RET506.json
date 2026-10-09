@@ -197,7 +197,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "RET506",
-        "message": "Unnecessary `$BRANCH` after `raise` statement"
+        "message": "Unnecessary `$BRANCH` after `raise` statement",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RET506"
+            ]
+          }
+        }
       }
     }
   ]

@@ -110,7 +110,14 @@
         "anchor": "capture.C",
         "code": "E714",
         "message": "Test for object identity should be `is not`",
-        "each": "C"
+        "each": "C",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "E714"
+            ]
+          }
+        }
       }
     }
   ]

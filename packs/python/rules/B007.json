@@ -315,7 +315,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B007",
-        "message": "Loop control variable `$NAME` not used within loop body"
+        "message": "Loop control variable `$NAME` not used within loop body",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B007"
+            ]
+          }
+        }
       }
     },
     {
@@ -347,7 +354,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B007",
-        "message": "Loop control variable `$NAME` may not be used within loop body"
+        "message": "Loop control variable `$NAME` may not be used within loop body",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B007"
+            ]
+          }
+        }
       }
     }
   ]

@@ -34,7 +34,14 @@
       "violation": {
         "code": "B415",
         "anchor": "witness.span",
-        "message": "An IPMI-related module is being imported. IPMI is insecure; use an encrypted protocol."
+        "message": "An IPMI-related module is being imported. IPMI is insecure; use an encrypted protocol.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B415"
+            ]
+          }
+        }
       }
     }
   ]

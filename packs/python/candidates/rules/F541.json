@@ -38,7 +38,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F541",
-        "message": "f-string without any placeholders"
+        "message": "f-string without any placeholders",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F541"
+            ]
+          }
+        }
       }
     }
   ]

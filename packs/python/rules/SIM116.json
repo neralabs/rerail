@@ -514,7 +514,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM116",
-        "message": "Use a dictionary instead of consecutive `if` statements"
+        "message": "Use a dictionary instead of consecutive `if` statements",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM116"
+            ]
+          }
+        }
       }
     }
   ]

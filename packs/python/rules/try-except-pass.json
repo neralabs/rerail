@@ -95,7 +95,14 @@
       "violation": {
         "code": "B110",
         "anchor": "witness.span",
-        "message": "This exception is silently discarded with pass. Handle or log it, or catch a specific expected exception when suppression is intentional."
+        "message": "This exception is silently discarded with pass. Handle or log it, or catch a specific expected exception when suppression is intentional.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B110"
+            ]
+          }
+        }
       }
     }
   ]

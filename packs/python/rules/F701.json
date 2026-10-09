@@ -50,7 +50,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F701",
-        "message": "`break` outside loop"
+        "message": "`break` outside loop",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F701"
+            ]
+          }
+        }
       }
     }
   ]

@@ -44,7 +44,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B608",
-        "message": "Possible SQL injection: this query is built from values. Pass them as query parameters."
+        "message": "Possible SQL injection: this query is built from values. Pass them as query parameters.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B608"
+            ]
+          }
+        }
       }
     },
     {
@@ -68,7 +75,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B608",
-        "message": "Possible SQL injection: this query is built from values. Pass them as query parameters."
+        "message": "Possible SQL injection: this query is built from values. Pass them as query parameters.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B608"
+            ]
+          }
+        }
       }
     },
     {
@@ -93,7 +107,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B608",
-        "message": "Possible SQL injection: this query is built from values. Pass them as query parameters."
+        "message": "Possible SQL injection: this query is built from values. Pass them as query parameters.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B608"
+            ]
+          }
+        }
       }
     }
   ]

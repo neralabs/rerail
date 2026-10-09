@@ -196,7 +196,14 @@
       "violation": {
         "code": "B507",
         "anchor": "witness.span",
-        "message": "Paramiko call with policy set to automatically trust the unknown host key."
+        "message": "Paramiko call with policy set to automatically trust the unknown host key.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B507"
+            ]
+          }
+        }
       }
     }
   ]

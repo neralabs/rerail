@@ -965,7 +965,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "BLE001",
-        "message": "Do not catch blind exception"
+        "message": "Do not catch blind exception",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "BLE001"
+            ]
+          }
+        }
       }
     }
   ]

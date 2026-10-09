@@ -37,7 +37,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F842",
-        "message": "Local variable `$N` is annotated but never used"
+        "message": "Local variable `$N` is annotated but never used",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F842"
+            ]
+          }
+        }
       }
     }
   ]

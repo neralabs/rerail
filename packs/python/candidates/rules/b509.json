@@ -43,7 +43,14 @@
       "violation": {
         "code": "B509",
         "anchor": "capture.F",
-        "message": "pysnmp.hlapi.UsmUserData should be called with at least three positional arguments"
+        "message": "pysnmp.hlapi.UsmUserData should be called with at least three positional arguments",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B509"
+            ]
+          }
+        }
       }
     }
   ]

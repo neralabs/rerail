@@ -74,7 +74,14 @@
       "violation": {
         "code": "B609",
         "anchor": "capture.F",
-        "message": "Shell command combines a wildcard with a sensitive utility"
+        "message": "Shell command combines a wildcard with a sensitive utility",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B609"
+            ]
+          }
+        }
       }
     },
     {
@@ -141,7 +148,14 @@
       "violation": {
         "code": "B609",
         "anchor": "capture.F",
-        "message": "Shell command combines a wildcard with a sensitive utility"
+        "message": "Shell command combines a wildcard with a sensitive utility",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B609"
+            ]
+          }
+        }
       }
     }
   ]

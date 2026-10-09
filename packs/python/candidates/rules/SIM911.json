@@ -581,7 +581,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM911",
-        "message": "Use `$D.items()` instead of `zip($D.keys(), $D.values())`"
+        "message": "Use `$D.items()` instead of `zip($D.keys(), $D.values())`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM911"
+            ]
+          }
+        }
       }
     }
   ]

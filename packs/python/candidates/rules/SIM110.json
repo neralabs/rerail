@@ -539,7 +539,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM110",
-        "message": "Use `return any(...)` or `return all(...)` instead of `for` loop"
+        "message": "Use `return any(...)` or `return all(...)` instead of `for` loop",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM110"
+            ]
+          }
+        }
       }
     }
   ]

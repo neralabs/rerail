@@ -107,7 +107,14 @@
         "anchor": "witness.span",
         "code": "T100",
         "message": "Import for a debugger found",
-        "each": "D"
+        "each": "D",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "T100"
+            ]
+          }
+        }
       }
     },
     {
@@ -176,7 +183,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "T100",
-        "message": "Trace found: debugger used"
+        "message": "Trace found: debugger used",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "T100"
+            ]
+          }
+        }
       }
     }
   ]

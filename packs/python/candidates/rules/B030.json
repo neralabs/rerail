@@ -389,7 +389,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B030",
-        "message": "`except` handlers should only be exception classes or tuples of exception classes"
+        "message": "`except` handlers should only be exception classes or tuples of exception classes",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B030"
+            ]
+          }
+        }
       }
     }
   ]

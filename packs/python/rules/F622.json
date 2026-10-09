@@ -43,7 +43,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F622",
-        "message": "Two starred expressions in assignment"
+        "message": "Two starred expressions in assignment",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F622"
+            ]
+          }
+        }
       }
     }
   ]

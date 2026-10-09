@@ -44,7 +44,14 @@
       "violation": {
         "code": "B103",
         "anchor": "witness.span",
-        "message": "chmod mode grants world-write permission"
+        "message": "chmod mode grants world-write permission",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B103"
+            ]
+          }
+        }
       }
     },
     {
@@ -91,7 +98,14 @@
       "violation": {
         "code": "B103",
         "anchor": "witness.span",
-        "message": "chmod mode grants group-write, group-execute, or world-execute permission"
+        "message": "chmod mode grants group-write, group-execute, or world-execute permission",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B103"
+            ]
+          }
+        }
       }
     }
   ]

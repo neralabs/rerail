@@ -866,7 +866,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B008",
-        "message": "Do not perform function call in argument defaults; instead, perform the call within the function, or read the default from a module-level singleton variable"
+        "message": "Do not perform function call in argument defaults; instead, perform the call within the function, or read the default from a module-level singleton variable",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B008"
+            ]
+          }
+        }
       }
     }
   ]

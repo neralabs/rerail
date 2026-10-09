@@ -61,7 +61,14 @@
       "violation": {
         "code": "B508",
         "anchor": "capture.F",
-        "message": "CommunityData uses insecure SNMP version via mpModel 0 or 1"
+        "message": "CommunityData uses insecure SNMP version via mpModel 0 or 1",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B508"
+            ]
+          }
+        }
       }
     }
   ]

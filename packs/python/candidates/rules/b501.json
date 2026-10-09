@@ -383,7 +383,14 @@
       "violation": {
         "message": "Certificate verification is explicitly disabled",
         "anchor": "capture.VERIFY",
-        "code": "B501"
+        "code": "B501",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B501"
+            ]
+          }
+        }
       }
     }
   ]

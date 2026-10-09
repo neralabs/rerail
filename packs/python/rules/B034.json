@@ -145,7 +145,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B034",
-        "message": "`re.sub` should pass `count` and `flags` as keyword arguments to avoid confusion due to unintuitive argument positions"
+        "message": "`re.sub` should pass `count` and `flags` as keyword arguments to avoid confusion due to unintuitive argument positions",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B034"
+            ]
+          }
+        }
       }
     }
   ]

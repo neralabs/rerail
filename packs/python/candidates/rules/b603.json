@@ -50,7 +50,14 @@
       "violation": {
         "code": "B603",
         "anchor": "capture.F",
-        "message": "Review input passed to a shell-free subprocess invocation"
+        "message": "Review input passed to a shell-free subprocess invocation",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B603"
+            ]
+          }
+        }
       }
     },
     {
@@ -97,7 +104,14 @@
       "violation": {
         "code": "B603",
         "anchor": "capture.F",
-        "message": "Review input passed to a shell-free subprocess invocation"
+        "message": "Review input passed to a shell-free subprocess invocation",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B603"
+            ]
+          }
+        }
       }
     }
   ]

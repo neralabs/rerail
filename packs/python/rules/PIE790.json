@@ -266,7 +266,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PIE790",
-        "message": "Unnecessary `$P` placeholder"
+        "message": "Unnecessary `$P` placeholder",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PIE790"
+            ]
+          }
+        }
       }
     }
   ]

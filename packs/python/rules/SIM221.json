@@ -251,7 +251,14 @@
         "anchor": "capture.ROOT",
         "code": "SIM221",
         "message": "Use `True` instead of `$A or not $A`",
-        "each": "N"
+        "each": "N",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM221"
+            ]
+          }
+        }
       }
     }
   ]

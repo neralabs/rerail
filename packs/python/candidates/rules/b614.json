@@ -77,7 +77,14 @@
       "violation": {
         "code": "B614",
         "anchor": "capture.F",
-        "message": "PyTorch loading permits unsafe deserialization; pass weights_only=True or use safetensors."
+        "message": "PyTorch loading permits unsafe deserialization; pass weights_only=True or use safetensors.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B614"
+            ]
+          }
+        }
       }
     }
   ]

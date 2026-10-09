@@ -124,7 +124,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "E731",
-        "message": "Do not assign a `lambda` expression, use a `def`"
+        "message": "Do not assign a `lambda` expression, use a `def`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "E731"
+            ]
+          }
+        }
       }
     }
   ]

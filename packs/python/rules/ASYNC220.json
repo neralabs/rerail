@@ -302,7 +302,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC220",
-    "message": "Async functions should not create subprocesses with blocking methods"
+    "message": "Async functions should not create subprocesses with blocking methods",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC220"
+        ]
+      }
+    }
    }
   }
  ]

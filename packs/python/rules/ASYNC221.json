@@ -328,7 +328,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC221",
-    "message": "Async functions should not run processes with blocking methods"
+    "message": "Async functions should not run processes with blocking methods",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC221"
+        ]
+      }
+    }
    }
   }
  ]

@@ -34,7 +34,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F402",
-        "message": "Import `$NAME` shadowed by loop variable"
+        "message": "Import `$NAME` shadowed by loop variable",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F402"
+            ]
+          }
+        }
       }
     }
   ]

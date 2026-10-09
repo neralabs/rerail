@@ -83,7 +83,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F901",
-        "message": "`raise NotImplemented` should be `raise NotImplementedError`"
+        "message": "`raise NotImplemented` should be `raise NotImplementedError`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F901"
+            ]
+          }
+        }
       }
     }
   ]

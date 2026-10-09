@@ -74,7 +74,14 @@
       "violation": {
         "code": "B502",
         "anchor": "witness.span",
-        "message": "An SSL context is configured with an insecure protocol version."
+        "message": "An SSL context is configured with an insecure protocol version.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B502"
+            ]
+          }
+        }
       }
     }
   ]

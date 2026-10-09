@@ -115,7 +115,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC110",
-    "message": "Use `trio.Event` instead of awaiting `trio.sleep` in a `while` loop"
+    "message": "Use `trio.Event` instead of awaiting `trio.sleep` in a `while` loop",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC110"
+        ]
+      }
+    }
    }
   },
   {
@@ -222,7 +229,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC110",
-    "message": "Use `anyio.Event` instead of awaiting `anyio.sleep` in a `while` loop"
+    "message": "Use `anyio.Event` instead of awaiting `anyio.sleep` in a `while` loop",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC110"
+        ]
+      }
+    }
    }
   },
   {
@@ -328,7 +342,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC110",
-    "message": "Use `asyncio.Event` instead of awaiting `asyncio.sleep` in a `while` loop"
+    "message": "Use `asyncio.Event` instead of awaiting `asyncio.sleep` in a `while` loop",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC110"
+        ]
+      }
+    }
    }
   }
  ]

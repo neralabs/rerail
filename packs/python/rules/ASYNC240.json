@@ -255,7 +255,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC240",
-    "message": "Async functions should not perform blocking os.path operations"
+    "message": "Async functions should not perform blocking os.path operations",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC240"
+        ]
+      }
+    }
    }
   },
   {
@@ -588,7 +595,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC240",
-    "message": "Async functions should not perform blocking pathlib.Path operations"
+    "message": "Async functions should not perform blocking pathlib.Path operations",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC240"
+        ]
+      }
+    }
    }
   }
  ]

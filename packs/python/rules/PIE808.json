@@ -118,7 +118,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PIE808",
-        "message": "Unnecessary `start` argument in `range`"
+        "message": "Unnecessary `start` argument in `range`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PIE808"
+            ]
+          }
+        }
       }
     }
   ]

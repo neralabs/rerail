@@ -258,7 +258,14 @@
         "anchor": "witness.span",
         "code": "E712",
         "message": "Avoid equality comparisons to `True` or `False`",
-        "each": "OP"
+        "each": "OP",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "E712"
+            ]
+          }
+        }
       }
     }
   ]

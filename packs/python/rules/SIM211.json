@@ -76,7 +76,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM211",
-        "message": "Use `not ...` instead of `False if ... else True`"
+        "message": "Use `not ...` instead of `False if ... else True`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM211"
+            ]
+          }
+        }
       }
     }
   ]

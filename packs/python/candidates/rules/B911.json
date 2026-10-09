@@ -427,7 +427,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B911",
-        "message": "`itertools.batched()` without an explicit `strict` parameter"
+        "message": "`itertools.batched()` without an explicit `strict` parameter",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B911"
+            ]
+          }
+        }
       }
     }
   ]

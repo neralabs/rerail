@@ -25,20 +25,6 @@
                 "has": {
                   "pattern": "$F($$$ARGS)"
                 }
-              },
-              {
-                "not": {
-                  "precedes": {
-                    "all": [
-                      {
-                        "kind": "comment"
-                      },
-                      {
-                        "regex": "(?i)#\\s*nosec\\b"
-                      }
-                    ]
-                  }
-                }
               }
             ]
           },
@@ -58,7 +44,14 @@
       "violation": {
         "code": "B317",
         "anchor": "witness.span",
-        "message": "Using xml.sax to parse untrusted XML may permit XML attacks; use defusedxml."
+        "message": "Using xml.sax to parse untrusted XML may permit XML attacks; use defusedxml.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B317"
+            ]
+          }
+        }
       }
     }
   ]

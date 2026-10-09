@@ -85,7 +85,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F525",
-        "message": "`.format` string mixes automatic and manual numbering"
+        "message": "`.format` string mixes automatic and manual numbering",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F525"
+            ]
+          }
+        }
       }
     }
   ]

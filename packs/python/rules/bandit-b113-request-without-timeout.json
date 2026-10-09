@@ -3,7 +3,7 @@
   "id": "python-conformance:bandit-b113-request-without-timeout",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Bandit 1.8.6's B113 request_without_timeout: a `requests` call without `timeout`, or a `requests`/`httpx` call whose `timeout` keyword is `None` (Bandit reads `timeout` as a keyword only). Port of the kernel test b113_requests_without_a_timeout_or_with_none (rerail/native/src/code_rule_dsl/value/rules.rs). Bandit's `# nosec` is not modelled; its recordings run with --ignore-nosec.",
+  "description": "Port of Bandit 1.9.4's B113 request_without_timeout: a `requests` call without `timeout`, or a `requests`/`httpx` call whose `timeout` keyword is `None` (Bandit reads `timeout` as a keyword only). Port of the kernel test b113_requests_without_a_timeout_or_with_none (rerail/native/src/code_rule_dsl/value/rules.rs). Bandit's `# nosec` is honoured (`suppress.nosec`), as its recordings honour it.",
   "scope": {
     "include": [
       "**/*"
@@ -124,7 +124,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B113",
-        "message": "Bandit B113 (request-without-timeout)"
+        "message": "Bandit B113 (request-without-timeout)",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B113"
+            ]
+          }
+        }
       }
     }
   ]

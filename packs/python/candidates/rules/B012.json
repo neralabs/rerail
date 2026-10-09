@@ -137,7 +137,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B012",
-        "message": "`return` inside `finally` blocks cause exceptions to be silenced"
+        "message": "`return` inside `finally` blocks cause exceptions to be silenced",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B012"
+            ]
+          }
+        }
       }
     },
     {
@@ -158,7 +165,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B012",
-        "message": "`break` inside `finally` blocks cause exceptions to be silenced"
+        "message": "`break` inside `finally` blocks cause exceptions to be silenced",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B012"
+            ]
+          }
+        }
       }
     },
     {
@@ -179,7 +193,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B012",
-        "message": "`continue` inside `finally` blocks cause exceptions to be silenced"
+        "message": "`continue` inside `finally` blocks cause exceptions to be silenced",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B012"
+            ]
+          }
+        }
       }
     }
   ]

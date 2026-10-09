@@ -63,7 +63,14 @@
       "violation": {
         "code": "B503",
         "anchor": "witness.span",
-        "message": "Function default uses an insecure SSL/TLS protocol"
+        "message": "Function default uses an insecure SSL/TLS protocol",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B503"
+            ]
+          }
+        }
       }
     }
   ]

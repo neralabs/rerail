@@ -74,7 +74,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F501",
-        "message": "`%`-format string has invalid format string"
+        "message": "`%`-format string has invalid format string",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F501"
+            ]
+          }
+        }
       }
     }
   ]

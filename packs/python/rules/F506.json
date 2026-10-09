@@ -100,7 +100,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F506",
-        "message": "`%`-format string has mixed positional and named placeholders"
+        "message": "`%`-format string has mixed positional and named placeholders",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F506"
+            ]
+          }
+        }
       }
     }
   ]

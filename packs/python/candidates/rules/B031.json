@@ -297,7 +297,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B031",
-        "message": "Using the generator returned from `itertools.groupby()` more than once will do nothing on the second usage"
+        "message": "Using the generator returned from `itertools.groupby()` more than once will do nothing on the second usage",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B031"
+            ]
+          }
+        }
       }
     }
   ]

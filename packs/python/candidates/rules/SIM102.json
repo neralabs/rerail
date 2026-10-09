@@ -289,7 +289,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM102",
-        "message": "Use a single `if` statement instead of nested `if` statements"
+        "message": "Use a single `if` statement instead of nested `if` statements",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM102"
+            ]
+          }
+        }
       }
     },
     {
@@ -421,7 +428,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM102",
-        "message": "Use a single `if` statement instead of nested `if` statements"
+        "message": "Use a single `if` statement instead of nested `if` statements",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM102"
+            ]
+          }
+        }
       }
     }
   ]

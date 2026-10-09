@@ -27,7 +27,14 @@
       "violation": {
         "code": "B104",
         "anchor": "witness.span",
-        "message": "Possible binding to all network interfaces."
+        "message": "Possible binding to all network interfaces.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B104"
+            ]
+          }
+        }
       }
     }
   ]

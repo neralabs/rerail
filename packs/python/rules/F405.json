@@ -73,7 +73,14 @@
         "anchor": "capture.NAME",
         "code": "F405",
         "message": "`$NAME` may be undefined, or defined from star imports",
-        "each": "NAME"
+        "each": "NAME",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F405"
+            ]
+          }
+        }
       }
     }
   ]

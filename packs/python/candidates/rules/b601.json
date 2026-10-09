@@ -48,7 +48,14 @@
       "violation": {
         "code": "B601",
         "anchor": "witness.span",
-        "message": "Require a paramiko-like import and resolve an exec_command call, which runs remote input through a shell; Bandit recommends verifying that inputs are sanitized."
+        "message": "Require a paramiko-like import and resolve an exec_command call, which runs remote input through a shell; Bandit recommends verifying that inputs are sanitized.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B601"
+            ]
+          }
+        }
       }
     }
   ]

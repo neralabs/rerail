@@ -117,7 +117,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC109",
-    "message": "Async function definition with a `timeout` parameter"
+    "message": "Async function definition with a `timeout` parameter",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC109"
+        ]
+      }
+    }
    }
   },
   {
@@ -214,7 +221,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC109",
-    "message": "Async function definition with a `timeout` parameter"
+    "message": "Async function definition with a `timeout` parameter",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC109"
+        ]
+      }
+    }
    }
   }
  ]

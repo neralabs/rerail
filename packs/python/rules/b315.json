@@ -33,7 +33,14 @@
       "violation": {
         "code": "B315",
         "anchor": "witness.span",
-        "message": "Using xml.sax.expatreader to parse untrusted XML may permit XML attacks; use defusedxml."
+        "message": "Using xml.sax.expatreader to parse untrusted XML may permit XML attacks; use defusedxml.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B315"
+            ]
+          }
+        }
       }
     }
   ]

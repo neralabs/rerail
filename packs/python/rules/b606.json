@@ -49,7 +49,14 @@
       "violation": {
         "code": "B606",
         "anchor": "witness.span",
-        "message": "Review input passed to a no-shell process API"
+        "message": "Review input passed to a no-shell process API",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B606"
+            ]
+          }
+        }
       }
     }
   ]

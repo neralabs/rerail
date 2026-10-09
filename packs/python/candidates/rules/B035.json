@@ -285,7 +285,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B035",
-        "message": "Dictionary comprehension uses static key"
+        "message": "Dictionary comprehension uses static key",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B035"
+            ]
+          }
+        }
       }
     }
   ]

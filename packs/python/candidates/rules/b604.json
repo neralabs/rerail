@@ -54,7 +54,14 @@
       "violation": {
         "code": "B604",
         "anchor": "capture.F",
-        "message": "Non-subprocess call uses a truthy shell keyword"
+        "message": "Non-subprocess call uses a truthy shell keyword",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B604"
+            ]
+          }
+        }
       }
     }
   ]

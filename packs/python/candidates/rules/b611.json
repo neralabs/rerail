@@ -55,7 +55,14 @@
       "violation": {
         "code": "B611",
         "anchor": "witness.span",
-        "message": "RawSQL received a nonconstant SQL expression; use a constant query with parameter binding."
+        "message": "RawSQL received a nonconstant SQL expression; use a constant query with parameter binding.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B611"
+            ]
+          }
+        }
       }
     }
   ]

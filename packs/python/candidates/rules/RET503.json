@@ -672,7 +672,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "RET503",
-        "message": "Missing explicit `return` at the end of function able to return non-`None` value"
+        "message": "Missing explicit `return` at the end of function able to return non-`None` value",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RET503"
+            ]
+          }
+        }
       }
     }
   ]

@@ -370,7 +370,14 @@
         "anchor": "witness.span",
         "code": "SIM101",
         "message": "Multiple `isinstance` calls for `$T`, merge into a single call",
-        "each": "P"
+        "each": "P",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM101"
+            ]
+          }
+        }
       }
     }
   ]

@@ -32,7 +32,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F504",
-        "message": "`%`-format string has unused named argument(s)"
+        "message": "`%`-format string has unused named argument(s)",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F504"
+            ]
+          }
+        }
       }
     }
   ]

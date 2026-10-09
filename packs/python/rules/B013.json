@@ -80,7 +80,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B013",
-        "message": "A length-one tuple literal is redundant in exception handlers"
+        "message": "A length-one tuple literal is redundant in exception handlers",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B013"
+            ]
+          }
+        }
       }
     }
   ]

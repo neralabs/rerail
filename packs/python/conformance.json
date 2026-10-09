@@ -16,7 +16,7 @@
     {
       "capability": "calls",
       "reason": "No pinned reference linter has a rule that reads callees transitively, which is what Rerail's calls capability answers.",
-      "evidence": "Checked Ruff 0.16.9 and Bandit 1.9.4. Ruff's rules that look at a call read only the call itself or the direct callee: flake8-async's ASYNC2xx and flake8-bugbear's call rules match the callee's resolved name; RET503 (crates/ruff_linter/src/rules/flake8_return/rules/function.rs, is_noreturn_func) reads only the direct callee's own `def` in the same file for a `NoReturn` annotation; Pyflakes' rules read bindings, not callees. Bandit's call tests (B3xx, B6xx, B113, B505, B506) match the callee's qualified name through its import. None answers whether a function reaches a call of X through any chain of calls.",
+      "evidence": "Checked Ruff 0.16.9 and Bandit 1.9.4. Ruff's rules that look at a call read only the call itself or the direct callee: flake8-async's ASYNC2xx and flake8-bugbear's call rules match the callee's resolved name; RET503 (crates/ruff_linter/src/rules/flake8_return/rules/function.rs, is_noreturn_func) reads only the direct callee's own `def` in the same file for a `NoReturn` annotation; Pyflakes' rules read bindings, not callees. Bandit's call tests (B3xx, B6xx, B113, B505) match the callee's qualified name through its import. None answers whether a function reaches a call of X through any chain of calls.",
       "coveredBy": [
         "T2: fixtures/python/calls (calls::python_tests::python_calls_agree_with_the_runtime, against CPython 3.13.14 runtime traces)",
         "T3: benchmark_python_calls_corpus (Jedi 0.19.2 over django)"
@@ -53,7 +53,8 @@
       },
       "policy": "rules/ASYNC100.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -65,7 +66,8 @@
       },
       "policy": "rules/ASYNC105.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -77,7 +79,8 @@
       },
       "policy": "rules/ASYNC109.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -89,7 +92,8 @@
       },
       "policy": "rules/ASYNC110.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -103,6 +107,7 @@
       "capabilities": [
         "arguments",
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -117,6 +122,7 @@
       "capabilities": [
         "arguments",
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -129,7 +135,8 @@
       },
       "policy": "rules/ASYNC210.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -142,6 +149,7 @@
       "policy": "rules/ASYNC212.json",
       "capabilities": [
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -157,6 +165,7 @@
         "arguments",
         "compare",
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -172,6 +181,7 @@
         "arguments",
         "compare",
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -184,7 +194,8 @@
       },
       "policy": "rules/ASYNC222.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -198,6 +209,7 @@
       "capabilities": [
         "compare",
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -211,6 +223,7 @@
       "policy": "rules/ASYNC240.json",
       "capabilities": [
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -223,7 +236,8 @@
       },
       "policy": "rules/ASYNC250.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -235,7 +249,8 @@
       },
       "policy": "rules/ASYNC251.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -247,6 +262,7 @@
       },
       "policy": "rules/B002.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -259,6 +275,7 @@
       },
       "policy": "rules/B003.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -272,6 +289,7 @@
       "policy": "rules/B004.json",
       "capabilities": [
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -284,6 +302,7 @@
       },
       "policy": "rules/B005.json",
       "capabilities": [
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -296,6 +315,7 @@
       },
       "policy": "rules/B007.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -309,6 +329,7 @@
       "policy": "rules/B009.json",
       "capabilities": [
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -322,6 +343,7 @@
       "policy": "rules/B010.json",
       "capabilities": [
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -334,8 +356,8 @@
       },
       "policy": "rules/ruff-b011-assert-false.json",
       "capabilities": [
-        "syntax",
-        "suppression"
+        "suppression",
+        "syntax"
       ],
       "match": "line+column"
     },
@@ -347,6 +369,7 @@
       },
       "policy": "rules/B013.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -359,6 +382,7 @@
       },
       "policy": "rules/B014.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -371,6 +395,7 @@
       },
       "policy": "rules/B016.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -383,7 +408,8 @@
       },
       "policy": "rules/B017.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -395,7 +421,8 @@
       },
       "policy": "rules/B019.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -407,6 +434,7 @@
       },
       "policy": "rules/B020.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -419,6 +447,7 @@
       },
       "policy": "rules/B021.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -444,6 +473,7 @@
       },
       "policy": "rules/B023.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -456,6 +486,7 @@
       },
       "policy": "rules/B025.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -468,6 +499,7 @@
       },
       "policy": "rules/B026.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -494,6 +526,7 @@
       },
       "policy": "rules/B029.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -506,6 +539,7 @@
       },
       "policy": "rules/B032.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -518,7 +552,8 @@
       },
       "policy": "rules/B033.json",
       "capabilities": [
-        "compare"
+        "compare",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -530,7 +565,8 @@
       },
       "policy": "rules/B034.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -542,7 +578,8 @@
       },
       "policy": "rules/B039.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -581,8 +618,8 @@
       },
       "policy": "rules/ruff-e711-none-comparison.json",
       "capabilities": [
-        "syntax",
-        "suppression"
+        "suppression",
+        "syntax"
       ],
       "match": "line+column"
     },
@@ -594,6 +631,7 @@
       },
       "policy": "rules/E712.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -606,7 +644,8 @@
       },
       "policy": "rules/E713.json",
       "capabilities": [
-        "annotation"
+        "annotation",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -618,7 +657,8 @@
       },
       "policy": "rules/E714.json",
       "capabilities": [
-        "annotation"
+        "annotation",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -630,7 +670,8 @@
       },
       "policy": "rules/E721.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -642,8 +683,8 @@
       },
       "policy": "rules/ruff-e722-bare-except.json",
       "capabilities": [
-        "syntax",
-        "suppression"
+        "suppression",
+        "syntax"
       ],
       "match": "line+column"
     },
@@ -655,6 +696,7 @@
       },
       "policy": "rules/E742.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -667,7 +709,8 @@
       },
       "policy": "rules/F404.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -680,7 +723,8 @@
       "policy": "rules/F405.json",
       "capabilities": [
         "annotation",
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -692,6 +736,7 @@
       },
       "policy": "rules/F406.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -704,7 +749,8 @@
       },
       "policy": "rules/F407.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -717,6 +763,7 @@
       "policy": "rules/F501.json",
       "capabilities": [
         "formatArgs",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -729,7 +776,8 @@
       },
       "policy": "rules/F502.json",
       "capabilities": [
-        "formatArgs"
+        "formatArgs",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -741,7 +789,8 @@
       },
       "policy": "rules/F503.json",
       "capabilities": [
-        "formatArgs"
+        "formatArgs",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -753,7 +802,8 @@
       },
       "policy": "rules/F504.json",
       "capabilities": [
-        "formatArgs"
+        "formatArgs",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -765,7 +815,8 @@
       },
       "policy": "rules/F505.json",
       "capabilities": [
-        "formatArgs"
+        "formatArgs",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -777,7 +828,8 @@
       },
       "policy": "rules/F506.json",
       "capabilities": [
-        "formatArgs"
+        "formatArgs",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -802,7 +854,8 @@
       },
       "policy": "rules/F508.json",
       "capabilities": [
-        "formatArgs"
+        "formatArgs",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -815,6 +868,7 @@
       "policy": "rules/F509.json",
       "capabilities": [
         "formatArgs",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -827,7 +881,8 @@
       },
       "policy": "rules/F521.json",
       "capabilities": [
-        "formatArgs"
+        "formatArgs",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -839,7 +894,8 @@
       },
       "policy": "rules/F522.json",
       "capabilities": [
-        "formatArgs"
+        "formatArgs",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -877,7 +933,8 @@
       },
       "policy": "rules/F525.json",
       "capabilities": [
-        "formatArgs"
+        "formatArgs",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -902,7 +959,8 @@
       },
       "policy": "rules/F602.json",
       "capabilities": [
-        "compare"
+        "compare",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -914,6 +972,7 @@
       },
       "policy": "rules/F622.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -926,6 +985,7 @@
       },
       "policy": "rules/F631.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -951,7 +1011,8 @@
       },
       "policy": "rules/F633.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -963,6 +1024,7 @@
       },
       "policy": "rules/F634.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -975,6 +1037,7 @@
       },
       "policy": "rules/F701.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -987,6 +1050,7 @@
       },
       "policy": "rules/F702.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -999,6 +1063,7 @@
       },
       "policy": "rules/F706.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1011,6 +1076,7 @@
       },
       "policy": "rules/F707.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1023,8 +1089,8 @@
       },
       "policy": "rules/ruff-f722-forward-annotation-syntax-error.json",
       "capabilities": [
-        "scope",
         "annotation",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -1050,7 +1116,8 @@
       },
       "policy": "rules/F842.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1062,6 +1129,7 @@
       },
       "policy": "rules/F901.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1074,7 +1142,8 @@
       },
       "policy": "rules/PIE790.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1086,6 +1155,7 @@
       },
       "policy": "rules/PIE794.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1112,6 +1182,7 @@
       },
       "policy": "rules/PIE800.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1124,6 +1195,7 @@
       },
       "policy": "rules/PIE804.json",
       "capabilities": [
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -1136,6 +1208,7 @@
       },
       "policy": "rules/PIE807.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1149,6 +1222,7 @@
       "policy": "rules/PIE808.json",
       "capabilities": [
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -1163,6 +1237,7 @@
       "capabilities": [
         "compare",
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -1175,7 +1250,8 @@
       },
       "policy": "rules/RET501.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1187,6 +1263,7 @@
       },
       "policy": "rules/RET502.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1200,7 +1277,8 @@
       "policy": "rules/RET504.json",
       "capabilities": [
         "compare",
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1212,6 +1290,7 @@
       },
       "policy": "rules/RET505.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1224,6 +1303,7 @@
       },
       "policy": "rules/RET506.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1236,6 +1316,7 @@
       },
       "policy": "rules/RET507.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1248,6 +1329,7 @@
       },
       "policy": "rules/RET508.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1261,7 +1343,8 @@
       "policy": "rules/SIM101.json",
       "capabilities": [
         "compare",
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1273,6 +1356,7 @@
       },
       "policy": "rules/SIM107.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1285,7 +1369,8 @@
       },
       "policy": "rules/SIM109.json",
       "capabilities": [
-        "compare"
+        "compare",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1298,6 +1383,7 @@
       "policy": "rules/SIM112.json",
       "capabilities": [
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -1312,6 +1398,7 @@
       "capabilities": [
         "compare",
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -1324,7 +1411,8 @@
       },
       "policy": "rules/SIM115.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1337,7 +1425,8 @@
       "policy": "rules/SIM116.json",
       "capabilities": [
         "compare",
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1349,6 +1438,7 @@
       },
       "policy": "rules/SIM201.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1361,6 +1451,7 @@
       },
       "policy": "rules/SIM202.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1373,6 +1464,7 @@
       },
       "policy": "rules/SIM208.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1385,6 +1477,7 @@
       },
       "policy": "rules/SIM210.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1397,6 +1490,7 @@
       },
       "policy": "rules/SIM211.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1409,6 +1503,7 @@
       },
       "policy": "rules/SIM212.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1421,7 +1516,8 @@
       },
       "policy": "rules/SIM220.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1433,7 +1529,8 @@
       },
       "policy": "rules/SIM221.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1445,6 +1542,7 @@
       },
       "policy": "rules/SIM905.json",
       "capabilities": [
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -1458,6 +1556,7 @@
       "policy": "rules/SIM910.json",
       "capabilities": [
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -1470,7 +1569,8 @@
       },
       "policy": "rules/T100.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1482,6 +1582,7 @@
       },
       "policy": "rules/bandit-b101-assert-used.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1494,7 +1595,8 @@
       },
       "policy": "rules/exec.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1506,6 +1608,7 @@
       },
       "policy": "rules/b104.json",
       "capabilities": [
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -1518,6 +1621,7 @@
       },
       "policy": "rules/b108.json",
       "capabilities": [
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -1530,6 +1634,7 @@
       },
       "policy": "rules/try-except-pass.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1542,6 +1647,7 @@
       },
       "policy": "rules/try-except-continue.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1556,6 +1662,7 @@
       "capabilities": [
         "arguments",
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -1568,7 +1675,8 @@
       },
       "policy": "rules/b301.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1580,7 +1688,8 @@
       },
       "policy": "rules/b302.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1592,7 +1701,8 @@
       },
       "policy": "rules/b305.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1604,7 +1714,8 @@
       },
       "policy": "rules/b306.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1616,7 +1727,8 @@
       },
       "policy": "rules/eval.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1628,7 +1740,8 @@
       },
       "policy": "rules/b310.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1640,7 +1753,8 @@
       },
       "policy": "rules/b311.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1652,7 +1766,8 @@
       },
       "policy": "rules/b312.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1664,7 +1779,8 @@
       },
       "policy": "rules/b313.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1676,7 +1792,8 @@
       },
       "policy": "rules/b314.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1688,7 +1805,8 @@
       },
       "policy": "rules/b315.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1700,7 +1818,8 @@
       },
       "policy": "rules/b316.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1712,7 +1831,8 @@
       },
       "policy": "rules/b317.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1724,7 +1844,8 @@
       },
       "policy": "rules/b318.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1736,7 +1857,8 @@
       },
       "policy": "rules/b319.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1748,7 +1870,8 @@
       },
       "policy": "rules/b321.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1760,7 +1883,8 @@
       },
       "policy": "rules/b323.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1772,6 +1896,7 @@
       },
       "policy": "rules/b401.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1784,6 +1909,7 @@
       },
       "policy": "rules/b402.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1796,6 +1922,7 @@
       },
       "policy": "rules/b405.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1808,6 +1935,7 @@
       },
       "policy": "rules/b406.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1820,6 +1948,7 @@
       },
       "policy": "rules/b407.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1832,6 +1961,7 @@
       },
       "policy": "rules/b408.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1844,6 +1974,7 @@
       },
       "policy": "rules/b409.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1856,6 +1987,7 @@
       },
       "policy": "rules/b411.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1868,6 +2000,7 @@
       },
       "policy": "rules/b413.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1880,6 +2013,7 @@
       },
       "policy": "rules/b415.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -1893,7 +2027,8 @@
       "policy": "rules/b502.json",
       "capabilities": [
         "arguments",
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1907,6 +2042,7 @@
       "capabilities": [
         "arguments",
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -1919,7 +2055,8 @@
       },
       "policy": "rules/b507.json",
       "capabilities": [
-        "arguments"
+        "arguments",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1931,7 +2068,8 @@
       },
       "policy": "rules/b606.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1943,7 +2081,8 @@
       },
       "policy": "rules/bandit-b610-django-extra-used.json",
       "capabilities": [
-        "arguments"
+        "arguments",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -1956,6 +2095,7 @@
       "policy": "rules/b615.json",
       "capabilities": [
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -1970,6 +2110,7 @@
       "capabilities": [
         "arguments",
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -1998,6 +2139,7 @@
         "arguments",
         "compare",
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -2010,6 +2152,7 @@
       },
       "policy": "candidates/rules/B012.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2022,6 +2165,7 @@
       },
       "policy": "candidates/rules/B015.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2034,7 +2178,8 @@
       },
       "policy": "candidates/rules/B018.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2046,7 +2191,8 @@
       },
       "policy": "candidates/rules/B024.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2058,7 +2204,8 @@
       },
       "policy": "candidates/rules/B027.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2070,6 +2217,7 @@
       },
       "policy": "candidates/rules/B030.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2082,7 +2230,8 @@
       },
       "policy": "candidates/rules/B031.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2094,6 +2243,7 @@
       },
       "policy": "candidates/rules/B035.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2107,7 +2257,8 @@
       "policy": "candidates/rules/B911.json",
       "capabilities": [
         "arguments",
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2120,7 +2271,8 @@
       "policy": "candidates/rules/B912.json",
       "capabilities": [
         "arguments",
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2133,6 +2285,7 @@
       "policy": "candidates/rules/BLE001.json",
       "capabilities": [
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -2145,7 +2298,8 @@
       },
       "policy": "candidates/rules/E402.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2157,6 +2311,7 @@
       },
       "policy": "candidates/rules/E731.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2169,6 +2324,7 @@
       },
       "policy": "candidates/rules/E741.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2181,6 +2337,7 @@
       },
       "policy": "candidates/rules/E743.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2206,7 +2363,8 @@
       },
       "policy": "candidates/rules/F402.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2218,6 +2376,7 @@
       },
       "policy": "candidates/rules/F403.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2230,6 +2389,7 @@
       },
       "policy": "candidates/rules/F541.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2242,6 +2402,7 @@
       },
       "policy": "candidates/rules/F704.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2267,8 +2428,8 @@
       },
       "policy": "candidates/rules/ruff-f821-undefined-name.json",
       "capabilities": [
-        "scope",
         "annotation",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -2281,7 +2442,8 @@
       },
       "policy": "candidates/rules/F822.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2306,6 +2468,7 @@
       },
       "policy": "candidates/rules/N999.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2318,7 +2481,8 @@
       },
       "policy": "candidates/rules/RET503.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2330,7 +2494,8 @@
       },
       "policy": "candidates/rules/SIM102.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2342,7 +2507,8 @@
       },
       "policy": "candidates/rules/SIM103.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2354,6 +2520,7 @@
       },
       "policy": "candidates/rules/SIM105.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2379,6 +2546,7 @@
       },
       "policy": "candidates/rules/SIM110.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2391,7 +2559,8 @@
       },
       "policy": "candidates/rules/SIM114.json",
       "capabilities": [
-        "compare"
+        "compare",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2403,7 +2572,8 @@
       },
       "policy": "candidates/rules/SIM117.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2415,6 +2585,7 @@
       },
       "policy": "candidates/rules/SIM118.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2427,9 +2598,9 @@
       },
       "policy": "candidates/rules/ruff-sim222-expr-or-true.json",
       "capabilities": [
-        "value",
         "scope",
-        "suppression"
+        "suppression",
+        "value"
       ],
       "match": "line+column"
     },
@@ -2442,6 +2613,7 @@
       "policy": "candidates/rules/SIM223.json",
       "capabilities": [
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -2454,6 +2626,7 @@
       },
       "policy": "candidates/rules/SIM300.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2467,6 +2640,7 @@
       "policy": "candidates/rules/SIM401.json",
       "capabilities": [
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -2480,6 +2654,7 @@
       "policy": "candidates/rules/SIM911.json",
       "capabilities": [
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -2492,6 +2667,7 @@
       },
       "policy": "candidates/rules/W605.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2504,6 +2680,7 @@
       },
       "policy": "candidates/rules/b103.json",
       "capabilities": [
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -2516,6 +2693,7 @@
       },
       "policy": "candidates/rules/bandit-B105.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2528,6 +2706,7 @@
       },
       "policy": "candidates/rules/hardcoded-password-function-argument.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2540,6 +2719,7 @@
       },
       "policy": "candidates/rules/hardcoded-password-default.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2554,6 +2734,7 @@
       "capabilities": [
         "arguments",
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -2567,6 +2748,7 @@
       "policy": "candidates/rules/b202.json",
       "capabilities": [
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -2579,7 +2761,8 @@
       },
       "policy": "candidates/rules/bandit-B303.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2591,7 +2774,8 @@
       },
       "policy": "candidates/rules/b304.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2603,7 +2787,8 @@
       },
       "policy": "candidates/rules/b308.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2615,7 +2800,8 @@
       },
       "policy": "candidates/rules/b324.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2627,6 +2813,7 @@
       },
       "policy": "candidates/rules/b403.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2639,6 +2826,7 @@
       },
       "policy": "candidates/rules/b404.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2651,6 +2839,7 @@
       },
       "policy": "candidates/rules/b412.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2664,6 +2853,7 @@
       "policy": "candidates/rules/b501.json",
       "capabilities": [
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -2676,7 +2866,8 @@
       },
       "policy": "candidates/rules/b503.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2689,7 +2880,8 @@
       "policy": "candidates/rules/b504.json",
       "capabilities": [
         "arguments",
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2702,7 +2894,8 @@
       "policy": "candidates/rules/bandit-b506-yaml-load.json",
       "capabilities": [
         "arguments",
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2716,6 +2909,7 @@
       "capabilities": [
         "arguments",
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -2728,7 +2922,8 @@
       },
       "policy": "candidates/rules/b509.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2741,6 +2936,7 @@
       "policy": "candidates/rules/b601.json",
       "capabilities": [
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -2753,7 +2949,8 @@
       },
       "policy": "candidates/rules/bandit-B602.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2767,6 +2964,7 @@
       "capabilities": [
         "arguments",
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -2781,6 +2979,7 @@
       "capabilities": [
         "arguments",
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -2793,7 +2992,8 @@
       },
       "policy": "candidates/rules/b605.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2806,6 +3006,7 @@
       "policy": "candidates/rules/b607.json",
       "capabilities": [
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -2818,6 +3019,7 @@
       },
       "policy": "candidates/rules/bandit-B608.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2832,6 +3034,7 @@
       "capabilities": [
         "arguments",
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -2845,7 +3048,8 @@
       "policy": "candidates/rules/b611.json",
       "capabilities": [
         "arguments",
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2858,7 +3062,8 @@
       "policy": "candidates/rules/b612.json",
       "capabilities": [
         "arguments",
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2870,6 +3075,7 @@
       },
       "policy": "candidates/rules/b613.json",
       "capabilities": [
+        "suppression",
         "syntax"
       ],
       "match": "line+column"
@@ -2884,6 +3090,7 @@
       "capabilities": [
         "arguments",
         "scope",
+        "suppression",
         "value"
       ],
       "match": "line+column"
@@ -2896,7 +3103,8 @@
       },
       "policy": "candidates/rules/b702.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2908,7 +3116,8 @@
       },
       "policy": "candidates/rules/b703.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -2920,7 +3129,8 @@
       },
       "policy": "candidates/rules/b704.json",
       "capabilities": [
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     }

@@ -157,7 +157,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F404",
-        "message": "`from __future__` imports must occur at the beginning of the file"
+        "message": "`from __future__` imports must occur at the beginning of the file",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F404"
+            ]
+          }
+        }
       }
     }
   ]

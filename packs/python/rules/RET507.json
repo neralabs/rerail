@@ -197,7 +197,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "RET507",
-        "message": "Unnecessary `$BRANCH` after `continue` statement"
+        "message": "Unnecessary `$BRANCH` after `continue` statement",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RET507"
+            ]
+          }
+        }
       }
     }
   ]

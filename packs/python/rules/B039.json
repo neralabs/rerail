@@ -267,7 +267,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B039",
-        "message": "Do not use mutable data structures for `ContextVar` defaults"
+        "message": "Do not use mutable data structures for `ContextVar` defaults",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B039"
+            ]
+          }
+        }
       }
     }
   ]

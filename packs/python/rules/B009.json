@@ -176,7 +176,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B009",
-        "message": "Do not call `getattr` with a constant attribute value. It is not any safer than normal property access."
+        "message": "Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B009"
+            ]
+          }
+        }
       }
     }
   ]

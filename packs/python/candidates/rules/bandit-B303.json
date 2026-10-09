@@ -65,7 +65,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B303",
-        "message": "MD5 and SHA1 are broken for security use. Use SHA-256, or a password hash for passwords."
+        "message": "MD5 and SHA1 are broken for security use. Use SHA-256, or a password hash for passwords.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B303"
+            ]
+          }
+        }
       }
     }
   ]

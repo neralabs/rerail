@@ -247,7 +247,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B019",
-        "message": "Use of `functools.lru_cache` or `functools.cache` on methods can lead to memory leaks"
+        "message": "Use of `functools.lru_cache` or `functools.cache` on methods can lead to memory leaks",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B019"
+            ]
+          }
+        }
       }
     }
   ]

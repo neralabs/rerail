@@ -36,7 +36,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F707",
-        "message": "An `except` block as not the last exception handler"
+        "message": "An `except` block as not the last exception handler",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F707"
+            ]
+          }
+        }
       }
     }
   ]

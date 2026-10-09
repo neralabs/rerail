@@ -44,7 +44,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM208",
-        "message": "Use the operand instead of `not (not ...)`"
+        "message": "Use the operand instead of `not (not ...)`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM208"
+            ]
+          }
+        }
       }
     }
   ]

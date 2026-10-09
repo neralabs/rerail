@@ -279,7 +279,14 @@
       "violation": {
         "anchor": "capture.CMP",
         "code": "E721",
-        "message": "Use `is` and `is not` for type comparisons, or `isinstance()` for isinstance checks"
+        "message": "Use `is` and `is not` for type comparisons, or `isinstance()` for isinstance checks",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "E721"
+            ]
+          }
+        }
       }
     }
   ]

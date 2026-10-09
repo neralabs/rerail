@@ -397,7 +397,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC212",
-    "message": "Blocking httpx method $OBJ.$METH() in async context, use httpx.AsyncClient"
+    "message": "Blocking httpx method $OBJ.$METH() in async context, use httpx.AsyncClient",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC212"
+        ]
+      }
+    }
    }
   }
  ]

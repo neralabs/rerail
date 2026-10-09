@@ -194,7 +194,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "E741",
-        "message": "Ambiguous variable name: `$NAME`"
+        "message": "Ambiguous variable name: `$NAME`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "E741"
+            ]
+          }
+        }
       }
     }
   ]

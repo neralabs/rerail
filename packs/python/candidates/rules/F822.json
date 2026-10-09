@@ -40,7 +40,15 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F822",
-        "message": "Undefined name $S in `__all__`"
+        "message": "Undefined name $S in `__all__`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F822"
+            ],
+            "parent": "statement"
+          }
+        }
       }
     }
   ]

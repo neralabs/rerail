@@ -166,7 +166,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B025",
-        "message": "try-except block with duplicate exception `$E`"
+        "message": "try-except block with duplicate exception `$E`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B025"
+            ]
+          }
+        }
       }
     }
   ]

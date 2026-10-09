@@ -448,7 +448,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "E402",
-        "message": "Module level import not at top of file"
+        "message": "Module level import not at top of file",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "E402"
+            ]
+          }
+        }
       }
     }
   ]

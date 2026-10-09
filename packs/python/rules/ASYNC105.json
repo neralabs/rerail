@@ -185,7 +185,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC105",
-    "message": "Call to `$CALLEE` is not immediately awaited"
+    "message": "Call to `$CALLEE` is not immediately awaited",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC105"
+        ]
+      }
+    }
    }
   }
  ]

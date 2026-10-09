@@ -376,7 +376,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B027",
-        "message": "`$CLS.$METHOD` is an empty method in an abstract base class, but has no abstract decorator"
+        "message": "`$CLS.$METHOD` is an empty method in an abstract base class, but has no abstract decorator",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B027"
+            ]
+          }
+        }
       }
     }
   ]

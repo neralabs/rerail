@@ -68,7 +68,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM107",
-        "message": "Don't use `return` in `try`-`except` and `finally`"
+        "message": "Don't use `return` in `try`-`except` and `finally`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM107"
+            ]
+          }
+        }
       }
     }
   ]

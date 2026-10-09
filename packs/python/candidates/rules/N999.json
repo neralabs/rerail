@@ -71,7 +71,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "N999",
-        "message": "Invalid module name"
+        "message": "Invalid module name",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N999"
+            ]
+          }
+        }
       }
     },
     {
@@ -107,7 +114,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "N999",
-        "message": "Invalid module name"
+        "message": "Invalid module name",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N999"
+            ]
+          }
+        }
       }
     },
     {
@@ -146,7 +160,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "N999",
-        "message": "Invalid module name"
+        "message": "Invalid module name",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N999"
+            ]
+          }
+        }
       }
     },
     {
@@ -185,7 +206,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "N999",
-        "message": "Invalid module name"
+        "message": "Invalid module name",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N999"
+            ]
+          }
+        }
       }
     }
   ]

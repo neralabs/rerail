@@ -157,7 +157,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B004",
-        "message": "Using `hasattr(x, \"__call__\")` to test if x is callable is unreliable. Use `callable(x)` for consistent results."
+        "message": "Using `hasattr(x, \"__call__\")` to test if x is callable is unreliable. Use `callable(x)` for consistent results.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B004"
+            ]
+          }
+        }
       }
     }
   ]

@@ -422,7 +422,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM103",
-        "message": "Return the condition directly"
+        "message": "Return the condition directly",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM103"
+            ]
+          }
+        }
       }
     }
   ]

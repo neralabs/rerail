@@ -73,7 +73,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B105",
-        "message": "Possible hard-coded password. Read it from the environment or a secret store."
+        "message": "Possible hard-coded password. Read it from the environment or a secret store.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B105"
+            ]
+          }
+        }
       }
     },
     {
@@ -113,7 +120,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B105",
-        "message": "Possible hard-coded password. Read it from the environment or a secret store."
+        "message": "Possible hard-coded password. Read it from the environment or a secret store.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B105"
+            ]
+          }
+        }
       }
     }
   ]

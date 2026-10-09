@@ -1320,7 +1320,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM223",
-        "message": "Use `False` instead of `... and False`"
+        "message": "Use `False` instead of `... and False`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM223"
+            ]
+          }
+        }
       }
     }
   ]

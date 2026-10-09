@@ -336,7 +336,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F704",
-        "message": "`yield` or `await` outside of a function"
+        "message": "`yield` or `await` outside of a function",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F704"
+            ]
+          }
+        }
       }
     }
   ]

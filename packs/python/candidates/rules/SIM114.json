@@ -882,7 +882,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM114",
-        "message": "Combine `if` branches using logical `or` operator"
+        "message": "Combine `if` branches using logical `or` operator",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM114"
+            ]
+          }
+        }
       }
     }
   ]

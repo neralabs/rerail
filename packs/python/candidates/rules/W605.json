@@ -62,7 +62,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "W605",
-        "message": "Invalid escape sequence"
+        "message": "Invalid escape sequence",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "W605"
+            ]
+          }
+        }
       }
     },
     {
@@ -95,7 +102,14 @@
         "anchor": "capture.BS",
         "code": "W605",
         "message": "Invalid escape sequence",
-        "each": "BS"
+        "each": "BS",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "W605"
+            ]
+          }
+        }
       }
     }
   ]

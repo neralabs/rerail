@@ -33,7 +33,14 @@
       "violation": {
         "code": "B321",
         "anchor": "witness.span",
-        "message": "FTP is unencrypted and insecure; use SSH, SFTP, SCP, or another encrypted protocol."
+        "message": "FTP is unencrypted and insecure; use SSH, SFTP, SCP, or another encrypted protocol.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B321"
+            ]
+          }
+        }
       }
     }
   ]

@@ -129,7 +129,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC250",
-    "message": "Blocking call to `input()` in async context"
+    "message": "Blocking call to `input()` in async context",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC250"
+        ]
+      }
+    }
    }
   }
  ]

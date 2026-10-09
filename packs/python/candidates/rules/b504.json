@@ -50,7 +50,14 @@
       "violation": {
         "code": "B504",
         "anchor": "capture.F",
-        "message": "ssl.wrap_socket called without an explicit ssl_version"
+        "message": "ssl.wrap_socket called without an explicit ssl_version",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B504"
+            ]
+          }
+        }
       }
     }
   ]

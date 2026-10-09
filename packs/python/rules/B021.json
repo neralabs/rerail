@@ -42,7 +42,7 @@
           }
         }
       },
-      "violation": { "anchor": "witness.span", "code": "B021", "message": "f-string used as docstring. Python will interpret this as a joined string, rather than a docstring." }
+      "violation": { "anchor": "witness.span", "code": "B021", "message": "f-string used as docstring. Python will interpret this as a joined string, rather than a docstring.", "suppress": { "noqa": { "codes": ["B021"] } } }
     }
   ]
 }

@@ -98,7 +98,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F508",
-        "message": "`%`-format string `*` specifier requires sequence"
+        "message": "`%`-format string `*` specifier requires sequence",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F508"
+            ]
+          }
+        }
       }
     }
   ]

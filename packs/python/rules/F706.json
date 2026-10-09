@@ -47,7 +47,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F706",
-        "message": "`return` statement outside of a function/method"
+        "message": "`return` statement outside of a function/method",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F706"
+            ]
+          }
+        }
       }
     }
   ]

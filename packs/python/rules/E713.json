@@ -110,7 +110,14 @@
         "anchor": "capture.C",
         "code": "E713",
         "message": "Test for membership should be `not in`",
-        "each": "C"
+        "each": "C",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "E713"
+            ]
+          }
+        }
       }
     }
   ]

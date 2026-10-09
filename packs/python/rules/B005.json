@@ -117,7 +117,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B005",
-        "message": "Using `.strip()` with multi-character strings is misleading"
+        "message": "Using `.strip()` with multi-character strings is misleading",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B005"
+            ]
+          }
+        }
       }
     }
   ]

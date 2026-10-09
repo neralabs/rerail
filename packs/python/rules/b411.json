@@ -34,7 +34,14 @@
       "violation": {
         "code": "B411",
         "anchor": "witness.span",
-        "message": "xmlrpc parsing may be vulnerable to XML attacks; use defusedxml.xmlrpc.monkey_patch() to mitigate XML vulnerabilities."
+        "message": "xmlrpc parsing may be vulnerable to XML attacks; use defusedxml.xmlrpc.monkey_patch() to mitigate XML vulnerabilities.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B411"
+            ]
+          }
+        }
       }
     }
   ]

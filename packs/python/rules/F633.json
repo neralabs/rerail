@@ -285,7 +285,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F633",
-        "message": "Use of `>>` is invalid with `print` function"
+        "message": "Use of `>>` is invalid with `print` function",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F633"
+            ]
+          }
+        }
       }
     }
   ]

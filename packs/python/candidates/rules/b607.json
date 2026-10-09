@@ -79,7 +79,14 @@
       "violation": {
         "code": "B607",
         "anchor": "capture.CMD",
-        "message": "Process executable uses a partial path."
+        "message": "Process executable uses a partial path.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B607"
+            ]
+          }
+        }
       }
     },
     {
@@ -150,7 +157,14 @@
       "violation": {
         "code": "B607",
         "anchor": "capture.CMD",
-        "message": "Process executable uses a partial path."
+        "message": "Process executable uses a partial path.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B607"
+            ]
+          }
+        }
       }
     }
   ]

@@ -113,7 +113,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F502",
-        "message": "`%`-format string expected mapping but got sequence"
+        "message": "`%`-format string expected mapping but got sequence",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F502"
+            ]
+          }
+        }
       }
     }
   ]

@@ -48,7 +48,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PIE800",
-        "message": "Unnecessary spread `**`"
+        "message": "Unnecessary spread `**`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PIE800"
+            ]
+          }
+        }
       }
     }
   ]

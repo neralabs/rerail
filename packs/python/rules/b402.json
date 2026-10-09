@@ -34,7 +34,14 @@
       "violation": {
         "code": "B402",
         "anchor": "witness.span",
-        "message": "An FTP-related module is being imported. FTP is insecure; use SSH, SFTP, SCP, or another encrypted protocol."
+        "message": "An FTP-related module is being imported. FTP is insecure; use SSH, SFTP, SCP, or another encrypted protocol.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B402"
+            ]
+          }
+        }
       }
     }
   ]

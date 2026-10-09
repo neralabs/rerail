@@ -61,7 +61,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F631",
-        "message": "Assert test is a non-empty tuple, which is always `True`"
+        "message": "Assert test is a non-empty tuple, which is always `True`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F631"
+            ]
+          }
+        }
       }
     }
   ]

@@ -64,7 +64,14 @@
       "violation": {
         "code": "B704",
         "anchor": "capture.CONTENT",
-        "message": "Dynamic content is marked safe without sanitization; interpolate into a Markup object or use markupsafe.escape()."
+        "message": "Dynamic content is marked safe without sanitization; interpolate into a Markup object or use markupsafe.escape().",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B704"
+            ]
+          }
+        }
       }
     }
   ]

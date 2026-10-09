@@ -142,7 +142,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC115",
-    "message": "Use `trio.lowlevel.checkpoint()` instead of `trio.sleep(0)`"
+    "message": "Use `trio.lowlevel.checkpoint()` instead of `trio.sleep(0)`",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC115"
+        ]
+      }
+    }
    }
   },
   {
@@ -243,7 +250,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC115",
-    "message": "Use `anyio.lowlevel.checkpoint()` instead of `anyio.sleep(0)`"
+    "message": "Use `anyio.lowlevel.checkpoint()` instead of `anyio.sleep(0)`",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC115"
+        ]
+      }
+    }
    }
   }
  ]

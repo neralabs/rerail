@@ -275,7 +275,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B018",
-        "message": "Found useless expression. Either assign it to a variable or remove it."
+        "message": "Found useless expression. Either assign it to a variable or remove it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B018"
+            ]
+          }
+        }
       }
     },
     {
@@ -310,7 +317,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B018",
-        "message": "Found useless attribute access. Either assign it to a variable or remove it."
+        "message": "Found useless attribute access. Either assign it to a variable or remove it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B018"
+            ]
+          }
+        }
       }
     }
   ]

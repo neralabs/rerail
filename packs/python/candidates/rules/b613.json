@@ -31,7 +31,14 @@
       "violation": {
         "code": "B613",
         "anchor": "witness.span",
-        "message": "Python string literal contains a bidirectional-control character."
+        "message": "Python string literal contains a bidirectional-control character.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B613"
+            ]
+          }
+        }
       }
     }
   ]

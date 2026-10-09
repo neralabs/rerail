@@ -473,7 +473,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM300",
-        "message": "Yoda condition detected"
+        "message": "Yoda condition detected",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM300"
+            ]
+          }
+        }
       }
     }
   ]

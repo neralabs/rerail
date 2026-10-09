@@ -34,7 +34,14 @@
       "violation": {
         "code": "B404",
         "anchor": "witness.span",
-        "message": "Consider possible security implications associated with the subprocess module."
+        "message": "Consider possible security implications associated with the subprocess module.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B404"
+            ]
+          }
+        }
       }
     }
   ]

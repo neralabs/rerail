@@ -324,7 +324,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B017",
-        "message": "Do not assert blind exception: `$EXC`"
+        "message": "Do not assert blind exception: `$EXC`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B017"
+            ]
+          }
+        }
       }
     },
     {
@@ -371,7 +378,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B017",
-        "message": "Do not assert blind exception: `$EXC`"
+        "message": "Do not assert blind exception: `$EXC`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B017"
+            ]
+          }
+        }
       }
     }
   ]

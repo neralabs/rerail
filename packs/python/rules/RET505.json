@@ -197,7 +197,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "RET505",
-        "message": "Unnecessary `$BRANCH` after `return` statement"
+        "message": "Unnecessary `$BRANCH` after `return` statement",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RET505"
+            ]
+          }
+        }
       }
     }
   ]

@@ -33,7 +33,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "E743",
-        "message": "Ambiguous function name: `$NAME`"
+        "message": "Ambiguous function name: `$NAME`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "E743"
+            ]
+          }
+        }
       }
     }
   ]

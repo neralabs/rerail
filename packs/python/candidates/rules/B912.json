@@ -434,7 +434,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B912",
-        "message": "`map()` without an explicit `strict=` parameter"
+        "message": "`map()` without an explicit `strict=` parameter",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B912"
+            ]
+          }
+        }
       }
     }
   ]

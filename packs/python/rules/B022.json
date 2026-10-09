@@ -81,7 +81,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B022",
-        "message": "No arguments passed to `contextlib.suppress`. No exceptions will be suppressed and therefore this context manager is redundant"
+        "message": "No arguments passed to `contextlib.suppress`. No exceptions will be suppressed and therefore this context manager is redundant",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B022"
+            ]
+          }
+        }
       }
     }
   ]

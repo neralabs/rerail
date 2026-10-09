@@ -156,7 +156,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM118",
-        "message": "Use `key in dict` instead of `key in dict.keys()`"
+        "message": "Use `key in dict` instead of `key in dict.keys()`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM118"
+            ]
+          }
+        }
       }
     }
   ]

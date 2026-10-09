@@ -27,7 +27,14 @@
       "violation": {
         "code": "B108",
         "anchor": "witness.span",
-        "message": "Probable insecure use of a temporary-file path."
+        "message": "Probable insecure use of a temporary-file path.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B108"
+            ]
+          }
+        }
       }
     }
   ]

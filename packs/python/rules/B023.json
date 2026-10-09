@@ -546,7 +546,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B023",
-        "message": "Function definition does not bind loop variable `$N`"
+        "message": "Function definition does not bind loop variable `$N`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B023"
+            ]
+          }
+        }
       }
     }
   ]

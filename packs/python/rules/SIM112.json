@@ -154,7 +154,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM112",
-        "message": "Use capitalized environment variable"
+        "message": "Use capitalized environment variable",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM112"
+            ]
+          }
+        }
       }
     }
   ]

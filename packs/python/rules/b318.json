@@ -34,7 +34,14 @@
       "violation": {
         "code": "B318",
         "anchor": "witness.span",
-        "message": "Using xml.dom.minidom to parse untrusted XML is vulnerable to XML attacks; use the defusedxml equivalent."
+        "message": "Using xml.dom.minidom to parse untrusted XML is vulnerable to XML attacks; use the defusedxml equivalent.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B318"
+            ]
+          }
+        }
       }
     }
   ]

@@ -49,7 +49,14 @@
       "violation": {
         "anchor": "file.start",
         "code": "INP001",
-        "message": "File is part of an implicit namespace package. Add an `__init__.py`."
+        "message": "File is part of an implicit namespace package. Add an `__init__.py`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "INP001"
+            ]
+          }
+        }
       }
     }
   ]

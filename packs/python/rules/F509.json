@@ -72,7 +72,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F509",
-        "message": "`%`-format string has unsupported format character"
+        "message": "`%`-format string has unsupported format character",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F509"
+            ]
+          }
+        }
       }
     }
   ]

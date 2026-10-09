@@ -111,7 +111,14 @@
       "violation": {
         "code": "B102",
         "anchor": "witness.span",
-        "message": "This exec call executes supplied text as Python code and is risky when that code is not fully trusted. Remove exec and implement the intended operation explicitly."
+        "message": "This exec call executes supplied text as Python code and is risky when that code is not fully trusted. Remove exec and implement the intended operation explicitly.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B102"
+            ]
+          }
+        }
       }
     }
   ]

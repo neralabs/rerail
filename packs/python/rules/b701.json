@@ -68,7 +68,14 @@
       "violation": {
         "code": "B701",
         "anchor": "witness.span",
-        "message": "Jinja autoescaping is disabled or unsafe; use autoescape=True or jinja2.select_autoescape()."
+        "message": "Jinja autoescaping is disabled or unsafe; use autoescape=True or jinja2.select_autoescape().",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B701"
+            ]
+          }
+        }
       }
     },
     {
@@ -142,7 +149,14 @@
       "violation": {
         "code": "B701",
         "anchor": "witness.span",
-        "message": "Jinja autoescaping is disabled or unsafe; use autoescape=True or jinja2.select_autoescape()."
+        "message": "Jinja autoescaping is disabled or unsafe; use autoescape=True or jinja2.select_autoescape().",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B701"
+            ]
+          }
+        }
       }
     },
     {
@@ -214,7 +228,14 @@
       "violation": {
         "code": "B701",
         "anchor": "witness.span",
-        "message": "Jinja autoescaping is disabled or unsafe; use autoescape=True or jinja2.select_autoescape()."
+        "message": "Jinja autoescaping is disabled or unsafe; use autoescape=True or jinja2.select_autoescape().",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B701"
+            ]
+          }
+        }
       }
     },
     {
@@ -271,7 +292,14 @@
       "violation": {
         "code": "B701",
         "anchor": "witness.span",
-        "message": "Jinja autoescaping is not statically safe."
+        "message": "Jinja autoescaping is not statically safe.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B701"
+            ]
+          }
+        }
       }
     }
   ]

@@ -130,7 +130,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC222",
-    "message": "Async functions should not wait on processes with blocking methods"
+    "message": "Async functions should not wait on processes with blocking methods",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC222"
+        ]
+      }
+    }
    }
   }
  ]

@@ -42,7 +42,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F407",
-        "message": "Future feature `$NAME` is not defined"
+        "message": "Future feature `$NAME` is not defined",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F407"
+            ]
+          }
+        }
       }
     }
   ]

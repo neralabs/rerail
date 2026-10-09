@@ -601,7 +601,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "RET504",
-        "message": "Unnecessary assignment to `$N` before `return` statement"
+        "message": "Unnecessary assignment to `$N` before `return` statement",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RET504"
+            ]
+          }
+        }
       }
     }
   ]

@@ -126,7 +126,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC251",
-    "message": "Async functions should not call `time.sleep`"
+    "message": "Async functions should not call `time.sleep`",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC251"
+        ]
+      }
+    }
    }
   }
  ]

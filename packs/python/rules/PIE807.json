@@ -86,7 +86,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PIE807",
-        "message": "Prefer `list` or `dict` over useless lambda"
+        "message": "Prefer `list` or `dict` over useless lambda",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PIE807"
+            ]
+          }
+        }
       }
     }
   ]

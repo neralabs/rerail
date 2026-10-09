@@ -571,7 +571,14 @@
         "anchor": "witness.span",
         "code": "PIE810",
         "message": "Call `$M` once with a `tuple`",
-        "each": "FIRST"
+        "each": "FIRST",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PIE810"
+            ]
+          }
+        }
       }
     }
   ]

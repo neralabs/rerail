@@ -205,7 +205,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B010",
-        "message": "Do not call `setattr` with a constant attribute value. It is not any safer than normal property access."
+        "message": "Do not call `setattr` with a constant attribute value. It is not any safer than normal property access.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B010"
+            ]
+          }
+        }
       }
     }
   ]

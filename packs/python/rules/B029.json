@@ -88,7 +88,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B029",
-        "message": "Using `except ():` with an empty tuple does not catch anything; add exceptions to handle"
+        "message": "Using `except ():` with an empty tuple does not catch anything; add exceptions to handle",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B029"
+            ]
+          }
+        }
       }
     }
   ]

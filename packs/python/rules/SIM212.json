@@ -81,7 +81,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM212",
-        "message": "Use `$A if $A else ...` instead of `... if not $A else $A`"
+        "message": "Use `$A if $A else ...` instead of `... if not $A else $A`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM212"
+            ]
+          }
+        }
       }
     }
   ]

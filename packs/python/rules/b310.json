@@ -40,7 +40,14 @@
       "violation": {
         "code": "B310",
         "anchor": "witness.span",
-        "message": "Audit URL opening for permitted schemes; file or custom schemes may be unexpected."
+        "message": "Audit URL opening for permitted schemes; file or custom schemes may be unexpected.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B310"
+            ]
+          }
+        }
       }
     }
   ]

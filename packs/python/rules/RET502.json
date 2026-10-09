@@ -149,7 +149,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "RET502",
-        "message": "Do not implicitly `return None` in function able to return non-`None` value"
+        "message": "Do not implicitly `return None` in function able to return non-`None` value",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RET502"
+            ]
+          }
+        }
       }
     }
   ]

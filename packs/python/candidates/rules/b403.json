@@ -61,7 +61,14 @@
       "violation": {
         "code": "B403",
         "anchor": "witness.span",
-        "message": "Consider the security implications of importing pickle, cPickle, dill, or shelve."
+        "message": "Consider the security implications of importing pickle, cPickle, dill, or shelve.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B403"
+            ]
+          }
+        }
       }
     }
   ]

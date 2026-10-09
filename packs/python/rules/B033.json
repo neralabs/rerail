@@ -115,7 +115,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B033",
-        "message": "Sets should not contain duplicate item `$V`"
+        "message": "Sets should not contain duplicate item `$V`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B033"
+            ]
+          }
+        }
       }
     }
   ]

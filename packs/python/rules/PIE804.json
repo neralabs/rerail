@@ -165,7 +165,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PIE804",
-        "message": "Unnecessary `dict` kwargs"
+        "message": "Unnecessary `dict` kwargs",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PIE804"
+            ]
+          }
+        }
       }
     }
   ]

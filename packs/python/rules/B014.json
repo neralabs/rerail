@@ -112,7 +112,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B014",
-        "message": "Exception handler with duplicate exception: `$NAME`"
+        "message": "Exception handler with duplicate exception: `$NAME`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B014"
+            ]
+          }
+        }
       }
     }
   ]

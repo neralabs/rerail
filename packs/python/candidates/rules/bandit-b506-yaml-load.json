@@ -3,7 +3,7 @@
   "id": "python-conformance:bandit-b506-yaml-load",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Bandit 1.8.6's B506 yaml_load: `yaml.load` without `Loader`, or with a `Loader` (by keyword or second position) other than SafeLoader or CSafeLoader. Port of the kernel test b506_yaml_load_without_a_safe_loader. Bandit's `# nosec` is not modelled; its recordings run with --ignore-nosec.",
+  "description": "Port of Bandit 1.9.4's B506 yaml_load: `yaml.load` without `Loader`, or with a `Loader` (by keyword or second position) other than SafeLoader or CSafeLoader. Port of the kernel test b506_yaml_load_without_a_safe_loader. Bandit's `# nosec` is honoured (`suppress.nosec`), as its recordings honour it.",
   "scope": {
     "include": [
       "**/*"
@@ -79,7 +79,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B506",
-        "message": "Bandit B506 (yaml-load)"
+        "message": "Bandit B506 (yaml-load)",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B506"
+            ]
+          }
+        }
       }
     }
   ]

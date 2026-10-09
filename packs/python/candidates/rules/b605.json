@@ -44,7 +44,14 @@
       "violation": {
         "code": "B605",
         "anchor": "witness.span",
-        "message": "Command is executed through a shell-spawning API"
+        "message": "Command is executed through a shell-spawning API",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B605"
+            ]
+          }
+        }
       }
     }
   ]

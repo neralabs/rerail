@@ -76,7 +76,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM210",
-        "message": "Use `bool(...)` instead of `True if ... else False`"
+        "message": "Use `bool(...)` instead of `True if ... else False`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM210"
+            ]
+          }
+        }
       }
     }
   ]

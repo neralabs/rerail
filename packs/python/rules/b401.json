@@ -34,7 +34,14 @@
       "violation": {
         "code": "B401",
         "anchor": "witness.span",
-        "message": "A telnet-related module is being imported. Telnet is insecure; use SSH or another encrypted protocol."
+        "message": "A telnet-related module is being imported. Telnet is insecure; use SSH or another encrypted protocol.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B401"
+            ]
+          }
+        }
       }
     }
   ]

@@ -33,7 +33,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "E742",
-        "message": "Ambiguous class name: `$NAME`"
+        "message": "Ambiguous class name: `$NAME`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "E742"
+            ]
+          }
+        }
       }
     }
   ]

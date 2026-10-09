@@ -94,7 +94,14 @@
       "violation": {
         "code": "B412",
         "anchor": "witness.span",
-        "message": "Consider possible security implications associated with this CGI handler import."
+        "message": "Consider possible security implications associated with this CGI handler import.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B412"
+            ]
+          }
+        }
       }
     }
   ]

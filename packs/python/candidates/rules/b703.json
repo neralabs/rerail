@@ -37,7 +37,14 @@
       "violation": {
         "code": "B703",
         "anchor": "witness.span",
-        "message": "Potentially dynamic content is passed to a Django safestring API."
+        "message": "Potentially dynamic content is passed to a Django safestring API.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B703"
+            ]
+          }
+        }
       }
     }
   ]

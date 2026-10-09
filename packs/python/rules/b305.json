@@ -33,7 +33,14 @@
       "violation": {
         "code": "B305",
         "anchor": "witness.span",
-        "message": "Use of the insecure ECB cipher mode."
+        "message": "Use of the insecure ECB cipher mode.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B305"
+            ]
+          }
+        }
       }
     }
   ]

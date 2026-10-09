@@ -145,7 +145,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC116",
-    "message": "`trio.sleep()` with >24 hour interval should usually be `trio.sleep_forever()`"
+    "message": "`trio.sleep()` with >24 hour interval should usually be `trio.sleep_forever()`",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC116"
+        ]
+      }
+    }
    }
   },
   {
@@ -246,7 +253,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC116",
-    "message": "`anyio.sleep()` with >24 hour interval should usually be `anyio.sleep_forever()`"
+    "message": "`anyio.sleep()` with >24 hour interval should usually be `anyio.sleep_forever()`",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC116"
+        ]
+      }
+    }
    }
   }
  ]

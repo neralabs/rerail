@@ -35,7 +35,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F505",
-        "message": "`%`-format string is missing argument(s) for placeholder(s)"
+        "message": "`%`-format string is missing argument(s) for placeholder(s)",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F505"
+            ]
+          }
+        }
       }
     }
   ]

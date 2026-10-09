@@ -325,7 +325,14 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC230",
-    "message": "Async functions should not open files with blocking methods like `open`"
+    "message": "Async functions should not open files with blocking methods like `open`",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC230"
+        ]
+      }
+    }
    }
   }
  ]

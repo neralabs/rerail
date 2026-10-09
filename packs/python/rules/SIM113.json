@@ -548,7 +548,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM113",
-        "message": "Use `enumerate()` for index variable `$N` in `for` loop"
+        "message": "Use `enumerate()` for index variable `$N` in `for` loop",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM113"
+            ]
+          }
+        }
       }
     }
   ]
