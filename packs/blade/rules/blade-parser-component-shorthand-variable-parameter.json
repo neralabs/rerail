@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "blade-parser-component-shorthand-variable-parameter",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "stillat/blade-parser 2.1.0 ComponentShorthandVariableParameterValidator: on an `<x-...>` component, an attribute named `$:...` (a typo for `:$...`) or a shorthand `:$var` given a value.",
   "scope": {
@@ -22,15 +22,15 @@
               "stopBy": "neighbor",
               "any": [
                 {
-                  "kind": "start_tag"
+                  "kind": "component"
                 },
                 {
-                  "kind": "self_closing_tag"
+                  "kind": "slot"
                 }
               ],
               "has": {
                 "stopBy": "neighbor",
-                "kind": "tag_name",
+                "kind": "element_name",
                 "regex": "^x-"
               }
             },
@@ -54,14 +54,7 @@
                   {
                     "has": {
                       "stopBy": "neighbor",
-                      "any": [
-                        {
-                          "kind": "quoted_attribute_value"
-                        },
-                        {
-                          "kind": "attribute_value"
-                        }
-                      ]
+                      "kind": "attribute_value"
                     }
                   }
                 ]

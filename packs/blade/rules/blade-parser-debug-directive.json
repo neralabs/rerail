@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "blade-parser-debug-directive",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "stillat/blade-parser 2.1.0 DebugDirectiveValidator: a @dd or @dump directive (CoreDirectiveRetriever::getDebugDirectiveNames).",
   "scope": {
@@ -17,14 +17,7 @@
         "ast": {
           "language": "blade",
           "rule": {
-            "any": [
-              {
-                "kind": "directive"
-              },
-              {
-                "kind": "directive_start"
-              }
-            ],
+            "kind": "directive_name",
             "regex": "^@(dd|dump)$"
           }
         }

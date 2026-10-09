@@ -149,8 +149,8 @@ export const LANGUAGE_REGISTRY = /* registry */ [
         "suffixes": [
           ".blade.php"
         ],
-        "parser": "tree-sitter",
-        "grammar": "vendored:blade",
+        "parser": "forte",
+        "grammar": "native:forte",
         "tapeTag": 8
       }
     ],
