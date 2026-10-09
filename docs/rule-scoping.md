@@ -22,7 +22,7 @@ Rerail is off until it is started. Each repository and each checkout has a start
 
 ## Set-up
 
-A repository is **Not set up** until its first configuration. Starting Rerail in a repository that is not set up sets it up: the rule packs recommended for this checkout are added, and the repository is started. A language or framework pack is added at the folder holding everything that matched it (for example `web` when only `web/` has TypeScript); a repository pack is added for the whole repository. `rerail start --no-packs` (in the dashboard, "I'll pick rule packs myself") sets the repository up with no packs. Set-up never adds rules created by you; you add them yourself.
+A repository is **Not set up** until its first configuration. Starting Rerail in a repository that is not set up runs set-up there: it asks before reading the repository, recommends rule packs with the reason for each, and asks you to confirm. "Start" sets the repository up with the recommended packs, each attached at the folder the recommendation names, and starts it: a language or framework pack at the folder holding everything that matched it (for example `web` when only `web/` has TypeScript), a repository pack for the whole repository. "I'll pick rule packs myself" (`--answer pick-myself`) sets the repository up with no packs and reads no code. "Review them first" opens the dashboard's review page (`#rule-packs?review=1`, scoped to the repository and checkout) and set-up asks again rather than waiting on the browser. In the review the recommended packs show switched on until the first change; the first change adds the packs kept on, which sets the repository up without starting it, and later switches add or remove one pack. "Start Rerail with the rule packs you kept on" then starts the repository with those attachments; picking rule packs yourself after a review removes the packs the review added. Set-up run again in a repository that is set up never asks again: it shows the summary, or says Rerail is stopped there. Set-up never adds rules created by you; you add them yourself.
 
 A repository that is set up runs only what is attached to it. The rules that ship with Rerail run only in repositories that add them. Nothing else runs: there are no rule files in the working tree.
 
@@ -82,6 +82,7 @@ The same operation definitions drive HTTP/OpenAPI and MCP. Every operation names
 | `repository_start`, `repository_stop` | `POST /api/repository/start`, `/stop` | Scope `checkout` (with the checkouts inside it) or `repository`. |
 | `repository_link` | `POST /api/repository/aliases` | Make another remote address resolve to this repository. People only. |
 | `rule_packs_recommend` | `GET /api/rule-packs/recommendations` | The packs that fit a checkout, each with the folder to add it in. |
+| `coding_agents_list` | `GET /api/coding-agents` | Each coding agent Rerail works with: found on this computer, connected, and any problem. Changes nothing. |
 | `rerail_rules_list` | `GET /api/rerail-rules` | By Rerail rules, each with its pack. |
 | `library_rules_list`, `library_rules_get`, `library_rules_upsert`, `library_rules_remove` | `/api/library-rules[/{id}]` | Rules created by you. Upsert can attach a new rule (`attach: true`) and copies a By Rerail rule on edit. |
 

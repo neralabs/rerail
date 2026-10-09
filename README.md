@@ -205,9 +205,22 @@ The daemon serves every repository on the machine. Its listings — sessions, au
 
 ## Install
 
+This section is the install guide, for you or for the coding agent you ask to install Rerail.
+
+Run one command in the repository you want Rerail in:
+
 ```sh
 npx @neralabs/rerail setup
 ```
+
+From a Rerail checkout, `just rerail` runs the same set-up. To start in another repository, answer "Use a different folder…" or pass `--repo ~/code/your-repo`.
+
+- **Node 24 or newer.** On an older Node, set-up stops before changing anything and says how to upgrade.
+- **What it does.** It installs Rerail into your home folder (`~/.rerail`), with no admin rights, and turns nothing on. Then it asks before reading the repository you ran it in, shows the rule packs that look right for it with the reason for each, and starts Rerail in that checkout only once you say yes. It connects the coding agents it finds (Claude Code, Cursor, Codex, OMP and Pi), or only the ones you name, and ends on a short summary and a link to the dashboard. Open a new session when you are ready; Rerail starts there.
+- **Your choices.** You can review the rule packs in the dashboard first, pick rule packs yourself (Rerail then reads no code and the repository is set up with no packs), or name a different folder. Run outside a repository, it asks which folder to start with, or you can skip and later type `/rerail-start` in a session in any repository.
+- **In a terminal**, answer each question there.
+- **From a coding agent**, ask it to install Rerail and give it this section. Without a terminal, set-up prints each question for the coding agent to ask you as written, with the command to run for each answer (`rerail setup --answer … --repo … --agents …`). The coding agent waits for your reply and runs the command for the answer you gave.
+- **If your coding agent can't install it, run the same line in a terminal.**
 
 Prerequisites:
 
@@ -215,7 +228,7 @@ Prerequisites:
 - macOS (arm64, x64), Linux glibc (arm64, x64), or Windows MSVC (arm64, x64). The package carries prebuilt native kernels for those targets; nothing is compiled on your machine.
 - Read access to `@neralabs/rerail` on [npmjs](https://www.npmjs.com/), the only registry Rerail is published to. Until launch the package is restricted: sign in with `npm login` as a member of the `neralabs` npm organization (or put a read token in `~/.npmrc`). After launch it installs anonymously.
 
-`setup` installs the package under `~/.rerail/versions/<version>`, points `~/.rerail/current` and the launcher `~/.rerail/bin/rerail` (`rerail.cmd` on Windows) at it, registers Rerail with every coding harness it finds on the machine, and starts the daemon. Add `~/.rerail/bin` to `PATH` and restart the harnesses. Make the first run `npx @neralabs/rerail setup --dry-run` to see what it would change; `--harness <list>` limits registration. `rerail update` shells out to `npm` and uses the same `~/.npmrc`. `rerail install --remove` takes Rerail out of every coding agent, stops the daemon, and moves `rerail.sqlite` into a dated backup so rules and history are kept. [Installing Rerail](docs/installation.md) describes what setup writes, how to remove Rerail, and the managed-installation layout.
+`setup` installs the package under `~/.rerail/versions/<version>` and points `~/.rerail/current` and the launcher `~/.rerail/bin/rerail` (`rerail.cmd` on Windows) at it; add `~/.rerail/bin` to `PATH`. `rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--port <n>] [--json]` takes the answers above as arguments; `rerail install --agents <list> [--dry-run]` connects coding agents without setting anything up. `rerail update` shells out to `npm` and uses the same `~/.npmrc`. `rerail install --remove` takes Rerail out of every coding agent, stops the daemon, and moves `rerail.sqlite` into a dated backup so rules and history are kept. [Installing Rerail](docs/installation.md) describes every set-up step, what it writes, how to remove Rerail, and the managed-installation layout.
 
 Rerail is off in every repository until it is started there. Every coding agent gets one command set: `/rerail` (what Rerail is doing here, and every command), `/rerail-ui` (open the dashboard), `/rerail-create` (create a rule in your own words), `/rerail-start`, `/rerail-stop`, `/rerail-update` (install the newest version), and `/rerail-rage-quit` (remove Rerail from this computer; rules and history are kept in a backup). `/rerail-start` starts Rerail in the current checkout and the worktrees that follow it (from the main checkout, every linked worktree without its own setting) and `/rerail-stop` stops them, immediately detaching the active runtime. OMP and Pi register these commands natively. Claude Code and Cursor receive user-level command files in `~/.claude/commands/` and `~/.cursor/commands/` during `rerail install` (and `rerail setup`), removed by `rerail install --remove`. Codex receives one skill per command under `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-ui`, `$rerail-start`, and so on. Registration also removes the `/rerail-session` command file an earlier version wrote, when it is Rerail's own. Restart the coding agent after installing or rebuilding to refresh command registration. Settings, audits, status, update checks, rollback, and reset are CLI commands (`rerail settings`, `rerail scan`, `rerail status`, `rerail update check`, `rerail update rollback`, `rerail reset`). See [Scan and settings controls](#scan-and-settings-controls) for targeting and coding-agent differences.
 
@@ -292,7 +305,7 @@ One `rerail` install carries the rules kernel, the transcript database, and a br
 rerail daemon start            # background daemon on http://127.0.0.1:4737/, opens nothing
 rerail daemon start --open     # same, then opens the browser view
 rerail daemon start --host 0.0.0.0 --allow-remote --public-host rerail.example   # bind off loopback (see below)
-rerail start                   # start Rerail in this checkout and the checkouts inside it; the first time also sets the repository up with its recommended rule packs (--no-packs: none; --repository: every checkout)
+rerail start                   # start Rerail in this checkout and the checkouts inside it (--repository: every checkout); in a repository that is not set up, first runs set-up's questions there
 rerail stop                    # stop Rerail in this checkout and the checkouts inside it (--repository: every checkout); leave the shared daemon running
 rerail state                   # prints started, stopped, or not-set-up for this checkout
 rerail status                  # whether Rerail is on here, then the daemon; exit 3 when the daemon is not running
@@ -324,6 +337,7 @@ The daemon owns the resident kernel execution service and exposes the Rerail dat
 | `rules_activity`              | `GET /api/rules/activity?since=&repository=`                          | What each rule caught since a time: distinct violations, sessions, last sighting, `audits` that evaluated it, and steering deliveries it drove.                                                |
 | `rule_packs_list`             | `GET /api/rule-packs`                                                 | Every rule pack with its rules (kind, title, group, mode, on or off, and examples where the pack has them). Read-only. |
 | `rule_packs_recommend`        | `GET /api/rule-packs/recommendations?repository=&checkout=`           | The packs that fit a checkout, each with its rule count, the reason it matched and the folder to add it in. Local; changes nothing. |
+| `coding_agents_list`          | `GET /api/coding-agents`                                              | Each coding agent Rerail works with: whether it is on this computer (`found`), whether Rerail is connected to it (`connected`), and any `problem`. A dry run; changes nothing. Settings shows it. |
 | `rerail_rules_list`           | `GET /api/rerail-rules?kind=`                                         | The By Rerail rules, each with the pack it belongs to. |
 | `library_rules_list`          | `GET /api/library-rules?kind=`                                        | The rules created by you. |
 | `library_rules_get`           | `GET /api/library-rules/{id}`                                         | One rule created by you. |
@@ -386,7 +400,7 @@ OMP and Pi expose the commands natively, with descriptions in slash completion. 
 | `/rerail`          | Show whether Rerail is on in this repository, its rule count, how often it steered this session, the session's dashboard link, and every command. Rendered by `rerail session`; Cursor gets the repository-level form. |
 | `/rerail-ui`       | Open the dashboard's rules page for this repository and checkout (the same link the footer's rule count carries).                 |
 | `/rerail-create`   | Create a rule in your own words: the coding agent drafts it, tests it with `rerail rules test <draft.json>`, reads it back, and adds it with `rerail rules add <draft.json>` only after you say yes: the rule goes into your library and is added to this repository (setting it up with that rule when it is not set up yet). |
-| `/rerail-start`    | Start Rerail in this checkout and the worktrees inside it and attach it to the current session; in a repository that is not set up it also sets it up with its recommended rule packs (OMP and Pi ask first: recommended rules, or pick them yourself). |
+| `/rerail-start`    | Start Rerail in this checkout and the worktrees inside it and attach it to the current session; in a repository that is not set up it first runs set-up's questions there (OMP and Pi ask through their own picker; Claude Code and Cursor relay the questions as text). |
 | `/rerail-stop`     | Stop recording, evaluation, steering, and daemon autostart in this checkout and the worktrees inside it. The shared daemon stays available to others. |
 | `/rerail-update`   | Install the newest Rerail version.                                                                                                 |
 | `/rerail-rage-quit` | Remove Rerail from this computer (`rerail install --remove`); rules and history are kept in a backup. Asks first: OMP and Pi use a native selector, and Claude Code does not pre-approve the removal. |
@@ -400,10 +414,10 @@ repository. Starting or stopping a checkout also reaches the checkouts inside
 it, which follow it again; `rerail start --repository` and `rerail stop
 --repository` (or the dashboard) act on every checkout of the repository. The
 state is stored in `~/.rerail/rerail.sqlite`. `/rerail-start` (or `rerail
-start`) in a repository that is not set up also sets it up: the rule packs
-recommended for this checkout are added, a language pack at the folder it
-matched and a repository pack for the whole repository (`rerail start
---no-packs` adds none). A started repository that is not set up records
+start`) in a repository that is not set up first runs the set-up there: it
+asks, recommends rule packs, and once you confirm adds them (a language pack
+at the folder it matched, a repository pack for the whole repository) and
+starts. A started repository that is not set up records
 sessions but runs no rules. Stopping takes effect immediately in OMP and Pi
 and before the next one-shot Claude Code, Codex, or Cursor hook runs. It
 persists across coding agent and daemon restarts, does not delete history or
@@ -707,6 +721,8 @@ Claude's internal temporary directory is explicitly kept inside the sandbox with
 ### UI
 
 The browser view lives in `ui/` and has no toolchain: `index.html`, `app.css`, and native ES modules (`app.js`, `api.js`, `state.js`, `render/*.js`), served as bytes. No React, no Vite, no Tailwind, no TypeScript, not even as dev dependencies. Colours come from the committed `ui/tokens.generated.css` (and the terminal brand colour from `src/terminal-brand.generated.ts`); `npm run check:ui-tokens` fails when the UI references a `var(--…)` that neither the token sheet nor the page's own CSS declares.
+
+The dashboard's routes: `#rules` (rules by rule pack), `#rule/<id>` (one rule's panel, the link a steer carries), `#activity`, `#sessions` (with `?sessionId=<id>` for one session), `#settings`, `#rule-packs`, and `#rule-packs?review=1` (the packs set-up recommended, reviewed before Rerail starts). Every route carries the `?repository=<key>&checkout=<path>` scope; without one the dashboard lists the repositories to pick from.
 
 `npm run build:ui` copies `ui/` to `dist/ui`, which the daemon serves. A daemon started with `--dev`, or with `RERAIL_DEV=1` in its environment, serves `ui/` itself instead, so an edit needs only a browser reload; `rerail status` and `/healthz` report it as `dev` rather than `bundled`.
 
