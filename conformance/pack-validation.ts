@@ -192,6 +192,29 @@ function readLicences(directory: string): Licences {
 }
 
 /**
+ * Files Rerail wrote under `upstream/<tool>/` subdirectories (a corpus authored for the tool to score), as the tool's own
+ * `upstream/<tool>/UPSTREAM.md` lists them, pack-relative. A record may list only its tool's files.
+ */
+function readAuthored(directory: string): { authored: Set<string>; failures: string[] } {
+  const authored = new Set<string>();
+  const failures: string[] = [];
+  const upstream = join(directory, "upstream");
+  if (!existsSync(upstream)) return { authored, failures };
+  for (const tool of readdirSync(upstream, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort(compareDeterministicStrings)) {
+    const record = `upstream/${tool}/UPSTREAM.md`;
+    if (!existsSync(join(directory, record))) continue;
+    for (const line of readFileSync(join(directory, record), "utf8").split("\n")) {
+      const file = UPSTREAM_ROW.exec(line)?.[1];
+      if (file === undefined) continue;
+      if (!file.startsWith(`upstream/${tool}/`)) failures.push(`${record} lists ${file}, which is not under upstream/${tool}/`);
+      else if (!existsSync(join(directory, file))) failures.push(`${record} lists ${file}, which does not exist`);
+      else authored.add(file);
+    }
+  }
+  return { authored, failures };
+}
+
+/**
  * Validates `packs/<id>/` against the contract. Check 4 runs the conformance runner (the engine's production workspace
  * path), so a pack that ports rules takes as long as its fixture tier.
  */
@@ -369,14 +392,18 @@ export async function validatePack(directory: string, options: ValidatePackOptio
 
   // Check 6: licences. Every copied file is listed in an UPSTREAM.md, every listed file exists, and every recorded
   // licence is on the repository allowlist. Under upstream/<tool>/, the recordings and the recorder (files directly in
-  // it) are Rerail's; everything in its subdirectories (fixtures/, tests/) is copied from the tool.
+  // it) are Rerail's; everything in its subdirectories (fixtures/, tests/) is copied from the tool, unless the tool's
+  // own upstream/<tool>/UPSTREAM.md lists it as Rerail's.
   for (const failure of licences.failures) fail("licences", failure);
   if (!existsSync(join(directory, "LICENSE"))) fail("licences", "LICENSE is missing");
   for (const [project, licence] of licences.recorded) {
     if (!allowedLicenses().has(licence)) fail("licences", `licenses/${project}/UPSTREAM.md: ${licence} is not on the repository licence allowlist`);
   }
+  const { authored, failures: authoredFailures } = readAuthored(directory);
+  for (const failure of authoredFailures) fail("licences", failure);
   for (const file of filesUnder(directory, join(directory, "upstream"))) {
-    if (file.split("/").length > 3 && !licences.listed.has(file)) fail("licences", `${file} is copied but no licenses/*/UPSTREAM.md lists it`);
+    if (file.split("/").length > 3 && !licences.listed.has(file) && !authored.has(file))
+      fail("licences", `${file} is under upstream/<tool>/ but neither licenses/*/UPSTREAM.md (copied) nor its tool's UPSTREAM.md (Rerail's) lists it`);
   }
   for (const [file, record] of licences.listed) {
     if (!existsSync(join(directory, file))) fail("licences", `${record} lists ${file}, which does not exist`);

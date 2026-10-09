@@ -8,7 +8,8 @@
       "EX101"
     ],
     "files": [
-      "asserts.py"
+      "asserts.py",
+      "clean.py"
     ]
   },
   "findings": [

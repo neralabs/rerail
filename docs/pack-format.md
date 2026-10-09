@@ -38,7 +38,8 @@ packs/<id>/
 ├── conformance.json    the conformance pack schema of conformance/languages/pack.ts, as today
 ├── divergences.json    declared disagreements with the tools, as today
 ├── upstream/
-│   └── <tool>/         the tool's copied tests (fixtures/), its recordings (*.expected.json), the recorder
+│   └── <tool>/         the tool's copied tests (fixtures/), its recordings (*.expected.json), the recorder, and
+│                       UPSTREAM.md when Rerail wrote files for the tool to score (an authored corpus)
 └── candidates/         ports still being evaluated: scored, never shipped
 ```
 
@@ -111,7 +112,7 @@ port entry; check 4 checks that the manifest lists exactly the pack's rules, and
 Implemented: `validatePack(directory, { corpora?, corpusRoot? })` in `conformance/pack-validation.ts` runs checks 1
 to 6 over one pack and returns each check's failures and each rule's status (`ok`, `failed` or `not-supported-yet`).
 `test/packs.test.ts` calls it for every directory under `packs/`, with one test per check and one per rule, and has
-the validator's own tests over the fixture packs in `test/fixtures/packs/`. `npm test` runs it with the local core.
+the validator's own tests over the fixture packs in `fixtures/packs/`. `npm test` runs it with the local core.
 Running it against the newest published core inside each pack's range is for pack CI, which does not exist yet.
 
 ```sh
@@ -154,7 +155,10 @@ Precisely:
 6. Each `licenses/<project>/` holds the upstream licence text and an `UPSTREAM.md` whose table rows start with a
    pack-relative path in backticks. Every file in a subdirectory of `upstream/<tool>/` (the tool's copied tests:
    `fixtures/`, `tests/`) must be listed; files directly in `upstream/` or `upstream/<tool>/` (recordings, recorders)
-   are Rerail's. Every listed file must exist, every recorded licence must be on the repository allowlist
+   are Rerail's. A file Rerail wrote for the tool to score (an authored corpus, such as `packs/complexity/`'s lizard
+   corpus) is listed instead in the tool's own `upstream/<tool>/UPSTREAM.md`, with the same table rows: it is Rerail's,
+   so it adds no licence to `licenses/` or to the package's `license`. That record may list only files under its own
+   `upstream/<tool>/`. Every listed file must exist, every recorded licence must be on the repository allowlist
    (`scripts/licence-allowlist.json`), and the pack needs a `LICENSE`. `reuse lint` and `node scripts/check-licenses.mjs`
    stay repository-wide gates in CI; annotate copied files in `REUSE.toml` as well, since `reuse lint` alone accepts
    a copied file the catch-all Apache-2.0 annotation covers.
