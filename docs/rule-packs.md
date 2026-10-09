@@ -13,7 +13,7 @@ Only rules that already exist ship as packs. Rerail ships two:
 | Pack | Category | Rules | Where it applies | What it is |
 |---|---|--:|---|---|
 | Cyclomatic complexity (limit 6) | language | 3 | never recommended; chosen by hand | One rule each for Python, TypeScript and JavaScript that flags a function whose cyclomatic complexity, with lizard 1.24.0's decision points, is above 6. The documents are in `packs/complexity/rules/`, seeded off. Group: Complexity. See [Cyclomatic complexity](#cyclomatic-complexity). |
-| TSLint | language | 74 | the `typescript` dependency, `*.ts` or `*.tsx` files | The golden TSLint ports in `packs/tslint/rules/`: each passed TSLint's own test suite in the conformance harness, with TSLint's default options. Group: TSLint. |
+| TSLint | language | 74 | the `typescript` dependency, `*.ts` or `*.tsx` files | The TSLint ports in `packs/tslint/rules/`, with TSLint's default options, each proven against TSLint's own test suite (see `packs/tslint/README.md`). A violation's code is the TSLint rule (`triple-equals`). Group: TSLint. |
 
 The rule lists are the pack files themselves: `packs/complexity/pack.json` and `packs/tslint/pack.json`. A rule's title comes from its document's description. Core ships both packs inside its own package (`CORE_RULE_PACKS` in `src/rule-bootstrap.ts`, and `package.json` `files`) and seeds their rules disabled; the other packs under `packs/` are not shipped yet.
 
@@ -63,11 +63,11 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
   - `title` and `group` are what the dashboard shows.
   - `mode` (optional) is the rule mode the pack starts the rule in; without it the rule keeps its document's mode. No shipped pack sets one. Takes effect once packs are attached.
   - `on` (optional, default `true`) is whether the pack starts the rule on. Takes effect once packs are attached.
-  - `examples` (optional) is one caught and one passing example, `{ "caught": { "path"?, "text" }, "passes": { … } }`, with a path for a file rule and none for a conversation rule. The complexity pack has one pair per rule; the TSLint ports are proved by the conformance harness (the golden manifest, `packs/tslint/conformance.json`).
+  - `examples` (optional) is one caught and one passing example, `{ "caught": { "path"?, "text" }, "passes": { … } }`, with a path for a file rule and none for a conversation rule. The complexity pack has one pair per rule; the TSLint ports are proved against TSLint's recorded tests (`packs/tslint/conformance.json`), and the three whose rule TSLint never tests with its default options also have examples.
   - `document` is the rule's document, `rules/<name>.json`, relative to the pack; it must carry the rule's id
     ([pack format](pack-format.md#packjson)).
 
-`test/rule-packs.test.ts` holds the packs to this: TSLint lists exactly the golden ports, the complexity pack exactly its three rules, every rule starts in its document's mode, and every example is caught or passes as it says.
+`test/rule-packs.test.ts` holds the packs to this: TSLint lists exactly its shipped ports, the complexity pack exactly its three rules, every rule starts in its document's mode, and every example is caught or passes as it says.
 
 ## Matching
 

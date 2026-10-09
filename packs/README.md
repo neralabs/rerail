@@ -31,7 +31,7 @@ Each pack lives in `packs/<id>/`:
 | `rules/*.json` | Code-rule documents (`rerail.policy/v1`) | yes |
 | `LICENSE`, `NOTICE`, `README.md` | The pack's licence, notice and description | yes |
 | `licenses/<project>/` | Upstream licence, verbatim, and `UPSTREAM.md` listing every copied or adapted file | yes |
-| `conformance.json`, `divergences.json`, `upstream/`, `candidates/` | For ported rules: the tools' recorded findings, their copied tests, declared divergences, ports under evaluation | no |
+| `conformance.json`, `divergences.json`, `upstream/`, `candidates/` | For ported rules: the tools' recorded findings, their copied tests, declared divergences, ports under evaluation (scored and reported, never gated) | no |
 
 A pack is data only: it never imports the core engine. Core runs its rules, and the repository's tests validate
 every pack against the contract. A pack may hold rules for a language core lists as `planned`: they are stored

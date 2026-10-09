@@ -718,12 +718,12 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <dt>Languages</dt><dd><code>ast</code>: <code>python</code>, <code>typescript</code>, <code>javascript</code>, <code>php</code>, or <code>blade</code>. regex: any file.</dd>
 <dt>Limits</dt><dd>Pattern and regex source sizes are bounded by the capabilities (<code>maxAstPatternBytes</code>, <code>maxRegexPatternBytes</code>: 16 KiB each in the bundled capabilities).</dd>
 </dl>
-<figure class="ex-fig" data-src="repo:packs/tslint/candidates/encoding.json#/clauses/0" data-kind="clause"><figcaption>TSLint's <code>encoding</code>: a <code>file.content</code> regex anchored at the start of the file.</figcaption><div class="src"><span class="src-path">packs/tslint/candidates/encoding.json</span> <span class="src-at"><code>/clauses/0</code> · this repository</span></div><pre class="ex" data-kind="clause">{
+<figure class="ex-fig" data-src="repo:packs/tslint/candidates/encoding/encoding.json#/clauses/0" data-kind="clause"><figcaption>TSLint's <code>encoding</code>: a <code>file.content</code> regex anchored at the start of the file.</figcaption><div class="src"><span class="src-path">packs/tslint/candidates/encoding/encoding.json</span> <span class="src-at"><code>/clauses/0</code> · this repository</span></div><pre class="ex" data-kind="clause">{
   "id": "bom",
   "forbid": { "regex": { "source": "file.content", "pattern": "\\A\\x{FEFF}" } },
   "violation": {
     "anchor": "witness.span",
-    "code": "ENCODING",
+    "code": "encoding",
     "message": "This file is not UTF-8 encoded."
   }
 }</pre></figure>
@@ -739,7 +739,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
   },
   "violation": {
     "anchor": "witness.start",
-    "code": "FILE_NAME_CASING",
+    "code": "file-name-casing",
     "message": "File name must be kebab-case"
   }
 }</pre></figure>
@@ -804,11 +804,11 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
   "forbid": { "ast": { "language": "typescript", "rule": { "pattern": "console.$M" } } },
   "violation": {
     "anchor": "witness.span",
-    "code": "NO_CONSOLE",
+    "code": "no-console",
     "message": "Calls to 'console.&lt;method&gt;' are not allowed."
   }
 }</pre></figure>
-<figure class="ex-fig" data-src="repo:packs/tslint/candidates/object-literal-shorthand.json#/clauses/1" data-kind="clause"><figcaption>TSLint's <code>object-literal-shorthand</code>: contextual patterns for fragments, and a fix template that reuses <code>$A</code>.</figcaption><div class="src"><span class="src-path">packs/tslint/candidates/object-literal-shorthand.json</span> <span class="src-at"><code>/clauses/1</code> · this repository</span></div><pre class="ex" data-kind="clause">{
+<figure class="ex-fig" data-src="repo:packs/tslint/candidates/object-literal-shorthand/object-literal-shorthand.json#/clauses/1" data-kind="clause"><figcaption>TSLint's <code>object-literal-shorthand</code>: contextual patterns for fragments, and a fix template that reuses <code>$A</code>.</figcaption><div class="src"><span class="src-path">packs/tslint/candidates/object-literal-shorthand/object-literal-shorthand.json</span> <span class="src-at"><code>/clauses/1</code> · this repository</span></div><pre class="ex" data-kind="clause">{
   "id": "longhand-property",
   "forbid": {
     "ast": {
@@ -823,7 +823,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
   },
   "violation": {
     "anchor": "witness.span",
-    "code": "OBJECT_LITERAL_SHORTHAND",
+    "code": "object-literal-shorthand",
     "message": "Expected property shorthand in object literal.",
     "fix": "$A"
   }
@@ -2653,7 +2653,7 @@ Gap = { "to": "token" | "sibling" | "capture.NAME", "comments"?: Bool, "edge"?: 
   },
   "violation": {
     "anchor": "witness.span",
-    "code": "ORDERED_IMPORTS",
+    "code": "ordered-imports",
     "message": "Named imports must be alphabetized ($B before $A)."
   }
 }</pre></figure>

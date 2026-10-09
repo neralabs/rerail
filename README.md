@@ -112,7 +112,7 @@ The Rerail database (`$RERAIL_HOME/rerail.sqlite`) is the source of truth for ru
 
 Rule documents bundled with the package are core's own rules, under `code-rule-dsl/rules/` and seeded enabled (none ship today), and the rules of the packs core ships, under `packs/<id>/rules/` and seeded disabled. Rerail 0.1.0 ships one pack, the TSLint ports in `packs/tslint/rules/`. Bootstrap — run by every runtime start and `rerail daemon start` — seeds those documents into the catalog as project rules without clobbering yours: a new id is inserted with its `source_digest`; a row whose content still equals the document it was seeded from follows the bundled document when a package update changes it; a row you edited or created is never touched, and `enabled` is never reset. `rerail rules export` dumps the global and current-project rules to `$RERAIL_HOME/rules.json` (or `--output <file>`) and `rerail rules import <file>` loads one back. `rerail update` first copies the whole database to `$RERAIL_HOME/rerail.sqlite.pre-update`; `rerail reset` never touches rules.
 
-Rule packs (`packs/<id>/`, [pack format](docs/pack-format.md)) hold rule documents in `rules/` and a `pack.json` that lists each with its document, a title and a group, and a match definition (file globs or `package.json` dependencies) used to explain why it fits. Rerail ships two: **TSLint**, the 74 golden TSLint ports, and **complexity**, three cyclomatic complexity rules chosen by hand. A pack for a project's own conventions is added the same way: a pack directory with its rule documents and a `pack.json` listing them. `recommendRulePacks` matches a repository's files and manifests against every pack locally, with no model and no network, and returns each fitting pack with its rule count and the reason. Packs are not attached to repositories yet: choosing them and seeding their rules in place of the bundled rules is future work. See [Rule packs](docs/rule-packs.md).
+Rule packs (`packs/<id>/`, [pack format](docs/pack-format.md)) hold rule documents in `rules/` and a `pack.json` that lists each with its document, a title and a group, and a match definition (file globs or `package.json` dependencies) used to explain why it fits. Rerail ships two: **TSLint**, 74 TSLint ports proven against TSLint's own tests, and **complexity**, three cyclomatic complexity rules chosen by hand. A pack for a project's own conventions is added the same way: a pack directory with its rule documents and a `pack.json` listing them. `recommendRulePacks` matches a repository's files and manifests against every pack locally, with no model and no network, and returns each fitting pack with its rule count and the reason. Packs are not attached to repositories yet: choosing them and seeding their rules in place of the bundled rules is future work. See [Rule packs](docs/rule-packs.md).
 
 A file rule is a `rerail.policy/v1` document: a path `scope` and a list of regex, AST, or relational clauses the native engine evaluates, each with the violation it reports. The [code-rule DSL reference](docs/code-rule-dsl-reference.html) documents every construct, and [Tool-call rules](docs/tool-call-rules.md) covers structural matching of tool calls. A conversation rule file looks like this:
 
@@ -637,7 +637,7 @@ npm run build:native      # compile the native kernel into native/
 npm run build             # clean build: native kernel, runtime, host bundles, UI
 npm run check:all         # TypeScript, rustfmt + clippy, UI token and reference checks
 npm run test:all          # build, unit, conformance, reference, native, and integration suites
-npm run test:conformance  # TSLint harness tests (fetches TSLint's tests first) and the language conformance gate
+npm run test:conformance  # conformance tests (the identifier-rename gate) and the language conformance gate, offline
 npm run package:check     # build and dry-run the npm pack
 ```
 
@@ -651,7 +651,7 @@ Rerail's own toolchain is Node only. OMP remains an external Bun-hosted runtime;
 
 `scripts/prepare-model.py` reproduces the bundled INT8 artifact from the revision and checksums recorded in `model/manifest.json`.
 
-`npm run conformance:languages -- --pack <pack>` scores a language pack's ported linter rules (`packs/<pack>/`) through the production workspace against the tool's recordings in the pack's `upstream/` and, with corpora checked out under `.rerail/corpora/<pack>/`, the linter's output on pinned corpora; `--write` saves the report under `.rerail/reports/`. `npm run conformance:languages:check` is the fixtures-only gate. Both it and the TSLint harness's tests (`conformance/tslint/*.test.ts`, which need TSLint's tests fetched into `tmp/tslint-fixtures/` and skip without them) run in `npm run test:conformance`, part of `test:all` in CI.
+`npm run conformance:languages -- --pack <pack>` scores a language pack's ported linter rules (`packs/<pack>/`, TSLint's included) through the production workspace against the tool's recordings in the pack's `upstream/` and, with corpora checked out under `.rerail/corpora/<pack>/`, the linter's output on pinned corpora; `--write` saves the report under `.rerail/reports/`. `npm run conformance:languages:check` is the fixtures-only gate. Both it and the conformance tests (`test/conformance/`: the identifier-rename gate) run offline in `npm run test:conformance`, part of `test:all` in CI.
 
 ### Operational commands (`just`)
 
@@ -667,7 +667,7 @@ The root [`Justfile`](Justfile) wraps the day-to-day operations; `just` lists th
 | `just rerail-status`, `just rerail-down`, `just rerail-reset` | Shows the dev instance and build freshness; stops its daemon (state kept); deletes this repository's session history from the dev database (rules kept). |
 | `just rerail-playground` | The development rule playground beside the dev daemon (attended macOS only; see [playground/README.md](playground/README.md)). |
 | `just rerail-smoke` | Packs this checkout, publishes it to a throwaway authenticated local registry, and drives install, update, `nuke-rerail`/`--restore` and `install --remove` in a sandbox `HOME` (`KEEP=1` keeps it). |
-| `just rerail-conformance`, `just rerail-language-conformance`, `just rerail-promote-tslint` | TSLint and language-pack conformance, and promotion of a proven TSLint port. |
+| `just rerail-language-conformance` | Language-pack conformance, TSLint's included (`--pack <id>`, `--check`). |
 | `just rerail-query-parity --corpus <dir> --manifest <paths.json>` | Compares a reference native addon (`RERAIL_QUERY_PARITY_REFERENCE_ADDON`) with this checkout's on a corpus. |
 
 `npm run test:scripts` runs the recipes' tests.

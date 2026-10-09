@@ -39,7 +39,7 @@ packs/<id>/
 ├── divergences.json    declared disagreements with the tools, as today
 ├── upstream/
 │   └── <tool>/         the tool's copied tests (fixtures/), its recordings (*.expected.json), the recorder
-└── candidates/         ports still being evaluated: scored, never shipped
+└── candidates/         ports still being evaluated: scored and reported, never gated, never shipped
 ```
 
 `<id>` is lowercase letters, digits and dashes. It is the directory name, the `id` in `pack.json`, and the npm name
@@ -89,22 +89,22 @@ recordings from `upstream/` unless `conformance.json` sets `oracles`:
 
 - `conformance.json`: the language family, the engine capabilities the pack declares (with exemptions and their
   evidence), the pinned tools and public corpora, and for each ported rule the upstream tool and rule it reproduces,
-  how findings compare (`line` or `line+column`) and the capabilities it exercises.
+  how findings compare (`line` or `line+column`) and the capabilities it exercises. A port whose document is under
+  `candidates/` is scored and reported but never fails a check. A port may set `fixtures`, `path.matchesGlob`
+  patterns over the tool's fixture paths: it is then evaluated and scored only on the fixtures they match, the tests
+  its upstream configuration ran on. That is how a tool whose tests run each rule with several option sets is
+  scored: one document per option set, each on its own tests (TSLint's `<rule>/<variant>/` directories).
 - `upstream/<tool>/fixtures.expected.json` and `corpus-<name>.expected.json`: what the tool reported on its own tests
   and on each pinned corpus, produced by the recorder in the same directory. Recorders are run by hand against the
-  pinned tool versions; tools and corpus checkouts live under `.rerail/{tools,corpora}/<id>/` (gitignored).
+  pinned tool versions; tools and corpus checkouts live under `.rerail/{tools,corpora}/<id>/` (gitignored). Where a
+  tool's tests state their expected findings (TSLint's `.lint` markup), the recorder reads them instead of running the
+  tool: the tool's own test suite requires it to report exactly those.
+- `upstream/<tool>/protected-identifiers.json` (optional, ECMA family): opts the pack into the identifier-rename gate,
+  `test/conformance/identifier-rename.test.ts`, which scores every shipped port again on the fixtures with each
+  user-chosen identifier renamed and fails when a score moves. It maps fixture paths or directories to the names and
+  patterns the rename must keep (names the rule's implementation or the test's options mention).
 - `divergences.json`: each place Rerail and the tool disagree, with its kind (`upstream-wrong`, `not-comparable`,
   `rerail-unknown`) and the evidence checked.
-
-**TSLint** is scored by its own harness, `conformance/tslint/` ([README](../conformance/tslint/README.md)), because
-TSLint's tests are `.lint` files with option variants that the harness fetches at a pinned commit instead of
-recordings. Its files carry a `format` that names them: `conformance.json` is the golden manifest
-(`rerail-tslint-golden/v1`: per shipped rule, the verdict and true positives the golden gate holds it to), and
-`divergences.json` is the PASS audit (`rerail-tslint-audit/v1`: per port that passes, whether it is genuine or where
-it differs from TSLint on real code). `candidates/` holds the ports not shipped, their verdict sidecars and every
-rule's option-variant overrides (`candidates/<rule>/<variant>.json`). Check 2 counts a golden manifest entry as a
-port entry; check 4 checks that the manifest lists exactly the pack's rules, and the golden gate
-(`conformance/tslint/golden-gate.test.ts`, run by `npm run test:conformance`) scores them against TSLint's tests.
 
 ## The validation contract
 
@@ -130,7 +130,7 @@ negative of one ported rule: `node --import tsx conformance/languages/cli.ts --p
 | 1 | Rules | A file in `rules/` is not listed in `pack.json`, a listed `document` is missing, its `id` differs from the listing, or it does not compile against core's capabilities |
 | 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json` |
 | 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one |
-| 4 | Ports | With `conformance.json`: a ported rule's violations and the tool's recordings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption |
+| 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's recordings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption |
 | 5 | Package | `package.json` misnames the pack, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records |
 | 6 | Licences | A copied file is missing from an `UPSTREAM.md`; `reuse lint` or the licence allowlist fails |
 
@@ -146,7 +146,8 @@ Precisely:
 4. The fixture tier of the conformance runner (`conformance/languages/runner.ts`, the `language-conformance` test's),
    over the production workspace path: an unexplained false positive fails on every source, an unexplained false
    negative on the fixtures only, as do engine failures, recording errors and stale divergences or exemptions.
-   Ports in `conformance.json` that `pack.json` does not list (candidates) are scored too.
+   Ports in `conformance.json` that `pack.json` does not list (candidates) are scored too; their false positives,
+   false negatives and engine failures are reported and fail nothing.
 5. The npm name is `@neralabs/rerail-pack-<id>`. `files` must publish `pack.json`, `rules`, `LICENSE` and, when
    present, `licenses`, and no entry may cover `conformance.json`, `divergences.json`, `upstream` or `candidates`. The
    SPDX ids `license` names must be exactly Apache-2.0 plus the licence each `licenses/<project>/UPSTREAM.md` records
@@ -203,10 +204,10 @@ repository allowlist are accepted.
 
 | Today | Becomes |
 |---|---|
-| `policies/rule-packs/tslint.json`, `code-rule-dsl/rules/opt-in/tslint/` (shipped in core) | `packs/tslint/pack.json` and `rules/`, still shipped in core's package until core loads installed packs |
-| `conformance/tslint/rules/**` (option variants, ports not shipped) | `packs/tslint/candidates/` |
-| `conformance/tslint/golden.json` and the audit in `conformance/tslint/audit.ts` | `packs/tslint/conformance.json` (golden manifest) and `divergences.json` (PASS audit) |
-| TSLint's upstream tests, fetched at a pinned commit by `conformance/tslint/fixtures.ts` | Not moved: still fetched into `tmp/tslint-fixtures/`; a recording under `packs/tslint/upstream/tslint/` would let the language runner score TSLint |
+| Core's shipped TSLint rule pack and its documents | `packs/tslint/pack.json` and `rules/`, still shipped in core's package until core loads installed packs |
+| `conformance/tslint/rules/**` (option variants, ports not shipped) | `packs/tslint/candidates/<rule>/` |
+| `conformance/tslint/golden.json`, the PASS audit and the TSLint harness | `packs/tslint/conformance.json` and `divergences.json` in the common schemas, scored by the common runner; the audit's notes in each candidate's `verdict.json` |
+| TSLint's upstream tests, fetched at a pinned commit | `packs/tslint/upstream/tslint/`, recorded |
 | `conformance/languages/<lang>/pack.json`, `rules/`, `divergences.json` | `packs/<lang>/conformance.json`, `rules/` or `candidates/`, `divergences.json`, plus a `pack.json` |
 | `fixtures/<family>/rules/<tool>/` recordings, copied tests and recorders | `packs/<lang>/upstream/<tool>/`; for a language without rules yet, `fixtures/<family>/upstream/<tool>/` |
 | `fixtures/<family>/{candidates,probes,policies}/` | `packs/<lang>/candidates/` |
@@ -217,10 +218,9 @@ repository allowlist are accepted.
 Moved: `python`, `php`, `blade`, `typescript`, `react`, `node` and `next`, each from `conformance/languages/<id>/`,
 `fixtures/<id>/rules/`, its candidates and probes, and the rule rows of its licence records. The ESLint recorder they
 share is `conformance/recorders/eslint-record.mjs`, and the TypeScript grammar census is `conformance/t1/typescript-syntax.ts`.
-TSLint moved to `packs/tslint/` and still ships inside core's package; its harness stays in `conformance/tslint/` as
-test support. The complexity rules (`code-rule-dsl/rules/opt-in/complexity/`, `policies/rule-packs/complexity.json`)
-moved to `packs/complexity/` the same way; their lizard parity test stays in `test/complexity-rules.test.ts`. Not
-moved yet: `rust`, `sql` and `vue`, which have upstream
+TSLint moved to `packs/tslint/` and still ships inside core's package; its tests are recorded and scored like every
+other tool's, and its harness is gone. The complexity rules moved to `packs/complexity/` the same way; their lizard
+parity test stays in `test/complexity-rules.test.ts`. Not moved yet: `rust`, `sql` and `vue`, which have upstream
 recordings but no rules: they stay in `fixtures/<id>/upstream/` beside each language's draft manifest
 (`fixtures/rust/upstream/conformance.draft.json`, `fixtures/sql/upstream/conformance.draft.json`,
 `fixtures/vue/upstream/rules.json`) until their packs gain rules, when the draft becomes `packs/<id>/conformance.json`
