@@ -94,6 +94,20 @@ or names `runsOn`; when entries name different capabilities; when `runsOn` names
 4. Flip `status` to `supported`, and each capability to `supported` as its oracle suite passes; mark one the language
    will never have `refused`.
 
+## Known parser gaps
+
+A known parser gap is source a language accepts but the engine's grammar cannot parse, confirmed and listed on
+purpose. The ledger in `conformance/t1/` belongs to the language conformance layer: each gap names its grammar, the
+grammar's version (`Cargo.lock`, or `native/grammars/<grammar>/PATCHES.md` for a vendored one) and the smallest probe
+that fails to parse, and a test parses every probe with the engine. A probe that parses is stale and fails the test,
+so the ledger always says what the engine cannot read today: when a grammar fix or upgrade makes a probe parse, remove
+its gap in the same change.
+
+The ledger starts with the 13 gaps rule validation confirmed in upstream's tests for the Python and ESLint-family
+packs: 6 in tree-sitter-javascript 0.25.0, 5 in tree-sitter-typescript 0.23.2 and 2 in tree-sitter-python 0.25.0. It
+records gaps; it excuses nothing. The [validation contract](pack-format.md#the-validation-contract) does not read it,
+so a difference a gap causes in a port's score stays that port's failure.
+
 ## Start a pack
 
 A pack is a directory `packs/<id>/` that passes the [validation contract](pack-format.md#the-validation-contract).
@@ -195,31 +209,41 @@ entry (below).
 The same files, with rules whose `language` the registry lists as `planned` (`vue`, `rust`, `sql`), or that read a
 capability their language has `not-supported-yet`. The pack lands: its checks pass, and each such rule's test is
 skipped as `not supported yet` with the engine's reason, for example
-``/clauses/0/forbid/ast/language: `vue` is not supported yet``. Write its `examples` now; checks 3 and 4 run them
-once core reads the language, and any other compile error fails check 1 today. `test/fixtures/packs/vue/` is a
-complete example.
+``/clauses/0/forbid/ast/language: `vue` is not supported yet``. Write its `examples` now; checks 3 and 4, and 7 to 9
+for its ports, run once core reads the language, and any other compile error fails check 1 today.
+`test/fixtures/packs/vue/` is a complete example.
 
 ### A ported pack
 
-A pack whose rules reproduce another tool's rules adds the validation material, which `files` never publishes:
+A pack whose rules reproduce another tool's rules adds the validation material, which `files` never publishes, and
+its ports face every check of the [validation contract](pack-format.md#the-validation-contract), 1 to 9:
 
 1. `conformance.json` ([schema](pack-format.md#conformancejson-divergencesjson-upstream)): the family, the
    capabilities the pack declares, the pinned `tools` and `corpora`, and per ported rule its `upstream` tool and rule,
    its `policy` (the same `rules/<name>.json` as the rule's `document`), how findings compare (`line` or
    `line+column`) and the capabilities it exercises. A port's clauses report the upstream rule's code. Every declared
-   capability needs a ported rule or an `exemptCapabilities` entry with its evidence.
-2. `upstream/<tool>/`: the tool's tests copied into `fixtures/`, and `fixtures.expected.json`, what the pinned tool
-   reported on them (`recordingSchema` in `conformance/languages/pack.ts`), written by a recorder you keep beside it
-   (`packs/python/upstream/ruff/generate.py` is one). Optionally `corpus-<name>.expected.json` per pinned corpus.
+   capability needs a ported rule or an `exemptCapabilities` entry with its evidence. Each tool lists its approved
+   configurations in `recommended`, in order, which declares its source facts: the
+   [guard](pack-format.md#the-scrub-list-scrubjson) refuses a new port whose tool has none.
+2. `upstream/<tool>/`, written by a recorder you keep beside it (`packs/python/upstream/ruff/generate.py` is one) and
+   run against the pinned tool and upstream checkout: the tool's tests copied into `fixtures/`;
+   `fixtures.expected.json`, what the tool reported on them under the first approved configuration that turns each
+   rule on, with each finding's end where the tool reports one (`recordingSchema` in `conformance/languages/pack.ts`);
+   `source.json`, the tool's [source facts](pack-format.md#source-facts-and-recordings) (`upstreamSourceSchema`),
+   naming each upstream test of a ported rule the fixtures leave out (`unscored`, which `ports:coverage` fails); and
+   optionally `corpus-<name>.expected.json` per pinned corpus.
 3. `licenses/<tool>/`: the tool's licence, verbatim, and `UPSTREAM.md` with a `License: <SPDX id>` line and a table
-   listing every copied file by its pack-relative path. Add the tool's licence to `package.json`'s `license`
-   (`Apache-2.0 AND MIT` for an MIT tool), and annotate the copied files in `REUSE.toml`.
-4. `divergences.json`: each line where Rerail and the tool disagree, with its kind and the evidence checked. Start
-   with `[]` and add an entry only for a disagreement you have checked.
+   listing every copied file and `upstream/<tool>/source.json` (extracted from the tool) by its pack-relative path.
+   Add the tool's licence to `package.json`'s `license` (`Apache-2.0 AND MIT` for an MIT tool), and annotate the
+   copied files (with the tool's licence) and `source.json` (with the tool's licence and Apache-2.0) in `REUSE.toml`.
+4. No `divergences.json` entries and no `scrub.json`: the guard refuses new divergences in `packs/*` and scrub entries
+   for new rules, so a new port agrees with its tool outright. The existing packs' divergences and scrub entries only
+   shrink.
 
-Then score one rule with every false positive and false negative listed, and run the contract:
+Then score one rule with every false positive and false negative listed, run the contract, and read the pack's report:
 
 ```sh
 node --import tsx conformance/languages/cli.ts --pack <id> --rule <port id> --fixtures
 npx vitest run test/packs.test.ts -t "pack <id>"
+npm run validate:packs -- --write   # .rerail/reports/<id>-validation.md
 ```

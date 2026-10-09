@@ -107,3 +107,43 @@ The one list of the languages Rerail knows (`languages/<id>.json`): for each, it
 ## Language Pack
 
 A language's registry entry, its engine adapter, and the rule packs written in it. A Code Rule for a `planned` language, or one reading a capability its language does not support yet, is stored but inactive: compiling it is refused as `language-not-supported`.
+
+## Language Conformance Layer
+
+The validation of how well the engine reads each language, on upstream's tests and on real code: grammar parity, capability oracles, corpus differentials, host routing, the Language Registry, and its Known Parser Gaps. It judges the engine and its languages, never a single rule, and passing it is not enough for a rule to ship. It complements the Rule Validation Layer; the two overlap only where check 4 scores a port with the conformance runner.
+
+## Rule Validation Layer
+
+The validation every Pack Rule passes before it ships: checks 1 to 9 of the pack validation contract (`docs/pack-format.md`), each made of Sub-checks. Checks 1 to 6 are a pack's own bar; checks 7 to 9 (provenance, generality, size) and the upstream-test Sub-checks of check 4 judge a port against its Upstream's Source Facts and Recordings.
+
+## Pack Rule
+
+A Rule a pack's `pack.json` lists, with its `rerail.policy/v1` document in `packs/<id>/rules/`. It is proven by examples it must catch and let pass, or, as a port, by reproducing one Upstream rule, recorded in the pack's `conformance.json`.
+
+## Upstream
+
+The public tool a port reproduces (Ruff, Bandit, ESLint and its plugins, PHPStan, TLint, …), pinned in the pack's `conformance.json` to one release, with its source repository at one commit. Upstream's own tests and output at that pin are the only evidence of what a port should report; nobody writes upstream's expected findings by hand.
+
+## Recording
+
+An Upstream tool's findings, recorded offline by the pack's recorder from the pinned tool and committed under `upstream/<tool>/`: on its own tests copied into the pack (`fixtures.expected.json`) and on each pinned corpus (`corpus-<name>.expected.json`). Each finding carries the parts of its position the tool reports: its start and, where reported, its end. Validation reads Recordings and never runs the tool.
+
+## Source Facts
+
+What an Upstream tool's own source says about each ported rule, recorded with its Recordings in `upstream/<tool>/source.json`: the pins, the file types the Approved Configurations lint, the rule's implementation and test files and which of those tests its Recordings leave out, whether upstream deprecates it, the Approved Configuration that turns it on, the names its code checks, and every word in upstream's tests. Checks 7 to 9 and check 4's coverage read them. For a tool without Source Facts those checks are not judged, which never counts as a pass.
+
+## Approved Configuration
+
+An Upstream configuration a pack counts as recommended for a tool, listed in order in the tool's `recommended` in `conformance.json` (Ruff's and Bandit's `default`, ESLint's `recommended`). A port is recorded with the options of the first one that turns its rule on, and a rule none turns on fails `provenance:recommended`. Listing them declares the tool's Source Facts.
+
+## Sub-check
+
+One named part of a validation check, under which every failure is filed: the check's own name for its original bar (`rules`, `examples`) or `<check>:<name>` (`ports:span`, `provenance:recommended`). It judges each Pack Rule, each tool or the whole pack; only some can be covered by a Scrub List. A Sub-check belongs to validation, a Clause to a rule document.
+
+## Scrub List
+
+The committed list of (Pack Rule, Sub-check) failures a pack's existing rules have today, `packs/<id>/scrub.json`, to clear before those rules go live. A covered failure makes the rule `scrubbed` instead of `failed`, an entry the rule now passes fails as stale, and a guard refuses entries for new or changed rules, so the list only shrinks. Its entries are either fidelity defects of a port or upstream-policy exclusions (upstream deprecates the rule, or no Approved Configuration turns it on).
+
+## Known Parser Gap
+
+Source a language accepts but the engine's grammar cannot parse, listed on purpose in the ledger in `conformance/t1/` with the grammar, its version and the smallest probe that fails to parse. A test proves every probe still fails, so a gap a grammar fix closes is stale and must be removed. It belongs to the Language Conformance Layer and excuses no failure in the Rule Validation Layer.

@@ -13,9 +13,18 @@ the core package at the repository root.
   planned one, or one that ports another tool's rules.
 
 ```sh
-npx vitest run test/packs.test.ts                    # every pack: checks 1 to 6 and each rule's status
+npx vitest run test/packs.test.ts                    # every pack: checks 1 to 9 and each rule's status
 npx vitest run test/packs.test.ts -t "pack python"   # one pack
+npm run validate:packs -- --write                    # one report per pack, in .rerail/reports/<id>-validation.md
 ```
+
+Checks 1 to 6 are each pack's own bar. Checks 7 to 9 (provenance, generality, size), with the sub-checks check 4 adds,
+judge a ported rule against its upstream tool's recorded source facts and tests; they are not judged for a tool that has
+none recorded yet (the `php`, `blade` and `tslint` packs). They do not apply to a rule its examples prove, such as the
+`complexity` pack's, whose parity with lizard is tested in `test/complexity-rules.test.ts`. A pack's `scrub.json` lists
+the failures its existing rules have today, to clear before they go live. CI fails on any failure the list does not
+cover and on any entry that has gone stale, and `scripts/check-scrub.mjs` refuses entries for new rules and for
+sub-checks the base already had, so the list only shrinks.
 
 A pull request that changes a pack adds a changeset (`npx changeset`); see
 [versioning](../docs/pack-format.md#versioning-and-release). Pack versions and changelogs are never edited by hand.
@@ -31,7 +40,8 @@ Each pack lives in `packs/<id>/`:
 | `rules/*.json` | Code-rule documents (`rerail.policy/v1`) | yes |
 | `LICENSE`, `NOTICE`, `README.md` | The pack's licence, notice and description | yes |
 | `licenses/<project>/` | Upstream licence, verbatim, and `UPSTREAM.md` listing every copied or adapted file | yes |
-| `conformance.json`, `divergences.json`, `upstream/`, `candidates/` | For ported rules: the tools' recorded findings, their copied tests, declared divergences, ports under evaluation | no |
+| `conformance.json`, `divergences.json`, `upstream/`, `candidates/` | For ported rules: the tools' recorded findings and source facts (`upstream/<tool>/source.json`), their copied tests, declared divergences, ports under evaluation | no |
+| `scrub.json` | Failures the pack's existing rules have today, to clear before going live | no |
 
 A pack is data only: it never imports the core engine. Core runs its rules, and the repository's tests validate
 every pack against the contract. A pack may hold rules for a language core lists as `planned`: they are stored
