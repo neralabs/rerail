@@ -44,7 +44,18 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
    - Codex: `~/.codex/hooks.json` running `current/dist/codex-hook.js` (Codex asks you to trust it once via `/hooks`), plus one skill per Rerail command under `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-ui`, and so on
    - Cursor: `~/.cursor/hooks.json` running `current/dist/cursor-hook.js`, plus the same Rerail commands under `~/.cursor/commands/` (`/rerail-ui` opens the dashboard as a tab in the Cursor window before falling back to the system browser)
 
-   Existing entries from other tools are preserved byte-for-byte; a backup
+   Existing entries from other tools are preserved byte-for-byte. Entries
+   another install of this package wrote (identified by the `package.json`
+   beside the script they run) are replaced, not duplicated; that includes a
+   Claude status line such an install composed, and because what it wrapped is
+   recorded only in that install's home, removing Rerail then leaves no status
+   line there. A hook, status line
+   or MCP bridge entry of the shape setup writes is also replaced when its
+   install is gone, with neither its script nor a `package.json` beside it on
+   disk, since it can never run again. The retired `/rerail-session`, `/rerail-disable` and
+   `/rerail-enable` command files are removed when they run this install,
+   another install of this package or one that is gone; anyone else's stay, and
+   removing Rerail removes only this install's. A backup
    `<file>.<timestamp>.bak` is written only when a file changes. Re-running is
    a no-op. `--harness <list>` limits it; `--project <dir>` also seeds empty
    `<dir>/.<harness>/conversation-rules.json` files.
@@ -53,8 +64,6 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
    Adapters also autostart it on the first session, so this is a convenience.
 4. **Report** — prints what changed and reminds you to add `~/.rerail/bin` to
    `PATH` (the Windows launcher is `rerail.cmd`) and restart the harnesses.
-   An older install's generated `bin/rerail` launcher is deleted; there is no
-   `rerail` alias.
 
 Rerail stays off in every repository until you start it there (see "Starting
 and stopping Rerail" below).
@@ -210,6 +219,15 @@ until that process has exited and the OS has released its lock, then starts
 the new daemon, which takes the lock. `rerail setup` replaces a stale daemon
 the same way. A `rerail events` stream that outlives an update keeps sending to
 whichever daemon is running and never brings its own version back.
+
+### Database compatibility
+
+`rerail.sqlite` records the schema version it was written for. A database file
+this release cannot use (one written by a newer or an older Rerail, or by other
+software) is refused with an error and left untouched; Rerail never converts
+data. Move such a file aside (or point `RERAIL_HOME` elsewhere) and start again,
+then re-import rules with `rerail rules import`. An export from the
+`0.1.0-next.0` pre-release names code rules `file` and is not imported.
 
 ### Resetting session history
 

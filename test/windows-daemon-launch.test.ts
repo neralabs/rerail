@@ -45,7 +45,7 @@ describe.runIf(process.platform === "win32")("Windows daemon launch", () => {
     await writeFile(launcher, [
       `import { startDaemon } from ${JSON.stringify(pathToFileURL(join(packageRoot, "src", "daemon-control.ts")).href)};`,
       `await startDaemon({ home: ${JSON.stringify(home)}, packageRoot: ${JSON.stringify(packageRoot)} },`,
-      `  { dev: true, transcriptDatabasePath: ${JSON.stringify(join(home, "transcripts.sqlite"))}, port: 0 });`,
+      "  { dev: true, port: 0 });",
     ].join("\n"));
 
     const { stdout } = await run(

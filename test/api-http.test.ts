@@ -236,7 +236,7 @@ describe("Rerail API over HTTP", () => {
     const upsert = await app.request(`/api/rules/${MOCK_CODE_RULES[1]!.id}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "file", rule: MOCK_CODE_RULES[1]! }),
+      body: JSON.stringify({ kind: "code", rule: MOCK_CODE_RULES[1]! }),
     });
     expect(upsert.status).toBe(200);
     const refreshed = await app.request("/api/rules", { headers: { "if-none-match": tag! } });

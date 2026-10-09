@@ -6,7 +6,7 @@ First release of Rerail as `@neralabs/rerail`, licensed under Apache-2.0.
 
 ### Rules
 
-- Two rule kinds: `file` rules, `rerail.policy/v1` documents whose clauses each report a violation, and `conversation` rules, which match the live conversation semantically or structurally.
+- Two rule kinds: `code` rules, `rerail.policy/v1` documents whose clauses each report a violation, and `conversation` rules, which match the live conversation semantically or structurally.
 - One required `mode` on every rule: `log` records only, `steer` delivers guidance, and `block` is stored, shown, and carried on violations but delivered exactly like `steer` until block enforcement lands; no shipped rule uses `block`. The rules and diagnostics filters take `mode=log|steer|block`.
 
 ### Semantic monitor
@@ -16,7 +16,7 @@ First release of Rerail as `@neralabs/rerail`, licensed under Apache-2.0.
 - Structural tool-call rules: a conversation rule's `match` may instead be a condition in the code-rule DSL's vocabulary (`regex`, `eq`, `contains` combined with `all`/`any`/`not`) over `text`, `tool.name`, `input`, or one string argument such as `input.command`. Structural rules never embed, and the engine validates their regexes when a rule is written.
 - Generic `mark`, `select`, `project`, and `relate` primitives for custom semantic workflows, exposed in OMP and Pi as the `rerail_mark`, `rerail_select`, `rerail_project`, and `rerail_relate` tools.
 
-### File rules
+### Code rules
 
 - The `rerail.policy/v1` code-rule DSL evaluated by a resident native engine over Python, JavaScript, TypeScript, PHP, and Blade sources: regex, AST (ast-grep), and relational clauses with ordered violations, witnesses, optional fixes, and bounded source, node, and witness budgets.
 - Python identifiers are NFKC-normalized wherever the engine resolves or compares them, as CPython and Ruff read them; string contents, spans, and `regex` keep the source text.
@@ -41,6 +41,7 @@ First release of Rerail as `@neralabs/rerail`, licensed under Apache-2.0.
 ### Rule catalog and database
 
 - One SQLite database per Rerail home (`$RERAIL_HOME/rerail.sqlite`) holds the scoped rule catalog and every repository's sessions, events, work links, audits, audit requests, and start state; the schema is defined as Drizzle tables.
+- The file records its schema version in `PRAGMA user_version` (2 in this release). A file written by a newer or an older Rerail, or by other software, is refused and left untouched; no data is converted. Databases from the `0.1.0-next.0` pre-release (schema 1, which stored code rules as `file`) are refused.
 - Rules apply globally or to a project, an explicit set of repositories identified by a stable repository ID shared across worktrees; edits made through the daemon, the UI, MCP, or plain SQL apply to the next sample or tool call in every open session. Catalog origins are `user` and `rerail`.
 - Bundled rule documents are seeded without overwriting rules you edited or created. `rerail rules export` / `rerail rules import` move rules by hand; `rerail reset` deletes the current repository's history and keeps rules; `rerail seed` writes mock data.
 - JSON `.<harness>/conversation-rules.json` files remain a secondary source; a database row with the same id wins.

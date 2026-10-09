@@ -47,8 +47,7 @@ describe("NativeSessionServer request boundary", () => {
     try {
       await server.handle({ ...session, operation: "initialize", entries: [] });
       expect(reader.hud("s").steeringCount).toBe(0);
-      // A client without steer attribution sends the bare receipt id.
-      const receipt = { ...session, operation: "record-steering-delivery" as const, input: "host-steer" };
+      const receipt = { ...session, operation: "record-steering-delivery" as const, input: { receiptId: "host-steer", ruleIds: [] } };
       await server.handle(receipt);
       await server.handle(receipt);
       expect(reader.hud("s").steeringCount).toBe(1);

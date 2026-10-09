@@ -1,6 +1,9 @@
 import { once } from "node:events";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
+import { DAEMON_STATE_FILE, processAlive, readDaemonState } from "./daemon-control.js";
+import { defaultRerailHome } from "./rerail-home.js";
 
 export type RerailMcpBridgeFetch = (endpoint: URL, init: RequestInit) => Promise<Response>;
 
@@ -9,6 +12,8 @@ export interface RerailMcpBridgeOptions {
   stdout?: Writable;
   stderr?: Writable;
   fetch?: RerailMcpBridgeFetch;
+  /** The Rerail home whose daemon state names the daemon; defaults to `defaultRerailHome()`. */
+  home?: string;
 }
 
 type JsonRpcId = string | number;
@@ -62,7 +67,15 @@ async function writeLine(output: Writable, line: string): Promise<void> {
   if (!output.write(`${line}\n`)) await once(output, "drain");
 }
 
-const MCP_ENDPOINT = new URL("http://127.0.0.1:4737/mcp");
+/**
+ * The home's daemon as its state file records it, read again for every request: the daemon takes a free port
+ * when the default one is held, and a restart or update may move it while the bridge runs.
+ */
+async function daemonEndpoint(home: string): Promise<URL> {
+  const state = await readDaemonState(join(home, DAEMON_STATE_FILE));
+  if (state === undefined || !processAlive(state.pid)) throw new Error("Rerail daemon is not running; start it with rerail daemon start");
+  return new URL("/mcp", state.url);
+}
 
 /** Relays one request; returns the line to answer with, or undefined when the server answered with no body. */
 async function relay(endpoint: URL, request: string, fetchImpl: RerailMcpBridgeFetch): Promise<string | undefined> {
@@ -81,12 +94,13 @@ async function relay(endpoint: URL, request: string, fetchImpl: RerailMcpBridgeF
 
 async function relayRequest(
   request: string,
+  home: string,
   stdout: Writable,
   stderr: Writable,
   fetchImpl: RerailMcpBridgeFetch,
 ): Promise<void> {
   try {
-    const body = await relay(MCP_ENDPOINT, request, fetchImpl);
+    const body = await relay(await daemonEndpoint(home), request, fetchImpl);
     if (body !== undefined) await writeLine(stdout, body);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -97,16 +111,17 @@ async function relayRequest(
 }
 
 /**
- * Stdio MCP bridge to the machine's Rerail daemon.
+ * Stdio MCP bridge to the machine's Rerail daemon, found for each request through the Rerail home's daemon state.
  * A failed request answers its own ids with a JSON-RPC error; only stdin EOF ends the bridge.
  */
 export async function runRerailMcpBridge(options: RerailMcpBridgeOptions = {}): Promise<void> {
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
   const fetchImpl = options.fetch ?? fetch;
+  const home = options.home ?? defaultRerailHome();
   const lines = createInterface({ input: options.input ?? process.stdin, crlfDelay: Infinity });
   for await (const request of lines) {
     if (request.trim() === "") continue;
-    await relayRequest(request, stdout, stderr, fetchImpl);
+    await relayRequest(request, home, stdout, stderr, fetchImpl);
   }
 }

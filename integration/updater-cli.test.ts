@@ -98,7 +98,7 @@ async function createLocalRegistry(root: string): Promise<string> {
   const bin = join(root, "bin");
   await mkdir(bin, { recursive: true });
   const fixture = join(bin, "npm-fixture.mjs");
-  await writeFile(fixture, `import { cpSync, mkdirSync } from "node:fs";
+  await writeFile(fixture, `import { cpSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 const args = process.argv.slice(2);
 if (args[0] === "view") {
@@ -109,9 +109,9 @@ if (args[0] === "install") {
   const prefix = args[args.indexOf("--prefix") + 1];
   const version = args.at(-1).split("@").at(-1);
   const source = version === process.env.RERAIL_ACCEPTED_VERSION ? process.env.RERAIL_ACCEPTED_PACKAGE : process.env.RERAIL_REJECTED_PACKAGE;
-  const scope = join(prefix, "node_modules", "@neralabs");
-  mkdirSync(scope, { recursive: true });
-  cpSync(source, join(scope, "rerail"), { recursive: true });
+  // Both packages install where the accepted package's name says, so a rejected one is caught by its identity.
+  const { name } = JSON.parse(readFileSync(join(process.env.RERAIL_ACCEPTED_PACKAGE, "package.json"), "utf8"));
+  cpSync(source, join(prefix, "node_modules", ...name.split("/")), { recursive: true });
   process.exit(0);
 }
 process.exit(1);
@@ -149,7 +149,6 @@ describe("Rerail managed launcher", () => {
     const environment = {
       ...process.env,
       PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
-      RERAIL_AUTO_UPDATE: "0",
       RERAIL_HOME: home,
       RERAIL_ACCEPTED_VERSION: acceptedVersion,
       RERAIL_ACCEPTED_PACKAGE: accepted,
@@ -161,7 +160,7 @@ describe("Rerail managed launcher", () => {
 
     const update = await run(["node", entrypoint, "update"], environment);
     expect(update).toMatchObject({ exitCode: 0, stderr: "" });
-    expect(update.stdout).toContain(`Activated Rerail ${acceptedVersion}`);
+    expect(update.stdout).toContain(`${acceptedVersion}; new harness sessions will use it.`);
     const acceptedState = JSON.parse(await readFile(join(home, "update-state.json"), "utf8")) as Record<string, unknown>;
     expect(acceptedState).toMatchObject({
       current: { version: acceptedVersion },
@@ -202,14 +201,14 @@ describe("Rerail managed launcher", () => {
       current: { version: missingVersion, packageRoot: join(root, "missing") },
       previous: { version: manifest.version, packageRoot: resolve(".") },
     })}\n`);
-    const environment = { ...process.env, RERAIL_AUTO_UPDATE: "0", RERAIL_HOME: home };
+    const environment = { ...process.env, RERAIL_HOME: home };
 
     const status = await run(["node", "dist/cli.js", "update", "status"], environment);
     expect(status).toMatchObject({ exitCode: 0, stderr: "" });
     expect(status.stdout).toContain(`Current: ${missingVersion}`);
     const rollback = await run(["node", "dist/cli.js", "update", "rollback"], environment);
     expect(rollback).toMatchObject({ exitCode: 0, stderr: "" });
-    expect(rollback.stdout).toContain(`Activated Rerail ${manifest.version}`);
+    expect(rollback.stdout).toContain(`${manifest.version}; new harness sessions will use it.`);
   }, 30_000); // Rollback health-checks this checkout: a real start, then a real session.
 
   test("reports that --skip-start wins during a setup dry run", async () => {

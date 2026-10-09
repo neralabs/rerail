@@ -122,7 +122,7 @@ describe("code-rule DSL catalog", () => {
     try {
       expect(catalog.codeRules()).toEqual([]);
       expect(catalog.quarantined()).toEqual([
-        expect.objectContaining({ kind: "file", ruleId: "test:requires-python", reason: expect.stringMatching(/missing.*python.*capability/iu) }),
+        expect.objectContaining({ kind: "code", ruleId: "test:requires-python", reason: expect.stringMatching(/missing.*python.*capability/iu) }),
       ]);
     } finally {
       catalog.close();
@@ -239,7 +239,7 @@ describe("code-rule DSL catalog", () => {
       expect(catalog.refresh()).toBe(true);
       expect(catalog.codeRules().map(({ id }) => id)).toEqual(["test:other"]);
       expect(catalog.codeRule("test:other")).toBe(other);
-      expect(catalog.quarantined()).toEqual([expect.objectContaining({ kind: "file", ruleId: "test:atomic" })]);
+      expect(catalog.quarantined()).toEqual([expect.objectContaining({ kind: "code", ruleId: "test:atomic" })]);
 
       const store = new SqliteRuleStore(databasePath);
       store.upsertCodeRule(rule("test:atomic", 3), { now: 3_000 });

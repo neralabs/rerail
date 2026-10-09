@@ -6,6 +6,7 @@ import {
   copyFile,
   lstat,
   mkdir,
+  readdir,
   readFile,
   readlink,
   realpath,
@@ -185,9 +186,36 @@ async function isRerailPackageRoot(context: Context, root: string): Promise<bool
   return verified;
 }
 
+/** False only when the path cannot exist; any other failure to look counts as present. */
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    return !(isMissing(error) || (error instanceof Error && "code" in error && error.code === "ENOTDIR"));
+  }
+}
+
+/**
+ * Whether registration replaces a generated entry that runs `script` (`<root>/dist/<executable>`): the root is an
+ * install of this package, or the install is gone, with neither the script nor a package.json beside it on disk, as
+ * after its home was deleted. A gone install's entry can never run again; a root that holds another package's
+ * package.json is that package's, whether or not its script is there.
+ */
+async function isReplaceableScript(context: Context, script: string): Promise<boolean> {
+  const root = dirname(dirname(script));
+  if (await isRerailPackageRoot(context, root)) return true;
+  return !(await pathExists(script)) && !(await pathExists(join(root, "package.json")));
+}
+
 function unquoteShellWord(word: string, windows = false): string {
   const value = word.replace(/^"|"$/gu, "");
   return windows ? value.replaceAll("%%", "%") : value.replace(/\\(["\\$`])/gu, "$1");
+}
+
+/** The words of `text` as `shellArgument` writes them, still quoted: double-quoted or bare, and always quoted on Windows. */
+function shellWords(text: string, windows: boolean): string[] {
+  return text.match(windows ? /"[^"]+"/gu : /"(?:\\["\\$`]|[^"\\$`])*"|[\w./:@+=-]+/gu) ?? [];
 }
 
 interface HookTarget {
@@ -202,8 +230,8 @@ function shellHookTarget(context: Context, command: string, executable: string):
   let direct = windowsFallback === null ? command : `${windowsFallback[1]} ${windowsFallback[2]}`;
   if (command.startsWith(fallbackPrefix)) direct = command.slice(fallbackPrefix.length);
   const windows = context.platform === "win32";
-  const words = direct.match(windows ? /"[^"]+"/gu : /"(?:\\["\\$`]|[^"\\$`])*"|[\w./:@+=-]+/gu);
-  if (words?.length !== 2 || words.join(" ") !== direct) return undefined;
+  const words = shellWords(direct, windows);
+  if (words.length !== 2 || words.join(" ") !== direct) return undefined;
   const target = { nodePath: unquoteShellWord(words[0]!, windows), script: unquoteShellWord(words[1]!, windows) };
   const recorded = { ...context, root: dirname(dirname(target.script)), nodePath: target.nodePath };
   return hookCommand(recorded, executable) === command || directCommand(recorded, executable) === command ? target : undefined;
@@ -227,8 +255,7 @@ async function isRerailHookEntry(context: Context, entry: JsonObject, executable
   if (target === undefined) return false;
   const { nodePath, script } = target;
   if (!/^node(?:\.exe)?$/iu.test(nodePath.split(/[\\/]/u).at(-1)!) || !isAbsolute(script) || basename(script) !== executable) return false;
-  const root = dirname(dirname(script));
-  return context.mode === "unregister" ? root === context.root : isRerailPackageRoot(context, root);
+  return context.mode === "unregister" ? dirname(dirname(script)) === context.root : isReplaceableScript(context, script);
 }
 
 /**
@@ -460,22 +487,31 @@ function composedClaudeStatus(previous: ClaudeStatusLine | null | undefined, com
   return { ...previous, type: "command", command, refreshInterval: previous?.refreshInterval ?? 5 };
 }
 
+/**
+ * `replaceable`: the predecessor is a status line of this package, or of an install that is gone, whose composition
+ * this home has no record of.
+ * It keeps its display settings but is not recorded, so removal never brings back a status line of another install.
+ */
 function registerClaudeStatus(
   context: Context, path: string, next: JsonObject, statusLine: ClaudeStatusLine | undefined,
-  inherited: ClaudeStatusLine | undefined, registration: ClaudeStatusRegistration | undefined,
+  inherited: ClaudeStatusLine | undefined, registration: ClaudeStatusRegistration | undefined, replaceable: boolean,
 ): ClaudeStatusRegistration {
   const command = directCommand(context, "claude-status.js")
     + (path === join(context.home, ".claude", "settings.json") ? "" : ` ${shellArgument(path, context.platform)}`);
   const ownsStatus = registration !== undefined && statusLine?.command === registration.installedCommand;
   const previous = statusLine ?? inherited;
-  if (!ownsStatus && previous !== undefined && (previous.command === command || isClaudeStatusWrapper(previous.command))) {
+  const wrapper = previous !== undefined
+    && (previous.command === command || claudeStatusScript(previous.command, context.platform) !== undefined);
+  if (!ownsStatus && !replaceable && wrapper) {
     throw new Error(`Cannot preserve the existing rerail status line in ${path}: registration ownership is missing`);
   }
-  const previousInherited = ownsStatus ? registration.previousInherited : statusLine === undefined && inherited !== undefined;
+  const replaced = !ownsStatus && replaceable;
+  const previousInherited = ownsStatus ? registration.previousInherited : !replaced && statusLine === undefined && inherited !== undefined;
   next.statusLine = composedClaudeStatus(previous, command);
+  const unownedPrevious = replaced ? null : previous ?? null;
   return {
     settingsPath: path, installedRoot: context.root, installedCommand: command,
-    previous: ownsStatus ? registration.previous : previous ?? null,
+    previous: ownsStatus ? registration.previous : unownedPrevious,
     ...(previousInherited ? { previousInherited: true } : {}),
   };
 }
@@ -521,7 +557,8 @@ async function planClaudeSettings(
     : { ...existing.value };
   let nextRegistration: ClaudeStatusRegistration | undefined = registration;
   if (context.mode === "register") {
-    nextRegistration = registerClaudeStatus(context, path, next, statusLine, inherited, registration);
+    const replaceable = await isPackageClaudeStatus(context, statusLine ?? inherited);
+    nextRegistration = registerClaudeStatus(context, path, next, statusLine, inherited, registration, replaceable);
   } else if (registration?.installedRoot === context.root) {
     restoreClaudeStatus(next, statusLine, registration);
     nextRegistration = undefined;
@@ -544,12 +581,20 @@ async function planClaudeSettings(
   });
 }
 
-/** Recognize the generated executable shape even when its old package/ownership is gone. */
-function isClaudeStatusWrapper(command: string): boolean {
+/** The script of the generated executable shape, recognized even when its old package/ownership is gone. */
+function claudeStatusScript(command: string, platform: NodeJS.Platform): string | undefined {
   const words = command.match(/"(?:\\.|[^"\\])*"|[\w./:@+=-]+/gu);
-  if (words === null || (words.length !== 2 && words.length !== 3) || words.join(" ") !== command) return false;
-  return /^node(?:\.exe)?$/iu.test(unquoteShellWord(words[0]!).split(/[\\/]/u).at(-1)!)
-    && unquoteShellWord(words[1]!).split(/[\\/]/u).at(-1) === "claude-status.js";
+  if (words === null || (words.length !== 2 && words.length !== 3) || words.join(" ") !== command) return undefined;
+  const windows = platform === "win32";
+  const script = unquoteShellWord(words[1]!, windows);
+  return /^node(?:\.exe)?$/iu.test(unquoteShellWord(words[0]!, windows).split(/[\\/]/u).at(-1)!)
+    && script.split(/[\\/]/u).at(-1) === "claude-status.js" ? script : undefined;
+}
+
+/** A status line generated by any install of this package, or by one that is gone, identified as hooks are (`isReplaceableScript`). */
+async function isPackageClaudeStatus(context: Context, statusLine: ClaudeStatusLine | undefined): Promise<boolean> {
+  const script = statusLine === undefined ? undefined : claudeStatusScript(statusLine.command, context.platform);
+  return script !== undefined && isAbsolute(script) && await isReplaceableScript(context, script);
 }
 
 const execGit = promisify(execFile);
@@ -652,8 +697,33 @@ function planPi(context: Context): Promise<Plan> {
   });
 }
 
+const OMP_EXTENSION_NAME = "rerail";
+
+/**
+ * Registration replaces another install of this package (identified as hooks are, by its package.json) under any
+ * extension name, so one OMP session never loads two copies.
+ */
+async function planOmpPackageDuplicates(context: Context): Promise<Plan[]> {
+  if (context.mode !== "register") return [];
+  const directory = join(context.home, ".omp", "agent", "extensions");
+  const names = await readdir(directory).catch((error: unknown) => {
+    if (isMissing(error)) return [];
+    throw error;
+  });
+  const plans: Plan[] = [];
+  for (const name of names) {
+    if (name === OMP_EXTENSION_NAME) continue;
+    const path = join(directory, name);
+    if (!(await lstat(path)).isSymbolicLink()) continue;
+    const target = await realpath(path).catch(() => undefined);
+    if (target === undefined || !(await isRerailPackageRoot(context, target))) continue;
+    plans.push(planMutation(context, "omp", path, "updated", `remove symlink to another install at ${target}`, () => unlink(path)));
+  }
+  return plans;
+}
+
 async function planOmp(context: Context): Promise<Plan> {
-  const path = join(context.home, ".omp", "agent", "extensions", "rerail");
+  const path = join(context.home, ".omp", "agent", "extensions", OMP_EXTENSION_NAME);
   assertInside(path, context.home, "home");
   let kind: "missing" | "symlink" | "other";
   try {
@@ -694,17 +764,33 @@ async function planOmp(context: Context): Promise<Plan> {
 /** The immutable stdio bridge selects the checkout-local MCP endpoint from its launch cwd. */
 export const RERAIL_MCP_SERVER_NAME = "rerail";
 
+/**
+ * A bridge entry another install of this package wrote, or one that is gone (`isReplaceableScript`), under any server
+ * name: `<node> <root>/dist/cli.js mcp-bridge`.
+ */
+async function isPackageMcpBridge(context: Context, server: unknown): Promise<boolean> {
+  if (!isObject(server) || typeof server.command !== "string" || !Array.isArray(server.args) || server.args.length !== 2) return false;
+  const [script, command] = server.args as unknown[];
+  if (command !== "mcp-bridge" || typeof script !== "string" || !isAbsolute(script) || basename(script) !== "cli.js") return false;
+  return await isReplaceableScript(context, script);
+}
+
 function planOmpMcp(context: Context): Promise<Plan> {
   const path = join(context.home, ".omp", "agent", "mcp.json");
   const detail =
     context.mode === "register"
       ? `register the ${RERAIL_MCP_SERVER_NAME} MCP bridge`
       : `remove the ${RERAIL_MCP_SERVER_NAME} MCP bridge`;
-  return planJsonFile("omp", path, context, detail, (value) => {
+  return planJsonFile("omp", path, context, detail, async (value) => {
     const servers = value.mcpServers === undefined ? {} : value.mcpServers;
     if (!isObject(servers))
       throw new Error(`Cannot register rerail MCP server: "mcpServers" in ${path} is not an object`);
-    const { [RERAIL_MCP_SERVER_NAME]: _previous, ...kept } = servers;
+    const { [RERAIL_MCP_SERVER_NAME]: _previous, ...others } = servers;
+    const kept: JsonObject = {};
+    for (const [name, server] of Object.entries(others)) {
+      if (context.mode === "register" && await isPackageMcpBridge(context, server)) continue;
+      kept[name] = server;
+    }
     const next: JsonObject =
       context.mode === "register"
         ? {
@@ -726,9 +812,9 @@ function codexSkillPath(context: Context, name: string): string {
   return path;
 }
 
-/** Removes a Codex skill only when Rerail wrote it for this installation; a skill someone else owns stays. */
-function planCodexSkillRemoval(context: Context, name: string, path: string, existing: TextFile): Plan {
-  if (!existing.text.includes(MANAGED_SKILL_MARKER) || !existing.text.includes(join(context.root, "dist", "cli.js"))) {
+/** Removes a Codex skill only when Rerail wrote it (`runsPackageCli`); a skill someone else owns stays. */
+async function planCodexSkillRemoval(context: Context, name: string, path: string, existing: TextFile): Promise<Plan> {
+  if (!existing.text.includes(MANAGED_SKILL_MARKER) || !(await runsPackageCli(context, existing.text))) {
     return { change: { harness: "codex", path, action: "unchanged", detail: `no $${name} skill from this Rerail installation to remove` } };
   }
   return planMutation(context, "codex", path, "updated", `remove the $${name} skill`, () => unlink(path));
@@ -753,10 +839,27 @@ function promptCommandPath(context: Context, harness: PromptCommandHarness, name
   return path;
 }
 
-/** Removes a prompt command only when it runs this package's CLI; anyone else's file is left in place. */
-function planPromptCommandRemoval(context: Context, harness: PromptCommandHarness, name: string, path: string, existing: TextFile): Plan {
+/**
+ * Whether a command file or skill runs this installation's CLI or, on registration, that of another install of this
+ * package or of one that is gone, recognized as hooks are (`isReplaceableScript`): an earlier version wrote its files
+ * under its own install root. A generated file names exactly one `<root>/dist/cli.js`.
+ */
+async function runsPackageCli(context: Context, text: string): Promise<boolean> {
+  if (text.includes(join(context.root, "dist", "cli.js"))) return true;
+  if (context.mode === "unregister") return false;
+  const windows = context.platform === "win32";
+  const scripts = new Set(shellWords(text, windows).map(word => unquoteShellWord(word, windows))
+    .filter(word => isAbsolute(word) && basename(word) === "cli.js" && basename(dirname(word)) === "dist"));
+  const [script] = scripts;
+  return scripts.size === 1 && await isReplaceableScript(context, script!);
+}
+
+/** Removes a prompt command only when it runs this package's CLI (`runsPackageCli`); anyone else's file is left in place. */
+async function planPromptCommandRemoval(
+  context: Context, harness: PromptCommandHarness, name: string, path: string, existing: TextFile,
+): Promise<Plan> {
   if (!existing.exists) return { change: { harness, path, action: "unchanged", detail: `no /${name} command: nothing to remove` } };
-  if (!existing.text.includes(join(context.root, "dist", "cli.js")))
+  if (!(await runsPackageCli(context, existing.text)))
     return { change: { harness, path, action: "unchanged", detail: `/${name} command is not Rerail's: left in place` } };
   return planMutation(context, harness, path, "updated", `remove the /${name} command`, () => unlink(path));
 }
@@ -778,14 +881,15 @@ async function planAgentCommands(context: Context, harness: PromptCommandHarness
   for (const { name } of RERAIL_COMMANDS) {
     plans.push(harness === "codex" ? await planCodexSkill(context, name) : await planPromptCommand(context, harness, name));
   }
-  // A retired file of ours goes in either mode; absent or foreign files produce no plan at all.
+  // A retired file of this installation goes in either mode, and on registration one of another install of this package
+  // or of one that is gone; absent or foreign files produce no plan at all.
   for (const name of harness === "codex" ? RETIRED_CODEX_SKILLS : RETIRED_PROMPT_COMMANDS) {
     const path = harness === "codex" ? codexSkillPath(context, name) : promptCommandPath(context, harness, name);
     const existing = await readTextFile(path);
     if (!existing.exists) continue;
     const plan = harness === "codex"
-      ? planCodexSkillRemoval(context, name, path, existing)
-      : planPromptCommandRemoval(context, harness, name, path, existing);
+      ? await planCodexSkillRemoval(context, name, path, existing)
+      : await planPromptCommandRemoval(context, harness, name, path, existing);
     if (plan.change.action !== "unchanged") plans.push(plan);
   }
   return plans;
@@ -858,7 +962,7 @@ async function run(options: RegistrationOptions, mode: Mode): Promise<Registrati
       continue;
     }
     plans.push(await planHarness(harness, context));
-    if (harness === "omp") plans.push(await planOmpMcp(context));
+    if (harness === "omp") plans.push(await planOmpMcp(context), ...await planOmpPackageDuplicates(context));
     if (harness === "claude-code" && options.workspaceDir !== undefined) {
       plans.push(...await planClaudeProjectSettings(options.workspaceDir, context));
     }

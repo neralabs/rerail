@@ -203,7 +203,7 @@ function runSeedCommand(args: readonly string[]): number {
     catalog.close();
   }
   process.stdout.write(
-    `Seeded ${database}: ${result.codeRules} file rules, `
+    `Seeded ${database}: ${result.codeRules} code rules, `
     + `${result.conversationRules} conversation rules, ${result.sessions} session, ${result.events} events, `
     + `${result.workLinks} work links.\n`,
   );

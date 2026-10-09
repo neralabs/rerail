@@ -43,7 +43,7 @@ describe("SqliteRuleStore", () => {
     const storedConversationRule = store.upsertConversationRule(conversationRule, { now: 1_000, scope: "global" });
 
     expect(storedCodeRule).toEqual({
-      kind: "file",
+      kind: "code",
       enabled: true,
       scope: "repository",
       revision: codeRule.revision,
@@ -69,7 +69,7 @@ describe("SqliteRuleStore", () => {
       "SELECT id, kind, format, json_extract(scope_json, '$.include[0]') AS firstInclude, json_array_length(clauses_json) AS clauseCount, reference FROM rules ORDER BY id",
     ).all()).toEqual([
       { id: conversationRule.id, kind: "conversation", format: null, firstInclude: null, clauseCount: null, reference: conversationRule.reference },
-      { id: codeRule.id, kind: "file", format: "rerail.policy/v1", firstInclude: codeRule.scope!.include[0], clauseCount: codeRule.clauses.length, reference: null },
+      { id: codeRule.id, kind: "code", format: "rerail.policy/v1", firstInclude: codeRule.scope!.include[0], clauseCount: codeRule.clauses.length, reference: null },
     ]);
     expect(database.prepare("SELECT id, mode FROM rules ORDER BY id").all()).toEqual([
       { id: conversationRule.id, mode: conversationRule.mode },
@@ -124,7 +124,7 @@ describe("SqliteRuleStore", () => {
     new SqliteRuleStore(path).close();
     const database = new Database(path);
     expect(() => database.prepare(
-      "INSERT INTO rules (id, kind, mode, revision, enabled, scope, created_at, updated_at, format, clauses_json) VALUES ('x', 'file', 'error', 1, 1, 'repository', 1, 1, 'rerail.policy/v1', '[]')",
+      "INSERT INTO rules (id, kind, mode, revision, enabled, scope, created_at, updated_at, format, clauses_json) VALUES ('x', 'code', 'error', 1, 1, 'repository', 1, 1, 'rerail.policy/v1', '[]')",
     ).run()).toThrow(/rules_mode/u);
     database.close();
   });
@@ -158,7 +158,7 @@ describe("SqliteRuleStore", () => {
     store.upsertConversationRule(MOCK_CONVERSATION_RULES[0]!, { now: 1 });
     store.upsertConversationRule(MOCK_CONVERSATION_RULES[1]!, { now: 1, enabled: false, scope: "global" });
 
-    expect(store.list({ kind: "file" }).map(stored => stored.rule.id)).toEqual(MOCK_CODE_RULES.map(rule => rule.id).sort());
+    expect(store.list({ kind: "code" }).map(stored => stored.rule.id)).toEqual(MOCK_CODE_RULES.map(rule => rule.id).sort());
     expect(store.list({ enabled: false }).map(stored => stored.rule.id)).toEqual([MOCK_CONVERSATION_RULES[1]!.id]);
     expect(store.list({ scope: "global" }).map(stored => stored.rule.id)).toEqual([MOCK_CONVERSATION_RULES[1]!.id]);
     expect(store.conversationRules()).toEqual([MOCK_CONVERSATION_RULES[0]]);
@@ -184,7 +184,7 @@ describe("SqliteRuleStore", () => {
     expect(ids({ text: "100%" })).toEqual([]);
     expect(ids({ source: "user-input" })).toEqual(["mock-cosine-migration-warning"]);
     expect(ids({ boundary: "sentence", mode: "steer" })).toEqual(["mock-cosine-prefer-generated-client"]);
-    expect(ids({ kind: "file", mode: "steer" })).toEqual(["mock-lazy-query-shaping", "mock-no-console-log"]);
+    expect(ids({ kind: "code", mode: "steer" })).toEqual(["mock-lazy-query-shaping", "mock-no-console-log"]);
     expect(ids({ mode: "log" })).toEqual(["mock-generated-client-imports"]);
 
     expect(store.setEnabled({ filter: { text: "generated client" } }, false, 7)).toBe(2);
@@ -231,9 +231,9 @@ describe("seedRerailDatabase", () => {
     expect(rules.list().map(stored => [stored.rule.id, stored.kind, stored.enabled])).toEqual([
       ["mock-cosine-migration-warning", "conversation", false],
       ["mock-cosine-prefer-generated-client", "conversation", true],
-      ["mock-generated-client-imports", "file", true],
-      ["mock-lazy-query-shaping", "file", true],
-      ["mock-no-console-log", "file", true],
+      ["mock-generated-client-imports", "code", true],
+      ["mock-lazy-query-shaping", "code", true],
+      ["mock-no-console-log", "code", true],
     ]);
     expect(rules.get("mock-no-console-log")?.createdAt).toBe(100_000);
     rules.close();

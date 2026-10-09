@@ -42,7 +42,7 @@ describe("rule documents with repeated keys are rejected on write", () => {
   let stores: RerailApiStores;
   const codeRule = MOCK_CODE_RULES[0]!;
   /** The mock code rule's upsert body with its clause's `id` given twice; JSON.parse would keep the second. */
-  const repeatedBody = JSON.stringify({ kind: "file", rule: codeRule })
+  const repeatedBody = JSON.stringify({ kind: "code", rule: codeRule })
     .replace('"id":"console-call"', '"id":"first","id":"console-call"');
 
   beforeEach(async () => {
@@ -73,7 +73,7 @@ describe("rule documents with repeated keys are rejected on write", () => {
     const accepted = await app.request(`/api/rules/${codeRule.id}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "file", rule: codeRule }),
+      body: JSON.stringify({ kind: "code", rule: codeRule }),
     });
     expect(accepted.status).toBe(200);
   });
@@ -81,7 +81,7 @@ describe("rule documents with repeated keys are rejected on write", () => {
   it("rejects a deeply nested discarded duplicate key instead of applying last-key-wins", async () => {
     const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
     const nested = `${"[".repeat(10_000)}0${"]".repeat(10_000)}`;
-    const body = JSON.stringify({ kind: "file", rule: codeRule }).replace('"kind":"file"', `"kind":${nested},"kind":"file"`);
+    const body = JSON.stringify({ kind: "code", rule: codeRule }).replace('"kind":"code"', `"kind":${nested},"kind":"code"`);
 
     const rejected = await app.request(`/api/rules/${codeRule.id}`, {
       method: "PUT",

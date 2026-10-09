@@ -1,11 +1,12 @@
 # Rule pack structure and validation contract
 
 Status: the layout and the validation contract (checks 1 to 6) are implemented. `test/packs.test.ts` validates every
-`packs/*` directory: `python`, `php`, `blade`, `typescript`, `react`, `node`, `next` and `tslint`. Core does not load
-installed packs yet: it ships the TSLint pack inside its own package (`packs/tslint/pack.json` and `packs/tslint/rules/`
-in its `files`, read from `CORE_RULE_PACKS` in `src/rule-bootstrap.ts`; see [rule packs](rule-packs.md)), and no pack
-is published. A pack introduces no new file format: it combines the two schemas the repository already has. To start
-one, see [language packs](language-packs.md#start-a-pack).
+`packs/*` directory: `python`, `php`, `blade`, `typescript`, `react`, `node`, `next`, `tslint` and `complexity`. Core
+does not load installed packs yet: it ships the TSLint and complexity packs inside its own package
+(`packs/<id>/pack.json` and `packs/<id>/rules/` in its `files`, read from `CORE_RULE_PACKS` in
+`src/rule-bootstrap.ts`; see [rule packs](rule-packs.md)), and no pack is published. A pack introduces no new file
+format: it combines the two schemas the repository already has. To start one, see
+[language packs](language-packs.md#start-a-pack).
 
 Core's own built-in rules are not a pack: they would live in `code-rule-dsl/rules/` beside the engine's
 `capabilities.json` and be seeded enabled. None ship today. Packs hold every other rule document; their rules are

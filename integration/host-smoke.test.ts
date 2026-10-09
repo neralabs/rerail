@@ -56,3 +56,20 @@ it("accepts a completed violation retry without accepting unrelated or mismatche
     store.close();
   }
 });
+
+it("counts extension errors from this package's extension or engine and ignores other extensions", async () => {
+  const project = await mkdtemp(join(tmpdir(), "rerail-smoke-errors-"));
+  temporaryDirectories.push(project);
+  vi.stubEnv("RERAIL_HOME", join(project, "home"));
+  await mkdir(join(project, ".rerail", "sessions"), { recursive: true });
+  new SqliteSessionStore(defaultRerailDatabasePath()).close();
+  const silent = async (stderr: string): Promise<boolean | undefined> => {
+    const assertions: Parameters<typeof inspectOutcome>[2] = [];
+    await inspectOutcome(project, "nonce", assertions, { exitCode: 0, stdout: "", stderr }, "transport");
+    return assertions.find((assertion) => assertion.name === "extension stayed silent")?.passed;
+  };
+  expect(await silent("Extension error (/checkout/package/dist/default-extension.js): handler timed out after 5000ms")).toBe(false);
+  expect(await silent("Extension error (/checkout/package/dist/pi-extension.js): boom")).toBe(false);
+  expect(await silent("Extension error (/elsewhere/index.js): cannot load rerail.darwin-arm64.node")).toBe(false);
+  expect(await silent("Extension error (/elsewhere/other-extension.js): unrelated failure")).toBe(true);
+});

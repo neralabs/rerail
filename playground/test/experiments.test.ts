@@ -36,7 +36,7 @@ function experiment(): PlaygroundExperiment {
       scenario,
       rule: {
         id: selection.ruleId,
-        kind: "file",
+        kind: "code",
         definition: "{}",
         digest: "edited-rule",
         updatedAt: "2",

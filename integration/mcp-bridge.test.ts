@@ -1,25 +1,11 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
-import { createServer } from "node:net";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { DEFAULT_DAEMON_PORT, RerailDaemon } from "../src/daemon.js";
-
-/** The bridge always dials the default daemon port; a daemon already running on this machine owns it. */
-async function defaultPortTaken(): Promise<boolean> {
-  const probe = createServer();
-  try {
-    probe.listen(DEFAULT_DAEMON_PORT, "127.0.0.1");
-    await once(probe, "listening");
-    return false;
-  } catch {
-    return true;
-  } finally {
-    probe.close();
-  }
-}
+import { DAEMON_STATE_FILE } from "../src/daemon-control.js";
+import { RerailDaemon } from "../src/daemon.js";
 
 let root: string | undefined;
 let daemon: RerailDaemon | undefined;
@@ -32,15 +18,18 @@ afterEach(async () => {
   root = undefined;
 });
 
-it.skipIf(await defaultPortTaken())("bridges real MCP writes with split UTF-8 input and no response to notifications", async () => {
+// The bridge finds the daemon through the Rerail home's state file, so the test runs beside a daemon that holds the default port.
+it("bridges real MCP writes with split UTF-8 input and no response to notifications", async () => {
   root = await mkdtemp(join(tmpdir(), "rerail-mcp-bridge-"));
   vi.stubEnv("RERAIL_HOME", join(root, "home"));
+  await mkdir(join(root, "home"), { recursive: true });
   daemon = await RerailDaemon.start({
     version: "test",
     databasePath: join(root, "home", "rerail.sqlite"),
     workspaceRoot: root,
     host: "127.0.0.1",
-    port: DEFAULT_DAEMON_PORT,
+    port: 0,
+    stateFile: join(root, "home", DAEMON_STATE_FILE),
   });
   const child = spawn(process.execPath, [resolve("dist/cli.js"), "mcp-bridge"], {
     cwd: root,

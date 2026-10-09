@@ -85,7 +85,7 @@ describe("code rule writes compile in the engine", () => {
       const rejected = await app.request(`/api/rules/${unboundMessage.id}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ kind: "file", rule: unboundMessage }),
+        body: JSON.stringify({ kind: "code", rule: unboundMessage }),
       });
       expect(rejected.status).toBe(400);
       const body = await rejected.json() as { error: string; message: string };
@@ -97,7 +97,7 @@ describe("code rule writes compile in the engine", () => {
       const unavailable = await app.request(`/api/rules/${MOCK_CODE_RULES[0]!.id}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ kind: "file", rule: MOCK_CODE_RULES[0] }),
+        body: JSON.stringify({ kind: "code", rule: MOCK_CODE_RULES[0] }),
       });
       expect(unavailable.status).toBe(503);
       expect(await unavailable.json()).toMatchObject({ error: "kernel-unavailable" });

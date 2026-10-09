@@ -79,7 +79,7 @@ describe("quarantined code rule rows", () => {
     try {
       expect(catalog.codeRules().map(entry => entry.id)).toEqual(["test:kept"]);
       expect(catalog.quarantined()).toEqual([
-        { ruleId: "test:broken", kind: "file", owner: "repository", reason: expect.stringMatching(/clauses/u) },
+        { ruleId: "test:broken", kind: "code", owner: "repository", reason: expect.stringMatching(/clauses/u) },
       ]);
     } finally {
       catalog.close();
@@ -142,7 +142,7 @@ describe("quarantined code rule rows", () => {
       expect(listed.rules.map(stored => stored.rule.id)).toEqual(["test:kept"]);
       expect(listed.quarantined).toEqual([{
         ruleId: "test:broken",
-        kind: "file",
+        kind: "code",
         owner: `project:${catalog.context().projectId}`,
         reason: expect.stringMatching(/clauses/u),
       }]);

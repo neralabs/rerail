@@ -74,13 +74,10 @@ export async function readPending(path: string): Promise<AdapterDelivery[]> {
           && RULE_MODES.includes(delivery.requested)
           && steers(delivery.requested)
           && typeof delivery.mechanism === "string"
-          && typeof delivery.content === "string";
-      })
-      // Files written before steer attribution carry no rule ids.
-      .map(delivery => ({
-        ...delivery,
-        ruleIds: Array.isArray(delivery.ruleIds) ? delivery.ruleIds.filter(id => typeof id === "string") : [],
-      }));
+          && typeof delivery.content === "string"
+          && Array.isArray(delivery.ruleIds)
+          && delivery.ruleIds.every(id => typeof id === "string");
+      });
   } catch (error) {
     if (errno(error, "ENOENT")) return [];
     throw error;

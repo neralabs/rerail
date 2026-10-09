@@ -153,8 +153,7 @@ const LedgerEntrySchema = z.union([
       requested: z.enum(RULE_MODES),
       mechanism: z.enum(["observe", "native-queue", "additional-context", "deferred-context"]),
       content: z.string(),
-      // Ledger entries written before steer attribution carry no rule ids.
-      ruleIds: z.array(z.string()).default([]),
+      ruleIds: z.array(z.string()),
     }),
   }),
   z.object({ type: z.literal("rule-mutation"), mutation: z.unknown() }),
@@ -734,7 +733,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         repositoryId: this.#ruleCatalog.context().repositoryId,
         activeRuleCount: (state.registry?.count ?? 0) + this.#codeRuleCatalog.status.ruleCount,
         conversationRuleSignature: state.ruleSync?.sourceSignature ?? "",
-        fileRuleSignature: this.#codeRuleCatalog.status.sourceSignature,
+        codeRuleSignature: this.#codeRuleCatalog.status.sourceSignature,
       });
     } catch (error) {
       console.error("rerail rule coverage:", error);

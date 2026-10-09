@@ -212,7 +212,7 @@ describe("OMP conversation-rules extension", () => {
     expect(receiptCount(harness.context)).toBe(0);
   });
 
-  it("loads enabled conversation rules from the project database and lets them override file rules", async () => {
+  it("loads enabled conversation rules from the project database and lets them override rules from JSON files", async () => {
     const harness = await createHarness();
     mkdirSync(join(harness.context.cwd, ".omp"));
     writeFileSync(join(harness.context.cwd, ".omp", "conversation-rules.json"), JSON.stringify({

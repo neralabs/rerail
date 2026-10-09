@@ -36,7 +36,7 @@ function lifecycleHarness(changeOwnerBeforeFailure: boolean) {
     ingest: async (_event: AdapterEvent) => { ingested += 1; },
     conversationRulesTool: {},
     conversationRulesCommand: {},
-    packageRoot: "/rerail",
+    packageRoot: "/package-root",
     started: () => true,
   });
   return { context, handlers, ingested: () => ingested };

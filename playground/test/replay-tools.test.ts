@@ -81,7 +81,7 @@ describe("replay glob", () => {
     const tools: ToolDefinition[] = [];
     const extension = await replayTools(root, false, {
       id: "glob", title: "Find source files", expectation: "match", explanation: "Inspect fixtures",
-      ruleDigest: "fixture", ruleKind: "file", prompt: "Find source files", fixtures: [], steps: [],
+      ruleDigest: "fixture", ruleKind: "code", prompt: "Find source files", fixtures: [], steps: [],
     });
     await extension({
       registerTool(tool: ToolDefinition) { tools.push(tool); },

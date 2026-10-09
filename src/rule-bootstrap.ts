@@ -43,7 +43,7 @@ export function defaultRulesDumpPath(databasePath: string): string {
 
 function parseRuleDocument(value: unknown, label: string): RuleDocument {
   const isCodeRule = typeof value === "object" && value !== null && "format" in value && value.format === CODE_RULE_FORMAT;
-  if (isCodeRule) return { kind: "file", rule: codeRuleSchema.parse(value) };
+  if (isCodeRule) return { kind: "code", rule: codeRuleSchema.parse(value) };
   const conversationRule = conversationRuleSchema.safeParse(value);
   if (conversationRule.success) return { kind: "conversation", rule: conversationRule.data };
   throw new Error(`${label} is neither a ${CODE_RULE_FORMAT} document nor a conversation rule: ${conversationRule.error.issues[0]?.message ?? "invalid"}`);
@@ -121,7 +121,7 @@ export function exportScopedRules(store: ScopedRuleCatalog, path: string, now = 
 function assertDumpCompiles(path: string, documents: readonly RuleDocument[]): void {
   const problems: string[] = [];
   for (const [index, document] of documents.entries()) {
-    if (document.kind !== "file") continue;
+    if (document.kind !== "code") continue;
     try {
       assertCodeRuleStorable(document.rule);
     } catch (error) {
@@ -130,7 +130,7 @@ function assertDumpCompiles(path: string, documents: readonly RuleDocument[]): v
     }
   }
   if (problems.length > 0) {
-    throw new Error(`${path}: nothing imported; ${problems.length} file rule(s) do not compile:\n${problems.join("\n")}`);
+    throw new Error(`${path}: nothing imported; ${problems.length} code rule(s) do not compile:\n${problems.join("\n")}`);
   }
 }
 

@@ -71,13 +71,13 @@ describe("a rule for a planned language", () => {
     const store = new SqliteRuleStore(databasePath);
     store.upsertCodeRule(astCodeRule("planned:vue", "vue"));
     store.upsertCodeRule(astCodeRule("supported:python", "python"));
-    expect(store.list({ kind: "file" }).map(stored => stored.rule.id).toSorted()).toEqual(["planned:vue", "supported:python"]);
+    expect(store.list({ kind: "code" }).map(stored => stored.rule.id).toSorted()).toEqual(["planned:vue", "supported:python"]);
     store.close();
     const catalog = bootstrapCodeRuleDslCatalog({ databasePath });
     try {
       expect(catalog.codeRules().map(entry => entry.id)).toEqual(["supported:python"]);
       expect(catalog.quarantined()).toEqual([
-        { ruleId: "planned:vue", kind: "file", owner: "project:unknown", reason: reason("vue"), code: LANGUAGE_NOT_SUPPORTED },
+        { ruleId: "planned:vue", kind: "code", owner: "project:unknown", reason: reason("vue"), code: LANGUAGE_NOT_SUPPORTED },
       ]);
       expect(warnings).not.toHaveBeenCalled();
     } finally {
@@ -93,7 +93,7 @@ describe("a rule for a planned language", () => {
       const put = await app.request("/api/rules/planned:sql", {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ kind: "file", rule: astCodeRule("planned:sql", "sql") }),
+        body: JSON.stringify({ kind: "code", rule: astCodeRule("planned:sql", "sql") }),
       });
       expect(put.status).toBe(200);
       expect(((await put.json()) as { rule: { inactive?: unknown } }).rule.inactive).toEqual(inactive);

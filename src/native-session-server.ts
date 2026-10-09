@@ -59,11 +59,7 @@ const requestSchema = objectSchema.extend({
 });
 
 const entriesSchema = z.array(z.object({ type: z.string(), id: z.string(), timestamp: z.string() }).passthrough());
-/** A client from a build without steer attribution sends the bare receipt id. */
-const steerReceiptSchema = z.union([
-  z.string().min(1).transform(receiptId => ({ receiptId, ruleIds: [] as string[] })),
-  z.object({ receiptId: z.string().min(1), ruleIds: z.array(z.string()).default([]) }),
-]);
+const steerReceiptSchema = z.object({ receiptId: z.string().min(1), ruleIds: z.array(z.string()) });
 const conversationRulesInputSchema = objectSchema.extend({ action: z.string() });
 
 

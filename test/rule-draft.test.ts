@@ -72,7 +72,7 @@ describe("rerail rules test", () => {
   it("passes when the rule catches its caught cases and passes its passed cases", async () => {
     const repo = await repository();
     const file = writeDraft(repo, {
-      kind: "file",
+      kind: "code",
       rule: noConsolePolicy(),
       cases: {
         caught: [{ path: "src/a.ts", content: "console.log(1);\n" }],
@@ -94,7 +94,7 @@ describe("rerail rules test", () => {
   it("fails when a case does not match its expectation", async () => {
     const repo = await repository();
     const file = writeDraft(repo, {
-      kind: "file",
+      kind: "code",
       rule: noConsolePolicy(),
       cases: { caught: [{ path: "src/a.ts", content: "logger.info(1);\n" }], passed: [] },
     });
@@ -108,7 +108,7 @@ describe("rerail rules test", () => {
 
   it("reports a policy the Engine cannot compile as not valid", async () => {
     const repo = await repository();
-    const file = writeDraft(repo, { kind: "file", rule: noConsolePolicy("(unclosed") });
+    const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy("(unclosed") });
 
     const { exit, report } = await testReport(file, repo);
 
@@ -135,7 +135,7 @@ describe("rerail rules test", () => {
       "lib/outside.ts": "console.log('outside scope');\n",
       "src/node_modules/dep.ts": "console.log('ignored');\n",
     });
-    const file = writeDraft(repo, { kind: "file", rule: noConsolePolicy() });
+    const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy() });
 
     const { exit, report } = await testReport(file, repo);
 
@@ -155,7 +155,7 @@ describe("rerail rules test", () => {
     const before = catalogFor(repo);
     const rulesBefore = stableJsonText(before.list());
     before.close();
-    const file = writeDraft(repo, { kind: "file", rule: noConsolePolicy() });
+    const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy() });
 
     await testReport(file, repo);
 
@@ -198,7 +198,7 @@ describe("rerail rules add", () => {
   it("stores the rule as an enabled project rule of the repo", async () => {
     const repo = await repository();
     const file = writeDraft(repo, {
-      kind: "file",
+      kind: "code",
       rule: noConsolePolicy(),
       cases: { caught: [{ path: "src/a.ts", content: "console.log(1);\n" }], passed: [] },
     });
@@ -210,7 +210,7 @@ describe("rerail rules add", () => {
     const catalog = catalogFor(repo);
     try {
       expect(catalog.list({ applicability: "project" }).find(rule => rule.rule.id === "acme:no-console-log")).toMatchObject({
-        kind: "file",
+        kind: "code",
         enabled: true,
         applicability: "project",
         catalogOrigin: "user",
@@ -226,12 +226,12 @@ describe("rerail rules add", () => {
     let bundled;
     try {
       seeded.seed(loadBundledRules());
-      bundled = seeded.list().find(rule => rule.catalogOrigin === "rerail" && rule.kind === "file");
+      bundled = seeded.list().find(rule => rule.catalogOrigin === "rerail" && rule.kind === "code");
     } finally {
       seeded.close();
     }
-    if (bundled === undefined) throw new Error("expected a file rule by Rerail");
-    const file = writeDraft(repo, { kind: "file", rule: { ...noConsolePolicy(), id: bundled.rule.id } });
+    if (bundled === undefined) throw new Error("expected a code rule by Rerail");
+    const file = writeDraft(repo, { kind: "code", rule: { ...noConsolePolicy(), id: bundled.rule.id } });
 
     const { exit, stdout, stderr } = await run("add", [file, "--repo", repo]);
 

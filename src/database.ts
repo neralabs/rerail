@@ -11,7 +11,7 @@ import { defaultRerailHome } from "./rerail-home.js";
 export type RerailDatabase = BetterSQLite3Database<typeof schema> & { readonly $client: Database.Database };
 
 export interface OpenRerailDatabaseOptions {
-  /** Open an existing database without write access; the schema is not applied. */
+  /** Open an existing database without write access; the schema version is checked but the schema is not applied. */
   readonly?: boolean;
 }
 
@@ -23,20 +23,82 @@ export function defaultRerailDatabasePath(environment: NodeJS.ProcessEnv = proce
   return join(defaultRerailHome(environment), RERAIL_DATABASE_FILE);
 }
 
+/** A connection that has changed nothing on disk yet; a writable one creates the directory and an absent file. */
+function connectSqlite(path: string, readonly: boolean): RerailDatabase {
+  if (!readonly) mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const client = new Database(path, { readonly });
+  try {
+    const database = drizzle(client, { schema });
+    database.run(sql`PRAGMA busy_timeout = 5000`);
+    return database;
+  } catch (error) {
+    client.close();
+    throw error;
+  }
+}
+
+/** What a writer owns: the file mode, WAL, and the connection's integrity settings. */
+function prepareWriter(database: RerailDatabase, path: string): void {
+  chmodSync(path, 0o600);
+  enableWal(() => database.run(sql`PRAGMA journal_mode = WAL`));
+  database.run(sql`PRAGMA foreign_keys = ON`);
+  database.run(sql`PRAGMA synchronous = FULL`);
+}
+
 /** Open the Node-owned SQLite database without applying Rerail's project schema. */
 export function openSqliteDatabase(path: string, options: OpenRerailDatabaseOptions = {}): RerailDatabase {
   const readonly = options.readonly === true;
-  if (!readonly) mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const client = new Database(path, { readonly });
-  const database = drizzle(client, { schema });
-  database.run(sql`PRAGMA busy_timeout = 5000`);
-  if (!readonly) {
-    chmodSync(path, 0o600);
-    enableWal(() => database.run(sql`PRAGMA journal_mode = WAL`));
-    database.run(sql`PRAGMA foreign_keys = ON`);
-    database.run(sql`PRAGMA synchronous = FULL`);
+  const database = connectSqlite(path, readonly);
+  try {
+    if (!readonly) prepareWriter(database, path);
+    return database;
+  } catch (error) {
+    database.$client.close();
+    throw error;
   }
-  return database;
+}
+
+/** What a file on disk records about its schema. */
+interface SchemaStamp {
+  /** Whether the file holds any table; a file without one is new. */
+  readonly empty: boolean;
+  /** `PRAGMA user_version`: the schema version the file was written for, 0 when no Rerail stamped it. */
+  readonly version: number;
+}
+
+function schemaStamp(database: RerailDatabase): SchemaStamp {
+  const tables = database.all<{ name: string }>(sql`SELECT name FROM sqlite_master WHERE type = 'table'`);
+  const version = database.all<{ user_version: number }>(sql`PRAGMA user_version`)[0]?.user_version ?? 0;
+  return { empty: tables.length === 0, version };
+}
+
+/** The refusal for a file that holds something other than a Rerail database. */
+function unreadableDatabase(path: string, recorded: string): string {
+  return `${path} is not a database this build can open (${recorded}; this build reads schema v${schema.RERAIL_SCHEMA_VERSION}). `
+    + "Move the file aside to start fresh.";
+}
+
+/** SQLite's "file is not a database", raised directly or as the cause of Drizzle's query error. */
+function notADatabase(error: unknown): boolean {
+  const notSqlite = (value: unknown): boolean => value instanceof Database.SqliteError && value.code === "SQLITE_NOTADB";
+  return notSqlite(error) || (error instanceof Error && notSqlite(error.cause));
+}
+
+/**
+ * Why this build cannot open a file stamped `stamp`, or undefined when it can: a file stamped by a newer Rerail,
+ * a file stamped by an older Rerail (the version only rises for a change the idempotent DDL cannot apply, and
+ * Rerail converts no data), or a file with tables that no Rerail stamped.
+ */
+function schemaRefusal(path: string, stamp: SchemaStamp): string | undefined {
+  if (stamp.empty) return undefined;
+  if (stamp.version > schema.RERAIL_SCHEMA_VERSION) {
+    return `${path} was written by a newer Rerail (schema v${stamp.version}); this Rerail supports schema v${schema.RERAIL_SCHEMA_VERSION}. Update Rerail to open it.`;
+  }
+  if (stamp.version === 0) return unreadableDatabase(path, "no Rerail schema version");
+  if (stamp.version < schema.RERAIL_SCHEMA_VERSION) {
+    return `${path} was written by an older Rerail (schema v${stamp.version}); this Rerail supports schema v${schema.RERAIL_SCHEMA_VERSION} and does not convert older files. Move the file aside to start fresh.`;
+  }
+  return undefined;
 }
 
 /**
@@ -44,34 +106,66 @@ export function openSqliteDatabase(path: string, options: OpenRerailDatabaseOpti
  * Writers own the file mode (0600) and directory mode (0700) they create.
  *
  * `PRAGMA user_version` holds the schema version the file was written for. A file stamped by a
- * newer Rerail is refused; otherwise the current DDL, which is idempotent, is applied and the
- * file is stamped with this build's version.
+ * newer or an older Rerail, a file with tables no Rerail stamped, and a file that is not SQLite at all are
+ * refused, writable or read-only, and left untouched: a writable open checks the stamp before it sets the file
+ * mode or switches the journal to WAL. Otherwise the current DDL, which is idempotent, is applied and the file
+ * is stamped with this build's version. A read-only open of a file whose creator has not committed the
+ * schema yet sees no table at all.
  */
 export function openRerailDatabase(path: string, options: OpenRerailDatabaseOptions = {}): RerailDatabase {
-  const database = openSqliteDatabase(path, options);
-  if (options.readonly === true) return database;
-  // DDL and stamp run under one write lock, so concurrent openers agree on the file's shape.
-  database.run(sql.raw("BEGIN IMMEDIATE"));
+  const readonly = options.readonly === true;
+  let database: RerailDatabase;
   try {
-    const version = database.all<{ user_version: number }>(sql`PRAGMA user_version`)[0]?.user_version ?? 0;
-    if (version > schema.RERAIL_SCHEMA_VERSION) {
-      throw new Error(
-        `${path} was written by a newer Rerail (schema v${version}); this Rerail supports schema v${schema.RERAIL_SCHEMA_VERSION}. Update Rerail to open it.`,
-      );
-    }
-    for (const statement of RERAIL_SCHEMA_STATEMENTS) database.run(sql.raw(statement));
-    if (version < schema.RERAIL_SCHEMA_VERSION) database.run(sql.raw(`PRAGMA user_version = ${schema.RERAIL_SCHEMA_VERSION}`));
-    database.run(sql.raw("COMMIT"));
+    database = connectSqlite(path, readonly);
   } catch (error) {
-    try {
-      database.run(sql.raw("ROLLBACK"));
-    } catch {
-      // Already rolled back, or the connection failed before the transaction began.
-    }
-    database.$client.close();
-    throw error;
+    throw notADatabase(error) ? new Error(unreadableDatabase(path, "not an SQLite database")) : error;
+  }
+  try {
+    if (!readonly) checkBeforeWriting(database, path);
+  } catch (error) {
+    closeAndRethrow(database, path, error);
+  }
+  try {
+    applySchema(database, path, readonly);
+  } catch (error) {
+    if (!readonly) rollbackQuietly(database);
+    closeAndRethrow(database, path, error);
   }
   return database;
+}
+
+/** A writable open checks the stamp before it sets the file mode or switches the journal to WAL. */
+function checkBeforeWriting(database: RerailDatabase, path: string): void {
+  // A plain read: the WAL switch cannot run inside a transaction, so the stamp is read again under the lock.
+  const refusal = schemaRefusal(path, schemaStamp(database));
+  if (refusal !== undefined) throw new Error(refusal);
+  prepareWriter(database, path);
+}
+
+/** DDL and stamp run under one write lock, so concurrent openers agree on the file's shape. */
+function applySchema(database: RerailDatabase, path: string, readonly: boolean): void {
+  if (!readonly) database.run(sql.raw("BEGIN IMMEDIATE"));
+  const stamp = schemaStamp(database);
+  const refusal = schemaRefusal(path, stamp);
+  if (refusal !== undefined) throw new Error(refusal);
+  if (readonly) return;
+  for (const statement of RERAIL_SCHEMA_STATEMENTS) database.run(sql.raw(statement));
+  if (stamp.version < schema.RERAIL_SCHEMA_VERSION) database.run(sql.raw(`PRAGMA user_version = ${schema.RERAIL_SCHEMA_VERSION}`));
+  database.run(sql.raw("COMMIT"));
+}
+
+function rollbackQuietly(database: RerailDatabase): void {
+  try {
+    database.run(sql.raw("ROLLBACK"));
+  } catch {
+    // Already rolled back, or the connection failed before the transaction began.
+  }
+}
+
+/** Closes the connection, then rethrows; a file that is not SQLite is reported as unreadable. */
+function closeAndRethrow(database: RerailDatabase, path: string, error: unknown): never {
+  database.$client.close();
+  throw notADatabase(error) ? new Error(unreadableDatabase(path, "not an SQLite database")) : error;
 }
 
 /** Opens a read-only database lazily so viewers can start before the writer creates it. */

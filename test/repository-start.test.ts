@@ -1,8 +1,10 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, mkdirSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase } from "../src/database.js";
@@ -24,6 +26,7 @@ import { resolveRepositoryContext, ScopedRuleCatalog } from "../src/scoped-rule-
 import { RerailRuntime } from "../src/runtime.js";
 import { testEmbedder } from "./hook-fixtures.js";
 
+const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
@@ -265,5 +268,32 @@ describe("repository start state", () => {
     seedRerailDatabase(databasePath, { cwd: checkout, repositoryId: resolveRepositoryContext(checkout).repositoryId });
     openRerailDatabase(databasePath).$client.close();
     expect(workspaceStartState(checkout, databasePath)).toBe("never");
+  });
+
+  it("reads a database another process is still creating as never, without failing", async () => {
+    const root = await temporary("rerail-creating-");
+    const databasePath = join(root, "home", "rerail.sqlite");
+    mkdirSync(dirname(databasePath), { recursive: true });
+    const checkout = gitRepository(join(root, "acme-web"));
+    resolveRepositoryContext(checkout);
+    // A creator that has made the file and holds the write lock while its schema transaction is still open.
+    const creator = spawn(process.execPath, ["--input-type=module", "-e", `
+      import Database from "better-sqlite3";
+      const database = new Database(process.argv[1]);
+      database.pragma("journal_mode = WAL");
+      database.exec("BEGIN IMMEDIATE");
+      database.exec("CREATE TABLE pending (id INTEGER)");
+      process.stdout.write("locked\\n");
+      setTimeout(() => {
+        database.exec("ROLLBACK");
+        database.close();
+      }, 500);
+    `, databasePath], { cwd: packageRoot, stdio: ["ignore", "pipe", "inherit"] });
+    const closed = once(creator, "close");
+    await Promise.race([once(creator.stdout, "data"), closed]);
+
+    expect(workspaceStartState(checkout, databasePath)).toBe("never");
+    expect(await closed).toEqual([0, null]);
+    expect(isRerailStarted(checkout, databasePath)).toBe(false);
   });
 });

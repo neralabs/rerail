@@ -63,7 +63,7 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
   - `title` and `group` are what the dashboard shows.
   - `mode` (optional) is the rule mode the pack starts the rule in; without it the rule keeps its document's mode. No shipped pack sets one. Takes effect once packs are attached.
   - `on` (optional, default `true`) is whether the pack starts the rule on. Takes effect once packs are attached.
-  - `examples` (optional) is one caught and one passing example, `{ "caught": { "path"?, "text" }, "passes": { … } }`, with a path for a file rule and none for a conversation rule. The complexity pack has one pair per rule; the TSLint ports are proved by the conformance harness (the golden manifest, `packs/tslint/conformance.json`).
+  - `examples` (optional) is one caught and one passing example, `{ "caught": { "path"?, "text" }, "passes": { … } }`, with a path for a code rule and none for a conversation rule. The complexity pack has one pair per rule; the TSLint ports are proved by the conformance harness (the golden manifest, `packs/tslint/conformance.json`).
   - `document` is the rule's document, `rules/<name>.json`, relative to the pack; it must carry the rule's id
     ([pack format](pack-format.md#packjson)).
 

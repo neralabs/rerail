@@ -67,7 +67,7 @@ export class OmpHost {
       child = spawn(executable, ["--mode", "rpc", "--no-session", "--no-extensions", "--no-skills", "--no-rules", "--no-lsp", "--no-pty",
         "--extension", fixture, "--thinking", "off"], {
         cwd, stdio: "pipe", env: { PATH: process.env.PATH, TMPDIR: temporaryDirectory, HOME: join(cwd, "host-home"), PI_CODING_AGENT_DIR: join(cwd, "host-agent"),
-          RERAIL_HOME: join(cwd, "home"), RERAIL_PACKAGE_ROOT: root, RERAIL_OMP_TEST_CONFIG: config },
+          RERAIL_HOME: join(cwd, "home"), RERAIL_OMP_TEST_CONFIG: config },
       });
     } catch (error) {
       await rm(temporaryDirectory, { recursive: true, force: true });

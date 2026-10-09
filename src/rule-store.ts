@@ -20,7 +20,7 @@ interface StoredRuleBase {
 }
 
 export interface StoredCodeRule extends StoredRuleBase {
-  kind: "file";
+  kind: "code";
   rule: CodeRule;
 }
 
@@ -32,20 +32,20 @@ export interface StoredConversationRule extends StoredRuleBase {
 export type StoredRule = StoredCodeRule | StoredConversationRule;
 
 /** A rule body with its kind, as bundled with the package or dumped by `rerail rules export`. */
-export type RuleDocument = { kind: "file"; rule: CodeRule } | { kind: "conversation"; rule: ConversationRule };
+export type RuleDocument = { kind: "code"; rule: CodeRule } | { kind: "conversation"; rule: ConversationRule };
 
 /** A bundled document; `enabledByDefault: false` (opt-in packs) makes the first seed insert it disabled. */
 export type BundledRuleDocument = RuleDocument & { readonly enabledByDefault?: boolean };
 
 /** The rule body of a bundled entry, without its seeding metadata. */
 export function bundledRuleBody(document: BundledRuleDocument): RuleDocument {
-  return document.kind === "file" ? { kind: "file", rule: document.rule } : { kind: "conversation", rule: document.rule };
+  return document.kind === "code" ? { kind: "code", rule: document.rule } : { kind: "conversation", rule: document.rule };
 }
 
 export interface RuleWriteOptions {
   enabled?: boolean;
   scope?: RuleScope;
-  /** Conversation rules carry no revision of their own; omit to bump the stored one. File rules take `rule.revision`. */
+  /** Conversation rules carry no revision of their own; omit to bump the stored one. Code rules take `rule.revision`. */
   revision?: number;
   now?: number;
   /** Bundled provenance; omit to keep what the row already records. */
@@ -66,9 +66,9 @@ export interface RuleQuery {
   scope?: RuleScope;
   /** Case-insensitive substring over id, reference/description, and action content or clause bodies. */
   text?: string;
-  /** Conversation `sample.source`; file rules never match. */
+  /** Conversation `sample.source`; code rules never match. */
   source?: string;
-  /** Conversation `sample.boundary`; file rules never match. */
+  /** Conversation `sample.boundary`; code rules never match. */
   boundary?: SampleBoundary;
   /** Rule mode; matches either kind. */
   mode?: RuleMode;
@@ -129,7 +129,7 @@ const NULL_CONVERSATION_COLUMNS = {
 
 /** The rule body exactly as the row stores it, before validation. */
 function storedBody(row: RuleRow): unknown {
-  if (row.kind === "file") {
+  if (row.kind === "code") {
     return {
       format: row.format,
       id: row.id,
@@ -167,10 +167,10 @@ function readRuleRow(row: RuleRow): RowRead {
     sourceDigest: row.sourceDigest,
   };
   const quarantine = (reason: string): RowRead => ({ ok: false, quarantined: { ruleId: row.id, kind: row.kind, owner: row.scope, reason } });
-  if (row.kind === "file") {
+  if (row.kind === "code") {
     const read = readStoredCodeRule(storedBody(row));
     if (!read.ok) return quarantine(read.reason);
-    return { ok: true, stored: { ...base, kind: "file", rule: read.rule } };
+    return { ok: true, stored: { ...base, kind: "code", rule: read.rule } };
   }
   try {
     return { ok: true, stored: { ...base, kind: "conversation", rule: parseConversationRule(storedBody(row), `rules[${row.id}]`) } };
@@ -205,13 +205,13 @@ export class SqliteRuleStore {
 
   #writeCodeRule(rule: CodeRule, options: RuleWriteOptions): StoredCodeRule {
     const existing = this.#row(rule.id);
-    if (existing !== undefined && existing.kind !== "file") {
-      throw new Error(`rule ${rule.id} exists with kind ${existing.kind}; remove it before storing a file rule`);
+    if (existing !== undefined && existing.kind !== "code") {
+      throw new Error(`rule ${rule.id} exists with kind ${existing.kind}; remove it before storing a code rule`);
     }
     const now = options.now ?? Date.now();
     this.#upsert({
       id: rule.id,
-      kind: "file",
+      kind: "code",
       mode: rule.mode,
       revision: rule.revision,
       enabled: options.enabled ?? existing?.enabled ?? true,
@@ -259,14 +259,14 @@ export class SqliteRuleStore {
 
   /** Write one document under either kind; the write options apply to whichever branch runs. */
   upsertDocument(document: RuleDocument, options: RuleWriteOptions = {}): StoredRule {
-    return document.kind === "file"
+    return document.kind === "code"
       ? this.upsertCodeRule(document.rule, options)
       : this.upsertConversationRule(document.rule, options);
   }
 
   /** Bundled and restored documents were validated when they were read; a restore must not fail on an engine change. */
   #writeDocument(document: RuleDocument, options: RuleWriteOptions): StoredRule {
-    return document.kind === "file" ? this.#writeCodeRule(document.rule, options) : this.upsertConversationRule(document.rule, options);
+    return document.kind === "code" ? this.#writeCodeRule(document.rule, options) : this.upsertConversationRule(document.rule, options);
   }
 
   /**
@@ -372,10 +372,10 @@ export class SqliteRuleStore {
     );
   }
 
-  /** Enabled file rules, validated. */
+  /** Enabled code rules, validated. */
   codeRules(): CodeRule[] {
-    return this.list({ kind: "file", enabled: true }).flatMap(stored =>
-      stored.kind === "file" ? [stored.rule] : [],
+    return this.list({ kind: "code", enabled: true }).flatMap(stored =>
+      stored.kind === "code" ? [stored.rule] : [],
     );
   }
 

@@ -49,7 +49,7 @@ type ConversationCase = z.infer<typeof conversationCaseSchema>;
 type Expectation = "caught" | "passed";
 
 export type RuleDraft =
-  | { kind: "file"; rule: CodeRule; cases: ReadonlyArray<{ expected: Expectation; sample: CodeRuleCase }> }
+  | { kind: "code"; rule: CodeRule; cases: ReadonlyArray<{ expected: Expectation; sample: CodeRuleCase }> }
   | { kind: "conversation"; rule: ConversationRule; cases: ReadonlyArray<{ expected: Expectation; sample: ConversationCase }> };
 
 export interface RuleDraftCaseResult {
@@ -108,10 +108,10 @@ export function parseRuleDraft(value: unknown): RuleDraft {
   if (!upsert.success) throw new RuleDraftError(issuesText(upsert.error));
   const cases = draftCasesSchema.safeParse(rawCases ?? {});
   if (!cases.success) throw new RuleDraftError(issuesText(cases.error, ["cases"]));
-  if (upsert.data.kind === "file") {
+  if (upsert.data.kind === "code") {
     const schema = codeRuleCaseSchema;
     return {
-      kind: "file",
+      kind: "code",
       rule: upsert.data.rule as CodeRule,
       cases: [...parseCases(schema, cases.data.caught, "caught"), ...parseCases(schema, cases.data.passed, "passed")],
     };
@@ -357,7 +357,7 @@ export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defa
     }
     const options = { applicability: "project" as const, enabled: true };
     try {
-      if (draft.kind === "file") catalog.upsertCodeRule(draft.rule, options);
+      if (draft.kind === "code") catalog.upsertCodeRule(draft.rule, options);
       else catalog.upsertConversationRule(draft.rule, options);
     } catch (error) {
       if (error instanceof EngineUnavailableError) throw new RuleDraftError(`the Engine is unavailable, so rule ${draft.rule.id} cannot be checked`);

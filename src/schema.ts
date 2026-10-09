@@ -30,11 +30,14 @@ import type { RuleDocument } from "./rule-store.js";
  * The schema version written by this Rerail build. A Rerail refuses a database stamped with a
  * newer version. New tables and indexes need no bump: the DDL is idempotent and older builds
  * ignore what they do not know. A change an older build would misread, or one SQLite cannot
- * apply idempotently, raises it.
+ * apply idempotently, raises it. Rerail converts no data, so a file stamped with an older
+ * version holds a shape this build cannot apply and is refused too.
+ *
+ * 2: the code rule contract (the `rules_kind` check, `rules_code_columns`, the stored rule kind).
  */
-export const RERAIL_SCHEMA_VERSION = 1 as const;
+export const RERAIL_SCHEMA_VERSION = 2 as const;
 
-export const RULE_KINDS = ["file", "conversation"] as const;
+export const RULE_KINDS = ["code", "conversation"] as const;
 export type RuleKind = (typeof RULE_KINDS)[number];
 
 export const RULE_SCOPES = ["repository", "global"] as const;
@@ -84,7 +87,7 @@ export const rules = sqliteTable(
      */
     sourceDigest: text("source_digest"),
 
-    // kind = 'file': one column per top-level field of the executable
+    // kind = 'code': one column per top-level field of the executable
     // `rerail.policy/v1` document the engine compiles. Nested structures are
     // JSON validated by codeRuleSchema at the write boundary.
     format: text("format", { enum: [CODE_RULE_FORMAT] }),
@@ -114,8 +117,8 @@ export const rules = sqliteTable(
     check("rules_action_json", sql`${table.action} IS NULL OR json_type(${table.action}) = 'object'`),
     check("rules_repeat_json", sql`${table.repeat} IS NULL OR json_type(${table.repeat}) = 'object'`),
     check(
-      "rules_file_columns",
-      sql`${table.kind} <> 'file' OR (
+      "rules_code_columns",
+      sql`${table.kind} <> 'code' OR (
         ${table.format} IS NOT NULL
         AND ${table.clauses} IS NOT NULL
         AND ${table.reference} IS NULL

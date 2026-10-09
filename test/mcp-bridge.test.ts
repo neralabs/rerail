@@ -1,8 +1,13 @@
+import { spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { DAEMON_STATE_FILE } from "../src/daemon-control.js";
 import { runRerailMcpBridge } from "../src/mcp-bridge.js";
 
-type FetchStep = Response | Error;
+type FetchStep = Response | Error | ((home: string) => Promise<Response>);
 
 interface BridgeRun {
   stdout: readonly string[];
@@ -10,6 +15,22 @@ interface BridgeRun {
   requests: readonly string[];
   endpoints: readonly string[];
 }
+
+interface RecordedDaemon {
+  pid: number;
+  port: number;
+}
+
+interface BridgeSetup {
+  /** The daemon the home records; null records none. Defaults to a live one on port 4321. */
+  daemon?: RecordedDaemon | null;
+}
+
+const directories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+});
 
 function jsonResponse(status: number, body: unknown, contentType = "application/json"): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": contentType } });
@@ -21,7 +42,35 @@ function collect(stream: PassThrough): () => string[] {
   return () => Buffer.concat(chunks).toString("utf8").split("\n").filter(Boolean);
 }
 
-async function runBridge(lines: readonly string[], steps: readonly FetchStep[]): Promise<BridgeRun> {
+async function recordDaemon(home: string, daemon: RecordedDaemon): Promise<void> {
+  await mkdir(home, { recursive: true });
+  await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify({
+    pid: daemon.pid,
+    host: "127.0.0.1",
+    port: daemon.port,
+    url: `http://127.0.0.1:${daemon.port}/`,
+    version: "0.0.0",
+    databasePath: join(home, "rerail.sqlite"),
+    kernelSocketPath: "/tmp/rerail-bridge-test.sock",
+    ui: "bundled",
+    startedAt: 0,
+    packageRoot: "/tmp/rerail-bridge-test-package",
+  }));
+}
+
+/** The pid of a process that has already exited. */
+function exitedPid(): number {
+  const pid = spawnSync(process.execPath, ["-e", ""]).pid;
+  if (pid === undefined) throw new Error("no pid for the exited process");
+  return pid;
+}
+
+async function runBridge(lines: readonly string[], steps: readonly FetchStep[], setup: BridgeSetup = {}): Promise<BridgeRun> {
+  const root = await mkdtemp(join(tmpdir(), "rerail-bridge-"));
+  directories.push(root);
+  const home = join(root, "home");
+  const daemon = setup.daemon === undefined ? { pid: process.pid, port: 4321 } : setup.daemon;
+  if (daemon !== null) await recordDaemon(home, daemon);
   const requests: string[] = [];
   const endpoints: string[] = [];
   const remaining = [...steps];
@@ -30,6 +79,7 @@ async function runBridge(lines: readonly string[], steps: readonly FetchStep[]):
     requests.push(String(init.body));
     const step = remaining.shift();
     if (step === undefined) throw new Error("unexpected request");
+    if (typeof step === "function") return await step(home);
     if (step instanceof Error) throw step;
     return step;
   });
@@ -42,6 +92,7 @@ async function runBridge(lines: readonly string[], steps: readonly FetchStep[]):
     stdout,
     stderr,
     fetch: fetchImpl,
+    home,
   });
   return { stdout: collectedStdout(), stderr: collectedStderr(), requests, endpoints };
 }
@@ -51,7 +102,7 @@ describe("Rerail MCP bridge", () => {
     const request = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" });
     const result = JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} });
     const run = await runBridge([request], [new Response(result, { status: 200 })]);
-    expect(run.endpoints).toEqual(["http://127.0.0.1:4737/mcp"]);
+    expect(run.endpoints).toEqual(["http://127.0.0.1:4321/mcp"]);
     expect(run.requests).toEqual([request]);
     expect(run.stdout).toEqual([result]);
     expect(run.stderr).toEqual([]);
@@ -113,5 +164,41 @@ describe("Rerail MCP bridge", () => {
     const run = await runBridge([notification, ""], [new Response(null, { status: 202 })]);
     expect(run.stdout).toEqual([]);
     expect(run.stderr).toEqual([]);
+  });
+
+  it("sends each request to the daemon the Rerail home records, on whatever port it holds", async () => {
+    const request = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" });
+    const pong = JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} });
+    const run = await runBridge([request], [new Response(pong, { status: 200 })], { daemon: { pid: process.pid, port: 51_234 } });
+    expect(run.endpoints).toEqual(["http://127.0.0.1:51234/mcp"]);
+    expect(run.stdout).toEqual([pong]);
+  });
+
+  it.each([
+    ["records no daemon", null],
+    ["records a daemon whose process has exited", "exited"],
+  ] as const)("answers with an error and dials nothing when the home %s", async (_case, recorded) => {
+    const request = JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/list" });
+    const daemon = recorded === null ? null : { pid: exitedPid(), port: 51_234 };
+    const run = await runBridge([request], [], { daemon });
+    const message = "Rerail daemon is not running; start it with rerail daemon start";
+    expect(run.requests).toEqual([]);
+    expect(run.stdout).toEqual([JSON.stringify({ jsonrpc: "2.0", id: 4, error: { code: -32000, message } })]);
+    expect(run.stderr).toEqual([expect.stringContaining(message)]);
+  });
+
+  it("reads the home again after a failed request and follows a daemon that moved", async () => {
+    const first = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" });
+    const second = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" });
+    const pong = JSON.stringify({ jsonrpc: "2.0", id: 2, result: {} });
+    const restarted = async (home: string): Promise<Response> => {
+      await recordDaemon(home, { pid: process.pid, port: 52_345 });
+      throw new TypeError("fetch failed", { cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }) });
+    };
+    const run = await runBridge([first, second], [restarted, new Response(pong, { status: 200 })], {
+      daemon: { pid: process.pid, port: 51_234 },
+    });
+    expect(run.endpoints).toEqual(["http://127.0.0.1:51234/mcp", "http://127.0.0.1:52345/mcp"]);
+    expect(run.stdout).toEqual([JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: "fetch failed" } }), pong]);
   });
 });

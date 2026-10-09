@@ -261,7 +261,7 @@ function activateSandboxRule(current: PlaygroundRuleSnapshot, sandbox: Sandbox):
   const definition: unknown = JSON.parse(current.definition);
   const document = current.kind === "conversation"
     ? { kind: "conversation" as const, rule: parseConversationRule(definition) }
-    : { kind: "file" as const, rule: codeRuleSchema.parse(definition) };
+    : { kind: "code" as const, rule: codeRuleSchema.parse(definition) };
   if (document.rule.id !== current.id || ruleDocumentDigest(document) !== current.digest)
     throw new Error("Selected rule definition does not match its id and digest.");
   const catalog = openScopedRuleCatalog(sandbox.cwd, defaultRerailDatabasePath(sandbox.env));

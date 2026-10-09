@@ -51,6 +51,15 @@ async function fixture(): Promise<Fixture> {
   return { home, root, nodePath: "/opt/node/bin/node" };
 }
 
+/** Another install's package root beside `home`: `dist/` and a package.json named `name`, this package's own by default. */
+async function packageInstall(options: Fixture, directory: string, name?: string): Promise<string> {
+  const root = join(dirname(options.home), directory, "current");
+  await mkdir(join(root, "dist"), { recursive: true });
+  const own = JSON.parse(await readFile(join(options.root, "package.json"), "utf8")) as { name: string };
+  await writeFile(join(root, "package.json"), JSON.stringify({ name: name ?? own.name, version: "0.1.0" }));
+  return root;
+}
+
 async function seed(path: string, value: unknown): Promise<string> {
   const text = `${JSON.stringify(value, null, 2)}\n`;
   await mkdir(dirname(path), { recursive: true });
@@ -491,13 +500,128 @@ describe("Claude Code status-line ownership", () => {
     expect(await readFile(rootPath, "utf8")).toBe(rootOriginal);
   });
 
-  it("preflights project status before global writes and refuses orphaned wrappers", async () => {
+  it("preflights project status before global writes and refuses another package's wrapper", async () => {
     const { options, rootPath: path } = await worktreeFixture();
-    const original = await seed(path, { statusLine: { type: "command", command: `/old/node /retired/rerail/dist/claude-status.js ${path}` } });
-    await expect(registerHarnesses(options)).rejects.toThrow();
+    const foreign = await packageInstall(options, "foreign", "another-package");
+    const original = await seed(path, { statusLine: { type: "command", command: `/old/node ${join(foreign, "dist", "claude-status.js")} ${path}` } });
+    await expect(registerHarnesses(options)).rejects.toThrow("registration ownership is missing");
     expect(await readFile(path, "utf8")).toBe(original);
     await expect(lstat(join(options.home, ".claude"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(lstat(claudeStatusDatabasePath(options.home))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  // Deleting an install's home leaves its generated entries behind with nothing to run; setup replaces them.
+  it("replaces the status line, hooks and MCP bridge of an install that is gone, and keeps a foreign package's", async () => {
+    const options = { ...await fixture(), harnesses: ["claude-code", "codex", "cursor", "omp"] as const };
+    const gone = join(dirname(options.home), "deleted-home", "current");
+    const foreign = await packageInstall(options, "foreign", "another-package");
+    const settingsPath = join(options.home, ".claude", "settings.json");
+    const statusLine = { type: "command", command: `/old/node ${join(gone, "dist", "claude-status.js")}`, padding: 2 };
+    await seed(settingsPath, {
+      statusLine,
+      hooks: { Stop: [{ hooks: [{ type: "command", command: hookLine("/old/node", gone, "claude-hook.js") }] }] },
+    });
+    const foreignCodexHook = { type: "command", command: hookLine("/old/node", foreign, "codex-hook.js") };
+    await seed(join(options.home, ".codex", "hooks.json"), {
+      hooks: { Stop: [{ hooks: [{ type: "command", command: hookLine("/old/node", gone, "codex-hook.js") }, foreignCodexHook] }] },
+    });
+    await seed(join(options.home, ".cursor", "hooks.json"), {
+      version: 1, hooks: { stop: [{ command: hookLine("/old/node", gone, "cursor-hook.js") }] },
+    });
+    const foreignBridge = { command: "/old/node", args: [join(foreign, "dist", "cli.js"), "mcp-bridge"] };
+    const mcpPath = join(options.home, ".omp", "agent", "mcp.json");
+    await seed(mcpPath, { mcpServers: { previous: { command: "/old/node", args: [join(gone, "dist", "cli.js"), "mcp-bridge"] }, foreign: foreignBridge } });
+
+    await registerHarnesses(options);
+    const settings = await readJson(settingsPath);
+    expect(settings.statusLine).toEqual({ ...statusLine, command: `${options.nodePath} ${join(options.root, "dist", "claude-status.js")}`, refreshInterval: 5 });
+    expect(readClaudeStatusRegistration(options.home)).toMatchObject({ previous: null });
+    expect((settings.hooks as Record<string, unknown>).Stop)
+      .toEqual([{ hooks: [{ type: "command", command: hookLine(options.nodePath, options.root, "claude-hook.js") }] }]);
+    expect(((await readJson(join(options.home, ".codex", "hooks.json"))).hooks as Record<string, unknown>).Stop).toEqual([
+      { hooks: [foreignCodexHook] },
+      { hooks: [{ type: "command", command: hookLine(options.nodePath, options.root, "codex-hook.js") }] },
+    ]);
+    expect(((await readJson(join(options.home, ".cursor", "hooks.json"))).hooks as Record<string, unknown>).stop)
+      .toEqual([{ command: hookLine(options.nodePath, options.root, "cursor-hook.js") }]);
+    expect(await readJson(mcpPath)).toEqual({
+      mcpServers: { foreign: foreignBridge, rerail: { command: options.nodePath, args: [join(options.root, "dist", "cli.js"), "mcp-bridge"] } },
+    });
+  });
+
+  it("replaces the status line and hooks of another install of this package that this home has no record of", async () => {
+    const { options, path } = await claudeFixture();
+    const other = await packageInstall(options, "elsewhere");
+    const replaced = { type: "command", command: `/old/node ${join(other, "dist", "claude-status.js")}`, padding: 2, refreshInterval: 3 };
+    await seed(path, {
+      statusLine: replaced,
+      hooks: { Stop: [{ hooks: [{ type: "command", command: hookLine("/old/node", other, "claude-hook.js") }] }] },
+    });
+    await registerHarnesses(options);
+    const installed = await readJson(path);
+    expect(installed.statusLine).toEqual({ ...replaced, command: `${options.nodePath} ${join(options.root, "dist", "claude-status.js")}` });
+    expect(readClaudeStatusRegistration(options.home)).toMatchObject({ previous: null });
+    expect(readClaudeStatusRegistration(options.home)?.previousInherited).toBeUndefined();
+    expect(readClaudeStatusCommand(options.home)).toBeUndefined();
+    for (const groups of Object.values(installed.hooks as Record<string, { hooks: { command: string }[] }[]>)) {
+      expect(groups).toHaveLength(1);
+      expect(groups[0]?.hooks).toEqual([{ type: "command", command: hookLine(options.nodePath, options.root, "claude-hook.js") }]);
+    }
+    await registerHarnesses(options);
+    expect(await readJson(path)).toEqual(installed);
+    await unregisterHarnesses(options);
+    expect((await readJson(path)).statusLine).toBeUndefined();
+    expect(readClaudeStatusRegistration(options.home)).toBeUndefined();
+  });
+
+  it("replaces its own status line when this home has no record of it", async () => {
+    const { options, path } = await claudeFixture();
+    const installedCommand = `${options.nodePath} ${join(options.root, "dist", "claude-status.js")}`;
+    await seed(path, { statusLine: { type: "command", command: installedCommand } });
+    await registerHarnesses(options);
+    expect((await readJson(path)).statusLine).toEqual({ type: "command", command: installedCommand, refreshInterval: 5 });
+    expect(readClaudeStatusRegistration(options.home)).toMatchObject({ installedCommand, previous: null });
+    await unregisterHarnesses(options);
+    expect((await readJson(path)).statusLine).toBeUndefined();
+  });
+
+  it("replaces another install's status line inherited from shared project settings without inheriting it again", async () => {
+    const { options, sharedPath, rootPath: localPath } = await worktreeFixture();
+    const other = await packageInstall(options, "elsewhere");
+    const sharedOriginal = await seed(sharedPath, {
+      statusLine: { type: "command", command: `/old/node ${join(other, "dist", "claude-status.js")} ${sharedPath}` },
+    });
+    await registerHarnesses(options);
+    expect((await readJson(localPath)).statusLine).toEqual({
+      type: "command", command: `${options.nodePath} ${join(options.root, "dist", "claude-status.js")} ${localPath}`, refreshInterval: 5,
+    });
+    const registration = readClaudeStatusRegistration(options.home, localPath);
+    expect(registration).toMatchObject({ previous: null });
+    expect(registration?.previousInherited).toBeUndefined();
+    expect(readClaudeStatusCommand(options.home, localPath, options.workspaceDir)).toBeUndefined();
+    await unregisterHarnesses(options);
+    expect((await readJson(localPath)).statusLine).toBeUndefined();
+    expect(await readFile(sharedPath, "utf8")).toBe(sharedOriginal);
+  });
+
+  it("replaces another install's project status line and refuses one whose script belongs to a different package", async () => {
+    const { options, rootPath: path } = await worktreeFixture();
+    const other = await packageInstall(options, "elsewhere");
+    await seed(path, { statusLine: { type: "command", command: `/old/node ${join(other, "dist", "claude-status.js")} ${path}` } });
+    await registerHarnesses(options);
+    expect((await readJson(path)).statusLine).toEqual({
+      type: "command", command: `${options.nodePath} ${join(options.root, "dist", "claude-status.js")} ${path}`, refreshInterval: 5,
+    });
+    expect(readClaudeStatusRegistration(options.home, path)).toMatchObject({ previous: null });
+    expect(readClaudeStatusCommand(options.home, path)).toBeUndefined();
+    await unregisterHarnesses(options);
+    expect(await readJson(path)).toEqual({});
+
+    const foreign = await packageInstall(options, "foreign", "another-package");
+    const original = await seed(path, { statusLine: { type: "command", command: `/old/node ${join(foreign, "dist", "claude-status.js")} ${path}` } });
+    await expect(registerHarnesses(options)).rejects.toThrow("registration ownership is missing");
+    expect(await readFile(path, "utf8")).toBe(original);
+    expect(readClaudeStatusRegistration(options.home, path)).toBeUndefined();
   });
 
   it("keeps scoped recovery isolated on settings write and restore failures", async () => {
@@ -635,6 +759,34 @@ describe("Claude Code commands", () => {
     expect((await readdir(directory)).sort()).toEqual([...commandFiles, "rerail-enable.md"].sort());
   });
 
+  it("on registration also removes the retired commands another install of this package wrote, or one that is gone", async () => {
+    const install = await fixture();
+    const { home, root, nodePath } = install;
+    const directory = join(home, ".claude", "commands");
+    await mkdir(directory, { recursive: true });
+    const runs = (cli: string): string =>
+      `---\nallowed-tools: Bash(${nodePath} ${cli} disable)\n---\n\n\`\`\`sh\n${nodePath} ${cli} disable\n\`\`\`\n`;
+    const cli = (installRoot: string): string => join(installRoot, "dist", "cli.js");
+    const elsewhere = cli(await packageInstall(install, "elsewhere"));
+    const foreign = cli(await packageInstall(install, "foreign", "another-package"));
+    // Each round writes retired files, then lists the ones registration must keep.
+    const rounds: readonly (readonly [Record<string, string>, readonly string[]])[] = [
+      [{ "rerail-disable.md": runs(elsewhere), "rerail-enable.md": runs(foreign) }, ["rerail-enable.md"]],
+      [{ "rerail-disable.md": runs(`"${cli(await packageInstall(install, "old development"))}"`), "rerail-enable.md": `${runs(elsewhere)}${runs(foreign)}` }, ["rerail-enable.md"]],
+      [{ "rerail-disable.md": runs(cli(join(dirname(home), "gone", "current"))), "rerail-session.md": runs(elsewhere) }, []],
+    ];
+    for (const [written, kept] of rounds) {
+      for (const [file, text] of Object.entries(written)) await writeFile(join(directory, file), text);
+
+      await unregisterHarnesses({ root, home, nodePath, harnesses: options });
+      expect((await readdir(directory)).sort()).toEqual(Object.keys(written).sort());
+
+      await registerHarnesses({ root, home, nodePath, harnesses: options });
+      expect((await readdir(directory)).sort()).toEqual([...commandFiles, ...kept].sort());
+      for (const file of kept) await rm(join(directory, file));
+    }
+  });
+
   it("rewrites a stale command that names another node, backing the old one up", async () => {
     const { home, root, nodePath } = await fixture();
     const path = join(home, ".claude", "commands", "rerail.md");
@@ -738,6 +890,39 @@ describe("legacy package-root cutover", () => {
     expect(((await readJson(join(options.home, ".cursor", "hooks.json"))).hooks as Record<string, unknown>).sessionStart)
       .toEqual([{ command: hookLine(options.nodePath, options.root, "cursor-hook.js") }]);
     expect((await readJson(join(options.home, ".pi", "agent", "settings.json"))).packages).toEqual([foreignRoot, options.root]);
+  });
+
+  it("replaces what another install of this package registered: hooks, status line, extension link, MCP entry and Pi package", async () => {
+    const options = { ...await fixture(), harnesses: ["claude-code", "codex", "omp", "pi"] as const };
+    const bridge = await packageInstall(options, join("versions", "0.0.9"));
+    const settingsPath = join(options.home, ".claude", "settings.json");
+    const statusLine = { type: "command", command: `/old/node ${join(bridge, "dist", "claude-status.js")}` };
+    await seed(settingsPath, {
+      statusLine,
+      hooks: { Stop: [{ hooks: [{ type: "command", command: hookLine("/old/node", bridge, "claude-hook.js") }] }] },
+    });
+    await seed(join(options.home, ".codex", "hooks.json"), {
+      hooks: { Stop: [{ hooks: [{ type: "command", command: hookLine("/old/node", bridge, "codex-hook.js") }] }] },
+    });
+    const mcpPath = join(options.home, ".omp", "agent", "mcp.json");
+    await seed(mcpPath, { mcpServers: { previous: { command: "/old/node", args: [join(bridge, "dist", "cli.js"), "mcp-bridge"] } } });
+    const extensions = join(options.home, ".omp", "agent", "extensions");
+    await mkdir(extensions, { recursive: true });
+    await symlink(bridge, join(extensions, "previous"));
+    await seed(join(options.home, ".pi", "agent", "settings.json"), { packages: [bridge] });
+
+    await registerHarnesses(options);
+    const settings = await readJson(settingsPath);
+    expect(settings.statusLine).toEqual({ ...statusLine, command: `${options.nodePath} ${join(options.root, "dist", "claude-status.js")}`, refreshInterval: 5 });
+    expect((settings.hooks as Record<string, unknown>).Stop)
+      .toEqual([{ hooks: [{ type: "command", command: hookLine(options.nodePath, options.root, "claude-hook.js") }] }]);
+    expect(((await readJson(join(options.home, ".codex", "hooks.json"))).hooks as Record<string, unknown>).Stop)
+      .toEqual([{ hooks: [{ type: "command", command: hookLine(options.nodePath, options.root, "codex-hook.js") }] }]);
+    expect(await readJson(mcpPath)).toEqual({
+      mcpServers: { rerail: { command: options.nodePath, args: [join(options.root, "dist", "cli.js"), "mcp-bridge"] } },
+    });
+    expect(await readdir(extensions)).toEqual(["rerail"]);
+    expect((await readJson(join(options.home, ".pi", "agent", "settings.json"))).packages).toEqual([options.root]);
   });
 });
 
@@ -981,6 +1166,32 @@ describe("OMP extensions symlink", () => {
 
     const again = await unregisterHarnesses({ root, home, nodePath, harnesses: ["omp"] });
     expect(change(again.changes, "omp", "mcp.json").action).toBe("unchanged");
+  });
+
+  it("replaces another install's bridge and extension link under any name, and leaves foreign ones", async () => {
+    const { home, root, nodePath } = await fixture();
+    const otherInstall = join(home, "other install");
+    await seed(join(otherInstall, "package.json"), { name: "@neralabs/rerail" });
+    const foreign = join(home, "foreign extension");
+    await seed(join(foreign, "package.json"), { name: "foreign" });
+    const path = join(home, ".omp", "agent", "mcp.json");
+    const otherBridge = { command: "/old/node", args: [join(otherInstall, "dist", "cli.js"), "mcp-bridge"] };
+    const foreignBridge = { command: "/old/node", args: [join(foreign, "dist", "cli.js"), "mcp-bridge"] };
+    await seed(path, { mcpServers: { previous: otherBridge, foreign: foreignBridge } });
+    const extensions = join(home, ".omp", "agent", "extensions");
+    await mkdir(extensions, { recursive: true });
+    await symlink(otherInstall, join(extensions, "previous"));
+    await symlink(foreign, join(extensions, "foreign"));
+
+    await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] });
+    expect(await readJson(path)).toEqual({
+      mcpServers: { foreign: foreignBridge, rerail: { command: nodePath, args: [join(root, "dist", "cli.js"), "mcp-bridge"] } },
+    });
+    expect((await readdir(extensions)).sort()).toEqual(["foreign", "rerail"]);
+
+    await unregisterHarnesses({ root, home, nodePath, harnesses: ["omp"] });
+    expect(await readJson(path)).toEqual({ mcpServers: { foreign: foreignBridge } });
+    expect(await readdir(extensions)).toEqual(["foreign"]);
   });
 
   it("creates the user mcp.json when absent and leaves an empty file alone on unregister", async () => {

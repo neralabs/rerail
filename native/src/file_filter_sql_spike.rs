@@ -146,12 +146,12 @@ const INDEXED_CANDIDATE_SQL: &str =
 const INDEXED_CANDIDATE_COUNT_SQL: &str =
     "SELECT count(*) FROM file_clause WHERE clause_id=?1";
 const INDEXED_FILE_CLAUSE_SQL: &str =
-    "SELECT c.file_rule_index,c.clause_index
+    "SELECT c.code_rule_index,c.clause_index
        FROM file_clause fc JOIN clauses c ON c.clause_id=fc.clause_id
       WHERE fc.file_id=?1";
 
 const FILE_CLAUSE_SQL: &str =
-    "SELECT c.file_rule_index,c.clause_index
+    "SELECT c.code_rule_index,c.clause_index
        FROM code_rule_file pf
        JOIN files f ON f.file_id=pf.file_id
        JOIN clauses c ON c.rule_id=pf.rule_id
@@ -282,11 +282,11 @@ fn spike_sql_file_filter_indexes() {
              PRAGMA journal_size_limit=16777216;
              CREATE TABLE files(file_id INTEGER PRIMARY KEY,path TEXT NOT NULL UNIQUE,language TEXT NOT NULL) STRICT;
              CREATE TABLE code_rule_file(rule_id INTEGER NOT NULL,file_id INTEGER NOT NULL,PRIMARY KEY(rule_id,file_id)) STRICT, WITHOUT ROWID;
-             CREATE INDEX file_rule_file_by_file ON code_rule_file(file_id,rule_id);
+             CREATE INDEX code_rule_file_by_file ON code_rule_file(file_id,rule_id);
              CREATE TABLE file_kind(language TEXT NOT NULL,kind_id INTEGER NOT NULL,file_id INTEGER NOT NULL,PRIMARY KEY(language,kind_id,file_id)) STRICT, WITHOUT ROWID;
              CREATE INDEX file_kind_by_file ON file_kind(file_id,language,kind_id);
-             CREATE TABLE clauses(clause_id INTEGER PRIMARY KEY,rule_id INTEGER NOT NULL,file_rule_index INTEGER NOT NULL,clause_index INTEGER NOT NULL) STRICT;
-             CREATE INDEX clauses_by_file_rule ON clauses(rule_id,clause_id);
+             CREATE TABLE clauses(clause_id INTEGER PRIMARY KEY,rule_id INTEGER NOT NULL,code_rule_index INTEGER NOT NULL,clause_index INTEGER NOT NULL) STRICT;
+             CREATE INDEX clauses_by_code_rule ON clauses(rule_id,clause_id);
              CREATE TABLE clause_languages(clause_id INTEGER NOT NULL,language TEXT NOT NULL,unrestricted INTEGER NOT NULL,PRIMARY KEY(clause_id,language)) STRICT, WITHOUT ROWID;
              CREATE TABLE clause_kind(clause_id INTEGER NOT NULL,language TEXT NOT NULL,kind_id INTEGER NOT NULL,PRIMARY KEY(clause_id,language,kind_id)) STRICT, WITHOUT ROWID;
              CREATE TABLE file_clause(clause_id INTEGER NOT NULL,file_id INTEGER NOT NULL,PRIMARY KEY(clause_id,file_id)) STRICT, WITHOUT ROWID;
@@ -732,7 +732,7 @@ fn spike_sql_file_filter_indexes() {
         "clauses": clauses.len(),
         "candidatePairs": candidate_pairs,
         "fileKindRows": file_kind_rows,
-        "fileRuleFileRows": code_rule_file_rows,
+        "codeRuleFileRows": code_rule_file_rows,
         "clauseKindRows": clause_kind_rows,
         "fileClauseRows": file_clause_rows,
         "timings": timings,

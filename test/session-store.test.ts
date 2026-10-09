@@ -464,8 +464,8 @@ describe("SQLite session persistence", () => {
     expect(reader.hud(first.sessionId).steeringCount).toBe(501);
   });
 
-  it("keeps legacy and reset totals unknown rather than counting only surviving receipts", async () => {
-    const { path, repositoryId, store, reader, session } = await hudFixture("legacy");
+  it("keeps untracked and reset totals unknown rather than counting only surviving receipts", async () => {
+    const { path, repositoryId, store, reader, session } = await hudFixture("untracked");
     store.openSession(session);
     store.recordSteer(session, "new-receipt");
     expect(reader.hud(session.sessionId)).toEqual({ activeRuleCount: null, steeringCount: null });
@@ -511,7 +511,7 @@ describe("SQLite session persistence", () => {
       repositoryId: rules.context().repositoryId,
       activeRuleCount: 3,
       conversationRuleSignature: rules.ruleSignature("conversation"),
-      fileRuleSignature: rules.ruleSignature("file"),
+      codeRuleSignature: rules.ruleSignature("code"),
     };
     store.recordRuleCoverage(session, coverage);
     expect(reader.hud(session.sessionId)).toEqual({ activeRuleCount: 3, steeringCount: 0 });

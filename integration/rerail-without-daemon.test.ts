@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
@@ -76,5 +76,20 @@ describe("Rerail's frequent readers", () => {
     expect(await rerailSession(root, env, ["claude-code", "abc"])).toBe(notOn);
     expect(await rerailSession(root, env, ["cursor"])).toBe(notOn);
     expect(await readFile(databasePath)).toEqual(before);
+  }, 30_000);
+
+  test("never write the database, and say not running where only a writable open could tell", async () => {
+    const { root, env } = await checkout();
+    const databasePath = join(env.RERAIL_HOME!, "rerail.sqlite");
+    resolveRepositoryContext(root);
+    // A database another process is still creating has no schema yet; only a writable open waits for it.
+    await mkdir(env.RERAIL_HOME!, { recursive: true });
+    await writeFile(databasePath, "");
+
+    const notRunning = "✕ Rerail is not running.\n  Start it with `rerail daemon start` in a terminal.";
+    expect(await claudeStatus(root, env)).toBe("Rerail ✕ not running");
+    expect(await rerailSession(root, env, ["claude-code", "abc"])).toBe(notRunning);
+    expect(await rerailSession(root, env, ["cursor"])).toBe(notRunning);
+    expect((await stat(databasePath)).size).toBe(0);
   }, 30_000);
 });

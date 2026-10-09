@@ -55,8 +55,8 @@ describe("bundled rules", () => {
 
   it.each(documents.map(document => [document.rule.id] as const))("%s fires on its flag fixture and stays silent on its pass fixture", id => {
     const document = documents.find(candidate => candidate.rule.id === id)!;
-    expect(document.kind).toBe("file");
-    if (document.kind !== "file") return;
+    expect(document.kind).toBe("code");
+    if (document.kind !== "code") return;
     const fixture = fixtureSchema.parse(JSON.parse(readFileSync(join(FIXTURES, `${stemByRuleId[id]!}.json`), "utf8")));
     const codes: Record<string, true> = Object.fromEntries(document.rule.clauses.map(clause => [clause.violation?.code, true]));
     const compiled = runtime.compile(JSON.stringify(document.rule), "json", capabilities);

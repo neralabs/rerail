@@ -51,7 +51,7 @@ export interface RuleCoverage {
   repositoryId: string;
   activeRuleCount: number | null;
   conversationRuleSignature: string;
-  fileRuleSignature: string;
+  codeRuleSignature: string;
 }
 
 export interface WorkLink {
@@ -283,12 +283,12 @@ export class SqliteSessionReader {
         repositoryId: sql<string | null>`json_extract(${events.payloadJson}, '$.repositoryId')`,
         activeRuleCount: sql<number | null>`json_extract(${events.payloadJson}, '$.activeRuleCount')`,
         conversationRuleSignature: sql<string | null>`json_extract(${events.payloadJson}, '$.conversationRuleSignature')`,
-        fileRuleSignature: sql<string | null>`json_extract(${events.payloadJson}, '$.fileRuleSignature')`,
+        codeRuleSignature: sql<string | null>`json_extract(${events.payloadJson}, '$.codeRuleSignature')`,
       }).from(events).where(and(eq(events.sessionId, sessionId), eq(events.kind, "rule-coverage")))
         .orderBy(desc(events.sequence)).limit(1).get();
       const current = coverage?.repositoryId != null
         && coverage.conversationRuleSignature === scopedRuleSignature(database, coverage.repositoryId, "conversation")
-        && coverage.fileRuleSignature === scopedRuleSignature(database, coverage.repositoryId, "file");
+        && coverage.codeRuleSignature === scopedRuleSignature(database, coverage.repositoryId, "code");
       const steeringCount = baseline?.complete === 1
         ? database.select({ total: count() }).from(events)
           .where(and(eq(events.sessionId, sessionId), eq(events.kind, "steering-delivered"))).get()!.total

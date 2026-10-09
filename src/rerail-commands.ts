@@ -49,7 +49,7 @@ export function rerailCommandList(sigil: CommandSigil): string {
 export interface CreateRuleInstructionsInput {
   /** The shell-quoted launcher the agent runs, e.g. `'/usr/bin/node' '/home/me/.rerail/current/dist/cli.js'`. */
   cli: string;
-  /** Where the installed package keeps example file rules and the rule grammar. */
+  /** Where the installed package keeps example code rules and the rule grammar. */
   packageRoot: string;
   /** The person's sentence; a placeholder such as `$ARGUMENTS` when the coding agent substitutes it. */
   request: string;
@@ -68,7 +68,7 @@ export function createRuleInstructions({ cli, packageRoot, request }: CreateRule
     "If there are no words after the command, ask the person in one line what the rule should enforce, then carry on.",
     "",
     "1. Draft the rule. Do not show it yet.",
-    "   - A file rule checks code in files, for example \"use design tokens, not hex colours\". It is a `rerail.policy/v1` rule, kind `file`.",
+    "   - A code rule checks code in files, for example \"use design tokens, not hex colours\". It is a `rerail.policy/v1` rule, kind `code`.",
     `     Copy the shape of the examples in ${examples}; the full grammar is in ${grammar}.`,
     "   - A conversation rule checks a command the coding agent runs or something said in the session, for example \"never force-push\".",
     "     It is kind `conversation`: for a command, a structural rule with `match.field` `input.command` and one `regex`, `sample.source` `tool:<tool name>` and `sample.boundary` `tool-call`.",
@@ -78,7 +78,7 @@ export function createRuleInstructions({ cli, packageRoot, request }: CreateRule
     "",
     "2. Test it before showing anything. Write the draft to a temporary JSON file as `{ \"kind\": …, \"rule\": …, \"cases\": { \"caught\": […], \"passed\": […] } }`,",
     "   with a few cases it must catch and a few it must let through, taken from this repo's own code where you can",
-    "   (a file rule case is `{ \"path\", \"content\" }`; a conversation rule case is `{ \"source\", \"boundary\", \"text\", \"input\" }`). Then run:",
+    "   (a code rule case is `{ \"path\", \"content\" }`; a conversation rule case is `{ \"source\", \"boundary\", \"text\", \"input\" }`). Then run:",
     "",
     "```sh",
     `${cli} rules test <draft.json> --json`,

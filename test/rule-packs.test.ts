@@ -83,7 +83,7 @@ async function withRepositoryPack(): Promise<readonly RulePack[]> {
 const capabilities = readFileSync(fileURLToPath(new URL("../code-rule-dsl/capabilities.json", import.meta.url)), "utf8");
 const evaluationSchema = z.object({ violations: z.array(z.object({ ruleId: z.string() })).default([]), failures: z.array(z.unknown()).default([]) });
 
-/** Whether the file rule `ruleId`, evaluated on `text` at `path`, reports a violation. */
+/** Whether the code rule `ruleId`, evaluated on `text` at `path`, reports a violation. */
 function fires(ruleId: string, path: string, text: string): boolean {
   const document = bundled.find(candidate => candidate.rule.id === ruleId)!;
   const compiled = loadNativeBinding().CodeRuleDslRuntime!.compile(JSON.stringify(document.rule), "json", capabilities);
@@ -109,7 +109,7 @@ describe("shipped rule packs", () => {
     }
   });
 
-  const exampled = packs.flatMap(found => found.rules).filter(rule => rule.examples !== undefined && rule.kind === "file");
+  const exampled = packs.flatMap(found => found.rules).filter(rule => rule.examples !== undefined && rule.kind === "code");
   it.each(exampled.map(rule => [rule.id, rule] as const))("%s catches its caught example and lets its passing example pass", (id, rule) => {
     const { caught, passes } = rule.examples!;
     expect(fires(id, caught.path!, caught.text)).toBe(true);
@@ -125,10 +125,10 @@ describe("shipped rule packs", () => {
 describe("rule pack definitions", () => {
   const conversation = { ...MOCK_CONVERSATION_RULES[0]!, id: "test:talk" };
   const debuggerRule = bundled.find(document => document.rule.id === "tslint:no-debugger")!;
-  const fileRule = { ...debuggerRule.rule, id: "test:no-debugger" };
+  const codeRule = { ...debuggerRule.rule, id: "test:no-debugger" };
   async function packFolder(definitions: readonly { id: string; rules: readonly { id: string; document: string }[] }[]): Promise<string[]> {
     const directory = await temporaryDirectory("rerail-rule-pack-def-");
-    const documents: Record<string, object> = { "test:no-debugger": fileRule, "test:talk": conversation };
+    const documents: Record<string, object> = { "test:no-debugger": codeRule, "test:talk": conversation };
     return definitions.map(definition =>
       writePack(directory, definition, Object.fromEntries(definition.rules.flatMap(rule => (documents[rule.id] === undefined ? [] : [[rule.document, documents[rule.id]!]])))),
     );
@@ -168,7 +168,7 @@ describe("rule pack definitions", () => {
     const directories = await packFolder([definition("one", "test:talk", { mode: "log", on: false }), definition("two", "test:no-debugger")]);
     const loaded = readRulePacks(directories);
     expect(loaded.find(found => found.id === "one")!.rules[0]).toMatchObject({ kind: "conversation", mode: "log", on: false });
-    expect(loaded.find(found => found.id === "two")!.rules[0]).toMatchObject({ kind: "file", mode: debuggerRule.rule.mode, on: true });
+    expect(loaded.find(found => found.id === "two")!.rules[0]).toMatchObject({ kind: "code", mode: debuggerRule.rule.mode, on: true });
   });
 });
 
@@ -309,7 +309,7 @@ describe("rule pack API", () => {
       expect(listed.packs.map(found => [found.id, found.category, found.rules.length]))
         .toEqual([["complexity", "language", complexity.rules.length], ["tslint", "language", tslint.rules.length]]);
       expect(listed.packs.find(found => found.id === "tslint")!.rules.find(rule => rule.id === "tslint:triple-equals"))
-        .toEqual({ id: "tslint:triple-equals", kind: "file", title: tslint.rules.find(rule => rule.id === "tslint:triple-equals")!.title, group: "TSLint", mode: "steer", on: true });
+        .toEqual({ id: "tslint:triple-equals", kind: "code", title: tslint.rules.find(rule => rule.id === "tslint:triple-equals")!.title, group: "TSLint", mode: "steer", on: true });
 
       const recommended = await get("/api/rule-packs/recommendations", rulePackRecommendationsSchema);
       expect(recommended).toEqual({ repositoryId: "repo-a", recommendations: [{ packId: "tslint", ruleCount: tslint.rules.length, reason: "matches *.ts files in src" }] });

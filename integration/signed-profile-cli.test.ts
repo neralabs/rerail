@@ -21,7 +21,7 @@ interface CommandResult {
 
 async function runRerail(home: string, args: readonly string[]): Promise<CommandResult> {
   const child = spawn("node", ["dist/cli.js", ...args], {
-    env: { ...process.env, RERAIL_AUTO_UPDATE: "0", RERAIL_HOME: home, RERAIL_DEVICE_SECRET_STORE: "file" },
+    env: { ...process.env, RERAIL_HOME: home, RERAIL_DEVICE_SECRET_STORE: "file" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const [stdout, stderr, exitCode] = await Promise.all([

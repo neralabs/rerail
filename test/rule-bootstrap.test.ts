@@ -40,7 +40,7 @@ function codeRule(id: string, revision = 1, message = "No print"): CodeRule {
   });
 }
 
-const bundled = (...rules: CodeRule[]): RuleDocument[] => rules.map(rule => ({ kind: "file", rule }));
+const bundled = (...rules: CodeRule[]): RuleDocument[] => rules.map(rule => ({ kind: "code", rule }));
 
 describe("SqliteRuleStore.seed", () => {
   it("inserts new bundled rules with their digest and leaves them alone on the next run", async () => {
@@ -64,7 +64,7 @@ describe("SqliteRuleStore.seed", () => {
     const upstream = bundled(codeRule("bundled:a", 2, "Print is forbidden"), codeRule("bundled:b", 2, "Print is forbidden"));
     expect(store.seed(upstream, 3_000)).toEqual({ inserted: 0, refreshed: 1, kept: 1 });
     const edited = store.get("bundled:a");
-    expect(edited?.kind === "file" && edited.rule.clauses[0]?.violation?.message).toBe("Use the logger");
+    expect(edited?.kind === "code" && edited.rule.clauses[0]?.violation?.message).toBe("Use the logger");
     expect(edited?.revision).toBe(1);
     const refreshed = store.get("bundled:b");
     expect(refreshed?.revision).toBe(2);
@@ -75,10 +75,10 @@ describe("SqliteRuleStore.seed", () => {
 
   it("inserts an opt-in document disabled, and neither a refresh nor a re-seed changes its enabled state", async () => {
     const store = new SqliteRuleStore(await temporaryDatabase());
-    const optIn = (rule: CodeRule): BundledRuleDocument => ({ kind: "file", rule, enabledByDefault: false });
+    const optIn = (rule: CodeRule): BundledRuleDocument => ({ kind: "code", rule, enabledByDefault: false });
 
     expect(store.seed([optIn(codeRule("pack:a")), optIn(codeRule("pack:b"))], 1_000)).toEqual({ inserted: 2, refreshed: 0, kept: 0 });
-    expect(store.get("pack:a")).toMatchObject({ enabled: false, sourceDigest: ruleDocumentDigest({ kind: "file", rule: codeRule("pack:a") }) });
+    expect(store.get("pack:a")).toMatchObject({ enabled: false, sourceDigest: ruleDocumentDigest({ kind: "code", rule: codeRule("pack:a") }) });
     expect(store.codeRules()).toEqual([]);
     store.setEnabled({ ids: ["pack:b"] }, true, 1_500);
 
@@ -102,11 +102,11 @@ describe("SqliteRuleStore.seed", () => {
 const MINIMUM_BUNDLED_RULES = 10;
 
 describe("bundled rules", () => {
-  it("ships only opt-in packs: every document parses as a file rule with a unique <pack>:<rule> id, disabled by default", () => {
+  it("ships only opt-in packs: every document parses as a code rule with a unique <pack>:<rule> id, disabled by default", () => {
     const documents = loadBundledRules();
     expect(documents.length).toBeGreaterThan(MINIMUM_BUNDLED_RULES);
     expect(new Set(documents.map(document => document.rule.id)).size).toBe(documents.length);
-    expect(documents.every(document => document.kind === "file")).toBe(true);
+    expect(documents.every(document => document.kind === "code")).toBe(true);
     expect(documents.every(document => document.enabledByDefault === false)).toBe(true);
     expect(documents.every(document => /^(?:complexity|tslint):[a-z0-9-]+$/u.test(document.rule.id))).toBe(true);
     expect(documents.map(document => document.rule.id)).not.toContain("tslint:file-header");

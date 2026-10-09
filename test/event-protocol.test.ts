@@ -44,7 +44,7 @@ describe("Rerail event protocol", () => {
     }))).toEqual({ eventId: "session-1:prompt-1", deliveries: [] });
   });
 
-  it("carries delivery rule ids across the engine socket", () => {
+  it("carries delivery rule ids across the engine socket and requires them", () => {
     const delivery = {
       sessionId: "session-1",
       requested: "steer" as const,
@@ -55,5 +55,8 @@ describe("Rerail event protocol", () => {
     const encoded = encodeRerailEventResult({ eventId: "session-1:prompt-1", deliveries: [delivery] });
     expect(JSON.parse(encoded).deliveries[0].ruleIds).toEqual(["rerail:no-raw-sql", "team:api-auth"]);
     expect(decodeRerailEventResult(encoded).deliveries).toEqual([delivery]);
+
+    const { ruleIds: _omitted, ...unattributed } = delivery;
+    expect(() => decodeRerailEventResult(JSON.stringify({ eventId: "session-1:prompt-1", deliveries: [unattributed] }))).toThrow();
   });
 });

@@ -26,7 +26,7 @@ interface CatalogSource {
 
 export interface CodeRuleDslCatalogStatus {
   capabilitiesPath: string;
-  /** The authoritative catalog the enabled `file` rows are compiled from. */
+  /** The authoritative catalog the enabled `code` rows are compiled from. */
   databasePath: string;
   ruleCount: number;
   /** Digest of the compiled set: capabilities plus every code rule's id and source digest. */
@@ -89,8 +89,8 @@ function catalogSource(
 }
 
 function loadCatalogSource(store: SqliteRuleStore | ScopedRuleCatalog, capabilitiesJson: string): CatalogSource {
-  const storedCodeRules = store.list({ kind: "file", enabled: true }).flatMap(stored =>
-    stored.kind === "file" ? [stored] : []);
+  const storedCodeRules = store.list({ kind: "code", enabled: true }).flatMap(stored =>
+    stored.kind === "code" ? [stored] : []);
   const seen = new Set<string>();
   const orderedCodeRules = storedCodeRules.toSorted((left, right) => compareIds(left.rule.id, right.rule.id));
   const sourced = orderedCodeRules.map(stored => {
@@ -110,13 +110,13 @@ function loadCatalogSource(store: SqliteRuleStore | ScopedRuleCatalog, capabilit
       revision: stored.revision,
       payloadHash: "payloadHash" in stored
         ? stored.payloadHash
-        : ruleDocumentDigest({ kind: "file", rule: stored.rule }),
+        : ruleDocumentDigest({ kind: "code", rule: stored.rule }),
       applicability,
       ...("origin" in stored && stored.origin.kind === "project" ? { projectId: stored.origin.projectId } : {}),
       origin: "catalogOrigin" in stored ? stored.catalogOrigin : "user" as const,
     };
   });
-  return catalogSource(sourced, provenance, store.quarantined().filter(entry => entry.kind === "file"), capabilitiesJson);
+  return catalogSource(sourced, provenance, store.quarantined().filter(entry => entry.kind === "code"), capabilitiesJson);
 }
 
 function compileCodeRule(codeRule: SourcedCodeRule, capabilitiesJson: string): NativeCompiledCodeRuleDsl {
@@ -148,7 +148,7 @@ export interface CodeRuleDslCatalog {
 }
 
 /**
- * The enabled `file` rows of the project database, compiled into resident
+ * The enabled `code` rows of the project database, compiled into resident
  * Rust executables. The database is the only source: a row toggled, edited,
  * or deleted by the daemon, the UI, or raw SQL is picked up by the next
  * `refresh()`. Compiled executables are keyed by source digest so an
@@ -167,7 +167,7 @@ class LiveRuleCatalog implements CodeRuleDslCatalog {
   constructor(store: SqliteRuleStore | ScopedRuleCatalog, capabilitiesPath: string, capabilitiesJson: string, readonly onRefresh?: () => void) {
     this.#store = store;
     this.#capabilitiesJson = capabilitiesJson;
-    const sourceSignature = "ruleSignature" in store ? store.ruleSignature("file") : String(store.dataVersion());
+    const sourceSignature = "ruleSignature" in store ? store.ruleSignature("code") : String(store.dataVersion());
     const source = loadCatalogSource(store, capabilitiesJson);
     const applied = this.#apply(source);
     this.status = { capabilitiesPath, databasePath: store.path, ruleCount: applied.codeRules.length, version: applied.catalogDigest, sourceSignature };
@@ -212,7 +212,7 @@ class LiveRuleCatalog implements CodeRuleDslCatalog {
 
   refresh(): boolean {
     this.#assertOpen();
-    const sourceSignature = "ruleSignature" in this.#store ? this.#store.ruleSignature("file") : String(this.#store.dataVersion());
+    const sourceSignature = "ruleSignature" in this.#store ? this.#store.ruleSignature("code") : String(this.#store.dataVersion());
     if (sourceSignature === this.status.sourceSignature) return false;
     const source = loadCatalogSource(this.#store, this.#capabilitiesJson);
     const applied = this.#apply(source);
@@ -255,7 +255,7 @@ class LiveRuleCatalog implements CodeRuleDslCatalog {
         const unsupported = languageNotSupportedOf(reason);
         const quarantinedCodeRule: QuarantinedRule = {
           ruleId: codeRule.policyId,
-          kind: "file" as const,
+          kind: "code" as const,
           owner: origin.applicability === "global" ? "global" : `project:${origin.projectId ?? "unknown"}`,
           reason: unsupported?.reason ?? reason,
           ...(unsupported === undefined ? {} : { code: unsupported.code }),

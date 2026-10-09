@@ -282,7 +282,7 @@ export class ScopedRuleCatalog {
   upsertCodeRule(input: unknown, options: ScopedRuleWriteOptions = {}): ScopedStoredRule {
     const rule = codeRuleSchema.parse(input);
     assertCodeRuleStorable(rule);
-    return this.#upsert({ kind: "file", rule }, { ...options, revision: rule.revision });
+    return this.#upsert({ kind: "code", rule }, { ...options, revision: rule.revision });
   }
 
   upsertConversationRule(input: unknown, options: ScopedRuleWriteOptions = {}): ScopedStoredRule {
@@ -291,7 +291,7 @@ export class ScopedRuleCatalog {
   }
 
   upsertDocument(document: RuleDocument, options: ScopedRuleWriteOptions = {}): ScopedStoredRule {
-    return document.kind === "file"
+    return document.kind === "code"
       ? this.upsertCodeRule(document.rule, options)
       : this.upsertConversationRule(document.rule, options);
   }
@@ -337,7 +337,7 @@ export class ScopedRuleCatalog {
   }
 
   codeRules(): CodeRule[] {
-    return this.list({ kind: "file", enabled: true }).flatMap(stored => stored.kind === "file" ? [stored.rule] : []);
+    return this.list({ kind: "code", enabled: true }).flatMap(stored => stored.kind === "code" ? [stored.rule] : []);
   }
 
   setEnabled(selection: ScopedRuleSelection, enabled: boolean, now = Date.now()): number {
@@ -523,7 +523,7 @@ export class ScopedRuleCatalog {
       const existing = this.#ownedRow(owner.kind, owner.id, document.rule.id);
       const now = options.now ?? Date.now();
       let revision: number;
-      if (document.kind === "file") revision = document.rule.revision;
+      if (document.kind === "code") revision = document.rule.revision;
       else if (options.revision !== undefined) revision = options.revision;
       else revision = existing === undefined ? 1 : existing.revision + 1;
       const payloadHash = ruleDocumentDigest(document);
@@ -604,10 +604,10 @@ export class ScopedRuleCatalog {
       quarantined: { ruleId: row.ruleId, kind: row.kind, owner: row.ownerKind === "global" ? GLOBAL_OWNER : `project:${row.ownerId}`, reason },
     });
     let document: RuleDocument;
-    if (row.kind === "file") {
+    if (row.kind === "code") {
       const read = readStoredCodeRule(row.document.rule);
       if (!read.ok) return quarantine(read.reason);
-      document = { kind: "file", rule: read.rule };
+      document = { kind: "code", rule: read.rule };
     } else {
       try {
         document = { kind: "conversation", rule: parseConversationRule(row.document.rule) };

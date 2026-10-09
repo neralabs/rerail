@@ -7,6 +7,7 @@ import {
   ManagedUpdater,
   compareSemver,
   launcherShim,
+  validateManagedInstallation,
   type Installation,
   type PackageRegistry,
 } from "../src/updater.js";
@@ -454,5 +455,57 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
     expect(existsSync(join(home, "versions", "1.0.0"))).toBe(false);
     expect(existsSync(updater.currentLink)).toBe(false);
     expect(existsSync(updater.launcherPath)).toBe(false);
+  });
+});
+
+/**
+ * A staged package that passes the identity, engine and CLI checks, with `eventStream` as its `dist/event-stream.js`.
+ * The CLI answers `state` with `never` and accepts `start`.
+ */
+async function candidate(eventStream: readonly string[]): Promise<Installation> {
+  const root = await mkdtemp(join(tmpdir(), "rerail-candidate-"));
+  temporaryDirectories.push(root);
+  const dist = join(root, "dist");
+  await mkdir(dist);
+  await writeFile(join(root, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "2.0.0", type: "module" }));
+  await writeFile(join(dist, "index.js"), "export function nativeHealth() { return { ok: true }; }\n");
+  await writeFile(join(dist, "cli.js"), 'if (process.argv[2] === "state") process.stdout.write("never\\n");\n');
+  await writeFile(join(dist, "event-stream.js"), [
+    'import { mkdirSync, readFileSync } from "node:fs";',
+    'import { join } from "node:path";',
+    'const [preface, request] = readFileSync(0, "utf8").trimEnd().split("\\n");',
+    ...eventStream,
+    "",
+  ].join("\n"));
+  return { version: "2.0.0", packageRoot: root };
+}
+
+describe("validateManagedInstallation", () => {
+  // A build that speaks another event protocol rejects this build's preface with an error frame and exits 0. It is
+  // refused for that reply even when it opened a session, so the update or rollback never activates it.
+  it("refuses a candidate whose event stream rejects this build's preface", async () => {
+    const installation = await candidate([
+      'mkdirSync(join(process.env.RERAIL_STORAGE_ROOT, "session"), { recursive: true });',
+      'if (preface !== "EARLIER-EVENTS/1") {',
+      '  process.stdout.write(JSON.stringify({ eventId: null, error: { code: "unsupported-version", message: "Expected EARLIER-EVENTS/1" } }) + "\\n");',
+      "  process.exit(0);",
+      "}",
+    ]);
+    await expect(validateManagedInstallation(installation)).rejects.toThrow("Installed event stream returned an invalid health response");
+  });
+
+  it("refuses a candidate whose event stream answers without opening a session", async () => {
+    const installation = await candidate([
+      'process.stdout.write(JSON.stringify({ eventId: JSON.parse(request).event.eventId, deliveries: [] }) + "\\n");',
+    ]);
+    await expect(validateManagedInstallation(installation)).rejects.toThrow("Installed event stream answered without opening a session");
+  });
+
+  it("accepts a candidate whose event stream opens a session and answers the health event", async () => {
+    const installation = await candidate([
+      'mkdirSync(join(process.env.RERAIL_STORAGE_ROOT, "session"), { recursive: true });',
+      'process.stdout.write(JSON.stringify({ eventId: JSON.parse(request).event.eventId, deliveries: [] }) + "\\n");',
+    ]);
+    await expect(validateManagedInstallation(installation)).resolves.toBeUndefined();
   });
 });

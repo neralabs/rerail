@@ -28,7 +28,7 @@ The effective rule set contains one definition per logical rule ID:
 3. Deleting the project definition reveals the global definition again.
 4. Deleting the global definition removes it for every project that does not override it.
 
-A logical ID cannot change rule kind while any global or project definition with that ID exists. Remove the existing definition before changing between `file` and `conversation`.
+A logical ID cannot change rule kind while any global or project definition with that ID exists. Remove the existing definition before changing between `code` and `conversation`.
 
 ## Propagation and concurrency
 

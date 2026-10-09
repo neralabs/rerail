@@ -24,9 +24,9 @@ const nonEmpty = z.string().refine(value => value.trim().length > 0, "must be a 
 
 const exampleSchema = z
   .object({
-    /** The file a file rule's example is read as; conversation rule examples have none. */
+    /** The file a code rule's example is read as; conversation rule examples have none. */
     path: nonEmpty.optional(),
-    /** File content for a file rule; the command a coding agent runs for a conversation rule. */
+    /** File content for a code rule; the command a coding agent runs for a conversation rule. */
     text: nonEmpty,
   })
   .strict();
@@ -98,7 +98,7 @@ export interface RuleExample {
 
 export interface RulePackRule {
   readonly id: string;
-  /** A file rule or a conversation rule. */
+  /** A code rule or a conversation rule. */
   readonly kind: RuleDocument["kind"];
   /** Plain-language name, e.g. "Use === and !== in TypeScript". */
   readonly title: string;
@@ -165,8 +165,8 @@ export function readRulePacks(packs: readonly string[] = corePackDirectories()):
         const previous = owner.get(rule.id);
         if (previous !== undefined) throw new Error(`Rule ${rule.id} is in both rule packs ${previous} and ${file.id}`);
         const examples = rule.examples;
-        if (examples !== undefined && document.kind === "file" && (examples.caught.path === undefined || examples.passes.path === undefined)) {
-          throw new Error(`File rule ${rule.id} in rule pack ${file.id} needs a path on both examples`);
+        if (examples !== undefined && document.kind === "code" && (examples.caught.path === undefined || examples.passes.path === undefined)) {
+          throw new Error(`Code rule ${rule.id} in rule pack ${file.id} needs a path on both examples`);
         }
         if (examples !== undefined && document.kind === "conversation" && (examples.caught.path !== undefined || examples.passes.path !== undefined)) {
           throw new Error(`Conversation rule ${rule.id} in rule pack ${file.id} takes no example path`);

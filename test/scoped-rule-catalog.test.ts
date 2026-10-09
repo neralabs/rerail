@@ -309,7 +309,7 @@ describe("ScopedRuleCatalog", () => {
     const reader = ScopedRuleCatalog.open(path, { repositoryId: "repo", workspaceRoot: "/repo" });
     const writer = ScopedRuleCatalog.open(path, { repositoryId: "repo", workspaceRoot: "/repo" });
     const initialVersion = reader.dataVersion();
-    writer.upsertDocument({ kind: "file", rule: MOCK_CODE_RULES[0]! }, { now: 1_000 });
+    writer.upsertDocument({ kind: "code", rule: MOCK_CODE_RULES[0]! }, { now: 1_000 });
     writer.upsertDocument(
       {
         kind: "conversation",
