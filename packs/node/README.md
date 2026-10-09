@@ -23,7 +23,7 @@ checkouts under `.rerail/corpora/node`:
 
 ```sh
 node packs/node/upstream/eslint-plugin-n/generate.mjs [--fixtures-only]
-python3 packs/node/candidates/generate.py
+python3 scripts/generate/packs/node_policies.py
 ```
 
 Scoring one rule with every false positive and false negative printed, and the candidates and probes:

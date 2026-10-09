@@ -18,7 +18,7 @@ from model2vec import StaticModel
 
 MODEL_ID = "minishlab/potion-base-8M"
 REVISION = "bf8b056651a2c21b8d2565580b8569da283cab23"
-OUTPUT = Path(__file__).resolve().parents[1] / "model"
+OUTPUT = Path(__file__).resolve().parents[3] / "model"
 FILES = ("config.json", "tokenizer.json", "model.safetensors")
 
 

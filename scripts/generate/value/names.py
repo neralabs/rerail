@@ -1,9 +1,10 @@
-"""Writes names.bin, the Unicode character names `\\N{...}` reads, as CPython 3.13 (Unicode 15.1.0) reads them.
+"""Writes native/src/code_rule_dsl/value/names/names.bin, the Unicode character names `\\N{...}` reads, as CPython 3.13
+(Unicode 15.1.0) reads them.
 
 Stored names are every name unicodedata.name gives (except the CJK unified ideographs and Hangul syllables, whose
 names the decoder derives) and every alias in the UCD's NameAliases.txt, which `\\N{...}` accepts and
 unicodedata.name does not give. Each one is checked against CPython's own `\\N{...}`. Run offline, not in CI:
-python3.13 generate.py <path to NameAliases.txt of Unicode 15.1.0>
+python3.13 scripts/generate/value/names.py <path to NameAliases.txt of Unicode 15.1.0>
 
 Layout, little-endian:
 - b"TNAMES01", then the Unicode version as one length byte and ASCII;
@@ -20,7 +21,7 @@ import struct
 import sys
 import unicodedata
 
-HERE: pathlib.Path = pathlib.Path(__file__).parent
+TARGET: pathlib.Path = pathlib.Path(__file__).parents[3] / "native/src/code_rule_dsl/value/names/names.bin"
 BUCKET: int = 16
 CJK: str = "CJK UNIFIED IDEOGRAPH-"
 HANGUL: str = "HANGUL SYLLABLE "
@@ -109,7 +110,7 @@ def main() -> None:
     for offset in offsets:
         out += struct.pack("<I", offset)
     out += entries
-    (HERE / "names.bin").write_bytes(bytes(out))
+    TARGET.write_bytes(bytes(out))
     print(f"{len(items)} names, {len(ranges)} CJK ranges, {len(out)} bytes")
 
 

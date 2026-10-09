@@ -1,6 +1,7 @@
-"""Writes python_builtins.json: for each Python minor version Ruff targets, the names Ruff resolves at module level
-without a binding (its builtins and magic globals, F821-silent). Run offline, not in CI:
-python3 generate_python_builtins.py <ruff 0.16.9 executable> <ruff checkout>/crates/ruff_python_stdlib/src/builtins.rs"""
+"""Writes native/src/code_rule_dsl/scope/data/python_builtins.generated.json: for each Python minor version Ruff
+targets, the names Ruff resolves at module level without a binding (its builtins and magic globals, F821-silent). Run
+offline, not in CI:
+python3 scripts/generate/scope/python_builtins.py <ruff 0.16.9 executable> <ruff checkout>/crates/ruff_python_stdlib/src/builtins.rs"""
 
 from __future__ import annotations
 
@@ -36,7 +37,8 @@ def main() -> None:
             undefined: set[str] = {candidates[item["location"]["row"] - 1] for item in json.loads(report.stdout)}
             versions[f"3.{minor}"] = [name for name in candidates if name not in undefined]
     table: dict[str, object] = {"source": f"{version} F821 at module level, per --target-version", "versions": versions}
-    (pathlib.Path(__file__).parent / "python_builtins.json").write_text(json.dumps(table, indent=1) + "\n")
+    target: pathlib.Path = pathlib.Path(__file__).parents[3] / "native/src/code_rule_dsl/scope/data/python_builtins.generated.json"
+    target.write_text(json.dumps(table, indent=1) + "\n")
 
 
 if __name__ == "__main__":

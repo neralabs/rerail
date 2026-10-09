@@ -649,7 +649,7 @@ To run a checkout's build in your harnesses instead of the published package, ru
 
 Rerail's own toolchain is Node only. OMP remains an external Bun-hosted runtime; its integration suites (`integration/omp-*.test.ts`, `integration/host-auth.test.ts`) use Vitest to drive a real standalone OMP executable. Set `RERAIL_OMP_EXECUTABLE` to its absolute path, or provision the release pinned to the SDK dependency with `node scripts/install-omp-host.mjs` (checksum-verified; uses a private local cache and prints the executable path). CI uses the same host. `npm run test:integration:built` skips the build step when `dist/` is current.
 
-`scripts/prepare-model.py` reproduces the bundled INT8 artifact from the revision and checksums recorded in `model/manifest.json`.
+`scripts/generate/model/prepare_model.py` reproduces the bundled INT8 artifact from the revision and checksums recorded in `model/manifest.json`. Every generated file in the repository, with its generator and the command that rewrites it, is listed in [scripts/generate/README.md](scripts/generate/README.md).
 
 `npm run conformance:languages -- --pack <pack>` scores a language pack's ported linter rules (`packs/<pack>/`) through the production workspace against the tool's recordings in the pack's `upstream/` and, with corpora checked out under `.rerail/corpora/<pack>/`, the linter's output on pinned corpora; `--write` saves the report under `.rerail/reports/`. `npm run conformance:languages:check` is the fixtures-only gate. Both it and the TSLint harness's tests (`conformance/tslint/*.test.ts`, which need TSLint's tests fetched into `tmp/tslint-fixtures/` and skip without them) run in `npm run test:conformance`, part of `test:all` in CI.
 
