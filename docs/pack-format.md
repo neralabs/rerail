@@ -92,7 +92,8 @@ recordings from `upstream/` unless `conformance.json` sets `oracles`:
 - `conformance.json`: the language family, the engine capabilities the pack declares (with exemptions and their
   evidence), the pinned tools and public corpora, and for each ported rule the upstream tool and rule it reproduces,
   how findings compare (`line` or `line+column`) and the capabilities it exercises. A port whose document is under
-  `candidates/` is scored and reported but never fails a check. A port may set `fixtures`, `path.matchesGlob`
+  `candidates/` is scored and reported but never fails a check; it is scored on the fixtures, whose recording must
+  cover it, and on a corpus only where that corpus's recording covers it. A port may set `fixtures`, `path.matchesGlob`
   patterns over the tool's fixture paths: it is then evaluated and scored only on the fixtures they match, the tests
   its upstream configuration ran on. That is how a tool whose tests run each rule with several option sets is
   scored: one document per option set, each on its own tests.

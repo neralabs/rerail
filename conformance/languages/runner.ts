@@ -381,7 +381,10 @@ async function runCorpus(loaded: LoadedPack, compiled: readonly CompiledRule[], 
   const recordings: SourceRun["recordings"] = new Map();
   const skipped = new Set<string>();
   for (const tool of [...new Set(compiled.map(entry => entry.rule.upstream.tool))].sort(compareDeterministicStrings)) {
-    const recording = pinnedRecording(loaded, tool, corpusRecordingPath(loaded, tool, corpus.name), corpus);
+    const path = corpusRecordingPath(loaded, tool, corpus.name);
+    // A corpus recording covers the shipped ports: a tool with only candidates may have none, and they skip the corpus.
+    if (!existsSync(path) && compiled.every(entry => entry.rule.upstream.tool !== tool || isCandidate(entry.rule))) continue;
+    const recording = pinnedRecording(loaded, tool, path, corpus);
     recordings.set(tool, recording);
     if (typeof recording !== "string") for (const path of (recording as CorpusRecording).source.skipped) skipped.add(path);
   }
@@ -454,6 +457,8 @@ function rowFor(entry: CompiledRule, run: SourceRun, loaded: LoadedPack, used: S
     return undefined;
   }
   if (!recording.source.rules.includes(rule.upstream.rule)) {
+    // Candidates are scored on the fixtures, and on a corpus only where its recording covers them.
+    if (isCandidate(rule) && recording.source.kind === "corpus") return undefined;
     errors.push(`${rule.id} (${run.label}): the ${rule.upstream.tool} recording does not cover ${rule.upstream.rule}`);
     return undefined;
   }
