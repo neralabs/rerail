@@ -52,6 +52,7 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/bandit/fixtures/mktemp.py` | `examples/mktemp.py` | verbatim |
 | `upstream/bandit/fixtures/multiline_statement.py` | `examples/multiline_statement.py` | verbatim |
 | `upstream/bandit/fixtures/new_candidates-all.py` | `examples/new_candidates-all.py` | verbatim |
+| `upstream/bandit/fixtures/new_candidates-nosec.py` | `examples/new_candidates-nosec.py` | verbatim |
 | `upstream/bandit/fixtures/new_candidates-some.py` | `examples/new_candidates-some.py` | verbatim |
 | `upstream/bandit/fixtures/no_host_key_verification.py` | `examples/no_host_key_verification.py` | verbatim |
 | `upstream/bandit/fixtures/nosec.py` | `examples/nosec.py` | verbatim |

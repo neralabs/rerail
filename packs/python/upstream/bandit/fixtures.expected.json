@@ -120,6 +120,7 @@
    "mktemp.py",
    "multiline_statement.py",
    "new_candidates-all.py",
+   "new_candidates-nosec.py",
    "new_candidates-some.py",
    "no_host_key_verification.py",
    "nosec.py",
@@ -140,6 +141,50 @@
    "random_module.py",
    "requests-missing-timeout.py",
    "requests-ssl-verify-disabled.py",
+   "rerail/nosec/B101.py",
+   "rerail/nosec/B102.py",
+   "rerail/nosec/B104.py",
+   "rerail/nosec/B108.py",
+   "rerail/nosec/B110.py",
+   "rerail/nosec/B112.py",
+   "rerail/nosec/B113.py",
+   "rerail/nosec/B301.py",
+   "rerail/nosec/B302.py",
+   "rerail/nosec/B305.py",
+   "rerail/nosec/B306.py",
+   "rerail/nosec/B307.py",
+   "rerail/nosec/B310.py",
+   "rerail/nosec/B311.py",
+   "rerail/nosec/B312.py",
+   "rerail/nosec/B313.py",
+   "rerail/nosec/B314.py",
+   "rerail/nosec/B315.py",
+   "rerail/nosec/B316.py",
+   "rerail/nosec/B317.py",
+   "rerail/nosec/B318.py",
+   "rerail/nosec/B319.py",
+   "rerail/nosec/B321.py",
+   "rerail/nosec/B323.py",
+   "rerail/nosec/B401.py",
+   "rerail/nosec/B402.py",
+   "rerail/nosec/B405.py",
+   "rerail/nosec/B406.py",
+   "rerail/nosec/B407.py",
+   "rerail/nosec/B408.py",
+   "rerail/nosec/B409.py",
+   "rerail/nosec/B411.py",
+   "rerail/nosec/B413.py",
+   "rerail/nosec/B415.py",
+   "rerail/nosec/B502.py",
+   "rerail/nosec/B505.py",
+   "rerail/nosec/B507.py",
+   "rerail/nosec/B606.py",
+   "rerail/nosec/B610.py",
+   "rerail/nosec/B615.py",
+   "rerail/nosec/B701.py",
+   "rerail/probes/b108-docstring-concatenation.py",
+   "rerail/probes/b502-keyword-only.py",
+   "rerail/probes/nosec-lines.py",
    "shelve_open.py",
    "skip.py",
    "snmp.py",
@@ -175,9 +220,33 @@
    "column": 1
   },
   {
+   "rule": "B101",
+   "path": "rerail/nosec/B101.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B101",
+   "path": "rerail/nosec/B101.py",
+   "line": 11,
+   "column": 1
+  },
+  {
    "rule": "B102",
    "path": "exec.py",
    "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B102",
+   "path": "rerail/nosec/B102.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B102",
+   "path": "rerail/nosec/B102.py",
+   "line": 11,
    "column": 1
   },
   {
@@ -251,6 +320,18 @@
    "path": "binding.py",
    "line": 4,
    "column": 9
+  },
+  {
+   "rule": "B104",
+   "path": "rerail/nosec/B104.py",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "B104",
+   "path": "rerail/nosec/B104.py",
+   "line": 11,
+   "column": 8
   },
   {
    "rule": "B105",
@@ -379,6 +460,42 @@
    "column": 10
   },
   {
+   "rule": "B108",
+   "path": "rerail/nosec/B108.py",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "B108",
+   "path": "rerail/nosec/B108.py",
+   "line": 11,
+   "column": 8
+  },
+  {
+   "rule": "B108",
+   "path": "rerail/probes/b108-docstring-concatenation.py",
+   "line": 8,
+   "column": 5
+  },
+  {
+   "rule": "B108",
+   "path": "rerail/probes/b108-docstring-concatenation.py",
+   "line": 10,
+   "column": 5
+  },
+  {
+   "rule": "B110",
+   "path": "rerail/nosec/B110.py",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "B110",
+   "path": "rerail/nosec/B110.py",
+   "line": 28,
+   "column": 1
+  },
+  {
    "rule": "B110",
    "path": "try_except_pass.py",
    "line": 4,
@@ -389,6 +506,18 @@
    "path": "try_except_pass.py",
    "line": 11,
    "column": 1
+  },
+  {
+   "rule": "B112",
+   "path": "rerail/nosec/B112.py",
+   "line": 4,
+   "column": 5
+  },
+  {
+   "rule": "B112",
+   "path": "rerail/nosec/B112.py",
+   "line": 34,
+   "column": 5
   },
   {
    "rule": "B112",
@@ -553,6 +682,24 @@
    "column": 12
   },
   {
+   "rule": "B113",
+   "path": "rerail/nosec/B113.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "rerail/nosec/B113.py",
+   "line": 17,
+   "column": 1
+  },
+  {
+   "rule": "B113",
+   "path": "rerail/probes/nosec-lines.py",
+   "line": 8,
+   "column": 1
+  },
+  {
    "rule": "B201",
    "path": "flask_debug.py",
    "line": 10,
@@ -656,6 +803,18 @@
   },
   {
    "rule": "B301",
+   "path": "rerail/nosec/B301.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B301",
+   "path": "rerail/nosec/B301.py",
+   "line": 17,
+   "column": 1
+  },
+  {
+   "rule": "B301",
    "path": "shelve_open.py",
    "line": 8,
    "column": 10
@@ -677,6 +836,18 @@
    "path": "marshal_deserialize.py",
    "line": 11,
    "column": 7
+  },
+  {
+   "rule": "B302",
+   "path": "rerail/nosec/B302.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B302",
+   "path": "rerail/nosec/B302.py",
+   "line": 17,
+   "column": 1
   },
   {
    "rule": "B303",
@@ -847,6 +1018,18 @@
    "column": 8
   },
   {
+   "rule": "B305",
+   "path": "rerail/nosec/B305.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B305",
+   "path": "rerail/nosec/B305.py",
+   "line": 17,
+   "column": 1
+  },
+  {
    "rule": "B306",
    "path": "mktemp.py",
    "line": 7,
@@ -871,6 +1054,18 @@
    "column": 1
   },
   {
+   "rule": "B306",
+   "path": "rerail/nosec/B306.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B306",
+   "path": "rerail/nosec/B306.py",
+   "line": 17,
+   "column": 1
+  },
+  {
    "rule": "B307",
    "path": "eval.py",
    "line": 3,
@@ -887,6 +1082,18 @@
    "path": "eval.py",
    "line": 5,
    "column": 7
+  },
+  {
+   "rule": "B307",
+   "path": "rerail/nosec/B307.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B307",
+   "path": "rerail/nosec/B307.py",
+   "line": 11,
+   "column": 1
   },
   {
    "rule": "B308",
@@ -1148,6 +1355,18 @@
   },
   {
    "rule": "B310",
+   "path": "rerail/nosec/B310.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B310",
+   "path": "rerail/nosec/B310.py",
+   "line": 17,
+   "column": 1
+  },
+  {
+   "rule": "B310",
    "path": "urlopen.py",
    "line": 17,
    "column": 5
@@ -1267,10 +1486,46 @@
    "column": 7
   },
   {
+   "rule": "B311",
+   "path": "rerail/nosec/B311.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B311",
+   "path": "rerail/nosec/B311.py",
+   "line": 17,
+   "column": 1
+  },
+  {
+   "rule": "B312",
+   "path": "rerail/nosec/B312.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B312",
+   "path": "rerail/nosec/B312.py",
+   "line": 17,
+   "column": 1
+  },
+  {
    "rule": "B312",
    "path": "telnetlib.py",
    "line": 8,
    "column": 6
+  },
+  {
+   "rule": "B313",
+   "path": "rerail/nosec/B313.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B313",
+   "path": "rerail/nosec/B313.py",
+   "line": 17,
+   "column": 1
   },
   {
    "rule": "B313",
@@ -1295,6 +1550,18 @@
    "path": "xml_etree_celementtree.py",
    "line": 11,
    "column": 5
+  },
+  {
+   "rule": "B314",
+   "path": "rerail/nosec/B314.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B314",
+   "path": "rerail/nosec/B314.py",
+   "line": 17,
+   "column": 1
   },
   {
    "rule": "B314",
@@ -1322,9 +1589,33 @@
   },
   {
    "rule": "B315",
+   "path": "rerail/nosec/B315.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B315",
+   "path": "rerail/nosec/B315.py",
+   "line": 17,
+   "column": 1
+  },
+  {
+   "rule": "B315",
    "path": "xml_expatreader.py",
    "line": 4,
    "column": 5
+  },
+  {
+   "rule": "B316",
+   "path": "rerail/nosec/B316.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B316",
+   "path": "rerail/nosec/B316.py",
+   "line": 17,
+   "column": 1
   },
   {
    "rule": "B316",
@@ -1343,6 +1634,18 @@
    "path": "new_candidates-all.py",
    "line": 22,
    "column": 5
+  },
+  {
+   "rule": "B317",
+   "path": "rerail/nosec/B317.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B317",
+   "path": "rerail/nosec/B317.py",
+   "line": 17,
+   "column": 1
   },
   {
    "rule": "B317",
@@ -1382,6 +1685,18 @@
   },
   {
    "rule": "B318",
+   "path": "rerail/nosec/B318.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B318",
+   "path": "rerail/nosec/B318.py",
+   "line": 17,
+   "column": 1
+  },
+  {
+   "rule": "B318",
    "path": "xml_minidom.py",
    "line": 3,
    "column": 5
@@ -1391,6 +1706,18 @@
    "path": "xml_minidom.py",
    "line": 11,
    "column": 5
+  },
+  {
+   "rule": "B319",
+   "path": "rerail/nosec/B319.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B319",
+   "path": "rerail/nosec/B319.py",
+   "line": 17,
+   "column": 1
   },
   {
    "rule": "B319",
@@ -1409,6 +1736,30 @@
    "path": "ftplib.py",
    "line": 6,
    "column": 7
+  },
+  {
+   "rule": "B321",
+   "path": "rerail/nosec/B321.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B321",
+   "path": "rerail/nosec/B321.py",
+   "line": 17,
+   "column": 1
+  },
+  {
+   "rule": "B323",
+   "path": "rerail/nosec/B323.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B323",
+   "path": "rerail/nosec/B323.py",
+   "line": 17,
+   "column": 1
   },
   {
    "rule": "B323",
@@ -1562,6 +1913,54 @@
   },
   {
    "rule": "B401",
+   "path": "rerail/nosec/B312.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B401",
+   "path": "rerail/nosec/B312.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B401",
+   "path": "rerail/nosec/B312.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B401",
+   "path": "rerail/nosec/B312.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B401",
+   "path": "rerail/nosec/B312.py",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "B401",
+   "path": "rerail/nosec/B312.py",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "B401",
+   "path": "rerail/nosec/B401.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B401",
+   "path": "rerail/nosec/B401.py",
+   "line": 11,
+   "column": 1
+  },
+  {
+   "rule": "B401",
    "path": "telnetlib.py",
    "line": 1,
    "column": 1
@@ -1576,6 +1975,54 @@
    "rule": "B402",
    "path": "ftplib.py",
    "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B402",
+   "path": "rerail/nosec/B321.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B402",
+   "path": "rerail/nosec/B321.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B402",
+   "path": "rerail/nosec/B321.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B402",
+   "path": "rerail/nosec/B321.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B402",
+   "path": "rerail/nosec/B321.py",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "B402",
+   "path": "rerail/nosec/B321.py",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "B402",
+   "path": "rerail/nosec/B402.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B402",
+   "path": "rerail/nosec/B402.py",
+   "line": 11,
    "column": 1
   },
   {
@@ -1624,6 +2071,42 @@
    "rule": "B403",
    "path": "pickle_deserialize.py",
    "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B403",
+   "path": "rerail/nosec/B301.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B403",
+   "path": "rerail/nosec/B301.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B403",
+   "path": "rerail/nosec/B301.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B403",
+   "path": "rerail/nosec/B301.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B403",
+   "path": "rerail/nosec/B301.py",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "B403",
+   "path": "rerail/nosec/B301.py",
+   "line": 16,
    "column": 1
   },
   {
@@ -1718,6 +2201,90 @@
   },
   {
    "rule": "B405",
+   "path": "rerail/nosec/B313.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B405",
+   "path": "rerail/nosec/B313.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B405",
+   "path": "rerail/nosec/B313.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B405",
+   "path": "rerail/nosec/B313.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B405",
+   "path": "rerail/nosec/B313.py",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "B405",
+   "path": "rerail/nosec/B313.py",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "B405",
+   "path": "rerail/nosec/B314.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B405",
+   "path": "rerail/nosec/B314.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B405",
+   "path": "rerail/nosec/B314.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B405",
+   "path": "rerail/nosec/B314.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B405",
+   "path": "rerail/nosec/B314.py",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "B405",
+   "path": "rerail/nosec/B314.py",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "B405",
+   "path": "rerail/nosec/B405.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B405",
+   "path": "rerail/nosec/B405.py",
+   "line": 11,
+   "column": 1
+  },
+  {
+   "rule": "B405",
    "path": "xml_etree_celementtree.py",
    "line": 1,
    "column": 1
@@ -1726,6 +2293,90 @@
    "rule": "B405",
    "path": "xml_etree_elementtree.py",
    "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "rerail/nosec/B315.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "rerail/nosec/B315.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "rerail/nosec/B315.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "rerail/nosec/B315.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "rerail/nosec/B315.py",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "rerail/nosec/B315.py",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "rerail/nosec/B317.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "rerail/nosec/B317.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "rerail/nosec/B317.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "rerail/nosec/B317.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "rerail/nosec/B317.py",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "rerail/nosec/B317.py",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "rerail/nosec/B406.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "rerail/nosec/B406.py",
+   "line": 11,
    "column": 1
   },
   {
@@ -1748,12 +2399,108 @@
   },
   {
    "rule": "B407",
+   "path": "rerail/nosec/B316.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B407",
+   "path": "rerail/nosec/B316.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B407",
+   "path": "rerail/nosec/B316.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B407",
+   "path": "rerail/nosec/B316.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B407",
+   "path": "rerail/nosec/B316.py",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "B407",
+   "path": "rerail/nosec/B316.py",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "B407",
+   "path": "rerail/nosec/B407.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B407",
+   "path": "rerail/nosec/B407.py",
+   "line": 11,
+   "column": 1
+  },
+  {
+   "rule": "B407",
    "path": "xml_expatbuilder.py",
    "line": 1,
    "column": 1
   },
   {
    "rule": "B408",
+   "path": "rerail/nosec/B318.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B408",
+   "path": "rerail/nosec/B318.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B408",
+   "path": "rerail/nosec/B318.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B408",
+   "path": "rerail/nosec/B318.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B408",
+   "path": "rerail/nosec/B318.py",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "B408",
+   "path": "rerail/nosec/B318.py",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "B408",
+   "path": "rerail/nosec/B408.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B408",
+   "path": "rerail/nosec/B408.py",
+   "line": 11,
+   "column": 1
+  },
+  {
+   "rule": "B408",
    "path": "xml_minidom.py",
    "line": 1,
    "column": 1
@@ -1766,6 +2513,54 @@
   },
   {
    "rule": "B409",
+   "path": "rerail/nosec/B319.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B409",
+   "path": "rerail/nosec/B319.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B409",
+   "path": "rerail/nosec/B319.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B409",
+   "path": "rerail/nosec/B319.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B409",
+   "path": "rerail/nosec/B319.py",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "B409",
+   "path": "rerail/nosec/B319.py",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "B409",
+   "path": "rerail/nosec/B409.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B409",
+   "path": "rerail/nosec/B409.py",
+   "line": 11,
+   "column": 1
+  },
+  {
+   "rule": "B409",
    "path": "xml_pulldom.py",
    "line": 1,
    "column": 1
@@ -1774,6 +2569,18 @@
    "rule": "B409",
    "path": "xml_pulldom.py",
    "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "B411",
+   "path": "rerail/nosec/B411.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B411",
+   "path": "rerail/nosec/B411.py",
+   "line": 11,
    "column": 1
   },
   {
@@ -1886,6 +2693,18 @@
   },
   {
    "rule": "B413",
+   "path": "rerail/nosec/B413.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "rerail/nosec/B413.py",
+   "line": 11,
+   "column": 1
+  },
+  {
+   "rule": "B413",
    "path": "weak_cryptographic_key_sizes.py",
    "line": 5,
    "column": 1
@@ -1900,6 +2719,18 @@
    "rule": "B415",
    "path": "pyghmi.py",
    "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B415",
+   "path": "rerail/nosec/B415.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B415",
+   "path": "rerail/nosec/B415.py",
+   "line": 11,
    "column": 1
   },
   {
@@ -2008,6 +2839,30 @@
    "rule": "B501",
    "path": "requests-ssl-verify-disabled.py",
    "line": 42,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "rerail/nosec/B502.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "rerail/nosec/B502.py",
+   "line": 17,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "rerail/probes/b502-keyword-only.py",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "rerail/probes/b502-keyword-only.py",
+   "line": 6,
    "column": 1
   },
   {
@@ -2146,6 +3001,18 @@
    "rule": "B504",
    "path": "ssl-insecure-version.py",
    "line": 30,
+   "column": 1
+  },
+  {
+   "rule": "B505",
+   "path": "rerail/nosec/B505.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B505",
+   "path": "rerail/nosec/B505.py",
+   "line": 17,
    "column": 1
   },
   {
@@ -2296,6 +3163,18 @@
    "rule": "B507",
    "path": "no_host_key_verification.py",
    "line": 14,
+   "column": 1
+  },
+  {
+   "rule": "B507",
+   "path": "rerail/nosec/B507.py",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "B507",
+   "path": "rerail/nosec/B507.py",
+   "line": 23,
    "column": 1
   },
   {
@@ -2918,6 +3797,18 @@
   },
   {
    "rule": "B606",
+   "path": "rerail/nosec/B606.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "rerail/nosec/B606.py",
+   "line": 17,
+   "column": 1
+  },
+  {
+   "rule": "B606",
    "path": "wildcard-injection.py",
    "line": 16,
    "column": 1
@@ -3331,6 +4222,18 @@
    "column": 1
   },
   {
+   "rule": "B610",
+   "path": "rerail/nosec/B610.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B610",
+   "path": "rerail/nosec/B610.py",
+   "line": 11,
+   "column": 1
+  },
+  {
    "rule": "B611",
    "path": "django_sql_injection_raw.py",
    "line": 5,
@@ -3487,6 +4390,18 @@
    "column": 23
   },
   {
+   "rule": "B615",
+   "path": "rerail/nosec/B615.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B615",
+   "path": "rerail/nosec/B615.py",
+   "line": 17,
+   "column": 1
+  },
+  {
    "rule": "B701",
    "path": "jinja2_templating.py",
    "line": 9,
@@ -3514,6 +4429,18 @@
    "rule": "B701",
    "path": "jinja2_templating.py",
    "line": 29,
+   "column": 1
+  },
+  {
+   "rule": "B701",
+   "path": "rerail/nosec/B701.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B701",
+   "path": "rerail/nosec/B701.py",
+   "line": 17,
    "column": 1
   },
   {

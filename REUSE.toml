@@ -646,6 +646,13 @@ precedence = "override"
 SPDX-FileCopyrightText = "2022 Charles Marsh"
 SPDX-License-Identifier = "MIT"
 
+# The fixtures Rerail wrote among them (packs/python/upstream/{ruff,bandit}/UPSTREAM.md).
+[[annotations]]
+path = ["packs/python/upstream/ruff/fixtures/rerail/**", "packs/python/upstream/bandit/fixtures/rerail/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Nera Software Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
 # packs/php
 
 # Rule documents: Rerail's re-implementations of PHP_CodeSniffer's, PHPStan's and Psalm's rules, annotated with the
