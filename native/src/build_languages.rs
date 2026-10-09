@@ -600,7 +600,18 @@ fn render(entries: &[Entry]) -> String {
             honoured.join("\n                | ")
         )
     };
-    let _ = writeln!(out, "        {body}\n    }}\n}}");
+    let _ = writeln!(out, "        {body}\n    }}\n}}\n");
+
+    out.push_str("/// Evaluates `$body` with `$a` the adapter of `$family` (`adapter`): one arm per registry family.\n");
+    out.push_str("macro_rules! with_adapter {\n    ($family:expr, $a:ident => $body:expr) => {\n        match $family {\n");
+    for (family, _) in &families {
+        let family = pascal(family);
+        let _ = writeln!(
+            out,
+            "            $crate::code_rule_dsl::language::Family::{family} => {{\n                type $a = $crate::code_rule_dsl::language::adapter::{family};\n                $body\n            }}"
+        );
+    }
+    out.push_str("        }\n    };\n}\n\npub(crate) use with_adapter;\n");
     out
 }
 
@@ -689,6 +700,35 @@ mod tests {
         assert!(generated.contains("label: \"one\""));
         assert!(!generated.contains("label: \"two\""));
         assert!(generated.contains("&[\"two\"]"));
+    }
+
+    #[test]
+    fn each_family_dispatches_to_its_adapter() {
+        let mut three = supported("three", ".three", 3);
+        three["family"] = json!("one");
+        let generated = Registry::new(
+            "adapters",
+            &[
+                supported("one", ".one", 1),
+                supported("two", ".two", 2),
+                three,
+                planned("four", ".four"),
+            ],
+        )
+        .generate();
+        assert!(generated.contains("macro_rules! with_adapter {\n    ($family:expr, $a:ident => $body:expr) => {\n        match $family {\n"));
+        for family in ["One", "Two"] {
+            assert_eq!(
+                generated
+                    .matches(&format!("            $crate::code_rule_dsl::language::Family::{family} => {{\n                type $a = $crate::code_rule_dsl::language::adapter::{family};\n                $body\n            }}\n"))
+                    .count(),
+                1,
+                "{family}"
+            );
+        }
+        assert!(!generated.contains("adapter::Three"));
+        assert!(!generated.contains("adapter::Four"));
+        assert!(generated.contains("pub(crate) use with_adapter;"));
     }
 
     #[test]
