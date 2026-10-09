@@ -38,7 +38,7 @@ struct Declaration {
 
 /// The document's options, each with its effective value (its `config` value, else its default).
 #[derive(Default)]
-pub(super) struct Options {
+pub(crate) struct Options {
     values: BTreeMap<String, Value>,
 }
 

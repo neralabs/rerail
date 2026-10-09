@@ -170,9 +170,17 @@ fn python() {
             ],
         },
         syntax: super::syntax::kit::Expect {
-            option_keys: super::OptionKeys::Python,
             dollar_names: true,
             language_options: None,
+            compiled_options: Some((r#"{"pythonVersion": "3.12"}"#, None, Some(12))),
+            when: &[
+                (r#"{"pythonVersion": {"min": "3.10"}}"#, Ok(true)),
+                (r#"{"pythonVersion": {"max": "3.9"}}"#, Ok(false)),
+                (
+                    r#"{"ecmaVersion": {"min": 2015}}"#,
+                    Err("unknown field `ecmaVersion` at /q/when"),
+                ),
+            ],
             parse: [
                 None,
                 None,
@@ -276,9 +284,21 @@ fn ecma() {
             styles: [Some("formatArgs reads Python and PHP format calls"); 4],
         },
         syntax: super::syntax::kit::Expect {
-            option_keys: super::OptionKeys::Ecma,
             dollar_names: false,
             language_options: None,
+            compiled_options: Some((
+                r#"{"ecmaVersion": 6, "sourceType": "script"}"#,
+                Some(2015),
+                None,
+            )),
+            when: &[
+                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok(true)),
+                (r#"{"sourceType": "script"}"#, Ok(false)),
+                (
+                    r#"{"pythonVersion": {"min": "3.10"}}"#,
+                    Err("unknown field `pythonVersion` at /q/when"),
+                ),
+            ],
             parse: [
                 Some("`percentFormat` parses Python literals"),
                 Some("`braceFormat` parses Python literals"),
@@ -418,9 +438,17 @@ fn php() {
             ],
         },
         syntax: super::syntax::kit::Expect {
-            option_keys: super::OptionKeys::Ecma,
             dollar_names: true,
             language_options: Some("`languageOptions` is not available for php policies"),
+            compiled_options: None,
+            when: &[
+                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok(true)),
+                (r#"{"sourceType": "script"}"#, Ok(false)),
+                (
+                    r#"{"pythonVersion": {"min": "3.10"}}"#,
+                    Err("unknown field `pythonVersion` at /q/when"),
+                ),
+            ],
             parse: [
                 Some(
                     "`percentFormat` parses Python literals; PHP's printf formats are `printfFormat`",
@@ -558,9 +586,17 @@ fn blade() {
             ],
         },
         syntax: super::syntax::kit::Expect {
-            option_keys: super::OptionKeys::Ecma,
             dollar_names: false,
             language_options: Some("`languageOptions` is not available for blade policies"),
+            compiled_options: None,
+            when: &[
+                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok(true)),
+                (r#"{"sourceType": "script"}"#, Ok(false)),
+                (
+                    r#"{"pythonVersion": {"min": "3.10"}}"#,
+                    Err("unknown field `pythonVersion` at /q/when"),
+                ),
+            ],
             parse: [
                 Some(
                     "`percentFormat` parses Python literals; blade embeds PHP, whose printf formats are `printfFormat`",
