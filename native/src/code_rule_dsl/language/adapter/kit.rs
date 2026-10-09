@@ -30,6 +30,8 @@ struct Expect {
     regions: &'static [Document],
     /// The suffix of the family's files, and the module of `pkg/mod<suffix>` in a package `pkg`.
     module: (&'static str, Option<&'static str>),
+    /// What the family's calls answer.
+    calls: super::calls::kit::Calls,
 }
 
 /// A tape of `source` in `dialect`, as files are read.
@@ -93,6 +95,7 @@ fn kit<A: Adapter>(expect: &Expect) {
         A::module_path(&package.0.join(format!("pkg/mod{suffix}"))),
         module.map(|module| serde_json::Value::String(module.to_owned()))
     );
+    super::calls::kit::check::<A>(&expect.calls, expect.dialect);
 }
 
 #[test]
@@ -105,6 +108,18 @@ fn python() {
         name: "file",
         regions: &[("x = 1\n", &[("module", 0..6)])],
         module: (".py", Some("pkg.mod")),
+        calls: super::calls::kit::Calls {
+            call_kinds: &["call"],
+            function_kinds: &["function_definition"],
+            refusal: None,
+            seed_language: None,
+            taped: false,
+            subclasses: true,
+            summary: ("def f():\n    g()\n", &["f"]),
+            unread: Some("pkg.mod"),
+            label: ("pkg.C.m", "pkg.C.m"),
+            keys: &[("pkg.f", 0, &["pkg.f", "alt.f"]), ("pkg.f", 64, &[])],
+        },
     });
 }
 
@@ -118,6 +133,18 @@ fn ecma() {
         name: "ﬁle",
         regions: &[("let x = 1;\n", &[("program", 0..11)])],
         module: (".ts", None),
+        calls: super::calls::kit::Calls {
+            call_kinds: &[],
+            function_kinds: &[],
+            refusal: Some("calls follows Python and PHP calls only"),
+            seed_language: None,
+            taped: false,
+            subclasses: false,
+            summary: ("function f() { g(); }\n", &[]),
+            unread: None,
+            label: ("pkg.f", "pkg.f"),
+            keys: &[("pkg.f", 0, &[])],
+        },
     });
 }
 
@@ -131,6 +158,29 @@ fn php() {
         name: "ﬁle",
         regions: &[("<?php $x = 1;\n", &[("program", 0..14)])],
         module: (".php", None),
+        calls: super::calls::kit::Calls {
+            call_kinds: &[
+                "function_call_expression",
+                "member_call_expression",
+                "nullsafe_member_call_expression",
+                "scoped_call_expression",
+                "object_creation_expression",
+            ],
+            function_kinds: &[
+                "function_definition",
+                "method_declaration",
+                "anonymous_function",
+                "arrow_function",
+            ],
+            refusal: None,
+            seed_language: None,
+            taped: false,
+            subclasses: false,
+            summary: ("<?php function f() { g(); }\n", &["\\f"]),
+            unread: None,
+            label: ("\\app\\c.m", "app\\c::m"),
+            keys: &[("\\App\\F", 0, &["\\app\\f"]), ("\\f", 64, &["\\f"])],
+        },
     });
 }
 
@@ -147,6 +197,29 @@ fn blade() {
             ("<p>x</p>\n", &[]),
         ],
         module: (".blade.php", None),
+        calls: super::calls::kit::Calls {
+            call_kinds: &[
+                "function_call_expression",
+                "member_call_expression",
+                "nullsafe_member_call_expression",
+                "scoped_call_expression",
+                "object_creation_expression",
+            ],
+            function_kinds: &[
+                "function_definition",
+                "method_declaration",
+                "anonymous_function",
+                "arrow_function",
+            ],
+            refusal: None,
+            seed_language: Some("php"),
+            taped: true,
+            subclasses: false,
+            summary: ("@php function f() { g(); } @endphp\n", &["\\f"]),
+            unread: None,
+            label: ("\\app\\c.m", "app\\c::m"),
+            keys: &[("\\App\\F", 0, &["\\app\\f"]), ("\\f", 64, &["\\f"])],
+        },
     });
 }
 
