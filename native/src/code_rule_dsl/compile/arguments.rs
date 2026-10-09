@@ -1,10 +1,14 @@
 use super::resolve::is_identifier;
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
+use crate::code_rule_dsl::language::adapter::{
+    Adapter, ArgumentFeature, ArgumentRules, gate, with_adapter,
+};
 use crate::code_rule_dsl::language::{Family, GrammarDialect, kind_ids};
 use crate::code_rule_dsl::matcher::Semantic;
 use crate::code_rule_dsl::matcher::{Arguments, AstMatcher, SlotKind};
 use napi::Result;
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 /// Slots one signature may name.
 const MAX_SLOTS: usize = 256;
@@ -158,7 +162,6 @@ pub(super) fn compile_arguments(
     path: &str,
 ) -> Result<AstMatcher> {
     let (slots, bind, absent) = parse(value, path)?;
-    let family = Family::of(language);
     let markers = value
         .get("signature")
         .and_then(Value::as_array)
@@ -167,54 +170,16 @@ pub(super) fn compile_arguments(
                 .iter()
                 .any(|item| matches!(item.as_str(), Some("/" | "*")))
         });
-    let marker_refusal = match family {
-        Family::Python => None,
-        Family::Ecma => Some("JavaScript passes arguments by position only"),
-        // Blade's calls are those of the PHP its template embeds.
-        Family::Php | Family::Blade => {
-            Some("PHP has no positional-only or keyword-only parameters")
-        }
-    };
-    if let Some(detail) = marker_refusal.filter(|_| markers) {
-        return Err(invalid(format!(
-            "{path}/signature: `/` and `*` mark Python's positional-only and keyword-only slots; {detail}"
-        )));
-    }
     let mode = value.get("mode").and_then(Value::as_str);
     let syntactic = mode == Some("syntactic");
     let estree = mode == Some("estree");
-    let mode_refusal = match (family, mode) {
-        (Family::Ecma, Some("syntactic")) => Some(
-            "`syntactic` finds arguments by position and keyword as Ruff's find_argument does; TypeScript has no keywords",
-        ),
-        (Family::Python, Some("estree")) => {
-            Some("`estree` reads ESLint's `node.arguments`; use language or syntactic for Python")
-        }
-        (Family::Php, Some("estree")) => Some(
-            "`estree` reads ESLint's `node.arguments` of ESTree, JavaScript's syntax tree; php has none (use language or syntactic)",
-        ),
-        (Family::Blade, Some("estree")) => Some(
-            "`estree` reads ESLint's `node.arguments` of ESTree, JavaScript's syntax tree; blade has none (use language or syntactic)",
-        ),
-        _ => None,
+    let mode = match mode {
+        Some("syntactic") => Some(ArgumentFeature::Syntactic),
+        Some("estree") => Some(ArgumentFeature::Estree),
+        Some(_) | None => None,
     };
-    if let Some(detail) = mode_refusal {
-        return Err(invalid(format!("{path}/mode: {detail}")));
-    }
-    let call_kinds = match family {
-        Family::Python => kind_ids(language, &["call"]),
-        Family::Ecma => kind_ids(language, &["call_expression", "new_expression"]),
-        Family::Php | Family::Blade => kind_ids(
-            language,
-            &[
-                "function_call_expression",
-                "member_call_expression",
-                "nullsafe_member_call_expression",
-                "scoped_call_expression",
-                "object_creation_expression",
-            ],
-        ),
-    };
+    let call_kinds =
+        with_adapter!(Family::of(language), A => call_kinds::<A>(language, path, markers, mode))?;
     Ok(AstMatcher::Semantic(Semantic::Arguments(Box::new(
         Arguments {
             language,
@@ -226,6 +191,32 @@ pub(super) fn compile_arguments(
             estree,
         },
     ))))
+}
+
+/// The kinds of `A`'s calls in `language`, once `A` reads the slot markers `/` and `*` (where
+/// `markers`) and the `mode`.
+fn call_kinds<A: Adapter>(
+    language: GrammarDialect,
+    path: &str,
+    markers: bool,
+    mode: Option<ArgumentFeature>,
+) -> Result<BTreeSet<u16>> {
+    if markers {
+        gate(
+            &format!("{path}/signature"),
+            <A::Arguments as ArgumentRules>::feature(ArgumentFeature::SignatureMarkers),
+        )?;
+    }
+    if let Some(mode) = mode {
+        gate(
+            &format!("{path}/mode"),
+            <A::Arguments as ArgumentRules>::feature(mode),
+        )?;
+    }
+    Ok(kind_ids(
+        language,
+        <A::Arguments as ArgumentRules>::CALL_KINDS,
+    ))
 }
 
 #[cfg(test)]

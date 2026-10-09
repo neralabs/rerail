@@ -1,6 +1,7 @@
 use super::util::UNKNOWN;
 use super::value::spend_step;
 use crate::code_rule_dsl::identifier::python_identifier;
+use crate::code_rule_dsl::language::adapter::{Adapter, ArgumentRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::value::{Context, Value};
 use crate::code_rule_dsl::value::{php, python};
@@ -47,7 +48,7 @@ pub(crate) struct Arguments {
 }
 
 /// What a call passes for a slot.
-enum Passed<'r, D: Doc> {
+pub(crate) enum Passed<'r, D: Doc> {
     Absent,
     Value(Node<'r, D>),
     /// A starred argument or a spread keyword dict may pass it, or a TypeError may be raised.
@@ -81,13 +82,7 @@ impl Arguments {
         {
             return None;
         }
-        let passed = match Family::of(self.language) {
-            Family::Python if self.syntactic => self.syntactic(&node),
-            Family::Python => self.python(&node),
-            Family::Ecma => self.typescript(&node),
-            Family::Php | Family::Blade if self.syntactic => self.php_syntactic(&node)?,
-            Family::Php | Family::Blade => self.php(&node)?,
-        };
+        let passed = with_adapter!(Family::of(self.language), A => passed::<A, D>(self, &node))?;
         let mut unknown = false;
         for &slot in &self.absent {
             match passed[slot] {
@@ -131,7 +126,7 @@ impl Arguments {
             .position(|(slot, kind)| slot == name && *kind != SlotKind::PositionalOnly)
     }
 
-    fn python<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
+    pub(crate) fn python<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
         let mut passed = every(self.slots.len(), || Passed::Absent);
         let Some(arguments) = call.field("arguments") else {
             return every(self.slots.len(), || Passed::Unknown);
@@ -198,7 +193,7 @@ impl Arguments {
     /// positional argument at the slot's position among the arguments before the first starred
     /// one. `**kw` and `**{...}` name no keyword. Positional-only slots take no keyword and
     /// keyword-only slots no position. Nothing is unknown.
-    fn syntactic<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
+    pub(crate) fn syntactic<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
         let mut passed = every(self.slots.len(), || Passed::Absent);
         let Some(arguments) = call.field("arguments") else {
             return passed;
@@ -249,7 +244,7 @@ impl Arguments {
     /// a name passed twice (listed or not), a slot passed by position and by name, a by-reference
     /// argument — passes nothing known: every slot is unknown. `f(...)` is a first-class
     /// callable, not a call: `None`.
-    fn php<'r, D: Doc>(&self, call: &Node<'r, D>) -> Option<Vec<Passed<'r, D>>> {
+    pub(crate) fn php<'r, D: Doc>(&self, call: &Node<'r, D>) -> Option<Vec<Passed<'r, D>>> {
         let refused = || Some(every(self.slots.len(), || Passed::Unknown));
         let mut passed = every(self.slots.len(), || Passed::Absent);
         let Some(arguments) = php_arguments(call) else {
@@ -365,7 +360,10 @@ impl Arguments {
     /// argument after a named one, a name passed twice) is read as written. An argument list PHP
     /// cannot parse (a syntax error, `&$x`) passes nothing known: every slot is unknown.
     /// `f(...)` is a first-class callable, not a call: `None`.
-    fn php_syntactic<'r, D: Doc>(&self, call: &Node<'r, D>) -> Option<Vec<Passed<'r, D>>> {
+    pub(crate) fn php_syntactic<'r, D: Doc>(
+        &self,
+        call: &Node<'r, D>,
+    ) -> Option<Vec<Passed<'r, D>>> {
         let mut passed = every(self.slots.len(), || Passed::Absent);
         let Some(arguments) = php_arguments(call) else {
             return Some(passed);
@@ -421,7 +419,7 @@ impl Arguments {
         Some(passed)
     }
 
-    fn typescript<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
+    pub(crate) fn typescript<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
         let mut passed = every(self.slots.len(), || Passed::Absent);
         let Some(arguments) = call.field("arguments") else {
             return passed;
@@ -447,6 +445,14 @@ impl Arguments {
         }
         passed
     }
+}
+
+/// What `call` passes for `arguments`' slots, as `A`'s family binds a call's arguments.
+fn passed<'r, A: Adapter, D: Doc>(
+    arguments: &Arguments,
+    call: &Node<'r, D>,
+) -> Option<Vec<Passed<'r, D>>> {
+    <A::Arguments as ArgumentRules>::passed(arguments, call)
 }
 
 /// A PHP call's argument list: a function or method call's `arguments`, or the `arguments` of

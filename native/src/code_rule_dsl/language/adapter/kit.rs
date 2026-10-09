@@ -30,6 +30,7 @@ struct Expect {
     regions: &'static [Document],
     /// The suffix of the family's files, and the module of `pkg/mod<suffix>` in a package `pkg`.
     module: (&'static str, Option<&'static str>),
+    arguments: super::arguments::kit::Expect,
     syntax: super::syntax::kit::Expect,
 }
 
@@ -94,6 +95,9 @@ fn kit<A: Adapter>(expect: &Expect) {
         A::module_path(&package.0.join(format!("pkg/mod{suffix}"))),
         module.map(|module| serde_json::Value::String(module.to_owned()))
     );
+    super::arguments::kit::check::<A>(&expect.arguments, expect.dialect, |s| {
+        tape(s, expect.dialect)
+    });
     with_adapter!(expect.family, B => super::syntax::kit::check::<B>(&expect.syntax, expect.dialect, |s| tape(s, expect.dialect)));
 }
 
@@ -107,6 +111,17 @@ fn python() {
         name: "file",
         regions: &[("x = 1\n", &[("module", 0..6)])],
         module: (".py", Some("pkg.mod")),
+        arguments: super::arguments::kit::Expect {
+            call_kinds: &["call"],
+            features: [
+                None,
+                None,
+                Some(
+                    "`estree` reads ESLint's `node.arguments`; use language or syntactic for Python",
+                ),
+            ],
+            passed: ("f(1, b=2)\n", ["1", "2"]),
+        },
         syntax: super::syntax::kit::Expect {
             option_keys: super::OptionKeys::Python,
             dollar_names: true,
@@ -138,6 +153,19 @@ fn ecma() {
         name: "ﬁle",
         regions: &[("let x = 1;\n", &[("program", 0..11)])],
         module: (".ts", None),
+        arguments: super::arguments::kit::Expect {
+            call_kinds: &["call_expression", "new_expression"],
+            features: [
+                Some(
+                    "`/` and `*` mark Python's positional-only and keyword-only slots; JavaScript passes arguments by position only",
+                ),
+                Some(
+                    "`syntactic` finds arguments by position and keyword as Ruff's find_argument does; TypeScript has no keywords",
+                ),
+                None,
+            ],
+            passed: ("f(1, ...xs);\n", ["1", "?"]),
+        },
         syntax: super::syntax::kit::Expect {
             option_keys: super::OptionKeys::Ecma,
             dollar_names: false,
@@ -167,6 +195,25 @@ fn php() {
         name: "ﬁle",
         regions: &[("<?php $x = 1;\n", &[("program", 0..14)])],
         module: (".php", None),
+        arguments: super::arguments::kit::Expect {
+            call_kinds: &[
+                "function_call_expression",
+                "member_call_expression",
+                "nullsafe_member_call_expression",
+                "scoped_call_expression",
+                "object_creation_expression",
+            ],
+            features: [
+                Some(
+                    "`/` and `*` mark Python's positional-only and keyword-only slots; PHP has no positional-only or keyword-only parameters",
+                ),
+                None,
+                Some(
+                    "`estree` reads ESLint's `node.arguments` of ESTree, JavaScript's syntax tree; php has none (use language or syntactic)",
+                ),
+            ],
+            passed: ("<?php f(1, b: 2);\n", ["1", "2"]),
+        },
         syntax: super::syntax::kit::Expect {
             option_keys: super::OptionKeys::Ecma,
             dollar_names: true,
@@ -205,6 +252,25 @@ fn blade() {
             ("<p>x</p>\n", &[]),
         ],
         module: (".blade.php", None),
+        arguments: super::arguments::kit::Expect {
+            call_kinds: &[
+                "function_call_expression",
+                "member_call_expression",
+                "nullsafe_member_call_expression",
+                "scoped_call_expression",
+                "object_creation_expression",
+            ],
+            features: [
+                Some(
+                    "`/` and `*` mark Python's positional-only and keyword-only slots; PHP has no positional-only or keyword-only parameters",
+                ),
+                None,
+                Some(
+                    "`estree` reads ESLint's `node.arguments` of ESTree, JavaScript's syntax tree; blade has none (use language or syntactic)",
+                ),
+            ],
+            passed: ("{{ f(1, b: 2) }}\n", ["1", "2"]),
+        },
         syntax: super::syntax::kit::Expect {
             option_keys: super::OptionKeys::Ecma,
             dollar_names: false,
