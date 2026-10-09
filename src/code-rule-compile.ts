@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadNativeBinding, type NativeBinding } from "./native.js";
-import { LANGUAGE_NOT_SUPPORTED, languageNotSupportedOf } from "./code-rule-language-support.js";
-import type { CodeRule } from "./code-rule-schema.js";
+import { LANGUAGE_NOT_SUPPORTED, languageNotSupportedOf, type CodeRuleLanguageNotSupported } from "./code-rule-language-support.js";
+import { codeRuleSchema, type CodeRule } from "./code-rule-schema.js";
 import { stableJsonText } from "./stable-json.js";
 
 /** `language-not-supported`: the rule names a language or capability the engine does not read yet; anything else is `invalid-rule`. */
@@ -69,15 +69,25 @@ export function assertCodeRuleCompiles(rule: CodeRule): void {
   }
 }
 
+/** A code rule the catalog may store, and why it stays inactive when the engine does not read it yet. */
+export interface StorableCodeRule {
+  rule: CodeRule;
+  inactive?: CodeRuleLanguageNotSupported;
+}
+
 /**
- * `assertCodeRuleCompiles`, except that a rule refused only as `language-not-supported` passes: the catalog stores it,
- * inactive, until the engine reads its language.
+ * The schema's parse of `input`, compiled as the live catalog will compile it. A rule the engine refuses only as
+ * `language-not-supported` is storable: the catalog keeps it, inactive, until the engine reads its language. Throws
+ * the schema's `ZodError`, `CodeRuleCompileError` or `EngineUnavailableError`.
  */
-export function assertCodeRuleStorable(rule: CodeRule): void {
+export function storableCodeRule(input: unknown): StorableCodeRule {
+  const rule = codeRuleSchema.parse(input);
   try {
     assertCodeRuleCompiles(rule);
   } catch (error) {
-    if (error instanceof CodeRuleCompileError && error.code === LANGUAGE_NOT_SUPPORTED) return;
-    throw error;
+    const inactive = error instanceof CodeRuleCompileError ? languageNotSupportedOf(error.reason) : undefined;
+    if (inactive === undefined) throw error;
+    return { rule, inactive };
   }
+  return { rule };
 }
