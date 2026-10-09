@@ -1,0 +1,212 @@
+{
+  "upstream": "ast-grep 0.45.3",
+  "about": "Cases that pin Rerail's `stopBy: <rule>` to upstream ast-grep 0.45.3 (`rule/stop_by.rs`, `rule/relational_rule.rs`): `inside`/`precedes`/`follows` walk their axis up to and including the first node the stop rule matches; `has` tests a descendant the stop rule matches but does not enter it. The stop rule matches in a fresh environment. Each case runs through the CLI and both Rerail paths (the indexed path plans the unbounded relation as a superset). The no-invalid-this cases are TSLint's boundary: functions rebind `this`, arrow functions and methods' class bodies do not.",
+  "cases": [
+    {
+      "id": "inside-stops-at-the-nearest-function",
+      "language": "typescript",
+      "source": "class A {\n  m() { this.a(); const f = () => this.b(); function g() { this.c(); } }\n  n = function () { return this; };\n}\nthis.top();\n",
+      "rule": {
+        "kind": "this",
+        "inside": {
+          "kind": "class_body",
+          "stopBy": {
+            "any": [
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "function_expression"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "inside-tests-the-stop-node",
+      "language": "typescript",
+      "source": "class A {\n  m() { this.a(); const f = () => this.b(); function g() { this.c(); } }\n  n = function () { return this; };\n}\nthis.top();\n",
+      "rule": {
+        "kind": "this",
+        "inside": {
+          "kind": "method_definition",
+          "stopBy": {
+            "any": [
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "method_definition"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "not-inside-with-stop-rule",
+      "language": "typescript",
+      "source": "class A {\n  m() { this.a(); const f = () => this.b(); function g() { this.c(); } }\n  n = function () { return this; };\n}\nthis.top();\n",
+      "rule": {
+        "kind": "this",
+        "not": {
+          "inside": {
+            "kind": "class_body",
+            "stopBy": {
+              "any": [
+                {
+                  "kind": "function_declaration"
+                },
+                {
+                  "kind": "function_expression"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "has-does-not-enter-the-stop-node",
+      "language": "typescript",
+      "source": "function f() { if (a) { return 1; } }\nfunction g() { const k = () => { return 2; }; }\nfunction h() { function i() { return 3; } }\n",
+      "rule": {
+        "kind": "function_declaration",
+        "has": {
+          "kind": "return_statement",
+          "stopBy": {
+            "any": [
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_declaration"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "has-tests-the-stop-node",
+      "language": "typescript",
+      "source": "function g() { const k = () => 1; }\nfunction h() { return 1; }\n",
+      "rule": {
+        "kind": "function_declaration",
+        "has": {
+          "kind": "arrow_function",
+          "stopBy": {
+            "kind": "arrow_function"
+          }
+        }
+      }
+    },
+    {
+      "id": "not-has-with-stop-rule",
+      "language": "typescript",
+      "source": "function f() { return 1; }\nfunction g() { const k = () => { return 2; }; }\nfunction h() { a(); }\n",
+      "rule": {
+        "kind": "function_declaration",
+        "not": {
+          "has": {
+            "kind": "return_statement",
+            "stopBy": {
+              "kind": "arrow_function"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "precedes-stops-after-the-stop-sibling",
+      "language": "typescript",
+      "source": "a();\nb();\nc();\nb();\n",
+      "rule": {
+        "kind": "expression_statement",
+        "precedes": {
+          "pattern": "c();",
+          "stopBy": {
+            "pattern": "b();"
+          }
+        }
+      }
+    },
+    {
+      "id": "follows-tests-the-stop-sibling",
+      "language": "typescript",
+      "source": "a();\nb();\nc();\n",
+      "rule": {
+        "kind": "expression_statement",
+        "follows": {
+          "pattern": "$X();",
+          "stopBy": {
+            "pattern": "b();"
+          }
+        }
+      }
+    },
+    {
+      "id": "stop-rule-has-a-fresh-environment",
+      "language": "typescript",
+      "source": "f(g(h(f())));\nk(k());\n",
+      "rule": {
+        "pattern": "$F($$$)",
+        "has": {
+          "pattern": "$F()",
+          "stopBy": {
+            "pattern": "$F($$$)"
+          }
+        }
+      }
+    },
+    {
+      "id": "stop-rule-with-a-relation",
+      "language": "typescript",
+      "source": "outer(mid(inner(x)), barrier(inner(y)));\n",
+      "rule": {
+        "kind": "identifier",
+        "regex": "^[xy]$",
+        "inside": {
+          "pattern": "outer($$$)",
+          "stopBy": {
+            "kind": "call_expression",
+            "has": {
+              "kind": "identifier",
+              "regex": "^barrier$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "stop-rule-uses-a-utility",
+      "language": "typescript",
+      "source": "class A {\n  m() { this.a(); const f = () => this.b(); function g() { this.c(); } }\n  n = function () { return this; };\n}\nthis.top();\n",
+      "rule": {
+        "kind": "this",
+        "inside": {
+          "kind": "class_body",
+          "stopBy": {
+            "matches": "rebinding"
+          }
+        }
+      },
+      "utils": {
+        "rebinding": {
+          "any": [
+            {
+              "kind": "function_declaration"
+            },
+            {
+              "kind": "function_expression"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
