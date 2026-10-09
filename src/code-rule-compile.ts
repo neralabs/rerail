@@ -45,6 +45,9 @@ function capabilitiesJson(): string {
   return bundledCapabilities;
 }
 
+/** Why a document that JSON cannot represent (a cycle, a function) is no code rule. */
+export const NOT_JSON_REPRESENTABLE = "the document is not JSON representable";
+
 /**
  * Compile a schema-valid code rule exactly as the live catalog will (same source text, same bundled capabilities),
  * so a rule the engine rejects never reaches the catalog and fails every later refresh. Code-rule evaluation has
@@ -53,7 +56,7 @@ function capabilitiesJson(): string {
  */
 export function assertCodeRuleCompiles(rule: CodeRule): void {
   const sourceText = stableJsonText(rule);
-  if (sourceText === undefined) throw new CodeRuleCompileError(rule.id, "the document is not JSON representable");
+  if (sourceText === undefined) throw new CodeRuleCompileError(rule.id, NOT_JSON_REPRESENTABLE);
   let binding: NativeBinding;
   let capabilities: string;
   try {
