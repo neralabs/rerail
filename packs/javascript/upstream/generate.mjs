@@ -120,8 +120,14 @@ async function lint(cwd, files, rules, languages) {
     }
     const reported = result.messages.filter(message => wanted.has(message.ruleId));
     if (reported.length === 0) continue;
-    const lines = splitLines(readFileSync(result.filePath, "utf8"));
-    for (const message of reported) findings.push({ rule: message.ruleId, path, line: message.line, column: codePointColumn(lines, message.line, message.column) });
+    // ESLint reads the text without a leading byte order mark; the file's first line, as the runner counts it, has it.
+    const text = readFileSync(result.filePath, "utf8");
+    const bom = text.startsWith("\uFEFF") ? 1 : 0;
+    const lines = splitLines(text.slice(bom));
+    for (const message of reported) {
+      const column = codePointColumn(lines, message.line, message.column) + (message.line === 1 ? bom : 0);
+      findings.push({ rule: message.ruleId, path, line: message.line, column });
+    }
   }
   const order = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
   findings.sort((left, right) => order(left.path, right.path) || left.line - right.line || left.column - right.column || order(left.rule, right.rule));

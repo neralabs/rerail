@@ -1,0 +1,1 @@
+function takesThings(...things: void[]): void {}

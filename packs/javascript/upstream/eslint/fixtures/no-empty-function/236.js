@@ -1,0 +1,1 @@
+var obj = {foo: function*() {}}; // allow: asyncMethods

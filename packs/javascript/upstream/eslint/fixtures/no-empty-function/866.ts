@@ -1,0 +1,3 @@
+class A { constructor(param: string) {
+    // empty
+} }

@@ -1,0 +1,1 @@
+class A { get a(){} constructor (){} set a(foo){} get b(){} static c(){} set b(bar){} }

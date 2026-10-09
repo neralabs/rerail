@@ -1,0 +1,1 @@
+var bar = 1; var baz = 2; qux(); var qux = 3; var quux;

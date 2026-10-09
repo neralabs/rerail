@@ -1,0 +1,1 @@
+var obj = {get foo() {}}; // allow: asyncFunctions

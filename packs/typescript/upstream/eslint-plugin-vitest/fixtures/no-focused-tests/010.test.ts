@@ -1,0 +1,1 @@
+describe.for([])("test group", () => {});

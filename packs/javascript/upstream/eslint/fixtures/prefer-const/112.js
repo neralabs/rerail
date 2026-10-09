@@ -1,0 +1,1 @@
+let { a, b, c} = obj; let { x, y, z} = anotherObj; x = 2;

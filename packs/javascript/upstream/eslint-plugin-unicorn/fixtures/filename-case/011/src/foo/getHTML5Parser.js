@@ -1,0 +1,1 @@
+/* Filename: src/foo/getHTML5Parser.js */

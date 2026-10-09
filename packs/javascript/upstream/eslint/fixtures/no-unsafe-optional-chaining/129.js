@@ -1,0 +1,1 @@
+async function foo() { foo instanceof await obj?.prop }

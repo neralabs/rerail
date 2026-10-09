@@ -1,0 +1,1 @@
+function foo() { var Atomics = bar(); var baz = Atomics(5); }

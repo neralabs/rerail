@@ -5,7 +5,7 @@
 // root, with the addon built:
 //   node --import tsx conformance/t1/typescript-syntax.ts <corpus checkout> <path>[,<path>...] <out.json> [<unparsed.json>]
 // <unparsed.json> is a corpus recording (`packs/typescript/upstream/typescript-eslint/corpus-<name>.expected.json`): its `source.skipped` are
-// the files ESLint 10.11.0 (espree, or typescript-eslint 8.70.1's parser for TypeScript files) cannot parse.
+// the files typescript-eslint 8.70.1's parser, which reads every file there, cannot parse on ESLint 10.11.0.
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { capabilitiesJson } from "../engine.js";

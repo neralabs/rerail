@@ -1,0 +1,1 @@
+var React, App; React.render(<App attr={a} />);

@@ -720,6 +720,13 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2022 - PRESENT Verité Mugabo Makuza", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
+# @vitest/eslint-plugin 1.6.27 (packs/typescript/licenses/eslint-plugin-vitest/UPSTREAM.md): derived or excerpted
+[[annotations]]
+path = "packs/typescript/upstream/eslint-plugin-vitest/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2022 - PRESENT Verité Mugabo Makuza", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
 # typescript-eslint 8.70.1 (packs/typescript/licenses/typescript-eslint/UPSTREAM.md): derived or excerpted
 [[annotations]]
 path = "packs/typescript/upstream/typescript-eslint/fixtures/**"
@@ -738,12 +745,19 @@ precedence = "override"
 SPDX-FileCopyrightText = ["OpenJS Foundation and other contributors, <www.openjsf.org>", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
-# Candidate rule documents re-implementing eslint-plugin-unicorn's rules (no file of the plugin is copied).
+# Candidate rule documents re-implementing eslint-plugin-unicorn's rules.
 [[annotations]]
 path = "packs/javascript/candidates/rules/unicorn-*.json"
 precedence = "override"
 SPDX-FileCopyrightText = ["Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
+# eslint-plugin-unicorn 76.0.0 (packs/javascript/licenses/eslint-plugin-unicorn/UPSTREAM.md): derived or excerpted
+[[annotations]]
+path = "packs/javascript/upstream/eslint-plugin-unicorn/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
 
 # ESLint 10.11.0 (packs/javascript/licenses/eslint/UPSTREAM.md): derived or excerpted
 [[annotations]]

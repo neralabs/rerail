@@ -1,0 +1,1 @@
+setTimeout(foo, 10)

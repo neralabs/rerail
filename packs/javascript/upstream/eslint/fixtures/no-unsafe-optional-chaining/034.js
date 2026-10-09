@@ -1,0 +1,1 @@
+({foo: obj.bar = obj?.baz} = obj);

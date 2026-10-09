@@ -71,9 +71,12 @@ const tsParser = toolsRequire("@typescript-eslint/parser");
 const tsPlugin = toolsRequire("@typescript-eslint/eslint-plugin");
 const PLUGIN_PREFIX = "@typescript-eslint/";
 
-/** Pack rules by tool: `upstream.rule` is the rule id ESLint reports (`@typescript-eslint/no-namespace`). */
+/**
+ * The pack's typescript-eslint rules, by tool: `upstream.rule` is the rule id ESLint reports
+ * (`@typescript-eslint/no-namespace`). The vitest ports have their own recorder, eslint-plugin-vitest/generate.mjs.
+ */
 const RULES = new Map();
-for (const rule of PACK.rules) {
+for (const rule of PACK.rules.filter(entry => entry.upstream.tool === "typescript-eslint")) {
   if (!RULES.has(rule.upstream.tool)) RULES.set(rule.upstream.tool, []);
   RULES.get(rule.upstream.tool).push(rule.upstream.rule);
 }
@@ -197,7 +200,6 @@ function installHooks() {
   const typescriptShim = shim("typescript-eslint-rule-tester.cjs", `module.exports = globalThis[Symbol.for("rerail.typescriptPack.ruleTesterStubs")];\n`);
   const emptyShim = shim("rule.cjs", "module.exports = { meta: {}, create() { return {}; } };\n");
   const ruleDirectory = pathToFileURL(join(options["typescript-eslint"], "packages", "eslint-plugin", "src", "rules")).href;
-  const toolsUrl = pathToFileURL(join(options.tools, "package.json")).href;
   registerHooks({
     resolve(specifier, context, nextResolve) {
       if (specifier === "@typescript-eslint/rule-tester") return { url: typescriptShim, format: "commonjs", shortCircuit: true };
@@ -207,9 +209,15 @@ function installHooks() {
       } catch (error) {
         // The checkouts have no node_modules: a bare specifier resolves from the tools directory.
         if (specifier.startsWith(".") || specifier.startsWith("/")) throw error;
-        resolved = nextResolve(specifier, { ...context, parentURL: toolsUrl });
+        resolved = { url: pathToFileURL(toolsRequire.resolve(specifier)).href, shortCircuit: true };
       }
-      if (resolved.url.startsWith(`${ruleDirectory}/`)) return { url: emptyShim, format: "commonjs", shortCircuit: true };
+      if (resolved.url.startsWith(`${ruleDirectory}/`)) {
+        // A rule's source: the published plugin's build of it (the same version) when the test reads its exports
+        // (prefer-function-type's `phrases`), else a stub; RuleTester never runs it.
+        const name = resolved.url.slice(ruleDirectory.length + 1).replace(/\.ts$/u, "");
+        const built = join(dirname(toolsRequire.resolve("@typescript-eslint/eslint-plugin/package.json")), "dist", "rules", `${name}.js`);
+        return { url: existsSync(built) ? pathToFileURL(built).href : emptyShim, format: "commonjs", shortCircuit: true };
+      }
       return resolved;
     },
   });
@@ -259,8 +267,10 @@ function extractFixtures(tool) {
     if (path === undefined) throw new Error(`${rule}: no test file`);
     RUNS.length = 0;
     createRequire(path)(path);
-    const runs = RUNS.filter(run => run.name === name);
-    if (runs.length === 0) throw new Error(`${rule}: ${path} ran no RuleTester for ${name}`);
+    // A test file may name its runs after the rule or, as ban-ts-comment's does, after each directive it tests.
+    const named = RUNS.filter(run => run.name === name);
+    const runs = named.length > 0 ? named : [...RUNS];
+    if (runs.length === 0) throw new Error(`${rule}: ${path} ran no RuleTester`);
     const seen = new Set();
     const count = (counts[rule] = { cases: 0, withOptions: 0, skipped: {}, written: 0, duplicate: 0 });
     const typeChecked = tsPlugin.rules[name].meta.docs?.requiresTypeChecking === true;

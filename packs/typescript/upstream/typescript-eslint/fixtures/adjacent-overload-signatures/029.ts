@@ -1,0 +1,1 @@
+export default function named<T>(foo: T) {}

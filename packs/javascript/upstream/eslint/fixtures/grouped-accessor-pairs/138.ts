@@ -1,0 +1,1 @@
+type T = { get a(): any, set a(value: any): void }

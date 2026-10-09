@@ -1,0 +1,1 @@
+var x = parseInt(y, 10);
