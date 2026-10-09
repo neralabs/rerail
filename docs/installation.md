@@ -46,8 +46,7 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
 
    Existing entries from other tools are preserved byte-for-byte; a backup
    `<file>.<timestamp>.bak` is written only when a file changes. Re-running is
-   a no-op. `--harness <list>` limits it; `--project <dir>` also seeds empty
-   `<dir>/.<harness>/conversation-rules.json` files.
+   a no-op. `--harness <list>` limits it.
 
 3. **Start** — the daemon comes up (`rerail daemon start`) unless `--skip-start`.
    Adapters also autostart it on the first session, so this is a convenience.
@@ -137,11 +136,7 @@ from the package and run only in repositories that add them (see
 `rerail update` first copies the database to `~/.rerail/rerail.sqlite.pre-update`;
 `rerail rules export [--output <file>]` and `rerail rules import <file>` move
 your rules and each repository's configuration by hand. `rerail seed` fills the
-database with mock rules to work against. A JSON rule file in
-`<project>/.omp|.pi|.claude|.codex|.cursor/conversation-rules.json` (as
-`{"version": 1, "rules": []}` plus rules) is also read where Rerail is started and
-the repository is set up, but a rule the repository's configuration holds with the
-same id wins.
+database with mock rules to work against.
 
 Policy evaluation caches parsed files and results in a content store. Which
 one a Rerail uses depends on where its package lives, not on a flag: the

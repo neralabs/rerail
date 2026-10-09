@@ -29,7 +29,6 @@ import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "./s
 import { ConversationRuleRegistry, type RuleMatch } from "./registry.js";
 import { LiveConversationRules } from "./conversation-rule-sync.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "./rule-schema.js";
-import { conversationRuleLoader } from "./rule-sources.js";
 import { RULE_MODES } from "./rule-mode.js";
 import { restorableRule, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
@@ -51,13 +50,6 @@ import type {
   WatermarkSnapshot,
   WatermarkStore,
 } from "./semantic-types.js";
-
-const RULE_DIRECTORIES: Readonly<Partial<Record<RerailHost, string>>> = {
-  "claude-code": ".claude",
-  cursor: ".cursor",
-  omp: ".omp",
-  pi: ".pi",
-};
 
 function assertEventHost(host: RerailHost): void {
   if (Object.hasOwn(ADAPTER_CAPABILITIES, host)) return;
@@ -1197,10 +1189,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (registry === undefined) {
       return { registry, turn: 0, ruleSync: undefined };
     }
-    // A caller without the daemon token gets the configured rules only: its folder's rule files are not read.
-    const directory = RULE_DIRECTORIES[session.host] ?? ".codex";
-    const loadRules = this.#trusted ? conversationRuleLoader({}, session.cwd, join(directory, "conversation-rules.json")) : undefined;
-    const ruleSync = new LiveConversationRules(this.#catalogs.conversationRules(checkout.root, checkout.folder, loadRules), registry);
+    const ruleSync = new LiveConversationRules(this.#catalogs.conversationRules(checkout.root, checkout.folder), registry);
     ruleSync.prime();
     return {
       registry,

@@ -357,7 +357,6 @@ describe("SQLite session persistence", () => {
     const contextFor = (sessionId: string) => ({ cwd: root, sessionManager: { getSessionId: () => sessionId, getBranch: () => [] } }) as unknown as ExtensionContext;
     createConversationRulesExtension({
       modelPath: resolve("model"),
-      rules: [],
       registerTool: false,
       registerCommand: false,
     })(extensionApi);

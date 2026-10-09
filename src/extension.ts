@@ -24,7 +24,6 @@ import { nodeExecutable } from "./daemon-control.js";
 import { registerOmpSemanticTools, type NativeSemanticToolRuntime } from "./native-semantic-tools.js";
 import { createNativeSession, NativeSessionClient, type NativeSessionHost } from "./native-session-client.js";
 import type { SessionDatabaseOptions } from "./session-database-options.js";
-import type { ConversationRuleSourceOptions } from "./rule-sources.js";
 import { registerRerailCommands } from "./rerail-command.js";
 import { createOmpPresentation } from "./omp-presentation.js";
 import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules, readRepositoryState } from "./session-presentation.js";
@@ -34,7 +33,7 @@ import { registerConversationRulesTool } from "./tool.js";
 export { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, TURN_ENTRY_TYPE } from "./session-state.js";
 
 
-export interface ConversationRulesOptions extends SessionDatabaseOptions, ConversationRuleSourceOptions {
+export interface ConversationRulesOptions extends SessionDatabaseOptions {
   modelPath?: string;
   maxInputTokens?: number;
   maxRules?: number;

@@ -228,12 +228,6 @@ export {
 export { loadBundledCatalog } from "./bundled-rules.js";
 export { GitUnavailableError } from "./git.js";
 export {
-  conversationRuleLoader,
-  type ConversationRuleLoader,
-  type ConversationRuleSourceOptions,
-  type DatabaseConversationRules,
-} from "./rule-sources.js";
-export {
   ApiError,
   invokeOperation,
   type Operation,

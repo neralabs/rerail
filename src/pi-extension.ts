@@ -20,13 +20,12 @@ import { linkDeliveries } from "./session-presentation.js";
 import { PiNativeSession } from "./pi-native-session.js";
 import { registerPiHostAdapter } from "./pi-host-adapter.js";
 import { ConversationRuleRegistry, type RuleMatch } from "./registry.js";
-import { conversationRuleLoader, type ConversationRuleSourceOptions } from "./rule-sources.js";
 import { openCheckoutConversationRules } from "./code-rule-dsl-catalog.js";
 import { defaultRerailDatabasePath } from "./database.js";
 import { RerailRuntime } from "./runtime.js";
 import { MATCH_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE } from "./session-state.js";
 
-export interface PiConversationRulesOptions extends SessionDatabaseOptions, ConversationRuleSourceOptions {
+export interface PiConversationRulesOptions extends SessionDatabaseOptions {
   modelPath?: string;
   maxInputTokens?: number;
   maxRules?: number;
@@ -263,10 +262,7 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
         ...(options.maxInputTokens === undefined ? {} : { maxInputTokens: options.maxInputTokens }),
         ...(options.maxRules === undefined ? {} : { maxRules: options.maxRules }),
       });
-      const sync = new LiveConversationRules(
-        openCheckoutConversationRules(databasePath, ctx.cwd, conversationRuleLoader(options, ctx.cwd, ".pi/conversation-rules.json")),
-        next,
-      );
+      const sync = new LiveConversationRules(openCheckoutConversationRules(databasePath, ctx.cwd), next);
       try {
         sync.prime();
         const nextTurn = replaySessionState(next, ctx.sessionManager.getBranch());

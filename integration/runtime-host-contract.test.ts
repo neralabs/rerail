@@ -218,27 +218,25 @@ describe("shared host engine", () => {
   it("discards unfinished assistant text when the host aborts its stream", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-kernel-abort-"));
     process.env.RERAIL_HOME = join(root, "home");
-    seedContractCodeRuleForRoot(root);
+    setUpTestRepository(root, {
+      library: [
+        { kind: "file", rule: codeRuleSchema.parse(CONTRACT_CURSOR_EXECUTE_CODE_RULE) },
+        {
+          kind: "conversation",
+          rule: {
+            id: "unfinished",
+            mode: "steer",
+            reference: "Preserve database transaction atomicity",
+            match: { operator: "gte", threshold: 0.95 },
+            sample: { source: "assistant-text", boundary: "message", minimumTokens: 1 },
+            action: { content: "UNFINISHED" },
+            repeat: { mode: "always" },
+          },
+        },
+      ],
+    }, join(root, "home", "rerail.sqlite"));
     let runtime: RerailRuntime | undefined;
     try {
-      await mkdir(join(root, ".pi"));
-      await writeFile(
-        join(root, ".pi/conversation-rules.json"),
-        JSON.stringify({
-          version: 1,
-          rules: [
-            {
-              id: "unfinished",
-              mode: "steer",
-              reference: "Preserve database transaction atomicity",
-              match: { operator: "gte", threshold: 0.95 },
-              sample: { source: "assistant-text", boundary: "message", minimumTokens: 1 },
-              action: { content: "UNFINISHED" },
-              repeat: { mode: "always" },
-            },
-          ],
-        }),
-      );
       runtime = new RerailRuntime({ storageRoot: join(root, ".rerail/sessions"), workspaceRoot: root, modelPath: resolve("model") });
       const session = { host: "pi" as const, sessionId: "abort", cwd: root };
       await runtime.ingest({ kind: "session-start", eventId: "start", session });

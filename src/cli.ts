@@ -109,7 +109,7 @@ function usage(): string {
   return [
     "Usage:",
     "  rerail setup [--project <dir>] [--harness omp,pi,claude-code,codex,cursor] [--port <n>] [--skip-start] [--skip-register] [--dry-run]",
-    "  rerail install [--root <package>] [--project <dir>] [--harness <list>] [--remove] [--dry-run]",
+    "  rerail install [--root <package>] [--harness <list>] [--remove] [--dry-run]",
     "  rerail start [--repo <dir>] [--repository] [--no-packs] [--agents <list>] [--database <file>]",
     "  rerail stop [--repo <dir>] [--repository] [--database <file>]",
     "  rerail state [--repo <dir>] [--database <file>]",

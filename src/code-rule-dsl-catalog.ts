@@ -31,7 +31,6 @@ import { checkoutStatus } from "./repository-start.js";
 import { loadCheckoutRuleSet, ruleConfigurationSignature } from "./rule-configuration.js";
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "./rule-library.js";
 import type { ConversationRule } from "./rule-schema.js";
-import type { ConversationRuleLoader } from "./rule-sources.js";
 import { checkouts, ruleAttachments, ruleSettings } from "./schema.js";
 import { compareDeterministicStrings, stableJsonText } from "./stable-json.js";
 
@@ -345,16 +344,14 @@ export class CheckoutCatalogs {
   }
 
   /** The conversation rules of the session folder `folder` (relative to `root`), as they change. */
-  conversationRules(root: string, folder: string, load?: ConversationRuleLoader): ConversationRuleSource {
+  conversationRules(root: string, folder: string): ConversationRuleSource {
     const entry = this.#entry(root);
     return {
       signature: () => this.#signature(entry),
       rules: () => {
         const ruleSet = this.#ruleSet(entry);
         if (ruleSet === undefined || entry.eligibility !== "ok") return [];
-        const configured = ruleSet.conversationRules(folder);
-        const enabled = configured.filter(rule => rule.on).map(rule => rule.document.rule as ConversationRule);
-        return load === undefined ? enabled : load({ enabled, ids: new Set(configured.map(rule => rule.document.rule.id)) });
+        return ruleSet.conversationRules(folder).filter(rule => rule.on).map(rule => rule.document.rule as ConversationRule);
       },
       close: () => {},
     };
@@ -446,10 +443,10 @@ export function startingCheckout(owners: CheckoutOwners, cwd: string): CheckoutO
 }
 
 /** The conversation rules of a session starting in `cwd`, over a connection of their own that `close()` releases. */
-export function openCheckoutConversationRules(databasePath: string, cwd: string, load?: ConversationRuleLoader): ConversationRuleSource {
+export function openCheckoutConversationRules(databasePath: string, cwd: string): ConversationRuleSource {
   const catalogs = new CheckoutCatalogs(databasePath);
   const start = startingCheckout(new CheckoutOwners(), cwd);
-  const source = catalogs.conversationRules(start.checkoutRoot, start.path, load);
+  const source = catalogs.conversationRules(start.checkoutRoot, start.path);
   return { signature: source.signature, rules: source.rules, close: () => catalogs.close() };
 }
 

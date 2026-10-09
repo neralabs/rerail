@@ -167,7 +167,7 @@ describe("Rerail session restore", () => {
     }
   });
 
-  it("layers the repository's rules over a hook host's conversation-rules.json: a configured rule owns its id, off or not", async () => {
+  it("runs only the repository's configured conversation rules: none before set-up, never one switched off, and never a rule file", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-rule-file-overlay-"));
     directories.push(root);
     const databasePath = join(root, "rerail.sqlite");
@@ -200,7 +200,7 @@ describe("Rerail session restore", () => {
     });
     type Listed = { rules: Array<{ rule: { id: string; action: { content: string } } }> };
 
-    // A checkout whose repository is not set up runs no rules, the file's included.
+    // A checkout whose repository is not set up runs no rules; a rule file in the working tree is never read.
     const before = runtime();
     try {
       await before.ingest({ kind: "session-start", eventId: "before", session: { host: "codex", sessionId: "before", cwd: root } });
@@ -228,7 +228,6 @@ describe("Rerail session restore", () => {
       await after.ingest({ kind: "session-start", eventId: "after", session: { host: "codex", sessionId: "after", cwd: root } });
       const listed = await after.manageRules("after", { action: "list" }) as Listed;
       expect(listed.rules.map(({ rule: { id, action } }) => [id, action.content])).toEqual([
-        ["file-only", "From the file."],
         ["shared", "From the library."],
       ]);
     } finally {

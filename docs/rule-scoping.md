@@ -24,7 +24,7 @@ Rerail is off until it is started. Each repository and each checkout has a start
 
 A repository is **Not set up** until its first configuration. Starting Rerail in a repository that is not set up sets it up: the rule packs recommended for this checkout are added, and the repository is started. A language or framework pack is added at the folder holding everything that matched it (for example `web` when only `web/` has TypeScript); a repository pack is added for the whole repository. `rerail start --no-packs` (in the dashboard, "I'll pick rule packs myself") sets the repository up with no packs. Set-up never adds rules created by you; you add them yourself.
 
-A repository that is set up runs only what is attached to it. The rules that ship with Rerail run only in repositories that add them. The one other source is a coding agent's `.<harness>/conversation-rules.json` file (and rules an embedding host passes in): it is read from the folder the session starts in, only for the daemon's own callers, and applies only where the checkout is started and set up; a rule the repository's configuration holds with the same id, on or off, replaces the file's.
+A repository that is set up runs only what is attached to it. The rules that ship with Rerail run only in repositories that add them. Nothing else runs: there are no rule files in the working tree.
 
 ## Rules: attachments and settings
 
@@ -54,7 +54,7 @@ Conversation rules are resolved the same way for the folder the session started 
 
 ## Which checkout judges a file
 
-Each file is judged by the checkout that owns it, with that checkout's configuration. The owner is the nearest folder above the file that holds a `.git` entry Git confirms as a checkout's top level, found from both the file's lexical and real paths (a symlink into another checkout or out of its owner is not evaluated). A nested checkout owns its files only when it is a submodule the checkout around it declares, or a recorded checkout that may run rules; any other nested repository (an untracked `git init`, a stray `.git`) is judged with the checkout around it. A declared submodule that is not set up runs nothing. Only checkouts that are recorded, started and set up evaluate files; a session that starts in a stopped or unrecorded checkout judges nothing.
+Each file is judged by the checkout that owns it, with that checkout's configuration. The owner is the nearest folder above the file that holds a `.git` entry Git confirms as a checkout's top level, found from both the file's lexical and real paths (a symlink into another checkout or out of its owner is not evaluated). A nested checkout owns its files when it is a submodule the checkout around it declares, or a checkout Rerail has recorded (such as a worktree kept inside the main checkout); while it is stopped or not set up it runs nothing, and the checkout around it does not judge its files either. Only a nested repository Rerail never recorded (an untracked `git init`, a stray `.git`) is judged with the checkout around it. Only checkouts that are recorded, started and set up evaluate files; a session that starts in a stopped or unrecorded checkout judges nothing.
 
 ## Coding agents
 
