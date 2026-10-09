@@ -1,0 +1,1 @@
+foo.map((bar, i) => React.createElement('Foo', { key: `foo-${i}` }))

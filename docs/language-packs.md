@@ -97,7 +97,7 @@ or names `runsOn`; when entries name different capabilities; when `runsOn` names
 ## Start a pack
 
 A pack is a directory `packs/<id>/` that passes the [validation contract](pack-format.md#the-validation-contract).
-The models to copy: `packs/python/`, `packs/php/` or `packs/typescript/` (ported language packs), `packs/react/`, `packs/node/` or
+The models to copy: `packs/python/`, `packs/php/` or `packs/typescript/` (ported language packs), `packs/node/` or
 `packs/next/` (framework packs over a supported language), `fixtures/packs/valid/` (the smallest pack, with an
 example-proven rule and a ported one) and `fixtures/packs/vue/` (a pack for a planned language).
 

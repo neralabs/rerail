@@ -109,8 +109,10 @@ describe("#11 orphan families and packs", () => {
         "packs/vue/candidates/rules/c.json": rule("vue:c"),
         "packs/probes/pack.json": "{}",
         "packs/probes/candidates/probes/rules/p.json": rule("probes:p"),
+        "packs/notes/pack.json": "{}",
+        "packs/notes/candidates/rules/notes.json": JSON.stringify({ note: "not a rule document" }),
       }),
     );
-    expect(paths(result)).toEqual(["fixtures/cobol", "packs/empty", "packs/probes"]);
+    expect(paths(result)).toEqual(["fixtures/cobol", "packs/empty", "packs/notes", "packs/probes"]);
   });
 });
