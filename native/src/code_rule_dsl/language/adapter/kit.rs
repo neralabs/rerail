@@ -30,6 +30,7 @@ struct Expect {
     regions: &'static [Document],
     /// The suffix of the family's files, and the module of `pkg/mod<suffix>` in a package `pkg`.
     module: (&'static str, Option<&'static str>),
+    scope: super::scope::kit::Expect,
 }
 
 /// A tape of `source` in `dialect`, as files are read.
@@ -93,6 +94,7 @@ fn kit<A: Adapter>(expect: &Expect) {
         A::module_path(&package.0.join(format!("pkg/mod{suffix}"))),
         module.map(|module| serde_json::Value::String(module.to_owned()))
     );
+    super::scope::kit::kit::<A>(expect.dialect, expect.module.0, &expect.scope);
 }
 
 #[test]
@@ -105,6 +107,34 @@ fn python() {
         name: "file",
         regions: &[("x = 1\n", &[("module", 0..6)])],
         module: (".py", Some("pkg.mod")),
+        scope: super::scope::kit::Expect {
+            flow: false,
+            globals: super::Globals::Ruff,
+            stubs: true,
+            redefines_shadowed: true,
+            reference_kinds: &["identifier"],
+            name_kinds: &["identifier", "dotted_name"],
+            resolves: (
+                "x = 1\nprint(x)\n",
+                "x",
+                Some(crate::code_rule_dsl::scope::Form::Assignment),
+            ),
+            refuses: &[
+                (
+                    super::ScopeFeature::This,
+                    "`this` is TypeScript's; Python has none",
+                ),
+                (
+                    super::ScopeFeature::Every,
+                    "Python's redefines reads the one binding shadowed; `every` is TypeScript's",
+                ),
+            ],
+            reads: &[
+                super::ScopeFeature::Imports,
+                super::ScopeFeature::StopAtGlobal,
+            ],
+            unpackaged: Some("mod"),
+        },
     });
 }
 
@@ -118,6 +148,43 @@ fn ecma() {
         name: "ﬁle",
         regions: &[("let x = 1;\n", &[("program", 0..11)])],
         module: (".ts", None),
+        scope: super::scope::kit::Expect {
+            flow: false,
+            globals: super::Globals::Eslint,
+            stubs: false,
+            redefines_shadowed: false,
+            reference_kinds: &[
+                "identifier",
+                "type_identifier",
+                "shorthand_property_identifier",
+                "shorthand_property_identifier_pattern",
+                "undefined",
+            ],
+            name_kinds: &[
+                "identifier",
+                "type_identifier",
+                "property_identifier",
+                "shorthand_property_identifier_pattern",
+                "undefined",
+            ],
+            resolves: (
+                "let x = 1;\nx;\n",
+                "x",
+                Some(crate::code_rule_dsl::scope::Form::Assignment),
+            ),
+            refuses: &[
+                (
+                    super::ScopeFeature::Imports,
+                    "import resolution is Python-only for now; TypeScript rules can use `global`",
+                ),
+                (
+                    super::ScopeFeature::Filter("latest"),
+                    "`latest` reads Python's binding order and declarations; TypeScript has none",
+                ),
+            ],
+            reads: &[super::ScopeFeature::This, super::ScopeFeature::LastWrite],
+            unpackaged: None,
+        },
     });
 }
 
@@ -131,6 +198,31 @@ fn php() {
         name: "ﬁle",
         regions: &[("<?php $x = 1;\n", &[("program", 0..14)])],
         module: (".php", None),
+        scope: super::scope::kit::Expect {
+            flow: true,
+            globals: super::Globals::Superglobals,
+            stubs: false,
+            redefines_shadowed: false,
+            reference_kinds: &["variable_name"],
+            name_kinds: &["variable_name"],
+            resolves: (
+                "<?php $x = 1;\necho $x;\n",
+                "$x",
+                Some(crate::code_rule_dsl::scope::Form::Assignment),
+            ),
+            refuses: &[
+                (
+                    super::ScopeFeature::StarImports,
+                    "php policies ask `unresolved: true`",
+                ),
+                (
+                    super::ScopeFeature::SameImport,
+                    "qualified import names are Python's; a PHP variable is never bound by an import",
+                ),
+            ],
+            reads: &[super::ScopeFeature::Imports, super::ScopeFeature::Every],
+            unpackaged: None,
+        },
     });
 }
 
@@ -147,6 +239,31 @@ fn blade() {
             ("<p>x</p>\n", &[]),
         ],
         module: (".blade.php", None),
+        scope: super::scope::kit::Expect {
+            flow: true,
+            globals: super::Globals::Superglobals,
+            stubs: false,
+            redefines_shadowed: false,
+            reference_kinds: &["variable_name"],
+            name_kinds: &["variable_name"],
+            resolves: (
+                "@php\n    $x = 1;\n@endphp\n{{ $x }}\n",
+                "$x",
+                Some(crate::code_rule_dsl::scope::Form::Assignment),
+            ),
+            refuses: &[
+                (
+                    super::ScopeFeature::StarImports,
+                    "blade policies ask `unresolved: true`",
+                ),
+                (
+                    super::ScopeFeature::SameImport,
+                    "qualified import names are Python's; a blade variable is never bound by an import",
+                ),
+            ],
+            reads: &[super::ScopeFeature::Imports, super::ScopeFeature::Every],
+            unpackaged: None,
+        },
     });
 }
 
