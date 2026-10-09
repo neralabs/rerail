@@ -17,6 +17,7 @@ mod python_tests;
 mod tests;
 
 use crate::code_rule_dsl::json::{invalid, object};
+use crate::code_rule_dsl::language::adapter::{Adapter, with_adapter};
 use crate::code_rule_dsl::language::is_stub_file;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::lines::Span;
@@ -974,13 +975,11 @@ pub(crate) fn summarize<D: Doc>(
             });
         php::extract(program, path, table, names.as_deref(), has_errors)
     };
-    let mut summary = match Family::of(language) {
-        Family::Php => extract_php(&root),
+    let family = Family::of(language);
+    let mut summary = match family {
         // A template's calls are its embedded program's; a template without one calls nothing.
-        Family::Blade => match crate::code_rule_dsl::blade::program(&root) {
-            Some(program) => extract_php(&program),
-            None => Summary::default(),
-        },
+        Family::Php | Family::Blade => with_adapter!(family, A => A::regions(&root).next())
+            .map_or_else(Summary::default, |region| extract_php(&region.root)),
         Family::Python | Family::Ecma => Summary::extract(&root, table, module, has_errors),
     };
     summary.bytes = u32::try_from(bytes).unwrap_or(u32::MAX);

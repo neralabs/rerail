@@ -26,6 +26,7 @@ use super::test_support::{Walk, record_walk};
 mod semantic;
 mod suppression;
 pub(crate) use super::lines::Span;
+use crate::code_rule_dsl::language::adapter::{Adapter, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect, Suppression};
 use ast_grep_core::matcher::NodeMatch;
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
@@ -454,13 +455,7 @@ pub(super) fn bind(
         // A query's matchers are the dialects of one code-rule language, so of one family, which
         // honours its own linters' comments or none.
         let family = matchers.first().map(|grammar| Family::of(grammar.language));
-        let language = match family {
-            Some(Family::Python) => "python",
-            Some(Family::Ecma) => "typescript",
-            Some(Family::Php) => "php",
-            Some(Family::Blade) => "blade",
-            None => "empty",
-        };
+        let language = family.map_or("empty", |family| with_adapter!(family, A => A::LABEL));
         let requested = [
             (
                 suppress.eslint.is_some(),

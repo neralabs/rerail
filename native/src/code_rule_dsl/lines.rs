@@ -2,6 +2,7 @@
 
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::adapter::{Adapter, with_adapter};
 use serde::{Deserialize, Serialize};
 
 /// A diagnostic span: the byte offsets of its start and end, and their 0-based lines and byte
@@ -28,12 +29,9 @@ pub(crate) enum Terminators {
 }
 
 impl Terminators {
-    /// The linter a language's ports follow.
+    /// The linter a language's ports follow (`Adapter::TERMINATORS`).
     pub(crate) fn of(language: GrammarDialect) -> Self {
-        match Family::of(language) {
-            Family::Python | Family::Php | Family::Blade => Self::Newlines,
-            Family::Ecma => Self::Eslint,
-        }
+        with_adapter!(Family::of(language), A => A::TERMINATORS)
     }
 
     pub(crate) const fn index(self) -> usize {
