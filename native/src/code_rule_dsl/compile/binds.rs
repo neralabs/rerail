@@ -3,15 +3,15 @@ use super::resolve::{BINDING_KEYS, OCCURRENCE_KEY};
 use super::utils::{UtilIds, UtilScope};
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
 use crate::code_rule_dsl::language::SourceType;
+use crate::code_rule_dsl::language::adapter::{
+    Adapter, Ecma, Globals, Php, Python, ScopeFeature, ScopeRules, gate, with_adapter,
+};
 use crate::code_rule_dsl::language::kind_ids;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::matcher::Semantic;
-use crate::code_rule_dsl::matcher::{
-    AstMatcher, BindingCount, BindingFilter, Binds, Redefines, ScopeName,
-};
+use crate::code_rule_dsl::matcher::{AstMatcher, BindingCount, BindingFilter, Binds, Redefines};
 use crate::code_rule_dsl::model::Limits;
 use crate::code_rule_dsl::scope::options::{EsGlobals, LanguageOptions};
-use crate::code_rule_dsl::scope::{Form, ScopeKind};
 use napi::Result;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
@@ -41,70 +41,6 @@ const BOOLEAN_FILTER_KEYS: &[&str] = &[
     "latest",
     "outer",
     "builtin",
-];
-
-const FORMS: &[(&str, Form)] = &[
-    ("assignment", Form::Assignment),
-    ("annotated", Form::Annotated),
-    ("annotation", Form::Annotation),
-    ("augmented", Form::Augmented),
-    ("named", Form::Named),
-    ("for", Form::For),
-    ("with", Form::With),
-    ("except", Form::Except),
-    ("import", Form::Import),
-    ("definition", Form::Definition),
-    ("parameter", Form::Parameter),
-    ("global", Form::Global),
-    ("match", Form::Match),
-    ("typeParameter", Form::TypeParameter),
-    ("typeAlias", Form::TypeAlias),
-    ("implicit", Form::Implicit),
-    ("deletion", Form::Deletion),
-    ("field", Form::Field),
-    ("method", Form::Method),
-    ("accessor", Form::Accessor),
-];
-
-const PYTHON_SCOPES: &[(&str, ScopeName)] = &[
-    ("module", ScopeName::Kind(ScopeKind::Module)),
-    ("class", ScopeName::Kind(ScopeKind::Class)),
-    ("function", ScopeName::Kind(ScopeKind::Function)),
-    ("lambda", ScopeName::Kind(ScopeKind::Lambda)),
-    ("comprehension", ScopeName::Kind(ScopeKind::Comprehension)),
-    ("typeParameters", ScopeName::Kind(ScopeKind::TypeParams)),
-];
-
-/// TypeScript's scopes as eslint-scope names them: `global` is a script's top level, `module` a
-/// module's or CommonJS file's; `functionName` holds a named function expression's own name.
-const TYPESCRIPT_SCOPES: &[(&str, ScopeName)] = &[
-    ("global", ScopeName::Global),
-    ("module", ScopeName::Kind(ScopeKind::Module)),
-    ("function", ScopeName::Kind(ScopeKind::Function)),
-    ("class", ScopeName::Kind(ScopeKind::Class)),
-    ("block", ScopeName::Kind(ScopeKind::Block)),
-    ("namespace", ScopeName::Kind(ScopeKind::Namespace)),
-    ("typeParameters", ScopeName::Kind(ScopeKind::TypeParams)),
-    ("functionName", ScopeName::Kind(ScopeKind::FunctionName)),
-];
-
-/// The forms a PHP variable is bound in.
-const PHP_FORMS: &[(&str, Form)] = &[
-    ("assignment", Form::Assignment),
-    ("augmented", Form::Augmented),
-    ("for", Form::For),
-    ("except", Form::Except),
-    ("parameter", Form::Parameter),
-    ("global", Form::Global),
-    ("static", Form::Static),
-];
-
-/// PHP's variable scopes: the file's top level (`global`), a function or method, a closure or
-/// arrow function.
-const PHP_SCOPES: &[(&str, ScopeName)] = &[
-    ("global", ScopeName::Kind(ScopeKind::Module)),
-    ("function", ScopeName::Kind(ScopeKind::Function)),
-    ("closure", ScopeName::Kind(ScopeKind::Lambda)),
 ];
 
 /// Names in a filter's `form` or `scope`: one name or a non-empty list, each one of `known`.
@@ -153,11 +89,13 @@ fn boolean(object: &Map<String, Value>, key: &str, path: &str) -> Result<Option<
 
 /// The grammar-independent checks of a filter's keys.
 pub(super) fn validate_filter(object: &Map<String, Value>, path: &str) -> Result<()> {
-    // Every family's names; each family's compile narrows them to its own.
+    // Every family's names, in the order its errors list them; each family's compile narrows
+    // them to its own (Blade's are PHP's).
     if let Some(form) = object.get("form") {
-        let mut known = FORMS
+        let mut known = <Python as ScopeRules>::FORMS
             .iter()
-            .chain(PHP_FORMS)
+            .chain(<Ecma as ScopeRules>::FORMS)
+            .chain(<Php as ScopeRules>::FORMS)
             .map(|(name, _)| (*name, ()))
             .collect::<Vec<_>>();
         let mut seen = BTreeSet::new();
@@ -165,10 +103,10 @@ pub(super) fn validate_filter(object: &Map<String, Value>, path: &str) -> Result
         names(form, &format!("{path}/form"), &known, "binding form")?;
     }
     if let Some(scope) = object.get("scope") {
-        let mut known = PYTHON_SCOPES
+        let mut known = <Python as ScopeRules>::SCOPES
             .iter()
-            .chain(TYPESCRIPT_SCOPES)
-            .chain(PHP_SCOPES)
+            .chain(<Ecma as ScopeRules>::SCOPES)
+            .chain(<Php as ScopeRules>::SCOPES)
             .map(|(name, _)| (*name, ()))
             .collect::<Vec<_>>();
         let mut seen = BTreeSet::new();
@@ -237,63 +175,21 @@ fn binding_count(value: &Value, path: &str) -> Result<BindingCount> {
 /// `outer`) are Python's, and PHP's from its flow; ESLint's directive comments (`directives`) and
 /// configured globals (`builtin`) are TypeScript's. `bindings` counts a scope's bindings of the
 /// name in all three: Ruff's `scope.get_all`, eslint-scope's `defs`, PHP's binding sites.
-pub(super) fn compile_filter(
+pub(super) fn compile_filter<S: ScopeRules>(
     object: &Map<String, Value>,
     language: GrammarDialect,
     path: &str,
     utils: &UtilScope,
 ) -> Result<BindingFilter> {
-    let family = Family::of(language);
-    match family {
-        Family::Python => {
-            if object.contains_key("directives") {
-                return Err(invalid(format!(
-                    "{path}/directives: /* exported */ comments are ESLint's; Python has none"
-                )));
-            } else if object.contains_key("builtin") {
-                return Err(invalid(format!(
-                    "{path}/builtin: configured globals are ESLint's; Python has none"
-                )));
-            }
-        }
-        Family::Ecma => {
-            for key in ["latest", "outer"] {
-                if object.contains_key(key) {
-                    return Err(invalid(format!(
-                        "{path}/{key}: `{key}` reads Python's binding order and declarations; TypeScript has none"
-                    )));
-                }
-            }
-        }
-        // Blade binds the variables of the PHP its template embeds.
-        Family::Php | Family::Blade => {
-            let refused = [
-                (
-                    "exported",
-                    "Python's re-exports and TypeScript's exports; a PHP file exports no variables (an including file shares its global scope, which no declaration exports)",
-                ),
-                (
-                    "builtin",
-                    "ESLint's configured globals; PHP's superglobals are no file's bindings (an assignment to `$_GET` writes the superglobal)",
-                ),
-                (
-                    "directives",
-                    "ESLint's /* exported */ comments; PHP exports no variables",
-                ),
-            ];
-            if let Some((key, what)) = refused.iter().find(|(key, _)| object.contains_key(*key)) {
-                return Err(invalid(format!(
-                    "{path}/{key}: `{key}` reads {what}; {} has none",
-                    php_family_name(family)
-                )));
-            }
+    for &key in S::REFUSED_FILTERS {
+        if object.contains_key(key) {
+            gate(
+                &format!("{path}/{key}"),
+                S::feature(ScopeFeature::Filter(key)),
+            )?;
         }
     }
-    let (forms, scopes) = match family {
-        Family::Python => (FORMS, PYTHON_SCOPES),
-        Family::Ecma => (FORMS, TYPESCRIPT_SCOPES),
-        Family::Php | Family::Blade => (PHP_FORMS, PHP_SCOPES),
-    };
+    let (forms, scopes) = (S::FORMS, S::SCOPES);
     Ok(BindingFilter {
         forms: object
             .get("form")
@@ -316,7 +212,7 @@ pub(super) fn compile_filter(
         builtin: boolean(object, "builtin", path)?,
         directives: object.contains_key("directives"),
         language: Some(language),
-        options: (family == Family::Ecma)
+        options: (S::GLOBALS == Globals::Eslint)
             .then(|| {
                 utils.options.clone().or_else(|| {
                     Some(Arc::new(LanguageOptions::new(
@@ -328,33 +224,6 @@ pub(super) fn compile_filter(
             })
             .flatten(),
     })
-}
-
-/// The kinds a binding's name node has: Python's identifiers and import items; TypeScript's
-/// identifiers, type names, enum members and shorthand patterns.
-pub(super) fn name_kinds(language: GrammarDialect) -> BTreeSet<u16> {
-    match Family::of(language) {
-        Family::Python => kind_ids(language, &["identifier", "dotted_name"]),
-        Family::Php | Family::Blade => kind_ids(language, &["variable_name"]),
-        Family::Ecma => kind_ids(
-            language,
-            &[
-                "identifier",
-                "type_identifier",
-                "property_identifier",
-                "shorthand_property_identifier_pattern",
-                "undefined",
-            ],
-        ),
-    }
-}
-
-/// A family whose variables are PHP's, as refusals name it.
-fn php_family_name(family: Family) -> &'static str {
-    match family {
-        Family::Blade => "blade",
-        Family::Php | Family::Python | Family::Ecma => "php",
-    }
 }
 
 /// The keys of a `binds` object.
@@ -445,41 +314,42 @@ pub(super) fn compile_binds(
     gaps: &mut Vec<String>,
     utils: &UtilScope,
 ) -> Result<AstMatcher> {
+    with_adapter!(Family::of(language), A => compile_binds_in::<<A as Adapter>::Scope>(
+        value, language, path, gaps, utils,
+    ))
+}
+
+/// `compile_binds`, for the family `S` reads.
+fn compile_binds_in<S: ScopeRules>(
+    value: &Value,
+    language: GrammarDialect,
+    path: &str,
+    gaps: &mut Vec<String>,
+    utils: &UtilScope,
+) -> Result<AstMatcher> {
     let binds = object(value, path)?;
     if let Some(redefines) = binds.get("redefines").and_then(Value::as_object) {
         let redefines_path = format!("{path}/redefines");
-        if language == GrammarDialect::Python && redefines.contains_key("every") {
-            return Err(invalid(format!(
-                "{redefines_path}/every: Python's redefines reads the one binding shadowed; `every` is TypeScript's"
-            )));
+        if redefines.contains_key("every") {
+            gate(
+                &format!("{redefines_path}/every"),
+                S::feature(ScopeFeature::Every),
+            )?;
         }
         if redefines.contains_key("sameImport") {
-            match Family::of(language) {
-                Family::Python => {}
-                Family::Php => {
-                    return Err(invalid(format!(
-                        "{redefines_path}/sameImport: qualified import names are Python's; a PHP variable is never bound by an import"
-                    )));
-                }
-                Family::Blade => {
-                    return Err(invalid(format!(
-                        "{redefines_path}/sameImport: qualified import names are Python's; a blade variable is never bound by an import"
-                    )));
-                }
-                Family::Ecma => {
-                    return Err(invalid(format!(
-                        "{redefines_path}/sameImport: qualified import names are Python's; TypeScript has none"
-                    )));
-                }
-            }
+            gate(
+                &format!("{redefines_path}/sameImport"),
+                S::feature(ScopeFeature::SameImport),
+            )?;
         }
     }
-    if language == GrammarDialect::Python && binds.contains_key(OCCURRENCE_KEY) {
-        return Err(invalid(format!(
-            "{path}/occurrence: a variable's occurrences are TypeScript's; Python has none"
-        )));
+    if binds.contains_key(OCCURRENCE_KEY) {
+        gate(
+            &format!("{path}/{OCCURRENCE_KEY}"),
+            S::feature(ScopeFeature::Occurrence),
+        )?;
     }
-    let filter = compile_filter(binds, language, path, utils)?;
+    let filter = compile_filter::<S>(binds, language, path, utils)?;
     let Some([site, value, annotation]) = compile_sub_rules(binds, language, path, gaps, utils)?
     else {
         return Ok(AstMatcher::Never);
@@ -510,7 +380,7 @@ pub(super) fn compile_binds(
                 return Ok(AstMatcher::Never);
             };
             Some(Box::new(Redefines {
-                filter: compile_filter(redefines, language, &redefines_path, utils)?,
+                filter: compile_filter::<S>(redefines, language, &redefines_path, utils)?,
                 same_scope: boolean(redefines, "sameScope", &redefines_path)?,
                 same_import: boolean(redefines, "sameImport", &redefines_path)?,
                 every: redefines.get("every") == Some(&Value::Bool(true)),
@@ -520,11 +390,9 @@ pub(super) fn compile_binds(
             }))
         }
     };
-    // TypeScript's private names (`#a`) are bindings of their class body.
-    let mut kinds = name_kinds(language);
-    if Family::of(language) == Family::Ecma {
-        kinds.extend(kind_ids(language, &["private_property_identifier"]));
-    }
+    // Private names (TypeScript's `#a`) are bindings of their class body.
+    let mut kinds = kind_ids(language, S::NAME_KINDS);
+    kinds.extend(kind_ids(language, S::PRIVATE_NAME_KINDS));
     Ok(AstMatcher::Semantic(Semantic::Binds(Box::new(Binds {
         language,
         name_kinds: kinds,
