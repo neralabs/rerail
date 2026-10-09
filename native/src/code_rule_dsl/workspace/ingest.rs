@@ -9,6 +9,7 @@ use super::{CandidateSets, Candidates, ClauseId, FileState, WorkspaceState};
 use crate::code_rule_dsl::eval::{file_language, grammar_matcher};
 use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::adapter::packages;
 use crate::code_rule_dsl::model::{
     ClauseKind, CompiledClause, CompiledCodeRule, FileInput, Query, package_marker_directory,
     python_module_in,
@@ -417,7 +418,7 @@ fn refresh_package_context(
             Some(file) => &file.input,
             None => &state.evicted_inputs[&path],
         };
-        if input.language != "python" || !derived(&state.package_directories, input)? {
+        if !packages(&input.language) || !derived(&state.package_directories, input)? {
             continue;
         }
         // The module depends on the path alone: compare before reading an evicted file's source.
@@ -440,7 +441,7 @@ fn refresh_package_context(
     // A requested file without a host module is named by the markers, as a derived one follows
     // them.
     for input in inputs.iter_mut() {
-        if input.language == "python"
+        if packages(&input.language)
             && (unhosted.contains(&input.path)
                 || (marker_directories
                     .iter()
@@ -464,7 +465,7 @@ pub(super) fn apply_request(
     let unhosted = request
         .files
         .iter()
-        .filter(|wire| wire.language == "python" && wire.module.is_none())
+        .filter(|wire| packages(&wire.language) && wire.module.is_none())
         .map(|wire| wire.path.clone())
         .collect::<HashSet<_>>();
     let mut inputs = request
@@ -527,11 +528,11 @@ fn adds_package_marker(state: &WorkspaceState, file: &WireFile) -> bool {
         && !state.evicted_inputs.contains_key(&file.path)
 }
 
-/// The inline path's one file (`is_cheap`) as `apply_request` reads it: a Python file without a
-/// host module is named by the workspace's markers. The file is no new marker, so no sibling's
-/// module changes.
+/// The inline path's one file (`is_cheap`) as `apply_request` reads it: a file whose family
+/// names modules from package markers (Python) without a host module is named by the
+/// workspace's markers. The file is no new marker, so no sibling's module changes.
 pub(super) fn inline_input(state: &mut WorkspaceState, file: WireFile) -> Result<FileInput> {
-    let unhosted = (file.language == "python" && file.module.is_none())
+    let unhosted = (packages(&file.language) && file.module.is_none())
         .then(|| file.path.clone())
         .into_iter()
         .collect::<HashSet<_>>();

@@ -46,8 +46,10 @@ pub(crate) struct Python;
 pub(crate) struct Ecma;
 /// PHP's family.
 pub(crate) struct Php;
-/// Blade templates: their semantics are those of the PHP the template embeds (`blade::view`),
-/// apart from scope, which reads the compiled view (`php::visit_blade_program`).
+/// Blade templates: their semantics are those of the PHP the template embeds (`blade::view`).
+/// Each concern impl delegates to PHP's, apart from what reads the template itself: scope reads
+/// the compiled view (`php::visit_blade_program`), calls come from the tape, and refusals name
+/// Blade.
 pub(crate) struct Blade;
 /// The adapter of a capability a family does not read (registry `refused` or `not-supported-yet`).
 pub(crate) struct Refused;
@@ -69,6 +71,9 @@ pub(crate) trait Adapter: 'static {
     const LABEL: &'static str;
     /// The line terminators of the linter the family's ports follow.
     const TERMINATORS: Terminators;
+    /// Whether the family names a file's module from the package markers around it (Python's
+    /// `__init__.py`): a file without a host module gets the markers' module.
+    const PACKAGES: bool;
     type Scope: ScopeRules;
     type Value: ValueRules;
     type Arguments: ArgumentRules;
@@ -98,6 +103,7 @@ impl Adapter for Python {
     const FAMILY: Family = Family::Python;
     const LABEL: &'static str = "python";
     const TERMINATORS: Terminators = Terminators::Newlines;
+    const PACKAGES: bool = true;
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -136,6 +142,7 @@ impl Adapter for Ecma {
     const FAMILY: Family = Family::Ecma;
     const LABEL: &'static str = "typescript";
     const TERMINATORS: Terminators = Terminators::Eslint;
+    const PACKAGES: bool = false;
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -173,6 +180,7 @@ impl Adapter for Php {
     const FAMILY: Family = Family::Php;
     const LABEL: &'static str = "php";
     const TERMINATORS: Terminators = Terminators::Newlines;
+    const PACKAGES: bool = false;
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -219,6 +227,7 @@ impl Adapter for Blade {
     const FAMILY: Family = Family::Blade;
     const LABEL: &'static str = "blade";
     const TERMINATORS: Terminators = Terminators::Newlines;
+    const PACKAGES: bool = false;
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -257,6 +266,13 @@ impl Adapter for Blade {
 pub(crate) fn module_path(label: &str, file: &Path) -> Option<serde_json::Value> {
     let dialect = super::dialect_by_label(label)?;
     with_adapter!(Family::of(dialect), A => A::module_path(file))
+}
+
+/// Whether files of the dialect labelled `label` take their module from package markers
+/// (`Adapter::PACKAGES`); `false` for a label no dialect has.
+pub(crate) fn packages(label: &str) -> bool {
+    super::dialect_by_label(label)
+        .is_some_and(|dialect| with_adapter!(Family::of(dialect), A => A::PACKAGES))
 }
 
 /// Why a family refuses a DSL feature, with the message the refusal reports.

@@ -102,6 +102,8 @@ fn kit<A: Adapter>(expect: &Expect) {
         A::module_path(&package.0.join(format!("pkg/mod{suffix}"))),
         module.map(|module| serde_json::Value::String(module.to_owned()))
     );
+    // A family names modules from package markers exactly when it derives one for `pkg/mod`.
+    assert_eq!(A::PACKAGES, module.is_some());
     value_kit::check::<A>(&expect.value, expect.dialect, tape);
     super::calls::kit::check::<A>(&expect.calls, expect.dialect);
     super::arguments::kit::check::<A>(&expect.arguments, expect.dialect, |s| {

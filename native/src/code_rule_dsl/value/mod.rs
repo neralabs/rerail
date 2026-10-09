@@ -101,7 +101,8 @@ impl NodeRef {
     }
 
     /// `find` in `root`'s tree, searched from `near`, a node of the same tree. In a tree whose
-    /// siblings never overlap (every grammar's but Blade's template), the nodes covering a nonempty
+    /// siblings never overlap (every grammar's but an embedding one's, whose embedded program spans
+    /// the template's bytes again: Blade's), the nodes covering a nonempty
     /// range form one path from the root, so the descent starts at the topmost node of `near`'s
     /// nearest covering ancestor's range instead of reading every sibling before that path from
     /// the root down: a read in a class of a thousand methods reads its own method's statements.
@@ -118,7 +119,7 @@ impl NodeRef {
                 Some(doc) => Some(*doc.get_lang()),
                 None => doc.downcast_ref::<TapeDoc>().map(|doc| *doc.get_lang()),
             };
-            dialect.is_some_and(|dialect| dialect != GrammarDialect::Blade)
+            dialect.is_some_and(|dialect| dialect.kinds().embedded().is_none())
         };
         if start >= end || root.parent().is_some() || !disjoint() {
             return self.find(root);
