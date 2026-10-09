@@ -218,13 +218,30 @@ whichever daemon is running and never brings its own version back.
 
 ### Database compatibility
 
-`rerail.sqlite` records the schema version it was written for. A database file
-this release cannot use (one written by a newer or an older Rerail, or by other
-software) is refused with an error and left untouched; Rerail never converts
-data. Move such a file aside (or point `RERAIL_HOME` elsewhere) and start again,
-then re-import rules with `rerail rules import`. An export from the
-`0.1.0-next.0` pre-release or from a development build before this release
-names code rules `file` and is not imported.
+`rerail.sqlite` records the schema version it was written for: 1 in this
+release. A database file written by a newer Rerail, or by other software, is
+refused with an error and left untouched; Rerail never converts data. Move such
+a file aside (or point `RERAIL_HOME` elsewhere) and start again, then re-import
+rules with `rerail rules import`.
+
+Until this release the tables changed in place under version 1. A database
+from the `0.1.0-next.0` pre-release or from a development build before this
+release is stamped 1 but keeps its older tables, and Rerail cannot tell it
+apart. It opens the file, and:
+
+- from `0.1.0-next.0`, or from a development build before rules belonged to
+  repositories, the rules stored there are not shown: they are in a table this
+  release does not read;
+- from a later development build, which stores code rules as `file`, those
+  rules are quarantined.
+
+The old tables also keep the checks they were created with, not this
+release's. Move such a file aside before you start this release. An export
+from those builds names code rules `file` and is not imported.
+
+Some development builds before this release stamped their database 2. This
+release refuses such a file as written by a newer Rerail, but no update opens
+it: move it aside as well.
 
 ### Resetting session history
 

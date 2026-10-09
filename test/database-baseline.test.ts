@@ -108,27 +108,19 @@ describe("the baseline schema", () => {
     const newer = RERAIL_SCHEMA_VERSION + 1;
     stampedFile(path, `PRAGMA user_version = ${newer}`);
     const before = settledBytes(path);
-    expectRefused(path, `${path} was written by a newer Rerail (schema v${newer}); this Rerail supports schema v${RERAIL_SCHEMA_VERSION}. Update Rerail to open it.`);
-    expect(readFileSync(path)).toEqual(before);
-  });
-
-  // The version only rises for a change the idempotent DDL cannot apply (v2: the code rule contract), and
-  // Rerail converts no data, so an older file is refused rather than restamped with its old shape.
-  it("refuses a file written by an older Rerail, writable or read-only, and leaves it untouched", async () => {
-    const path = await temporaryDatabase();
-    const older = RERAIL_SCHEMA_VERSION - 1;
-    stampedFile(path, `PRAGMA user_version = ${older}`);
-    const before = settledBytes(path);
-    expectRefused(path, `${path} was written by an older Rerail (schema v${older}); this Rerail supports schema v${RERAIL_SCHEMA_VERSION} and does not convert older files. Move the file aside to start fresh.`);
+    expectRefused(path, `${path} was written by a newer Rerail (schema v${newer}); this Rerail supports schema v${RERAIL_SCHEMA_VERSION}. `
+      + "Update Rerail to open it, or move the file aside to start fresh.");
     expect(readFileSync(path)).toEqual(before);
   });
 
   it("refuses a file that has tables but no Rerail schema version, writable or read-only, and leaves it untouched", async () => {
-    const path = await temporaryDatabase();
-    stampedFile(path, "PRAGMA user_version = 0");
-    const before = settledBytes(path);
-    expectRefused(path, unreadable(path, "no Rerail schema version"));
-    expect(readFileSync(path)).toEqual(before);
+    for (const version of [0, -1]) {
+      const path = await temporaryDatabase();
+      stampedFile(path, `PRAGMA user_version = ${version}`);
+      const before = settledBytes(path);
+      expectRefused(path, unreadable(path, "no Rerail schema version"));
+      expect(readFileSync(path)).toEqual(before);
+    }
   });
 
   it("refuses a file that is not SQLite at all with the same message and leaves its bytes and mode untouched", async () => {

@@ -86,18 +86,15 @@ function notADatabase(error: unknown): boolean {
 
 /**
  * Why this build cannot open a file stamped `stamp`, or undefined when it can: a file stamped by a newer Rerail,
- * a file stamped by an older Rerail (the version only rises for a change the idempotent DDL cannot apply, and
- * Rerail converts no data), or a file with tables that no Rerail stamped.
+ * or a file with tables that no Rerail stamped.
  */
 function schemaRefusal(path: string, stamp: SchemaStamp): string | undefined {
   if (stamp.empty) return undefined;
   if (stamp.version > schema.RERAIL_SCHEMA_VERSION) {
-    return `${path} was written by a newer Rerail (schema v${stamp.version}); this Rerail supports schema v${schema.RERAIL_SCHEMA_VERSION}. Update Rerail to open it.`;
+    return `${path} was written by a newer Rerail (schema v${stamp.version}); this Rerail supports schema v${schema.RERAIL_SCHEMA_VERSION}. `
+      + "Update Rerail to open it, or move the file aside to start fresh.";
   }
-  if (stamp.version === 0) return unreadableDatabase(path, "no Rerail schema version");
-  if (stamp.version < schema.RERAIL_SCHEMA_VERSION) {
-    return `${path} was written by an older Rerail (schema v${stamp.version}); this Rerail supports schema v${schema.RERAIL_SCHEMA_VERSION} and does not convert older files. Move the file aside to start fresh.`;
-  }
+  if (stamp.version < 1) return unreadableDatabase(path, "no Rerail schema version");
   return undefined;
 }
 
@@ -106,7 +103,7 @@ function schemaRefusal(path: string, stamp: SchemaStamp): string | undefined {
  * Writers own the file mode (0600) and directory mode (0700) they create.
  *
  * `PRAGMA user_version` holds the schema version the file was written for. A file stamped by a
- * newer or an older Rerail, a file with tables no Rerail stamped, and a file that is not SQLite at all are
+ * newer Rerail, a file with tables no Rerail stamped, and a file that is not SQLite at all are
  * refused, writable or read-only, and left untouched: a writable open checks the stamp before it sets the file
  * mode or switches the journal to WAL. Otherwise the current DDL, which is idempotent, is applied and the file
  * is stamped with this build's version. A read-only open of a file whose creator has not committed the

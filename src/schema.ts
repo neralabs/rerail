@@ -29,14 +29,15 @@ import type { RuleDocument } from "./rule-store.js";
  */
 /**
  * The schema version written by this Rerail build. A Rerail refuses a database stamped with a
- * newer version. New tables and indexes need no bump: the DDL is idempotent and older builds
- * ignore what they do not know. A change an older build would misread, or one SQLite cannot
- * apply idempotently, raises it. Rerail converts no data, so a file stamped with an older
- * version holds a shape this build cannot apply and is refused too.
- *
- * 2: the code rule contract (the `rules_kind` check, `rules_code_columns`, the stored rule kind).
+ * newer version. Until the first release the version stays 1 and the tables are edited in place;
+ * the DDL only creates what is missing, so a database created by an earlier development build
+ * keeps its old tables and has to be moved aside. From the first release on, new tables and
+ * indexes need no bump: the DDL is idempotent and older builds ignore what they do not know. A
+ * change an older build would misread, or one SQLite cannot apply idempotently, raises it.
+ * Some development builds stamped their files 2 before the version went back to 1, so the first
+ * raise goes to 3: such a file then stays refused instead of being read as current.
  */
-export const RERAIL_SCHEMA_VERSION = 2 as const;
+export const RERAIL_SCHEMA_VERSION = 1 as const;
 
 export const RULE_KINDS = ["code", "conversation"] as const;
 export type RuleKind = (typeof RULE_KINDS)[number];
