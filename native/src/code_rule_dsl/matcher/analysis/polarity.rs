@@ -1,7 +1,7 @@
 //! Where a rule reads `calls`: a rule that reads it only positively (never under `not`, a stop
 //! rule, a count or a position) matches nothing in a file where every `calls` is false.
 
-use super::{AstMatcher, Semantic, stop_rule};
+use super::super::{AstMatcher, Semantic, stop_rule};
 use std::collections::BTreeSet;
 
 /// Whether every `calls` term of `matcher` is read positively: false everywhere, the rule matches

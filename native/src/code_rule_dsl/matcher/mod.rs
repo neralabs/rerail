@@ -1,3 +1,4 @@
+mod analysis;
 mod anchors;
 mod arguments;
 mod binding;
@@ -14,9 +15,7 @@ mod layout;
 mod memo;
 mod nth_child;
 mod parse;
-mod polarity;
 mod relation;
-mod required_text;
 mod resolve;
 mod run;
 mod semantic;
@@ -28,6 +27,8 @@ mod value;
 
 use super::budget;
 use crate::code_rule_dsl::language::GrammarDialect;
+pub(super) use analysis::RequiredText;
+pub(crate) use analysis::calls_positive_only;
 pub(super) use anchors::{AnchorPlan, FileAnchorIndex, Selection};
 pub(super) use arguments::{Arguments, SlotKind};
 use ast_grep_core::matcher::Matcher;
@@ -49,12 +50,10 @@ pub(super) use nth_child::{NthChild, Position as NthPosition, parse_position};
 #[cfg(test)]
 pub(crate) use nth_child::{named_sibling_visits, reset_named_sibling_visits};
 pub(crate) use parse::{HostTest, ParseTest};
-pub(crate) use polarity::calls_positive_only;
 use regex::Regex;
 pub(super) use relation::{FieldRelation, Related, StopBy, stop_rule};
 #[cfg(test)]
 pub(super) use relation::{set_answers_off, set_same_key_off};
-pub(super) use required_text::RequiredText;
 #[cfg(test)]
 pub(super) use resolve::TABLE_BUILDS;
 pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved};
