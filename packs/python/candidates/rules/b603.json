@@ -1,0 +1,104 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit:b603",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect configured subprocess invocations where shell is absent or evaluates false",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit-b603-shell-absent",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)",
+            "arguments": {
+              "signature": [
+                "args",
+                "bufsize",
+                "executable",
+                "stdin",
+                "stdout",
+                "stderr",
+                "preexec_fn",
+                "close_fds",
+                "shell"
+              ],
+              "absent": [
+                "shell"
+              ]
+            }
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "subprocess.Popen",
+                  "subprocess.call"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B603",
+        "anchor": "capture.F",
+        "message": "Review input passed to a shell-free subprocess invocation"
+      }
+    },
+    {
+      "id": "bandit-b603-shell-false",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)",
+            "arguments": {
+              "signature": [
+                "args",
+                "bufsize",
+                "executable",
+                "stdin",
+                "stdout",
+                "stderr",
+                "preexec_fn",
+                "close_fds",
+                "shell"
+              ],
+              "bind": {
+                "SHELL": "shell"
+              }
+            }
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "subprocess.Popen",
+                  "subprocess.call"
+                ]
+              }
+            },
+            "SHELL": {
+              "value": {
+                "truthy": false
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B603",
+        "anchor": "capture.F",
+        "message": "Review input passed to a shell-free subprocess invocation"
+      }
+    }
+  ]
+}

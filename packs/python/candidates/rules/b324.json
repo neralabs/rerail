@@ -1,0 +1,231 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit:b324",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect weak hashlib algorithms and insecure crypt methods while allowing explicitly non-security hashlib use.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "B324-hashlib-direct",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "pattern": "$F($$$ARGS)"
+              },
+              {
+                "not": {
+                  "pattern": "$F($$$ARGS, usedforsecurity=False)"
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "hashlib.md4",
+                  "hashlib.md5",
+                  "hashlib.sha",
+                  "hashlib.sha1"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B324",
+        "anchor": "witness.span",
+        "message": "A weak hash algorithm is being used for a security-sensitive operation."
+      }
+    },
+    {
+      "id": "B324-hashlib-new",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "pattern": "$F(\"md4\", $$$ARGS)"
+                  },
+                  {
+                    "pattern": "$F(\"md5\", $$$ARGS)"
+                  },
+                  {
+                    "pattern": "$F(\"sha\", $$$ARGS)"
+                  },
+                  {
+                    "pattern": "$F(\"sha1\", $$$ARGS)"
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "pattern": "$F($$$ARGS, usedforsecurity=False)"
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "hashlib.new"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B324",
+        "anchor": "witness.span",
+        "message": "A weak hash algorithm is being used for a security-sensitive operation."
+      }
+    },
+    {
+      "id": "B324-crypt-crypt-explicit",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "$F($WORD, $SALT)"
+              },
+              {
+                "pattern": "$F($WORD, salt=$SALT)"
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "crypt.crypt"
+                ]
+              }
+            },
+            "SALT": {
+              "resolves": {
+                "import": [
+                  "crypt.METHOD_CRYPT",
+                  "crypt.METHOD_MD5",
+                  "crypt.METHOD_BLOWFISH"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B324",
+        "anchor": "witness.span",
+        "message": "An insecure crypt method is being used."
+      }
+    },
+    {
+      "id": "B324-crypt-crypt-default",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($WORD)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "crypt.crypt"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B324",
+        "anchor": "witness.span",
+        "message": "An insecure crypt method is being used."
+      }
+    },
+    {
+      "id": "B324-crypt-mksalt-explicit",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "$F($METHOD)"
+              },
+              {
+                "pattern": "$F(method=$METHOD)"
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "crypt.mksalt"
+                ]
+              }
+            },
+            "METHOD": {
+              "resolves": {
+                "import": [
+                  "crypt.METHOD_CRYPT",
+                  "crypt.METHOD_MD5",
+                  "crypt.METHOD_BLOWFISH"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B324",
+        "anchor": "witness.span",
+        "message": "An insecure crypt method is being used."
+      }
+    },
+    {
+      "id": "B324-crypt-mksalt-default",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F()"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "crypt.mksalt"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B324",
+        "anchor": "witness.span",
+        "message": "An insecure crypt method is being used."
+      }
+    }
+  ]
+}

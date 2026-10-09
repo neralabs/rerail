@@ -1,0 +1,47 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit:b407",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect direct imports of xml.dom.expatbuilder.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "B407",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "import xml.dom.expatbuilder"
+              },
+              {
+                "pattern": "import xml.dom.expatbuilder as $ALIAS"
+              },
+              {
+                "pattern": "from xml.dom.expatbuilder import $$$NAMES"
+              },
+              {
+                "pattern": "from xml.dom import expatbuilder"
+              },
+              {
+                "pattern": "from xml.dom import expatbuilder as $ALIAS"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "B407",
+        "anchor": "witness.span",
+        "message": "xml.dom.expatbuilder parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library."
+      }
+    }
+  ]
+}

@@ -1,0 +1,378 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:B017",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B017 (assert-raises-exception): `<x>.assertRaises(...)` or `pytest.raises(...)` whose exception (first positional argument, or `exception=` / `expected_exception=`) resolves to the builtin `Exception` or `BaseException` (the unshadowed name, or through an import of `builtins`; parentheses transparent). `pytest.raises` is exempt with `match=` or a string/bytes literal second positional argument. Reported on a `with` item that has no `as` target, and on any such call with at least two positional arguments or a `func=` keyword (the call form). `pytest.raises` and the exception names resolve with `resolves` (imports, their scope and order, and shadowing, as Ruff's semantic model sees them).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "assert-raises": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "attribute",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "identifier",
+                "regex": "^assertRaises$",
+                "follows": {
+                  "stopBy": "neighbor",
+                  "regex": "^\\.$"
+                }
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "matches": "first-positional",
+                        "pattern": "$EXC",
+                        "all": [
+                          {
+                            "matches": "blind"
+                          }
+                        ]
+                      },
+                      {
+                        "kind": "keyword_argument",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "identifier",
+                          "regex": "^exception$",
+                          "precedes": {
+                            "stopBy": "neighbor",
+                            "regex": "^=$"
+                          }
+                        },
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "pattern": "$EXC",
+                              "follows": {
+                                "stopBy": "neighbor",
+                                "regex": "^=$"
+                              },
+                              "matches": "blind"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "blind": {
+            "any": [
+              {
+                "matches": "ref-exception"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "blind"
+                }
+              }
+            ]
+          },
+          "blind-raises": {
+            "any": [
+              {
+                "matches": "assert-raises"
+              },
+              {
+                "matches": "pytest-raises"
+              }
+            ]
+          },
+          "byte-or-str": {
+            "any": [
+              {
+                "kind": "string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string_start",
+                    "regex": "[fFtT]"
+                  }
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string_start",
+                      "regex": "[fFtT]"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "byte-or-str"
+                }
+              }
+            ]
+          },
+          "first-positional": {
+            "follows": {
+              "stopBy": "neighbor",
+              "regex": "^\\($"
+            },
+            "not": {
+              "any": [
+                {
+                  "kind": "keyword_argument"
+                },
+                {
+                  "kind": "list_splat"
+                },
+                {
+                  "kind": "dictionary_splat"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "regex": "^[(),]$"
+                }
+              ]
+            }
+          },
+          "positional-arg": {
+            "not": {
+              "any": [
+                {
+                  "kind": "keyword_argument"
+                },
+                {
+                  "kind": "dictionary_splat"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "regex": "^[(),]$"
+                }
+              ]
+            }
+          },
+          "pytest-raises": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "ref-pytest-raises",
+              "not": {
+                "kind": "argument_list"
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "keyword_argument",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "identifier",
+                            "regex": "^match$",
+                            "precedes": {
+                              "stopBy": "neighbor",
+                              "regex": "^=$"
+                            }
+                          }
+                        },
+                        {
+                          "matches": "first-positional",
+                          "precedes": {
+                            "stopBy": "neighbor",
+                            "regex": "^,$",
+                            "precedes": {
+                              "stopBy": "neighbor",
+                              "matches": "byte-or-str"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "matches": "first-positional",
+                        "pattern": "$EXC",
+                        "all": [
+                          {
+                            "matches": "blind"
+                          }
+                        ]
+                      },
+                      {
+                        "kind": "keyword_argument",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "identifier",
+                          "regex": "^expected_exception$",
+                          "precedes": {
+                            "stopBy": "neighbor",
+                            "regex": "^=$"
+                          }
+                        },
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "pattern": "$EXC",
+                              "follows": {
+                                "stopBy": "neighbor",
+                                "regex": "^=$"
+                              },
+                              "matches": "blind"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "ref-exception": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "global": [
+                "Exception",
+                "BaseException"
+              ],
+              "import": [
+                "builtins.Exception",
+                "builtins.BaseException"
+              ]
+            }
+          },
+          "ref-pytest-raises": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "pytest.raises"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "assert-raises-exception-with-item",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "matches": "blind-raises",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "with_item"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B017",
+        "message": "Do not assert blind exception: `$EXC`"
+      }
+    },
+    {
+      "id": "assert-raises-exception-call",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "matches": "blind-raises",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "argument_list",
+              "any": [
+                {
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "positional-arg"
+                    },
+                    "min": 2
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "keyword_argument",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "regex": "^func$",
+                      "precedes": {
+                        "stopBy": "neighbor",
+                        "regex": "^=$"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B017",
+        "message": "Do not assert blind exception: `$EXC`"
+      }
+    }
+  ]
+}

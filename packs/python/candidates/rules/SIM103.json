@@ -1,0 +1,429 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:SIM103",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's SIM103 (needless-bool): an `if`/`else`, a trailing `elif`/`else`, or an `if` followed by a `return` statement, whose two branches are single `return True` / `return False` statements with opposite values, unless the `if` is a `sys.version_info`/`sys.platform` or `TYPE_CHECKING` block. Reported at the `if` (or the last `elif`).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "needless-bool",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "true-lit": {
+              "any": [
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "true-lit"
+                  }
+                }
+              ]
+            },
+            "false-lit": {
+              "any": [
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "false-lit"
+                  }
+                }
+              ]
+            },
+            "return-true": {
+              "kind": "return_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "true-lit"
+              }
+            },
+            "return-false": {
+              "kind": "return_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "false-lit"
+              }
+            },
+            "block-true": {
+              "kind": "block",
+              "count": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "kind": "line_continuation"
+                      },
+                      {
+                        "regex": "^;$"
+                      }
+                    ]
+                  }
+                },
+                "min": 1,
+                "max": 1
+              },
+              "has": {
+                "stopBy": "neighbor",
+                "all": [
+                  {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        },
+                        {
+                          "regex": "^;$"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "matches": "return-true"
+                  }
+                ]
+              }
+            },
+            "block-false": {
+              "kind": "block",
+              "count": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "kind": "line_continuation"
+                      },
+                      {
+                        "regex": "^;$"
+                      }
+                    ]
+                  }
+                },
+                "min": 1,
+                "max": 1
+              },
+              "has": {
+                "stopBy": "neighbor",
+                "all": [
+                  {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        },
+                        {
+                          "regex": "^;$"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "matches": "return-false"
+                  }
+                ]
+              }
+            },
+            "sys-version": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "sys.version_info",
+                  "sys.platform"
+                ]
+              }
+            },
+            "exempt-if": {
+              "kind": "if_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "follows": {
+                  "stopBy": "neighbor",
+                  "regex": "^if$"
+                },
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "matches": "sys-version"
+                    }
+                  },
+                  {
+                    "matches": "sys-version"
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^TYPE_CHECKING$"
+                      },
+                      {
+                        "kind": "identifier",
+                        "resolves": {
+                          "import": [
+                            "typing.TYPE_CHECKING",
+                            "_typeshed.TYPE_CHECKING",
+                            "typing_extensions.TYPE_CHECKING"
+                          ]
+                        }
+                      },
+                      {
+                        "kind": "attribute",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "identifier",
+                          "regex": "^TYPE_CHECKING$",
+                          "follows": {
+                            "stopBy": "neighbor",
+                            "regex": "^\\.$"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "if_statement",
+                "not": {
+                  "matches": "exempt-if"
+                },
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "elif_clause"
+                      },
+                      {
+                        "kind": "else_clause"
+                      }
+                    ]
+                  },
+                  "min": 1,
+                  "max": 1
+                },
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "block-true"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "else_clause",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "block-false"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "block-false"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "else_clause",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "block-true"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "elif_clause",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "if_statement",
+                  "not": {
+                    "matches": "exempt-if"
+                  }
+                },
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "block-true"
+                        }
+                      },
+                      {
+                        "precedes": {
+                          "stopBy": "neighbor",
+                          "kind": "else_clause",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "block-false"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "block-false"
+                        }
+                      },
+                      {
+                        "precedes": {
+                          "stopBy": "neighbor",
+                          "kind": "else_clause",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "block-true"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "if_statement",
+                "not": {
+                  "any": [
+                    {
+                      "matches": "exempt-if"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "elif_clause"
+                          },
+                          {
+                            "kind": "else_clause"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "block-true"
+                        }
+                      },
+                      {
+                        "precedes": {
+                          "stopBy": {
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "comment"
+                                },
+                                {
+                                  "kind": "line_continuation"
+                                }
+                              ]
+                            }
+                          },
+                          "matches": "return-false"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "block-false"
+                        }
+                      },
+                      {
+                        "precedes": {
+                          "stopBy": {
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "comment"
+                                },
+                                {
+                                  "kind": "line_continuation"
+                                }
+                              ]
+                            }
+                          },
+                          "matches": "return-true"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "SIM103",
+        "message": "Return the condition directly"
+      }
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:F407",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F407 (future-feature-not-defined): a name imported from `__future__` (also through a relative `from .__future__`, matched by the module's text with `resolves.imported` and `relative: \"text\"`, as Ruff ignores the level) that is not one of CPython's future features (`is_known_future_feature` in ruff_python_parser's semantic_errors.rs), reported on the alias (`name as alias` included) or on the `*` of a star import.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "future-feature-not-defined",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "known-feature": {
+              "kind": "dotted_name",
+              "regex": "^(nested_scopes|generators|division|absolute_import|with_statement|print_function|unicode_literals|barry_as_FLUFL|generator_stop|annotations)$"
+            },
+            "future-import": {
+              "any": [
+                { "kind": "future_import_statement" },
+                {
+                  "kind": "import_from_statement",
+                  "has": { "stopBy": "neighbor", "kind": "relative_import", "has": { "stopBy": "neighbor", "kind": "dotted_name", "resolves": { "imported": ["__future__"], "relative": "text" } } }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              { "kind": "dotted_name", "not": { "matches": "known-feature" }, "pattern": "$NAME" },
+              {
+                "kind": "aliased_import",
+                "has": { "stopBy": "neighbor", "kind": "dotted_name", "not": { "matches": "known-feature" }, "pattern": "$NAME" }
+              },
+              { "kind": "wildcard_import", "pattern": "$NAME" }
+            ],
+            "inside": { "stopBy": "neighbor", "matches": "future-import" }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F407",
+        "message": "Future feature `$NAME` is not defined"
+      }
+    }
+  ]
+}

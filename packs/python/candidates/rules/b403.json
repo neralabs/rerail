@@ -1,0 +1,68 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit:b403",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect direct imports of pickle, cPickle, dill, and shelve.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "B403",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "import pickle"
+              },
+              {
+                "pattern": "import pickle as $ALIAS"
+              },
+              {
+                "pattern": "from pickle import $$$NAMES"
+              },
+              {
+                "pattern": "import cPickle"
+              },
+              {
+                "pattern": "import cPickle as $ALIAS"
+              },
+              {
+                "pattern": "from cPickle import $$$NAMES"
+              },
+              {
+                "pattern": "import dill"
+              },
+              {
+                "pattern": "import dill as $ALIAS"
+              },
+              {
+                "pattern": "from dill import $$$NAMES"
+              },
+              {
+                "pattern": "import shelve"
+              },
+              {
+                "pattern": "import shelve as $ALIAS"
+              },
+              {
+                "pattern": "from shelve import $$$NAMES"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "B403",
+        "anchor": "witness.span",
+        "message": "Consider the security implications of importing pickle, cPickle, dill, or shelve."
+      }
+    }
+  ]
+}

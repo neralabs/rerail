@@ -1,0 +1,54 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:B002",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B002 (unary-prefix-increment-decrement): a unary `+` whose operand is a unary `+`, or a unary `-` whose operand is a unary `-` (parentheses around the operand are transparent, as in Ruff's AST). Reported on the outer unary expression.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "unary-prefix-increment",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "plus": {
+              "any": [
+                { "kind": "unary_operator", "regex": "^\\+" },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "plus" } }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "unary_operator",
+            "regex": "^\\+",
+            "has": { "stopBy": "neighbor", "matches": "plus" }
+          }
+        }
+      },
+      "violation": { "anchor": "witness.span", "code": "B002", "message": "Python does not support the unary prefix increment operator (`++`)" }
+    },
+    {
+      "id": "unary-prefix-decrement",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "minus": {
+              "any": [
+                { "kind": "unary_operator", "regex": "^-" },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "minus" } }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "unary_operator",
+            "regex": "^-",
+            "has": { "stopBy": "neighbor", "matches": "minus" }
+          }
+        }
+      },
+      "violation": { "anchor": "witness.span", "code": "B002", "message": "Python does not support the unary prefix decrement operator (`--`)" }
+    }
+  ]
+}

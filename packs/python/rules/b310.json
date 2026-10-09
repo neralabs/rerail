@@ -1,0 +1,47 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit:b310",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect URL-opening calls that require permitted-scheme review",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit:B310",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "urllib.request.urlopen",
+                  "urllib.request.urlretrieve",
+                  "urllib.request.URLopener",
+                  "urllib.request.FancyURLopener",
+                  "six.moves.urllib.request.urlopen",
+                  "six.moves.urllib.request.urlretrieve",
+                  "six.moves.urllib.request.URLopener",
+                  "six.moves.urllib.request.FancyURLopener"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B310",
+        "anchor": "witness.span",
+        "message": "Audit URL opening for permitted schemes; file or custom schemes may be unexpected."
+      }
+    }
+  ]
+}

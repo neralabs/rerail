@@ -1,0 +1,44 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:F842",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F842 (unused-annotation) with default settings (`dummy-variable-rgx` = `^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$`), on the engine's usedness (M10a `binds` with form `annotation`, Ruff's unused_annotation): the latest binding of a name in a function or lambda scope that is a bare annotation (`x: int`, `(x): int`) nothing reads, not a dummy name. Names in strings Ruff parses as type definitions are reads (M11a).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unused-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$N",
+            "binds": {
+              "form": "annotation",
+              "scope": [
+                "function",
+                "lambda"
+              ],
+              "latest": true,
+              "used": false
+            },
+            "not": {
+              "regex": "^(?:_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9])$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F842",
+        "message": "Local variable `$N` is annotated but never used"
+      }
+    }
+  ]
+}

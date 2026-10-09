@@ -1,0 +1,335 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff:ASYNC110",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of Ruff's ASYNC110 (async-busy-wait): a `while` loop whose body is a single statement `await <call>` where the callee resolves to `trio.sleep`/`sleep_until`, `anyio.sleep`/`sleep_until` or `asyncio.sleep`, reported on the loop. Names resolve as in Ruff's resolve_qualified_name, through the engine's `resolves` (M7).",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "async-busy-wait-trio",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "target": {
+       "any": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "attribute"
+        }
+       ],
+       "resolves": {
+        "import": [
+         "trio.sleep",
+         "trio.sleep_until"
+        ]
+       }
+      },
+      "callee-of-target": {
+       "any": [
+        {
+         "matches": "target"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee-of-target"
+         }
+        }
+       ]
+      },
+      "awaited-sleep": {
+       "any": [
+        {
+         "kind": "call",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee-of-target",
+          "precedes": {
+           "stopBy": "neighbor",
+           "any": [
+            {
+             "kind": "argument_list"
+            },
+            {
+             "kind": "generator_expression"
+            }
+           ]
+          }
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "awaited-sleep"
+         }
+        }
+       ]
+      }
+     },
+     "rule": {
+      "kind": "while_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "kind": "block",
+       "count": {
+        "has": {
+         "stopBy": "neighbor",
+         "not": {
+          "kind": "comment"
+         }
+        },
+        "min": 1,
+        "max": 1
+       },
+       "all": [
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "kind": "expression_statement",
+          "has": {
+           "stopBy": "neighbor",
+           "kind": "await",
+           "has": {
+            "stopBy": "neighbor",
+            "matches": "awaited-sleep"
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "ASYNC110",
+    "message": "Use `trio.Event` instead of awaiting `trio.sleep` in a `while` loop"
+   }
+  },
+  {
+   "id": "async-busy-wait-anyio",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "target": {
+       "any": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "attribute"
+        }
+       ],
+       "resolves": {
+        "import": [
+         "anyio.sleep",
+         "anyio.sleep_until"
+        ]
+       }
+      },
+      "callee-of-target": {
+       "any": [
+        {
+         "matches": "target"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee-of-target"
+         }
+        }
+       ]
+      },
+      "awaited-sleep": {
+       "any": [
+        {
+         "kind": "call",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee-of-target",
+          "precedes": {
+           "stopBy": "neighbor",
+           "any": [
+            {
+             "kind": "argument_list"
+            },
+            {
+             "kind": "generator_expression"
+            }
+           ]
+          }
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "awaited-sleep"
+         }
+        }
+       ]
+      }
+     },
+     "rule": {
+      "kind": "while_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "kind": "block",
+       "count": {
+        "has": {
+         "stopBy": "neighbor",
+         "not": {
+          "kind": "comment"
+         }
+        },
+        "min": 1,
+        "max": 1
+       },
+       "all": [
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "kind": "expression_statement",
+          "has": {
+           "stopBy": "neighbor",
+           "kind": "await",
+           "has": {
+            "stopBy": "neighbor",
+            "matches": "awaited-sleep"
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "ASYNC110",
+    "message": "Use `anyio.Event` instead of awaiting `anyio.sleep` in a `while` loop"
+   }
+  },
+  {
+   "id": "async-busy-wait-asyncio",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "target": {
+       "any": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "attribute"
+        }
+       ],
+       "resolves": {
+        "import": [
+         "asyncio.sleep"
+        ]
+       }
+      },
+      "callee-of-target": {
+       "any": [
+        {
+         "matches": "target"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee-of-target"
+         }
+        }
+       ]
+      },
+      "awaited-sleep": {
+       "any": [
+        {
+         "kind": "call",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee-of-target",
+          "precedes": {
+           "stopBy": "neighbor",
+           "any": [
+            {
+             "kind": "argument_list"
+            },
+            {
+             "kind": "generator_expression"
+            }
+           ]
+          }
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "awaited-sleep"
+         }
+        }
+       ]
+      }
+     },
+     "rule": {
+      "kind": "while_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "kind": "block",
+       "count": {
+        "has": {
+         "stopBy": "neighbor",
+         "not": {
+          "kind": "comment"
+         }
+        },
+        "min": 1,
+        "max": 1
+       },
+       "all": [
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "kind": "expression_statement",
+          "has": {
+           "stopBy": "neighbor",
+           "kind": "await",
+           "has": {
+            "stopBy": "neighbor",
+            "matches": "awaited-sleep"
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "ASYNC110",
+    "message": "Use `asyncio.Event` instead of awaiting `asyncio.sleep` in a `while` loop"
+   }
+  }
+ ]
+}

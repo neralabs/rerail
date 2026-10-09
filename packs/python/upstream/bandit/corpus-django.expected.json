@@ -1,6 +1,6 @@
 {
  "tool": "bandit",
- "version": "1.8.6",
+ "version": "1.9.4",
  "source": {
   "kind": "corpus",
   "name": "django",
@@ -8,10 +8,46 @@
   "commit": "fd91518f17c8a84fa47fe0e5534ef46afa7a0f7a",
   "rules": [
    "B101",
+   "B102",
+   "B104",
+   "B108",
+   "B110",
+   "B112",
    "B113",
+   "B301",
+   "B302",
+   "B305",
+   "B306",
+   "B307",
+   "B310",
+   "B311",
+   "B312",
+   "B313",
+   "B314",
+   "B315",
+   "B316",
+   "B317",
+   "B318",
+   "B319",
+   "B321",
+   "B323",
+   "B401",
+   "B402",
+   "B405",
+   "B406",
+   "B407",
+   "B408",
+   "B409",
+   "B411",
+   "B413",
+   "B415",
+   "B502",
    "B505",
-   "B506",
-   "B610"
+   "B507",
+   "B606",
+   "B610",
+   "B615",
+   "B701"
   ],
   "skipped": []
  },
@@ -267,6 +303,240 @@
    "path": "django/utils/version.py",
    "line": 30,
    "column": 5
+  },
+  {
+   "rule": "B102",
+   "path": "django/core/management/commands/shell.py",
+   "line": 89,
+   "column": 21
+  },
+  {
+   "rule": "B102",
+   "path": "django/core/management/commands/shell.py",
+   "line": 262,
+   "column": 13
+  },
+  {
+   "rule": "B102",
+   "path": "django/core/management/commands/shell.py",
+   "line": 272,
+   "column": 13
+  },
+  {
+   "rule": "B104",
+   "path": "django/core/management/commands/runserver.py",
+   "line": 178,
+   "column": 20
+  },
+  {
+   "rule": "B110",
+   "path": "django/apps/config.py",
+   "line": 112,
+   "column": 9
+  },
+  {
+   "rule": "B110",
+   "path": "django/apps/config.py",
+   "line": 163,
+   "column": 13
+  },
+  {
+   "rule": "B110",
+   "path": "django/contrib/sessions/backends/base.py",
+   "line": 144,
+   "column": 9
+  },
+  {
+   "rule": "B110",
+   "path": "django/http/response.py",
+   "line": 345,
+   "column": 13
+  },
+  {
+   "rule": "B110",
+   "path": "django/http/response.py",
+   "line": 420,
+   "column": 17
+  },
+  {
+   "rule": "B110",
+   "path": "django/utils/http.py",
+   "line": 146,
+   "column": 5
+  },
+  {
+   "rule": "B301",
+   "path": "django/core/cache/backends/db.py",
+   "line": 102,
+   "column": 25
+  },
+  {
+   "rule": "B301",
+   "path": "django/core/cache/backends/filebased.py",
+   "line": 38,
+   "column": 28
+  },
+  {
+   "rule": "B301",
+   "path": "django/core/cache/backends/filebased.py",
+   "line": 71,
+   "column": 42
+  },
+  {
+   "rule": "B301",
+   "path": "django/core/cache/backends/filebased.py",
+   "line": 154,
+   "column": 19
+  },
+  {
+   "rule": "B301",
+   "path": "django/core/cache/backends/locmem.py",
+   "line": 43,
+   "column": 16
+  },
+  {
+   "rule": "B301",
+   "path": "django/core/cache/backends/locmem.py",
+   "line": 73,
+   "column": 21
+  },
+  {
+   "rule": "B301",
+   "path": "django/core/cache/backends/redis.py",
+   "line": 29,
+   "column": 20
+  },
+  {
+   "rule": "B301",
+   "path": "django/test/runner.py",
+   "line": 208,
+   "column": 9
+  },
+  {
+   "rule": "B301",
+   "path": "django/test/testcases.py",
+   "line": 88,
+   "column": 9
+  },
+  {
+   "rule": "B307",
+   "path": "django/db/migrations/questioner.py",
+   "line": 168,
+   "column": 28
+  },
+  {
+   "rule": "B311",
+   "path": "django/core/cache/backends/db.py",
+   "line": 135,
+   "column": 43
+  },
+  {
+   "rule": "B311",
+   "path": "django/core/cache/backends/filebased.py",
+   "line": 116,
+   "column": 20
+  },
+  {
+   "rule": "B311",
+   "path": "django/core/cache/backends/redis.py",
+   "line": 82,
+   "column": 16
+  },
+  {
+   "rule": "B311",
+   "path": "django/template/defaultfilters.py",
+   "line": 646,
+   "column": 16
+  },
+  {
+   "rule": "B311",
+   "path": "django/test/runner.py",
+   "line": 716,
+   "column": 20
+  },
+  {
+   "rule": "B311",
+   "path": "django/utils/lorem_ipsum.py",
+   "line": 235,
+   "column": 18
+  },
+  {
+   "rule": "B311",
+   "path": "django/utils/lorem_ipsum.py",
+   "line": 235,
+   "column": 39
+  },
+  {
+   "rule": "B311",
+   "path": "django/utils/lorem_ipsum.py",
+   "line": 236,
+   "column": 24
+  },
+  {
+   "rule": "B311",
+   "path": "django/utils/lorem_ipsum.py",
+   "line": 240,
+   "column": 45
+  },
+  {
+   "rule": "B311",
+   "path": "django/utils/lorem_ipsum.py",
+   "line": 249,
+   "column": 47
+  },
+  {
+   "rule": "B311",
+   "path": "django/utils/lorem_ipsum.py",
+   "line": 283,
+   "column": 26
+  },
+  {
+   "rule": "B318",
+   "path": "django/test/utils.py",
+   "line": 713,
+   "column": 28
+  },
+  {
+   "rule": "B318",
+   "path": "django/test/utils.py",
+   "line": 714,
+   "column": 27
+  },
+  {
+   "rule": "B319",
+   "path": "django/core/serializers/xml_serializer.py",
+   "line": 244,
+   "column": 29
+  },
+  {
+   "rule": "B406",
+   "path": "django/core/serializers/xml_serializer.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "django/core/serializers/xml_serializer.py",
+   "line": 8,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "django/utils/xmlutils.py",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "B408",
+   "path": "django/test/utils.py",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "B409",
+   "path": "django/core/serializers/xml_serializer.py",
+   "line": 6,
+   "column": 1
   },
   {
    "rule": "B610",

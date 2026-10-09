@@ -1,0 +1,237 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:SIM201",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's SIM201 (negate-equal-op): `not` applied to a comparison (through any parentheses) whose only operator is `==`, reported on the `not` expression. Exempt, as Ruff: when the enclosing statement is an `if` whose body is a single `raise` (Ruff's `is_exception_check` reads the `if` statement's own body, so an `elif` test counts with it), and when the nearest enclosing scope is a function named `__eq__`, `__ne__`, `__lt__`, `__le__`, `__gt__` or `__ge__` (lambdas, comprehensions and nested functions are their own scopes).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "negate-equal-op",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "statement": {
+              "any": [
+                {
+                  "kind": "class_definition"
+                },
+                {
+                  "kind": "decorated_definition"
+                },
+                {
+                  "kind": "for_statement"
+                },
+                {
+                  "kind": "function_definition"
+                },
+                {
+                  "kind": "if_statement"
+                },
+                {
+                  "kind": "match_statement"
+                },
+                {
+                  "kind": "try_statement"
+                },
+                {
+                  "kind": "while_statement"
+                },
+                {
+                  "kind": "with_statement"
+                },
+                {
+                  "kind": "assert_statement"
+                },
+                {
+                  "kind": "break_statement"
+                },
+                {
+                  "kind": "continue_statement"
+                },
+                {
+                  "kind": "delete_statement"
+                },
+                {
+                  "kind": "exec_statement"
+                },
+                {
+                  "kind": "expression_statement"
+                },
+                {
+                  "kind": "future_import_statement"
+                },
+                {
+                  "kind": "global_statement"
+                },
+                {
+                  "kind": "import_from_statement"
+                },
+                {
+                  "kind": "import_statement"
+                },
+                {
+                  "kind": "nonlocal_statement"
+                },
+                {
+                  "kind": "pass_statement"
+                },
+                {
+                  "kind": "print_statement"
+                },
+                {
+                  "kind": "raise_statement"
+                },
+                {
+                  "kind": "return_statement"
+                },
+                {
+                  "kind": "type_alias_statement"
+                }
+              ]
+            },
+            "scope-boundary": {
+              "any": [
+                {
+                  "kind": "block",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "lambda"
+                },
+                {
+                  "kind": "list_comprehension"
+                },
+                {
+                  "kind": "set_comprehension"
+                },
+                {
+                  "kind": "dictionary_comprehension"
+                },
+                {
+                  "kind": "generator_expression"
+                }
+              ]
+            },
+            "single-op-compare": {
+              "any": [
+                {
+                  "kind": "comparison_operator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^==$"
+                  },
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^(==|!=|<|<=|>|>=|<>|in|not in|is|is not)$"
+                    },
+                    "max": 1
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "single-op-compare"
+                  }
+                }
+              ]
+            },
+            "exception-check": {
+              "kind": "if_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "block",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "raise_statement"
+                },
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "raise_statement"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "in-comparison-dunder": {
+              "inside": {
+                "stopBy": {
+                  "matches": "scope-boundary"
+                },
+                "kind": "block",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "function_definition",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "regex": "^__(eq|ne|lt|le|gt|ge)__$"
+                  }
+                }
+              }
+            }
+          },
+          "rule": {
+            "kind": "not_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "single-op-compare"
+            },
+            "not": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": {
+                      "matches": "statement"
+                    },
+                    "matches": "statement",
+                    "all": [
+                      {
+                        "matches": "exception-check"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "matches": "in-comparison-dunder"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "SIM201",
+        "message": "Use `!=` instead of `not ... == ...`"
+      }
+    }
+  ]
+}

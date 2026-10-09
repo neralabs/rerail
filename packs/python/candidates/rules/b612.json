@@ -1,0 +1,55 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit:b612",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect logging configuration listeners without verification",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit-B612",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "pattern": "$F($$$ARGS)"
+              },
+              {
+                "arguments": {
+                  "signature": [
+                    "port",
+                    "verify"
+                  ],
+                  "absent": [
+                    "verify"
+                  ]
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "logging.config.listen"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B612",
+        "anchor": "capture.F",
+        "message": "logging.config.listen is used without a verify callback; verify or decrypt received configuration bytes."
+      }
+    }
+  ]
+}

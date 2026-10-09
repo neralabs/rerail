@@ -1,0 +1,972 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:BLE001",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's BLE001 (blind-except): the first builtin `Exception` or `BaseException` (`resolve_builtin_symbol`: the unshadowed name or `builtins.`) in an `except` clause's type, searching nested tuples, reported on it, unless the handler body (not entering nested `try`, `def` or `class`) re-raises (`raise`, `raise e`, `raise ... from e` with the handler's name) or logs the exception: an expression-statement call of `exception`, or of another logger method with `exc_info` not known falsy, on a logger candidate (a value resolving to `logging` or `flask.current_app.logger`, an inline `logging.getLogger(...)`/`Logger(...)`, or a name whose last part starts with `log`/`LOG` or ends with `logger`/`logging` and that has no qualified name: `resolves.import: true`, Ruff's `resolve_qualified_name(..).is_some()`), or a name resolving to `logging.<method>`.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "blind-except",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "part-t": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_start",
+                "regex": "^[A-Za-z]*[tT]"
+              }
+            },
+            "part-f": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_start",
+                "regex": "^[A-Za-z]*[fF]"
+              }
+            },
+            "part-b": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_start",
+                "regex": "^[A-Za-z]*[bB]"
+              }
+            },
+            "part-has-text": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_content",
+                "not": {
+                  "regex": "^(\\\\\\r?\\n)+$"
+                }
+              }
+            },
+            "part-no-text": {
+              "not": {
+                "matches": "part-has-text"
+              }
+            },
+            "t-string": {
+              "any": [
+                {
+                  "kind": "string",
+                  "matches": "part-t"
+                },
+                {
+                  "kind": "concatenated_string",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "matches": "part-t"
+                  }
+                }
+              ]
+            },
+            "f-string": {
+              "not": {
+                "matches": "t-string"
+              },
+              "any": [
+                {
+                  "kind": "string",
+                  "matches": "part-f"
+                },
+                {
+                  "kind": "concatenated_string",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "matches": "part-f"
+                  }
+                }
+              ]
+            },
+            "plain-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "not": {
+                "any": [
+                  {
+                    "matches": "t-string"
+                  },
+                  {
+                    "matches": "f-string"
+                  }
+                ]
+              }
+            },
+            "bytes-string": {
+              "matches": "plain-string",
+              "any": [
+                {
+                  "kind": "string",
+                  "matches": "part-b"
+                },
+                {
+                  "kind": "concatenated_string",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "matches": "part-b"
+                  }
+                }
+              ]
+            },
+            "plain-empty": {
+              "matches": "plain-string",
+              "any": [
+                {
+                  "kind": "string",
+                  "matches": "part-no-text"
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "matches": "part-no-text"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "f-empty": {
+              "matches": "f-string",
+              "any": [
+                {
+                  "kind": "string",
+                  "all": [
+                    {
+                      "matches": "part-no-text"
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "interpolation",
+                          "not": {
+                            "matches": "interp-empty"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "all": [
+                          {
+                            "matches": "part-no-text"
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "interpolation",
+                                "not": {
+                                  "matches": "interp-empty"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "interp-empty": {
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "regex": "^=$"
+                    },
+                    {
+                      "kind": "type_conversion"
+                    },
+                    {
+                      "kind": "format_specifier"
+                    }
+                  ]
+                }
+              },
+              "has": {
+                "stopBy": "neighbor",
+                "follows": {
+                  "stopBy": "neighbor",
+                  "regex": "^\\{$"
+                },
+                "matches": "fexpr-empty"
+              }
+            },
+            "fexpr-empty": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "matches": "plain-empty",
+                      "not": {
+                        "matches": "bytes-string"
+                      }
+                    },
+                    {
+                      "matches": "f-empty"
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fexpr-empty"
+                  }
+                }
+              ]
+            },
+            "opaque-arg": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "any": [
+                        {
+                          "kind": "integer"
+                        },
+                        {
+                          "kind": "float"
+                        },
+                        {
+                          "kind": "true"
+                        },
+                        {
+                          "kind": "false"
+                        },
+                        {
+                          "kind": "none"
+                        },
+                        {
+                          "kind": "ellipsis"
+                        },
+                        {
+                          "kind": "lambda"
+                        },
+                        {
+                          "kind": "generator_expression"
+                        }
+                      ]
+                    },
+                    {
+                      "matches": "t-string"
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "opaque-arg"
+                  }
+                }
+              ]
+            },
+            "falsy": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "any": [
+                        {
+                          "kind": "false"
+                        },
+                        {
+                          "kind": "none"
+                        }
+                      ]
+                    },
+                    {
+                      "matches": "plain-empty"
+                    },
+                    {
+                      "matches": "f-empty"
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "integer"
+                        },
+                        {
+                          "kind": "float"
+                        }
+                      ],
+                      "value": {
+                        "truthy": false
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "list"
+                        },
+                        {
+                          "kind": "tuple"
+                        },
+                        {
+                          "kind": "dictionary"
+                        }
+                      ],
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "regex": "^[\\[\\](){},]$"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "call",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "identifier",
+                        "resolves": {
+                          "global": [
+                            "list",
+                            "tuple",
+                            "set",
+                            "dict",
+                            "frozenset"
+                          ]
+                        }
+                      },
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "argument_list",
+                            "not": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "not": {
+                                  "regex": "^[\\[\\](){},]$"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "call",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "identifier",
+                        "resolves": {
+                          "global": [
+                            "list",
+                            "tuple",
+                            "set",
+                            "dict",
+                            "frozenset"
+                          ]
+                        }
+                      },
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "argument_list",
+                            "count": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "not": {
+                                  "regex": "^[\\[\\](){},]$"
+                                }
+                              },
+                              "min": 1,
+                              "max": 1
+                            },
+                            "not": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "any": [
+                                  {
+                                    "kind": "keyword_argument"
+                                  },
+                                  {
+                                    "kind": "dictionary_splat"
+                                  }
+                                ]
+                              }
+                            },
+                            "has": {
+                              "stopBy": "neighbor",
+                              "not": {
+                                "any": [
+                                  {
+                                    "regex": "^[\\[\\](){},]$"
+                                  },
+                                  {
+                                    "matches": "opaque-arg"
+                                  }
+                                ]
+                              },
+                              "matches": "falsy"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "falsy"
+                  }
+                }
+              ]
+            },
+            "not-entered": {
+              "any": [
+                {
+                  "kind": "try_statement"
+                },
+                {
+                  "kind": "function_definition"
+                },
+                {
+                  "kind": "class_definition"
+                }
+              ]
+            },
+            "blind": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "global": [
+                  "Exception",
+                  "BaseException"
+                ],
+                "import": [
+                  "builtins.Exception",
+                  "builtins.BaseException"
+                ]
+              }
+            },
+            "blind-type": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "matches": "blind"
+                    },
+                    {
+                      "kind": "tuple",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "blind-type"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "blind-type"
+                  }
+                }
+              ]
+            },
+            "type-position": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "except_clause"
+                  },
+                  "not": {
+                    "kind": "block"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "as_pattern",
+                    "matches": "type-position"
+                  },
+                  "not": {
+                    "kind": "as_pattern_target"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "parenthesized_expression"
+                      }
+                    ],
+                    "matches": "type-position"
+                  }
+                }
+              ]
+            },
+            "first-blind": {
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "matches": "blind-type"
+                }
+              },
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "except_clause"
+                      },
+                      {
+                        "kind": "as_pattern"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "parenthesized_expression"
+                      }
+                    ],
+                    "matches": "first-blind"
+                  }
+                }
+              ]
+            },
+            "logger-object": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list"
+                    },
+                    "any": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "kind": "attribute"
+                      }
+                    ],
+                    "resolves": {
+                      "import": [
+                        "logging.getLogger",
+                        "logging.Logger"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "logging",
+                      "flask.current_app.logger"
+                    ]
+                  }
+                },
+                {
+                  "matches": "name-chain",
+                  "regex": "(^|\\.)\\s*(log|LOG)[^.]*$|(logger|logging|LOGGER|LOGGING)$",
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "kind": "attribute"
+                      }
+                    ],
+                    "resolves": {
+                      "import": true
+                    }
+                  }
+                }
+              ]
+            },
+            "name-chain": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "name-chain",
+                        "precedes": {
+                          "stopBy": "neighbor",
+                          "regex": "^\\.$"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-chain"
+                  }
+                }
+              ]
+            },
+            "log-exception-call": {
+              "kind": "expression_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list"
+                  },
+                  "any": [
+                    {
+                      "kind": "attribute",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "logger-object",
+                        "precedes": {
+                          "stopBy": "neighbor",
+                          "regex": "^\\.$"
+                        }
+                      },
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "identifier",
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "^\\.$"
+                            },
+                            "any": [
+                              {
+                                "regex": "^exception$"
+                              },
+                              {
+                                "regex": "^(debug|info|warn|warning|error|critical|log|exception)$",
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "kind": "attribute",
+                                  "inside": {
+                                    "stopBy": "neighbor",
+                                    "kind": "call",
+                                    "all": [
+                                      {
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "kind": "argument_list",
+                                          "has": {
+                                            "stopBy": "neighbor",
+                                            "kind": "keyword_argument",
+                                            "has": {
+                                              "stopBy": "neighbor",
+                                              "kind": "identifier",
+                                              "regex": "^exc_info$",
+                                              "precedes": {
+                                                "stopBy": "neighbor",
+                                                "regex": "^=$"
+                                              }
+                                            },
+                                            "not": {
+                                              "has": {
+                                                "stopBy": "neighbor",
+                                                "follows": {
+                                                  "stopBy": "neighbor",
+                                                  "regex": "^=$"
+                                                },
+                                                "matches": "falsy"
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "identifier",
+                      "any": [
+                        {
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "attribute"
+                            }
+                          ],
+                          "resolves": {
+                            "import": [
+                              "logging.exception"
+                            ]
+                          }
+                        },
+                        {
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "attribute"
+                            }
+                          ],
+                          "resolves": {
+                            "import": [
+                              "logging.debug",
+                              "logging.info",
+                              "logging.warn",
+                              "logging.warning",
+                              "logging.error",
+                              "logging.critical",
+                              "logging.log",
+                              "logging.exception"
+                            ]
+                          },
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "call",
+                            "all": [
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "argument_list",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "keyword_argument",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "kind": "identifier",
+                                      "regex": "^exc_info$",
+                                      "precedes": {
+                                        "stopBy": "neighbor",
+                                        "regex": "^=$"
+                                      }
+                                    },
+                                    "not": {
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "follows": {
+                                          "stopBy": "neighbor",
+                                          "regex": "^=$"
+                                        },
+                                        "matches": "falsy"
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "reraise": {
+              "kind": "raise_statement",
+              "any": [
+                {
+                  "regex": "^raise$"
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "handler-name",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^(raise|from)$"
+                    }
+                  }
+                }
+              ]
+            },
+            "handler-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$N"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "handler-name"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "blind-type",
+            "all": [
+              {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "tuple"
+                    },
+                    {
+                      "kind": "parenthesized_expression"
+                    }
+                  ]
+                }
+              },
+              {
+                "matches": "type-position"
+              },
+              {
+                "matches": "first-blind"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "kind": "except_clause"
+                  },
+                  "kind": "except_clause",
+                  "not": {
+                    "any": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "block",
+                          "has": {
+                            "stopBy": {
+                              "matches": "not-entered"
+                            },
+                            "kind": "raise_statement",
+                            "regex": "^raise$"
+                          }
+                        }
+                      },
+                      {
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "as_pattern",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "as_pattern_target",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "identifier",
+                                  "pattern": "$N"
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "block",
+                              "has": {
+                                "stopBy": {
+                                  "matches": "not-entered"
+                                },
+                                "matches": "reraise"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "block",
+                          "has": {
+                            "stopBy": {
+                              "matches": "not-entered"
+                            },
+                            "matches": "log-exception-call"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "BLE001",
+        "message": "Do not catch blind exception"
+      }
+    }
+  ]
+}

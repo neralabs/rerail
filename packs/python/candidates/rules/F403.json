@@ -1,0 +1,66 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:F403",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F403 (undefined-local-with-import-star): any `from <module> import *` whose module is not `__future__` (at any depth, whatever the relative level), reported on the whole statement.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "undefined-local-with-import-star",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "import_from_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "wildcard_import",
+              "follows": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "kind": "dotted_name"
+                  },
+                  {
+                    "kind": "relative_import"
+                  }
+                ],
+                "pattern": "$MODULE"
+              }
+            },
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "dotted_name",
+                    "regex": "^__future__$"
+                  },
+                  {
+                    "kind": "relative_import",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "dotted_name",
+                      "regex": "^__future__$"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F403",
+        "message": "`from $MODULE import *` used; unable to detect undefined names"
+      }
+    }
+  ]
+}

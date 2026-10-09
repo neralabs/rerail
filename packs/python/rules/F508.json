@@ -1,0 +1,105 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:F508",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F508 (percent-format-star-requires-sequence): a valid `%`-format string with a `*` width or precision applied to a dict display or comprehension. The format string is a str literal (no f/t/b prefix; implicit concatenations joined, escapes decoded, parentheses transparent) left of `%`, read with the `percentFormat` grammar (a port of ruff_python_literal's cformat parser).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "percent-format-star-requires-sequence",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "plain-string": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "kind": "string",
+                      "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"
+                    }
+                  }
+                }
+              ]
+            },
+            "format-string": {
+              "any": [
+                {
+                  "matches": "plain-string",
+                  "parse": {
+                    "grammar": "percentFormat",
+                    "not": {
+                      "has": {
+                        "kind": "error"
+                      }
+                    },
+                    "has": {
+                      "kind": "star",
+                      "stopBy": "end"
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "format-string"
+                  }
+                }
+              ]
+            },
+            "operand": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "dictionary"
+                    },
+                    {
+                      "kind": "dictionary_comprehension"
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "operand"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "pattern": "$S % $R"
+          },
+          "constraints": {
+            "S": {
+              "matches": "format-string"
+            },
+            "R": {
+              "matches": "operand"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F508",
+        "message": "`%`-format string `*` specifier requires sequence"
+      }
+    }
+  ]
+}

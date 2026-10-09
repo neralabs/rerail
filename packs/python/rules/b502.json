@@ -1,0 +1,81 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit:b502",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect calls whose method or ssl_version argument selects an insecure SSL/TLS protocol.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "B502",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "pattern": "$F($$$ARGS)"
+              },
+              {
+                "any": [
+                  {
+                    "arguments": {
+                      "signature": [
+                        "method"
+                      ],
+                      "bind": {
+                        "PROTOCOL": "method"
+                      }
+                    }
+                  },
+                  {
+                    "arguments": {
+                      "signature": [
+                        "ssl_version"
+                      ],
+                      "bind": {
+                        "PROTOCOL": "ssl_version"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "constraints": {
+            "PROTOCOL": {
+              "resolves": {
+                "import": [
+                  "ssl.PROTOCOL_SSLv2",
+                  "ssl.PROTOCOL_SSLv3",
+                  "ssl.PROTOCOL_TLSv1",
+                  "ssl.PROTOCOL_TLSv1_1",
+                  "OpenSSL.SSL.SSLv2_METHOD",
+                  "OpenSSL.SSL.SSLv23_METHOD",
+                  "OpenSSL.SSL.SSLv3_METHOD",
+                  "OpenSSL.SSL.TLSv1_METHOD",
+                  "OpenSSL.SSL.TLSv1_1_METHOD",
+                  "pyOpenSSL.SSL.SSLv2_METHOD",
+                  "pyOpenSSL.SSL.SSLv23_METHOD",
+                  "pyOpenSSL.SSL.SSLv3_METHOD",
+                  "pyOpenSSL.SSL.TLSv1_METHOD",
+                  "pyOpenSSL.SSL.TLSv1_1_METHOD"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B502",
+        "anchor": "witness.span",
+        "message": "An SSL context is configured with an insecure protocol version."
+      }
+    }
+  ]
+}

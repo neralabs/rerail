@@ -1,0 +1,101 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit:b412",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect imports of modules exposing insecure CGI handler classes.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "B412",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "import wsgiref.handlers"
+              },
+              {
+                "pattern": "import wsgiref.handlers as $ALIAS"
+              },
+              {
+                "pattern": "from wsgiref import handlers"
+              },
+              {
+                "pattern": "from wsgiref import handlers as $ALIAS"
+              },
+              {
+                "pattern": "import wsgiref.handlers.CGIHandler"
+              },
+              {
+                "pattern": "import wsgiref.handlers.CGIHandler as $ALIAS"
+              },
+              {
+                "pattern": "from wsgiref.handlers.CGIHandler import $$$NAMES"
+              },
+              {
+                "pattern": "from wsgiref.handlers import CGIHandler"
+              },
+              {
+                "pattern": "from wsgiref.handlers import CGIHandler as $ALIAS"
+              },
+              {
+                "pattern": "import twisted.web.twcgi"
+              },
+              {
+                "pattern": "import twisted.web.twcgi as $ALIAS"
+              },
+              {
+                "pattern": "from twisted.web import twcgi"
+              },
+              {
+                "pattern": "from twisted.web import twcgi as $ALIAS"
+              },
+              {
+                "pattern": "import twisted.web.twcgi.CGIScript"
+              },
+              {
+                "pattern": "import twisted.web.twcgi.CGIScript as $ALIAS"
+              },
+              {
+                "pattern": "from twisted.web.twcgi.CGIScript import $$$NAMES"
+              },
+              {
+                "pattern": "from twisted.web.twcgi import CGIScript"
+              },
+              {
+                "pattern": "from twisted.web.twcgi import CGIScript as $ALIAS"
+              },
+              {
+                "pattern": "import twisted.web.twcgi.CGIDirectory"
+              },
+              {
+                "pattern": "import twisted.web.twcgi.CGIDirectory as $ALIAS"
+              },
+              {
+                "pattern": "from twisted.web.twcgi.CGIDirectory import $$$NAMES"
+              },
+              {
+                "pattern": "from twisted.web.twcgi import CGIDirectory"
+              },
+              {
+                "pattern": "from twisted.web.twcgi import CGIDirectory as $ALIAS"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "B412",
+        "anchor": "witness.span",
+        "message": "Consider possible security implications associated with this CGI handler import."
+      }
+    }
+  ]
+}

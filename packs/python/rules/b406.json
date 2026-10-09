@@ -1,0 +1,47 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit:b406",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect direct imports of xml.sax.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "B406",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "import xml.sax"
+              },
+              {
+                "pattern": "import xml.sax as $ALIAS"
+              },
+              {
+                "pattern": "from xml.sax import $$$NAMES"
+              },
+              {
+                "pattern": "from xml import sax"
+              },
+              {
+                "pattern": "from xml import sax as $ALIAS"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "B406",
+        "anchor": "witness.span",
+        "message": "xml.sax parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library."
+      }
+    }
+  ]
+}

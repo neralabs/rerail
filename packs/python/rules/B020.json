@@ -1,0 +1,334 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:B020",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B020 (loop-variable-overrides-iterator): a name in a `for` loop's target that also occurs as a name in its iterable, where comprehensions in the iterable contribute only the iterables of their `for` clauses and lambdas the children of their body (Ruff's `NameFinder` walks the body's children, so `lambda: x` adds nothing). A name that is a (non-variadic) parameter of a lambda in the iterable is exempt unless it occurs again after that lambda, as Ruff's walk removes it and a later occurrence adds it back. Reported on each such target name (Ruff reports only the last occurrence of a name repeated in the target).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "loop-variable-overrides-iterator",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "name-ref": {
+              "kind": "identifier",
+              "pattern": "$NAME",
+              "not": {
+                "any": [
+                  {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^\\.$"
+                    }
+                  },
+                  {
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "regex": "^=$"
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "keyword_argument"
+                    }
+                  }
+                ]
+              }
+            },
+            "mentions": {
+              "any": [
+                {
+                  "matches": "name-ref"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "list_comprehension"
+                    },
+                    {
+                      "kind": "set_comprehension"
+                    },
+                    {
+                      "kind": "dictionary_comprehension"
+                    },
+                    {
+                      "kind": "generator_expression"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "for_in_clause",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "^in$"
+                      },
+                      "matches": "mentions"
+                    }
+                  }
+                },
+                {
+                  "kind": "lambda",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^:$"
+                    },
+                    "matches": "lambda-body"
+                  }
+                },
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "list_comprehension"
+                      },
+                      {
+                        "kind": "set_comprehension"
+                      },
+                      {
+                        "kind": "dictionary_comprehension"
+                      },
+                      {
+                        "kind": "generator_expression"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  },
+                  "matches": "mentions-inside"
+                }
+              ]
+            },
+            "lambda-body": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "lambda-body"
+                  }
+                },
+                {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "matches": "mentions"
+                      },
+                      {
+                        "any": [
+                          {
+                            "kind": "for_in_clause"
+                          },
+                          {
+                            "kind": "if_clause"
+                          }
+                        ],
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "mentions"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "mentions-inside": {
+              "has": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "list_comprehension"
+                    },
+                    {
+                      "kind": "set_comprehension"
+                    },
+                    {
+                      "kind": "dictionary_comprehension"
+                    },
+                    {
+                      "kind": "generator_expression"
+                    },
+                    {
+                      "kind": "lambda"
+                    }
+                  ]
+                },
+                "any": [
+                  {
+                    "matches": "name-ref"
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "list_comprehension"
+                      },
+                      {
+                        "kind": "set_comprehension"
+                      },
+                      {
+                        "kind": "dictionary_comprehension"
+                      },
+                      {
+                        "kind": "generator_expression"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ],
+                    "matches": "mentions"
+                  }
+                ]
+              }
+            },
+            "lambda-parameter": {
+              "kind": "lambda",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "lambda_parameters",
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "pattern": "$NAME"
+                    },
+                    {
+                      "kind": "default_parameter",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "identifier",
+                        "pattern": "$NAME",
+                        "precedes": {
+                          "stopBy": "neighbor",
+                          "regex": "^=$"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "shadowing-lambda": {
+              "matches": "lambda-parameter",
+              "not": {
+                "matches": "later-mention"
+              }
+            },
+            "later-mention": {
+              "any": [
+                {
+                  "precedes": {
+                    "stopBy": "end",
+                    "matches": "mentions"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "^in$"
+                      },
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "for_statement"
+                      }
+                    },
+                    "matches": "later-mention"
+                  }
+                }
+              ]
+            },
+            "in-target": {
+              "any": [
+                {
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "regex": "^in$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "for_statement",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "^in$"
+                      },
+                      "all": [
+                        {
+                          "matches": "mentions"
+                        },
+                        {
+                          "not": {
+                            "any": [
+                              {
+                                "matches": "shadowing-lambda"
+                              },
+                              {
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "shadowing-lambda"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "in-target"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "all": [
+              {
+                "pattern": "$NAME"
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\.$"
+                  }
+                }
+              },
+              {
+                "matches": "in-target"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B020",
+        "message": "Loop control variable `$NAME` overrides iterable it iterates"
+      }
+    }
+  ]
+}

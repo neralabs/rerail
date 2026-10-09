@@ -1,0 +1,106 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit:B602",
+  "revision": 1,
+  "mode": "steer",
+  "description": "A `subprocess` call that runs its command through the shell (`shell=True`).",
+  "scope": {
+    "include": [
+      "**/*.py",
+      "**/*.pyi"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shell",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "subprocess.Popen",
+                      "subprocess.call",
+                      "subprocess.check_call",
+                      "subprocess.check_output",
+                      "subprocess.run"
+                    ]
+                  }
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "kind": "keyword_argument",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^shell$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "value",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "false"
+                              },
+                              {
+                                "kind": "none"
+                              },
+                              {
+                                "kind": "integer",
+                                "regex": "^0$"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B602",
+        "message": "subprocess with shell=True runs the command through the shell. Pass a list of arguments without shell=True."
+      }
+    }
+  ]
+}

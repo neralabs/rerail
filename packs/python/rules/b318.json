@@ -1,0 +1,41 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit:b318",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect unsafe xml.dom.minidom parsing calls",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "B318",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "xml.dom.minidom.parse",
+                  "xml.dom.minidom.parseString"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B318",
+        "anchor": "witness.span",
+        "message": "Using xml.dom.minidom to parse untrusted XML is vulnerable to XML attacks; use the defusedxml equivalent."
+      }
+    }
+  ]
+}

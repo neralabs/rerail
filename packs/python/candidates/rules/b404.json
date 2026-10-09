@@ -1,0 +1,41 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit:b404",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect direct imports of subprocess.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "B404",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "import subprocess"
+              },
+              {
+                "pattern": "import subprocess as $ALIAS"
+              },
+              {
+                "pattern": "from subprocess import $$$NAMES"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "B404",
+        "anchor": "witness.span",
+        "message": "Consider possible security implications associated with the subprocess module."
+      }
+    }
+  ]
+}

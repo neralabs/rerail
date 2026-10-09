@@ -1,0 +1,201 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:E741",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's E741 (ambiguous-variable-name): a name `l`, `I` or `O` bound as a variable: assignment, augmented-assignment, annotated, `for`/comprehension, `with ... as`, `except ... as` and walrus targets (through tuple, list and starred unpacking), `global`/`nonlocal` names, function and lambda parameters, and `type` alias names. Not match-pattern captures, imports, type parameters or `del`. Stub files (`.pyi`) are skipped.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": [
+      "**/*.pyi"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "ambiguous-variable-name",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "store-position": {
+              "any": [
+                {
+                  "all": [
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "assignment"
+                          },
+                          {
+                            "kind": "augmented_assignment"
+                          },
+                          {
+                            "kind": "named_expression"
+                          },
+                          {
+                            "kind": "default_parameter"
+                          },
+                          {
+                            "kind": "typed_parameter"
+                          },
+                          {
+                            "kind": "typed_default_parameter"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "not": {
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "(?s)."
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^for$"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "as_pattern_target"
+                      },
+                      {
+                        "kind": "parameters"
+                      },
+                      {
+                        "kind": "lambda_parameters"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "type",
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^type$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type_alias_statement"
+                  }
+                },
+                {
+                  "kind": "generic_type",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type",
+                    "matches": "store-position"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "pattern_list"
+                      },
+                      {
+                        "kind": "tuple_pattern"
+                      },
+                      {
+                        "kind": "list_pattern"
+                      },
+                      {
+                        "kind": "list_splat_pattern"
+                      },
+                      {
+                        "kind": "dictionary_splat_pattern"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "list"
+                      },
+                      {
+                        "kind": "list_splat"
+                      },
+                      {
+                        "kind": "parenthesized_expression"
+                      }
+                    ],
+                    "matches": "store-position"
+                  }
+                }
+              ]
+            },
+            "store-name": {
+              "kind": "identifier",
+              "any": [
+                {
+                  "matches": "store-position"
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "global_statement"
+                      },
+                      {
+                        "kind": "nonlocal_statement"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "all": [
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "type"
+                          },
+                          {
+                            "kind": "generic_type"
+                          }
+                        ],
+                        "matches": "store-position"
+                      }
+                    },
+                    {
+                      "not": {
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "(?s)."
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "regex": "^(?<NAME>[lIO])$",
+            "matches": "store-name"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "E741",
+        "message": "Ambiguous variable name: `$NAME`"
+      }
+    }
+  ]
+}

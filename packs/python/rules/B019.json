@@ -1,0 +1,254 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:B019",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B019 (cached-instance-method): a decorator `functools.cache` / `functools.lru_cache` (called or not) on an instance method: a function defined directly in a class body, not decorated with `staticmethod`/`classmethod` (or `abc.abstractstaticmethod`/`abc.abstractclassmethod`), not `__new__`, `__init_subclass__` or `__class_getitem__`, in a class that does not list an `enum` base (`Enum`, `Flag`, `IntEnum`, `IntFlag`, `StrEnum`, `ReprEnum`, `CheckEnum`). Names resolve with `resolves` (imports, their scope and order, and shadowing, as Ruff's semantic model sees them); a base naming a class defined in the file is followed to that class's bases (`resolves.binding` on its definition, cycles fail). Reported on the decorator.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "cached-instance-method",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "ref-cache": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "functools.lru_cache",
+                  "functools.cache"
+                ]
+              }
+            },
+            "ref-staticmethod": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "global": [
+                  "staticmethod"
+                ],
+                "import": [
+                  "builtins.staticmethod",
+                  "abc.abstractstaticmethod"
+                ]
+              }
+            },
+            "ref-classmethod": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "global": [
+                  "classmethod"
+                ],
+                "import": [
+                  "builtins.classmethod",
+                  "abc.abstractclassmethod"
+                ]
+              }
+            },
+            "ref-enum": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "enum.Enum",
+                  "enum.Flag",
+                  "enum.IntEnum",
+                  "enum.IntFlag",
+                  "enum.StrEnum",
+                  "enum.ReprEnum",
+                  "enum.CheckEnum"
+                ]
+              }
+            },
+            "cache-expr": {
+              "any": [
+                {
+                  "matches": "ref-cache"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "ref-cache",
+                    "not": {
+                      "kind": "argument_list"
+                    }
+                  }
+                }
+              ]
+            },
+            "not-instance-method": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "matches": "ref-staticmethod"
+                    },
+                    {
+                      "kind": "call",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "ref-staticmethod",
+                        "not": {
+                          "kind": "argument_list"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "any": [
+                    {
+                      "matches": "ref-classmethod"
+                    },
+                    {
+                      "kind": "call",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "ref-classmethod",
+                        "not": {
+                          "kind": "argument_list"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "enum-base": {
+              "any": [
+                {
+                  "matches": "ref-enum"
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "matches": "enum-class"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "enum-base",
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "regex": "^\\[$"
+                    }
+                  }
+                }
+              ]
+            },
+            "enum-class": {
+              "kind": "class_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "argument_list",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "enum-base"
+                }
+              }
+            }
+          },
+          "rule": {
+            "kind": "decorator",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "cache-expr"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "function_definition",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "identifier",
+                        "regex": "^(__new__|__init_subclass__|__class_getitem__)$",
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "^def$"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "decorator",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "not-instance-method"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "class_definition",
+                      "not": {
+                        "matches": "enum-class"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B019",
+        "message": "Use of `functools.lru_cache` or `functools.cache` on methods can lead to memory leaks"
+      }
+    }
+  ]
+}

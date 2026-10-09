@@ -1,0 +1,68 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit:b508",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Resolve pysnmp.hlapi.CommunityData and flag mpModel equal to integer 0 or 1.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit:B508",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)",
+            "arguments": {
+              "signature": [
+                "communityIndex",
+                "communityName",
+                "mpModel",
+                "contextEngineId",
+                "contextName",
+                "tag",
+                "securityName"
+              ],
+              "bind": {
+                "MODEL": "mpModel"
+              }
+            }
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "pysnmp.hlapi.CommunityData"
+                ]
+              }
+            },
+            "MODEL": {
+              "any": [
+                {
+                  "value": {
+                    "eq": 0
+                  }
+                },
+                {
+                  "value": {
+                    "eq": 1
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B508",
+        "anchor": "capture.F",
+        "message": "CommunityData uses insecure SNMP version via mpModel 0 or 1"
+      }
+    }
+  ]
+}

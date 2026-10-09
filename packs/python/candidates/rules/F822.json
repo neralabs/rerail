@@ -1,0 +1,47 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:F822",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F822 (undefined-export) with default settings, on the engine's name resolution (M10a `resolves.unresolved` on `__all__` entries): a string entry of a static module `__all__` definition (Ruff's extract_dunder_all_names) (an implicit concatenation is one entry) that names no module binding (a bare annotation included) and no builtin, in a module without a star import. `__init__.py` is exempt (Ruff reports it only in preview). Reported on the string.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": [
+      "**/__init__.py",
+      "**/__init__.pyi",
+      "__init__.py",
+      "__init__.pyi"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "undefined-export",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "pattern": "$S",
+            "resolves": {
+              "unresolved": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F822",
+        "message": "Undefined name $S in `__all__`"
+      }
+    }
+  ]
+}

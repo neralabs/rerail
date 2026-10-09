@@ -1,0 +1,309 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff:ASYNC220",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of Ruff's ASYNC220 (create-subprocess-in-async-function): a call to `subprocess.Popen`, `os.popen`, or an `os.spawn*` function whose mode (Ruff's find_argument_value(\"mode\", 0): `arguments` in syntactic mode) is given and is not `os.P_WAIT` (directly, or through a name whose value, read as find_assigned_value's lookup_symbol does (`resolves.binding` with `stopAtGlobal`), is `os.P_WAIT`) inside an `async def` body whose function is the nearest enclosing function, lambda body or class, reported on the callee. Names resolve as in Ruff's resolve_qualified_name, through the engine's `resolves` (M7).",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "create-subprocess",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "scope-body": {
+       "kind": "block",
+       "inside": {
+        "stopBy": "neighbor",
+        "any": [
+         {
+          "kind": "function_definition"
+         },
+         {
+          "kind": "class_definition"
+         }
+        ]
+       }
+      },
+      "lambda-body": {
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "lambda"
+       },
+       "follows": {
+        "stopBy": "end",
+        "regex": "^:$"
+       }
+      },
+      "callee-position": {
+       "any": [
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "call"
+         },
+         "precedes": {
+          "stopBy": "neighbor",
+          "any": [
+           {
+            "kind": "argument_list"
+           },
+           {
+            "kind": "generator_expression"
+           }
+          ]
+         }
+        },
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "parenthesized_expression",
+          "matches": "callee-position"
+         }
+        }
+       ]
+      },
+      "async-context": {
+       "inside": {
+        "stopBy": {
+         "any": [
+          {
+           "matches": "scope-body"
+          },
+          {
+           "matches": "lambda-body"
+          }
+         ]
+        },
+        "kind": "block",
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "function_definition",
+         "has": {
+          "stopBy": "neighbor",
+          "regex": "^async$"
+         }
+        }
+       }
+      },
+      "p-wait-value": {
+       "any": [
+        {
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "import": [
+           "os.P_WAIT"
+          ]
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "p-wait-value"
+         }
+        }
+       ]
+      },
+      "p-wait-arg": {
+       "any": [
+        {
+         "matches": "p-wait-value"
+        },
+        {
+         "kind": "identifier",
+         "resolves": {
+          "binding": {
+           "stopAtGlobal": true,
+           "value": {
+            "matches": "p-wait-value"
+           }
+          }
+         }
+        },
+        {
+         "kind": "identifier",
+         "pattern": "$PW",
+         "resolves": {
+          "binding": {
+           "stopAtGlobal": true,
+           "site": {
+            "kind": "assignment",
+            "all": [
+             {
+              "has": {
+               "field": "left",
+               "has": {
+                "stopBy": "neighbor",
+                "kind": "identifier",
+                "pattern": "$UT",
+                "compare": {
+                 "left": "UT",
+                 "op": "eq",
+                 "right": "PW",
+                 "text": "tokens"
+                },
+                "not": {
+                 "precedes": {
+                  "stopBy": "end",
+                  "kind": "identifier",
+                  "pattern": "$UU",
+                  "compare": {
+                   "left": "UU",
+                   "op": "eq",
+                   "right": "PW",
+                   "text": "tokens"
+                  }
+                 }
+                }
+               }
+              }
+             },
+             {
+              "has": {
+               "field": "right",
+               "has": {
+                "stopBy": "neighbor",
+                "matches": "p-wait-value",
+                "pattern": "$UV"
+               }
+              }
+             },
+             {
+              "compare": {
+               "left": "UV",
+               "op": "eq",
+               "right": "UT",
+               "text": "index"
+              }
+             }
+            ]
+           }
+          }
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "p-wait-arg"
+         }
+        }
+       ]
+      },
+      "spawn": {
+       "any": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "attribute"
+        }
+       ],
+       "resolves": {
+        "import": [
+         "os.spawnl",
+         "os.spawnle",
+         "os.spawnlp",
+         "os.spawnlpe",
+         "os.spawnv",
+         "os.spawnve",
+         "os.spawnvp",
+         "os.spawnvpe"
+        ]
+       }
+      },
+      "target": {
+       "any": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "attribute"
+        }
+       ],
+       "resolves": {
+        "import": [
+         "subprocess.Popen",
+         "os.popen"
+        ]
+       }
+      }
+     },
+     "rule": {
+      "all": [
+       {
+        "matches": "callee-position"
+       },
+       {
+        "matches": "async-context"
+       },
+       {
+        "any": [
+         {
+          "matches": "target"
+         },
+         {
+          "all": [
+           {
+            "matches": "spawn"
+           },
+           {
+            "inside": {
+             "stopBy": {
+              "kind": "call"
+             },
+             "kind": "call",
+             "arguments": {
+              "bind": {
+               "M": "mode"
+              },
+              "signature": [
+               "mode"
+              ],
+              "mode": "syntactic"
+             },
+             "not": {
+              "has": {
+               "stopBy": "end",
+               "pattern": "$MODE_ARG",
+               "compare": {
+                "left": "M",
+                "op": "eq",
+                "right": "MODE_ARG",
+                "text": "node"
+               },
+               "matches": "p-wait-arg"
+              }
+             }
+            }
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "ASYNC220",
+    "message": "Async functions should not create subprocesses with blocking methods"
+   }
+  }
+ ]
+}

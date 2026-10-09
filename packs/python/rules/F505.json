@@ -1,0 +1,42 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:F505",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F505 (percent-format-missing-argument): a valid `%`-format string without positional placeholders applied to a dict display without `**`, all of whose keys are string literals, that passes no value for some `%(key)` placeholder. `formatArgs` reads the format string left of `%` (a str literal with no f/t/b prefix, implicit concatenations joined, escapes decoded, parentheses transparent) with the `percentFormat` grammar (a port of ruff_python_literal's cformat parser), and the right operand as Ruff's strings.rs does.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "percent-format-missing-argument",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$S % $R",
+            "formatArgs": {
+              "style": "percent",
+              "string": "S",
+              "args": "R",
+              "missing": {
+                "kind": "placeholder",
+                "has": {
+                  "kind": "mapping_key"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F505",
+        "message": "`%`-format string is missing argument(s) for placeholder(s)"
+      }
+    }
+  ]
+}

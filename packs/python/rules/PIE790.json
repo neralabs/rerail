@@ -1,0 +1,273 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:PIE790",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's PIE790 (unnecessary-placeholder): a `pass` statement, or an expression statement that is only `...`, in a body (module, class, function or compound-statement block) of two or more statements. An `...` is kept in a `TYPE_CHECKING` block, a `typing.Protocol` class or an `abc.abstractmethod`-decorated function, and there Ruff stops scanning the body, so a later `pass` is kept too.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unnecessary-placeholder",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "protocol": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.Protocol",
+                  "typing_extensions.Protocol",
+                  "_typeshed.Protocol"
+                ]
+              }
+            },
+            "abstract": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "abc.abstractmethod",
+                  "abc.abstractclassmethod",
+                  "abc.abstractstaticmethod",
+                  "abc.abstractproperty"
+                ]
+              }
+            },
+            "suite": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "block"
+                    },
+                    {
+                      "kind": "module"
+                    }
+                  ]
+                }
+              ],
+              "count": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "kind": "line_continuation"
+                      },
+                      {
+                        "regex": "^;$"
+                      }
+                    ]
+                  }
+                },
+                "min": 2
+              }
+            },
+            "ellipsis": {
+              "any": [
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "ellipsis"
+                  }
+                }
+              ]
+            },
+            "ellipsis-stmt": {
+              "kind": "expression_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "ellipsis"
+              },
+              "count": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "(?s)."
+                },
+                "max": 1
+              }
+            },
+            "stub-context": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "block",
+                    "not": {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "elif_clause"
+                          },
+                          {
+                            "kind": "else_clause"
+                          }
+                        ]
+                      }
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "if_statement",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "^if$"
+                        },
+                        "any": [
+                          {
+                            "kind": "identifier",
+                            "regex": "^TYPE_CHECKING$"
+                          },
+                          {
+                            "kind": "identifier",
+                            "resolves": {
+                              "import": [
+                                "typing.TYPE_CHECKING",
+                                "_typeshed.TYPE_CHECKING",
+                                "typing_extensions.TYPE_CHECKING"
+                              ]
+                            }
+                          },
+                          {
+                            "kind": "attribute",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "identifier",
+                              "regex": "^TYPE_CHECKING$",
+                              "follows": {
+                                "stopBy": "neighbor",
+                                "regex": "^\\.$"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "class_definition",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "matches": "protocol"
+                          },
+                          {
+                            "kind": "subscript",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "not": {
+                                "follows": {
+                                  "stopBy": "neighbor",
+                                  "regex": "(?s)."
+                                }
+                              },
+                              "matches": "protocol"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "function_definition",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "decorated_definition",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "decorator",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "abstract"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "pattern": "$P",
+            "any": [
+              {
+                "kind": "pass_statement",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "suite"
+                },
+                "not": {
+                  "all": [
+                    {
+                      "matches": "stub-context"
+                    },
+                    {
+                      "follows": {
+                        "stopBy": "end",
+                        "matches": "ellipsis-stmt"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "matches": "ellipsis-stmt",
+                "kind": "expression_statement",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "suite"
+                },
+                "not": {
+                  "matches": "stub-context"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PIE790",
+        "message": "Unnecessary `$P` placeholder"
+      }
+    }
+  ]
+}

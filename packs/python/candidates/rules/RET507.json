@@ -1,0 +1,204 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:RET507",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's RET507 (superfluous-else-continue): the first `elif`/`else` clause of an `if` statement inside a function whose `if` body has a direct `continue` statement and no earlier direct return/raise/break statement, reported on the `elif`/`else` keyword. As in Ruff, only the `if` body and the first clause are compared, nested functions and classes are separate, and generator functions and functions whose body is a lone `return` are skipped.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "superfluous-else-continue",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "analysed-function": {
+              "kind": "function_definition",
+              "all": [
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "class_definition"
+                          }
+                        ]
+                      },
+                      "kind": "yield"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "block",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "return_statement"
+                      },
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "return_statement"
+                              },
+                              {
+                                "kind": "comment"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "none-literal": {
+              "any": [
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "none-literal"
+                  }
+                }
+              ]
+            },
+            "value-return": {
+              "kind": "return_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "(?s).",
+                "not": {
+                  "any": [
+                    {
+                      "regex": "^return$"
+                    },
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "matches": "none-literal"
+                    }
+                  ]
+                }
+              }
+            },
+            "own-return": {
+              "kind": "return_statement"
+            },
+            "has-result": {
+              "has": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                },
+                "matches": "value-return"
+              }
+            }
+          },
+          "rule": {
+            "regex": "^(?<BRANCH>elif|else)$",
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "elif_clause"
+                },
+                {
+                  "kind": "else_clause"
+                }
+              ],
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "elif_clause"
+                    },
+                    {
+                      "kind": "else_clause"
+                    }
+                  ]
+                }
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "if_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "continue_statement",
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "kind": "return_statement"
+                          },
+                          {
+                            "kind": "raise_statement"
+                          },
+                          {
+                            "kind": "break_statement"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  },
+                  "kind": "function_definition",
+                  "all": [
+                    {
+                      "matches": "analysed-function"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RET507",
+        "message": "Unnecessary `$BRANCH` after `continue` statement"
+      }
+    }
+  ]
+}

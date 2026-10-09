@@ -1,0 +1,311 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:SIM105",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's SIM105 (suppressible-exception) at target 3.14: a `try` with one simple statement (expression, assignment, `del`, `assert`, import or `pass`), exactly one `except` handler whose body is only `pass` or `...`, no `else` or `finally`, and whose handled types are all names or attribute chains (or none). Reported on the `try` statement.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "suppressible-exception",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "dotted": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "matches": "dotted"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "regex": "^[()]$"
+                    },
+                    "matches": "dotted"
+                  }
+                }
+              ]
+            },
+            "dotted-or-tuple": {
+              "any": [
+                {
+                  "matches": "dotted"
+                },
+                {
+                  "kind": "tuple",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[(),]$"
+                          },
+                          {
+                            "matches": "dotted"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "handler-type": {
+              "any": [
+                {
+                  "matches": "dotted-or-tuple"
+                },
+                {
+                  "kind": "as_pattern",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "matches": "dotted-or-tuple"
+                  }
+                }
+              ]
+            },
+            "ellipsis": {
+              "any": [
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "ellipsis"
+                  }
+                }
+              ]
+            },
+            "empty-body": {
+              "kind": "block",
+              "count": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "kind": "line_continuation"
+                      },
+                      {
+                        "regex": "^;$"
+                      }
+                    ]
+                  }
+                },
+                "min": 1,
+                "max": 1
+              },
+              "has": {
+                "stopBy": "neighbor",
+                "all": [
+                  {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        },
+                        {
+                          "regex": "^;$"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "pass_statement"
+                      },
+                      {
+                        "kind": "expression_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "ellipsis"
+                        },
+                        "count": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "(?s)."
+                          },
+                          "max": 1
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "kind": "try_statement",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "else_clause"
+                  },
+                  {
+                    "kind": "finally_clause"
+                  }
+                ]
+              }
+            },
+            "count": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "except_clause"
+              },
+              "min": 1,
+              "max": 1
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          },
+                          {
+                            "regex": "^;$"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 1,
+                    "max": 1
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "kind": "line_continuation"
+                            },
+                            {
+                              "regex": "^;$"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "kind": "expression_statement"
+                          },
+                          {
+                            "kind": "delete_statement"
+                          },
+                          {
+                            "kind": "assert_statement"
+                          },
+                          {
+                            "kind": "import_statement"
+                          },
+                          {
+                            "kind": "import_from_statement"
+                          },
+                          {
+                            "kind": "future_import_statement"
+                          },
+                          {
+                            "kind": "pass_statement"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "except_clause",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "empty-body"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^(except|\\*|,|:)$"
+                          },
+                          {
+                            "kind": "block"
+                          },
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "matches": "handler-type"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "SIM105",
+        "message": "Use `contextlib.suppress(...)` instead of `try`-`except`-`pass`"
+      }
+    }
+  ]
+}

@@ -1,0 +1,164 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:F404",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F404 (late-future-import): a `from __future__ import` (also relative, by the module's text with `resolves.imported` and `relative: \"text\"`, as Ruff ignores the level) after the futures boundary, reported on the statement. The boundary is closed by any statement other than a `__future__` import or a string-literal module docstring in first position (ruff_python_parser semantic_errors.rs `visit_stmt`); a compound statement closes it before its body is visited, so a nested `__future__` import is always late.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "late-future-import",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "future-import": {
+              "any": [
+                {
+                  "kind": "future_import_statement"
+                },
+                {
+                  "kind": "import_from_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "relative_import",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "dotted_name",
+                      "resolves": {
+                        "imported": [
+                          "__future__"
+                        ],
+                        "relative": "text"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "string-literal": {
+              "any": [
+                {
+                  "kind": "string",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string_start",
+                    "regex": "^[rRuU]*['\"]"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "interpolation"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "matches": "string-literal"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "string-literal"
+                  }
+                }
+              ]
+            },
+            "module-docstring": {
+              "kind": "expression_statement",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "module"
+              },
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "string-literal"
+              },
+              "all": [
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^;$"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "matches": "string-literal"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "future-import",
+            "any": [
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "module"
+                  }
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "regex": "^;$"
+                      },
+                      {
+                        "matches": "future-import"
+                      },
+                      {
+                        "matches": "module-docstring"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F404",
+        "message": "`from __future__` imports must occur at the beginning of the file"
+      }
+    }
+  ]
+}

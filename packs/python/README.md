@@ -1,6 +1,6 @@
 # Rerail rule pack: Python
 
-22 code rules for Python, ported from Ruff 0.16.9 (17 rules) and Bandit 1.8.6 (5 tests). Each is scored against
+126 code rules for Python, ported from Ruff 0.16.9 (85 rules) and Bandit 1.9.4 (41 tests). Each is scored against
 the tool's own findings on the tool's test fixtures, through the engine's production workspace path, with every
 disagreement declared in `divergences.json` (none today).
 
@@ -15,16 +15,20 @@ checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 | `divergences.json` | Declared disagreements with the tools |
 | `upstream/<tool>/` | The tool's copied tests (`fixtures/`), its recordings (`fixtures.expected.json`, `corpus-django.expected.json`) and the recorder (`generate.py`, sharing `upstream/common.py`) |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
+| `candidates/rules/` | Ports still being evaluated (108 Ruff and Bandit ports): never shipped, never listed in `pack.json`, and not recorded |
 
-Re-recording runs offline against the pinned tool versions, under CPython 3.14:
+Re-recording runs offline against the pinned tool versions, under CPython 3.14 (Bandit itself runs from its own
+install, on CPython 3.13):
 
 ```sh
 python3.14 upstream/ruff/generate.py fixtures <ruff checkout at 0.16.9> <ruff 0.16.9 executable>
 python3.14 upstream/ruff/generate.py corpus <ruff 0.16.9 executable> django=<django checkout>
+python3.14 upstream/bandit/generate.py fixtures <bandit checkout at 1.9.4> <bandit 1.9.4 executable>
+python3.14 upstream/bandit/generate.py corpus <bandit 1.9.4 executable> django=<django checkout>
 ```
 
 Scoring one rule with every false positive and false negative printed:
 
 ```sh
-node --import tsx conformance/languages/cli.ts --pack python --rule ruff-f841-unused-variable --fixtures
+node --import tsx conformance/languages/cli.ts --pack python --rule ruff-f811-redefined-while-unused --fixtures
 ```

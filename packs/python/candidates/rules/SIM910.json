@@ -1,0 +1,511 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:SIM910",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's SIM910 (dict-get-with-none-default): `.get(key, None, ...)` whose second positional argument is `None`, with no keywords, called on a dict display or dict comprehension (through parentheses), or on a name whose binding is a dict (Ruff's `is_dict` through `resolves.binding`: a `def`'s `**kwargs`, a dict-typed value or `dict(...)`, a `dict`/`Dict` annotation or return annotation; unpacking carries no value).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "dict-get-with-none-default",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "dict-expr": {
+              "any": [
+                {
+                  "kind": "dictionary"
+                },
+                {
+                  "kind": "dictionary_comprehension"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dict-expr"
+                  }
+                },
+                {
+                  "kind": "named_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^:=$"
+                    },
+                    "matches": "dict-expr"
+                  }
+                },
+                {
+                  "kind": "conditional_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "precedes": {
+                          "stopBy": "neighbor",
+                          "regex": "^if$"
+                        },
+                        "matches": "dict-expr"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "^else$"
+                        },
+                        "matches": "dict-expr"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "boolean_operator",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^(and|or)$"
+                          },
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "matches": "dict-expr"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "dict-callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "dict"
+                    ],
+                    "import": [
+                      "builtins.dict"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dict-callee"
+                  }
+                }
+              ]
+            },
+            "dict-init": {
+              "any": [
+                {
+                  "matches": "dict-expr"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dict-callee",
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "argument_list"
+                        },
+                        {
+                          "kind": "generator_expression"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "dict-ann": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "dict"
+                    ],
+                    "import": [
+                      "builtins.dict"
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.Dict",
+                      "_typeshed.Dict",
+                      "typing_extensions.Dict"
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "subscript"
+                    },
+                    {
+                      "kind": "generic_type"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "matches": "dict-ann"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dict-ann"
+                  }
+                }
+              ]
+            },
+            "plain-target": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "plain-target"
+                  }
+                }
+              ]
+            },
+            "dict-bound": {
+              "kind": "identifier",
+              "any": [
+                {
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "any": [
+                          {
+                            "kind": "dictionary_splat_pattern",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "parameters"
+                            }
+                          },
+                          {
+                            "kind": "typed_parameter",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "parameters"
+                            },
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "dictionary_splat_pattern"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "matches": "dict-init"
+                      },
+                      "site": {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "type"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "as_pattern",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "with_item"
+                        },
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "dict-init",
+                              "precedes": {
+                                "stopBy": "end",
+                                "regex": "^as$"
+                              }
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "as_pattern_target",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "plain-target"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "annotation": {
+                        "matches": "dict-ann"
+                      },
+                      "site": {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "list_splat_pattern"
+                              },
+                              {
+                                "kind": "dictionary_splat_pattern"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "function_definition",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "dict-ann"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "dict-literal": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "dictionary"
+                    },
+                    {
+                      "kind": "dictionary_comprehension"
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dict-literal"
+                  }
+                }
+              ]
+            },
+            "none": {
+              "any": [
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "none"
+                  }
+                }
+              ]
+            },
+            "receiver-name": {
+              "any": [
+                {
+                  "matches": "dict-bound"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "receiver-name"
+                  }
+                }
+              ]
+            },
+            "receiver": {
+              "any": [
+                {
+                  "matches": "dict-literal"
+                },
+                {
+                  "matches": "receiver-name"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "attribute",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "receiver",
+                    "precedes": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      },
+                      "regex": "^\\.$"
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "regex": "^get$",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^\\.$"
+                    }
+                  }
+                }
+              ]
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "all": [
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "keyword_argument"
+                            },
+                            {
+                              "kind": "dictionary_splat"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "none",
+                        "follows": {
+                          "stopBy": {
+                            "not": {
+                              "kind": "comment"
+                            }
+                          },
+                          "regex": "^,$",
+                          "follows": {
+                            "stopBy": {
+                              "not": {
+                                "kind": "comment"
+                              }
+                            },
+                            "follows": {
+                              "stopBy": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              },
+                              "regex": "^\\($"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "SIM910",
+        "message": "Use `.get(key)` instead of `.get(key, None)`"
+      }
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:B014",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B014 (duplicate-handler-exception): the type of an `except` (or `except*`) handler is a tuple in which the same dotted name (a name or an attribute chain of names, Ruff's `UnqualifiedName`) occurs more than once (parentheses around an element are transparent). Reported once on the tuple, whatever the number of duplicates.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "duplicate-handler-exception",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "handler-type": {
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "except_clause"
+                  },
+                  {
+                    "kind": "as_pattern",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "except_clause"
+                    }
+                  },
+                  {
+                    "kind": "parenthesized_expression",
+                    "matches": "handler-type"
+                  }
+                ]
+              }
+            },
+            "dotted-name": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "regex": "^\\.$"
+                    },
+                    "matches": "dotted-name"
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "attribute",
+                    "matches": "dotted-name"
+                  }
+                }
+              ]
+            },
+            "element": {
+              "any": [
+                {
+                  "matches": "dotted-name",
+                  "pattern": "$NAME"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "element"
+                  }
+                }
+              ]
+            },
+            "same-element": {
+              "any": [
+                {
+                  "pattern": "$NAME"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "same-element"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "tuple",
+            "matches": "handler-type",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "element",
+              "precedes": {
+                "stopBy": "end",
+                "matches": "same-element"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B014",
+        "message": "Exception handler with duplicate exception: `$NAME`"
+      }
+    }
+  ]
+}

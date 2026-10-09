@@ -1,0 +1,62 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit:b611",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect nonconstant SQL passed to Django RawSQL",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit-B611",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "pattern": "$F($$$ARGS)"
+              },
+              {
+                "arguments": {
+                  "signature": [
+                    "sql",
+                    "params",
+                    "output_field"
+                  ],
+                  "bind": {
+                    "SQL": "sql"
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "django.db.models.RawSQL",
+                  "django.db.models.expressions.RawSQL"
+                ]
+              }
+            },
+            "SQL": {
+              "not": {
+                "kind": "string"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B611",
+        "anchor": "witness.span",
+        "message": "RawSQL received a nonconstant SQL expression; use a constant query with parameter binding."
+      }
+    }
+  ]
+}

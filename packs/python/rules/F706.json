@@ -1,0 +1,54 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:F706",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F706 (return-outside-function, a semantic syntax error) with default settings: `return` whose nearest enclosing function or class body is not a function body (module level, or directly in a class body).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "return-outside-function",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "return_statement",
+            "not": {
+              "inside": {
+                "stopBy": {
+                  "kind": "block",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  }
+                },
+                "kind": "block",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "function_definition"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F706",
+        "message": "`return` statement outside of a function/method"
+      }
+    }
+  ]
+}

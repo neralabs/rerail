@@ -1,0 +1,148 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:F401",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F401 (unused-import) on the engine's usedness (M10a `binds`): the latest binding of a name made by `import` or `from ... import` (not `__future__`, relative ones included as Ruff ignores their level; not `*`) in a module or function scope that nothing reads, not an explicit re-export (`x as x`, a name a static `__all__` lists), not under `global`, not an import of a module Ruff's option `pyflakes.allowed-unused-imports` lists (or of its submodules or members). Reads through a submodule's alias (`import pyarrow.csv` read as `pa.csv`) and `__all__` entries count. Reported on the unaliased import item's dotted name or on the alias. An `__all__` that may list names only at run time (a call, conditional or comprehension) leaves usedness unknown; names in strings Ruff parses as type definitions are reads (M11a).",
+  "scope": {
+    "include": [
+      "**/*.py",
+      "**/*.pyi"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "pyflakes.allowed-unused-imports": {
+            "type": "array",
+            "items": "string",
+            "default": [],
+            "description": "Modules whose imports may be unused, with their submodules and members."
+          }
+        }
+      }
+    },
+    {
+      "id": "unused-import",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "dotted_name"
+              },
+              {
+                "kind": "identifier"
+              }
+            ],
+            "pattern": "$NAME",
+            "binds": {
+              "form": "import",
+              "scope": [
+                "module",
+                "function"
+              ],
+              "latest": true,
+              "used": false,
+              "exported": false,
+              "outer": false
+            },
+            "not": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "future_import_statement"
+                      },
+                      {
+                        "kind": "import_from_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "relative_import",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "dotted_name",
+                            "regex": "^__future__$"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "$option": "pyflakes.allowed-unused-imports",
+                  "cases": {
+                    "[]": []
+                  },
+                  "default": [
+                    {
+                      "kind": "dotted_name",
+                      "resolves": {
+                        "imported": {
+                          "$option": "pyflakes.allowed-unused-imports"
+                        },
+                        "prefix": true
+                      }
+                    },
+                    {
+                      "kind": "identifier",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "aliased_import",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "dotted_name",
+                          "resolves": {
+                            "imported": {
+                              "$option": "pyflakes.allowed-unused-imports"
+                            },
+                            "prefix": true
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "spread": true
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F401",
+        "message": "`$NAME` imported but unused",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F401"
+            ],
+            "parent": "statement"
+          }
+        }
+      }
+    }
+  ]
+}

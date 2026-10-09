@@ -1,0 +1,40 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit:b308",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect potentially unsafe django mark_safe calls",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit:B308",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "django.utils.safestring.mark_safe"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B308",
+        "anchor": "witness.span",
+        "message": "Use of mark_safe may expose cross-site scripting vulnerabilities and should be reviewed."
+      }
+    }
+  ]
+}

@@ -1,0 +1,292 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:F633",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F633 (invalid-print-syntax) with default settings: the left operand of `>>` when it resolves to the builtin `print` (or `builtins.print`), reported on `print`. tree-sitter-python parses a statement `print >> f, x` as a Python 2 print statement whose `print` is a keyword token, not a name reference, so name resolution cannot be asked there; that form falls back to a file-wide test: no binding of `print` anywhere in the file (assignment, loop, with/except and walrus targets, def/class names, parameters, imports, global/nonlocal).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "invalid-print-syntax",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "print-binding": {
+              "kind": "identifier",
+              "regex": "^print$",
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "assignment"
+                      },
+                      {
+                        "kind": "augmented_assignment"
+                      },
+                      {
+                        "kind": "named_expression"
+                      }
+                    ]
+                  },
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "pattern_list"
+                      },
+                      {
+                        "kind": "tuple_pattern"
+                      },
+                      {
+                        "kind": "list_pattern"
+                      },
+                      {
+                        "kind": "list_splat_pattern"
+                      },
+                      {
+                        "kind": "as_pattern_target"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "for_statement"
+                      },
+                      {
+                        "kind": "for_in_clause"
+                      }
+                    ]
+                  },
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "regex": "^in$"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  },
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^(def|class)$"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "parameters"
+                      },
+                      {
+                        "kind": "lambda_parameters"
+                      },
+                      {
+                        "kind": "dictionary_splat_pattern"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "default_parameter"
+                      },
+                      {
+                        "kind": "typed_parameter"
+                      },
+                      {
+                        "kind": "typed_default_parameter"
+                      }
+                    ]
+                  },
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "aliased_import"
+                  },
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^as$"
+                  }
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "dotted_name",
+                    "any": [
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "import_statement"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "import_from_statement"
+                        },
+                        "follows": {
+                          "stopBy": "end",
+                          "regex": "^import$"
+                        },
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "^\\.$"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "global_statement"
+                      },
+                      {
+                        "kind": "nonlocal_statement"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "rshift-left": {
+              "any": [
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "regex": "^>>$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "binary_operator"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "rshift-left"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "regex": "^print$",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "print_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "chevron"
+                  }
+                },
+                "not": {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "(?s)."
+                  }
+                },
+                "all": [
+                  {
+                    "not": {
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "module",
+                        "has": {
+                          "stopBy": "end",
+                          "matches": "print-binding"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "matches": "rshift-left",
+                "resolves": {
+                  "global": [
+                    "print"
+                  ],
+                  "import": [
+                    "builtins.print"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F633",
+        "message": "Use of `>>` is invalid with `print` function"
+      }
+    }
+  ]
+}

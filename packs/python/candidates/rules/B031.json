@@ -1,0 +1,304 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:B031",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Partial port of Ruff's B031 (reuse-of-groupby-generator): in the body of `for k, g in itertools.groupby(...)`, a use of `g` inside a nested loop body or list/set/dict comprehension, or after an earlier statement (or the enclosing `if` test or `match` subject) that uses it. Ruff's per-branch use counting (maximum over if/match branches), resets at break/continue/return and reassignment of `g` are not modelled.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "reuse-of-groupby-generator",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "groupby": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "itertools.groupby"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "groupby"
+                  }
+                }
+              ]
+            },
+            "groupby-loop": {
+              "kind": "for_statement",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "pattern_list",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^for$"
+                    },
+                    "count": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "not": {
+                          "any": [
+                            {
+                              "regex": "^[(),]$"
+                            },
+                            {
+                              "kind": "comment"
+                            }
+                          ]
+                        }
+                      },
+                      "min": 2,
+                      "max": 2
+                    },
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "pattern": "$G",
+                      "not": {
+                        "precedes": {
+                          "stopBy": "end",
+                          "regex": "(?s)."
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^in$"
+                    },
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "groupby",
+                      "precedes": {
+                        "stopBy": "neighbor",
+                        "kind": "argument_list"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "use": {
+              "kind": "identifier",
+              "pattern": "$G",
+              "not": {
+                "any": [
+                  {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^\\.$"
+                    }
+                  },
+                  {
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "regex": "^=$"
+                    }
+                  }
+                ]
+              }
+            },
+            "scope": {
+              "any": [
+                {
+                  "kind": "function_definition"
+                },
+                {
+                  "kind": "lambda"
+                },
+                {
+                  "kind": "class_definition"
+                }
+              ]
+            },
+            "has-use": {
+              "has": {
+                "stopBy": {
+                  "matches": "scope"
+                },
+                "matches": "use"
+              }
+            },
+            "in-body": {
+              "inside": {
+                "stopBy": {
+                  "matches": "scope"
+                },
+                "kind": "block",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "groupby-loop"
+                }
+              }
+            },
+            "nested": {
+              "inside": {
+                "stopBy": {
+                  "kind": "for_statement",
+                  "matches": "groupby-loop"
+                },
+                "any": [
+                  {
+                    "kind": "block",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "for_statement"
+                        },
+                        {
+                          "kind": "while_statement"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "list_comprehension"
+                      },
+                      {
+                        "kind": "set_comprehension"
+                      },
+                      {
+                        "kind": "dictionary_comprehension"
+                      }
+                    ],
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "for_in_clause",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "use"
+                        }
+                      }
+                    }
+                  }
+                ],
+                "matches": "in-body"
+              }
+            },
+            "after-earlier-use": {
+              "inside": {
+                "stopBy": {
+                  "kind": "for_statement",
+                  "matches": "groupby-loop"
+                },
+                "any": [
+                  {
+                    "not": {
+                      "kind": "case_clause"
+                    },
+                    "follows": {
+                      "stopBy": "end",
+                      "matches": "has-use"
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "block"
+                    }
+                  },
+                  {
+                    "kind": "case_clause",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "block",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "match_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "follows": {
+                            "stopBy": "neighbor",
+                            "regex": "^match$"
+                          },
+                          "matches": "has-use"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "kind": "elif_clause"
+                      },
+                      {
+                        "kind": "else_clause"
+                      }
+                    ],
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "if_statement",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "^if$"
+                        },
+                        "matches": "has-use"
+                      }
+                    }
+                  }
+                ],
+                "matches": "in-body"
+              }
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "all": [
+              {
+                "matches": "use"
+              },
+              {
+                "any": [
+                  {
+                    "matches": "nested"
+                  },
+                  {
+                    "matches": "after-earlier-use"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B031",
+        "message": "Using the generator returned from `itertools.groupby()` more than once will do nothing on the second usage"
+      }
+    }
+  ]
+}

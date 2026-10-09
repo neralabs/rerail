@@ -1,0 +1,41 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit:b319",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect unsafe xml.dom.pulldom parsing calls",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "B319",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "xml.dom.pulldom.parse",
+                  "xml.dom.pulldom.parseString"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B319",
+        "anchor": "witness.span",
+        "message": "Using xml.dom.pulldom to parse untrusted XML is vulnerable to XML attacks; use the defusedxml equivalent."
+      }
+    }
+  ]
+}

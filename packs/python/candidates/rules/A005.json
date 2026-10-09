@@ -1,0 +1,470 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:A005",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's A005 (stdlib-module-shadowing): a `.py` file whose module, or a package's `__init__.py` whose package, is named like a standard-library module of the target version (`is_known_standard_library`, one `when`-gated check per range of versions; `_private` names are allowed), reported at the start of the file. Its options are Ruff's, with Ruff's defaults: without `flake8-builtins.strict-checking` the scope takes only top-level modules (files directly under the project root or a `src` root, and `x/__init__.py` there, never a root's own `__init__.py`); `flake8-builtins.allowed-modules` leaves files and packages so named out of scope.",
+  "scope": {
+    "$option": "flake8-builtins.strict-checking",
+    "cases": {
+      "true": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": [
+          "__init__.py",
+          {
+            "$option": "src",
+            "map": "{}/__init__.py",
+            "spread": true
+          },
+          {
+            "$option": "flake8-builtins.allowed-modules",
+            "map": "**/{}.py",
+            "spread": true
+          },
+          {
+            "$option": "flake8-builtins.allowed-modules",
+            "map": "**/{}/__init__.py",
+            "spread": true
+          }
+        ]
+      }
+    },
+    "default": {
+      "include": [
+        "*.py",
+        "*/__init__.py",
+        {
+          "$option": "src",
+          "map": "{}/*.py",
+          "spread": true
+        },
+        {
+          "$option": "src",
+          "map": "{}/*/__init__.py",
+          "spread": true
+        }
+      ],
+      "exclude": [
+        "__init__.py",
+        {
+          "$option": "src",
+          "map": "{}/__init__.py",
+          "spread": true
+        },
+        {
+          "$option": "flake8-builtins.allowed-modules",
+          "map": "**/{}.py",
+          "spread": true
+        },
+        {
+          "$option": "flake8-builtins.allowed-modules",
+          "map": "**/{}/__init__.py",
+          "spread": true
+        }
+      ]
+    }
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "flake8-builtins.strict-checking": {
+            "type": "boolean",
+            "default": false,
+            "description": "Report modules at any depth, not only top-level ones."
+          },
+          "flake8-builtins.allowed-modules": {
+            "type": "array",
+            "items": "string",
+            "default": [],
+            "description": "Module names that may shadow the standard library."
+          },
+          "src": {
+            "type": "array",
+            "items": "string",
+            "default": [
+              ".",
+              "src"
+            ],
+            "description": "Source roots, relative to the project root: a module directly under one is top-level."
+          }
+        }
+      }
+    },
+    {
+      "id": "stdlib-module-shadowing",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "module": {
+              "regex": "(?:^|\\.)(?:__hello__|__phello__|abc|antigravity|argparse|array|ast|asyncio|atexit|base64|bdb|binascii|bisect|builtins|bz2|cProfile|calendar|cmath|cmd|code|codecs|codeop|collections|colorsys|compileall|concurrent|configparser|contextlib|contextvars|copy|copyreg|csv|ctypes|curses|dataclasses|datetime|dbm|decimal|difflib|dis|doctest|email|encodings|ensurepip|enum|errno|faulthandler|fcntl|filecmp|fileinput|fnmatch|fractions|ftplib|functools|gc|genericpath|getopt|getpass|gettext|glob|grp|gzip|hashlib|heapq|hmac|html|http|idlelib|imaplib|importlib|inspect|io|ipaddress|itertools|json|keyword|linecache|locale|logging|lzma|mailbox|marshal|math|mimetypes|mmap|modulefinder|msvcrt|multiprocessing|netrc|nt|ntpath|nturl2path|numbers|opcode|operator|optparse|os|pathlib|pdb|pickle|pickletools|pkgutil|platform|plistlib|poplib|posix|posixpath|pprint|profile|pstats|pty|pwd|py_compile|pyclbr|pydoc|pydoc_data|pyexpat|queue|quopri|random|re|readline|reprlib|resource|rlcompleter|runpy|sched|secrets|select|selectors|shelve|shlex|shutil|signal|site|smtplib|socket|socketserver|sqlite3|ssl|stat|statistics|string|stringprep|struct|subprocess|symtable|sys|sysconfig|syslog|tabnanny|tarfile|tempfile|termios|textwrap|this|threading|time|timeit|tkinter|token|tokenize|trace|traceback|tracemalloc|tty|turtle|turtledemo|types|typing|unicodedata|unittest|urllib|uuid|venv|warnings|wave|weakref|webbrowser|winreg|winsound|wsgiref|xml|xmlrpc|xx|xxlimited|xxsubtype|zipapp|zipfile|zipimport|zlib)(?:\\.__init__)?$"
+            },
+            "moduleName": {
+              "notRegex": "\\."
+            }
+          },
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "A005",
+        "message": "Module shadows a Python standard-library module"
+      }
+    },
+    {
+      "id": "stdlib-module-shadowing-3.7-3.7",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "max": "3.7"
+            }
+          },
+          "file": {
+            "module": {
+              "regex": "(?:^|\\.)(?:macpath)(?:\\.__init__)?$"
+            },
+            "moduleName": {
+              "notRegex": "\\."
+            }
+          },
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "A005",
+        "message": "Module shadows a Python standard-library module"
+      }
+    },
+    {
+      "id": "stdlib-module-shadowing-3.7-3.8",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "max": "3.8"
+            }
+          },
+          "file": {
+            "module": {
+              "regex": "(?:^|\\.)(?:dummy_threading)(?:\\.__init__)?$"
+            },
+            "moduleName": {
+              "notRegex": "\\."
+            }
+          },
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "A005",
+        "message": "Module shadows a Python standard-library module"
+      }
+    },
+    {
+      "id": "stdlib-module-shadowing-3.7-3.9",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "max": "3.9"
+            }
+          },
+          "file": {
+            "module": {
+              "regex": "(?:^|\\.)(?:formatter|parser|symbol)(?:\\.__init__)?$"
+            },
+            "moduleName": {
+              "notRegex": "\\."
+            }
+          },
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "A005",
+        "message": "Module shadows a Python standard-library module"
+      }
+    },
+    {
+      "id": "stdlib-module-shadowing-3.7-3.10",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "max": "3.10"
+            }
+          },
+          "file": {
+            "module": {
+              "regex": "(?:^|\\.)(?:binhex)(?:\\.__init__)?$"
+            },
+            "moduleName": {
+              "notRegex": "\\."
+            }
+          },
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "A005",
+        "message": "Module shadows a Python standard-library module"
+      }
+    },
+    {
+      "id": "stdlib-module-shadowing-3.7-3.11",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "max": "3.11"
+            }
+          },
+          "file": {
+            "module": {
+              "regex": "(?:^|\\.)(?:asynchat|asyncore|distutils|imp|smtpd)(?:\\.__init__)?$"
+            },
+            "moduleName": {
+              "notRegex": "\\."
+            }
+          },
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "A005",
+        "message": "Module shadows a Python standard-library module"
+      }
+    },
+    {
+      "id": "stdlib-module-shadowing-3.7-3.12",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "max": "3.12"
+            }
+          },
+          "file": {
+            "module": {
+              "regex": "(?:^|\\.)(?:aifc|audioop|cgi|cgitb|chunk|crypt|imghdr|lib2to3|mailcap|msilib|nis|nntplib|ossaudiodev|pipes|sndhdr|spwd|sunau|telnetlib|uu|xdrlib)(?:\\.__init__)?$"
+            },
+            "moduleName": {
+              "notRegex": "\\."
+            }
+          },
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "A005",
+        "message": "Module shadows a Python standard-library module"
+      }
+    },
+    {
+      "id": "stdlib-module-shadowing-3.7-3.14",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "max": "3.14"
+            }
+          },
+          "file": {
+            "module": {
+              "regex": "(?:^|\\.)(?:sre_compile|sre_constants|sre_parse)(?:\\.__init__)?$"
+            },
+            "moduleName": {
+              "notRegex": "\\."
+            }
+          },
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "A005",
+        "message": "Module shadows a Python standard-library module"
+      }
+    },
+    {
+      "id": "stdlib-module-shadowing-3.9-3.15",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "min": "3.9"
+            }
+          },
+          "file": {
+            "module": {
+              "regex": "(?:^|\\.)(?:graphlib|zoneinfo)(?:\\.__init__)?$"
+            },
+            "moduleName": {
+              "notRegex": "\\."
+            }
+          },
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "A005",
+        "message": "Module shadows a Python standard-library module"
+      }
+    },
+    {
+      "id": "stdlib-module-shadowing-3.10-3.15",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "min": "3.10"
+            }
+          },
+          "file": {
+            "module": {
+              "regex": "(?:^|\\.)(?:xxlimited_35)(?:\\.__init__)?$"
+            },
+            "moduleName": {
+              "notRegex": "\\."
+            }
+          },
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "A005",
+        "message": "Module shadows a Python standard-library module"
+      }
+    },
+    {
+      "id": "stdlib-module-shadowing-3.11-3.15",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "min": "3.11"
+            }
+          },
+          "file": {
+            "module": {
+              "regex": "(?:^|\\.)(?:__hello_alias__|__hello_only__|__phello_alias__|tomllib)(?:\\.__init__)?$"
+            },
+            "moduleName": {
+              "notRegex": "\\."
+            }
+          },
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "A005",
+        "message": "Module shadows a Python standard-library module"
+      }
+    },
+    {
+      "id": "stdlib-module-shadowing-3.14-3.15",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "min": "3.14"
+            }
+          },
+          "file": {
+            "module": {
+              "regex": "(?:^|\\.)(?:annotationlib|compression)(?:\\.__init__)?$"
+            },
+            "moduleName": {
+              "notRegex": "\\."
+            }
+          },
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "A005",
+        "message": "Module shadows a Python standard-library module"
+      }
+    },
+    {
+      "id": "stdlib-module-shadowing-3.15-3.15",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "min": "3.15"
+            }
+          },
+          "file": {
+            "module": {
+              "regex": "(?:^|\\.)(?:profiling)(?:\\.__init__)?$"
+            },
+            "moduleName": {
+              "notRegex": "\\."
+            }
+          },
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "A005",
+        "message": "Module shadows a Python standard-library module"
+      }
+    }
+  ]
+}

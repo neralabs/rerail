@@ -1,0 +1,43 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:F707",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F707 (default-except-not-last) with default settings: a bare `except:` handler followed by another handler of the same `try`. Reported on the `except` keyword.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "default-except-not-last",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "regex": "^except$",
+            "precedes": {
+              "stopBy": "neighbor",
+              "regex": "^:$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "except_clause",
+              "precedes": {
+                "stopBy": "end",
+                "kind": "except_clause"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F707",
+        "message": "An `except` block as not the last exception handler"
+      }
+    }
+  ]
+}

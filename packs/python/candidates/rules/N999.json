@@ -1,0 +1,192 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:N999",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's N999 (invalid-module-name): a `.py` or `.pyi` file in a package (the host sent its module path) whose name is not a valid module name (`is_module_name`: `[a-z_][a-z0-9_]*`, not a keyword), reported at the start of the file. The name is the file's stem (`moduleName`), or for an `__init__` file the package root's directory (`package`: Ruff reads `package.path()`, the top package, not the file's own directory), as on disk. In a `versions` or `migrations` directory a leading digit is allowed (`is_migration_name`). Names matching `pep8-naming.ignore-names` (Ruff's option, with its defaults setUp, tearDown, ...) are exempt.",
+  "scope": {
+    "include": [
+      "**/*.py",
+      "**/*.pyi"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "pep8-naming.ignore-names": {
+            "type": "array",
+            "items": "string",
+            "default": [
+              "setUp",
+              "tearDown",
+              "setUpClass",
+              "tearDownClass",
+              "setUpModule",
+              "tearDownModule",
+              "asyncSetUp",
+              "asyncTearDown",
+              "setUpTestData",
+              "failureException",
+              "longMessage",
+              "maxDiff"
+            ],
+            "description": "Names exempt from the check, each a regex over the whole name (a Ruff glob: `*` is `.*`, `?` is `.`)."
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-module-name",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "inPackage": true,
+            "moduleName": {
+              "regex": "^$|^[0-9]|[^a-z0-9_]|^(?:and|as|assert|async|await|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield)$",
+              "notRegex": {
+                "$option": "pep8-naming.ignore-names",
+                "cases": {
+                  "[]": "^__init__$"
+                },
+                "default": {
+                  "$option": "pep8-naming.ignore-names",
+                  "join": "|",
+                  "template": "^(?:{})$|^__init__$"
+                }
+              }
+            },
+            "module": {
+              "notRegex": "(?:^|\\.)(?:versions|migrations)\\.[^.]*$"
+            }
+          },
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "N999",
+        "message": "Invalid module name"
+      }
+    },
+    {
+      "id": "invalid-module-name-migration",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "inPackage": true,
+            "moduleName": {
+              "regex": "[^a-z0-9_]|^(?:and|as|assert|async|await|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield)$",
+              "notRegex": {
+                "$option": "pep8-naming.ignore-names",
+                "cases": {
+                  "[]": "^__init__$"
+                },
+                "default": {
+                  "$option": "pep8-naming.ignore-names",
+                  "join": "|",
+                  "template": "^(?:{})$|^__init__$"
+                }
+              }
+            },
+            "module": {
+              "regex": "(?:^|\\.)(?:versions|migrations)\\.[^.]*$"
+            }
+          },
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "N999",
+        "message": "Invalid module name"
+      }
+    },
+    {
+      "id": "invalid-package-name",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "inPackage": true,
+            "moduleName": {
+              "regex": "^__init__$"
+            },
+            "package": {
+              "regex": "^$|^[0-9]|[^a-z0-9_]|^(?:and|as|assert|async|await|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield)$",
+              "notRegex": {
+                "$option": "pep8-naming.ignore-names",
+                "cases": {
+                  "[]": "[^\\s\\S]"
+                },
+                "default": {
+                  "$option": "pep8-naming.ignore-names",
+                  "join": "|",
+                  "template": "^(?:{})$"
+                }
+              }
+            },
+            "module": {
+              "notRegex": "(?:^|\\.)(?:versions|migrations)\\.[^.]*$"
+            }
+          },
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "N999",
+        "message": "Invalid module name"
+      }
+    },
+    {
+      "id": "invalid-package-name-migration",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "inPackage": true,
+            "moduleName": {
+              "regex": "^__init__$"
+            },
+            "package": {
+              "regex": "[^a-z0-9_]|^(?:and|as|assert|async|await|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield)$",
+              "notRegex": {
+                "$option": "pep8-naming.ignore-names",
+                "cases": {
+                  "[]": "[^\\s\\S]"
+                },
+                "default": {
+                  "$option": "pep8-naming.ignore-names",
+                  "join": "|",
+                  "template": "^(?:{})$"
+                }
+              }
+            },
+            "module": {
+              "regex": "(?:^|\\.)(?:versions|migrations)\\.[^.]*$"
+            }
+          },
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "N999",
+        "message": "Invalid module name"
+      }
+    }
+  ]
+}

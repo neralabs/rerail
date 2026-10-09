@@ -1,0 +1,118 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit:b102",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Detect calls to Python's exec function, which executes supplied text as Python code and is risky when that code is not fully trusted. As in Bandit, the callee is a bare name whose qualified name through the file's import aliases is exec: exec itself unless an import aliases it to another name, or a name imported as the module exec. Remove the exec call and implement the intended operation explicitly.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "exec-call",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "exec-callee"
+            }
+          },
+          "utils": {
+            "exec-callee": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^exec$",
+                  "not": {
+                    "resolves": {
+                      "binding": {
+                        "form": "import",
+                        "site": {
+                          "matches": "alias-to-other"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "form": "import",
+                      "site": {
+                        "matches": "alias-to-exec"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "exec-callee"
+                  }
+                }
+              ]
+            },
+            "from-with-module": {
+              "kind": "import_from_statement",
+              "has": {
+                "field": "module_name",
+                "any": [
+                  {
+                    "kind": "dotted_name"
+                  },
+                  {
+                    "kind": "relative_import",
+                    "has": {
+                      "kind": "dotted_name"
+                    }
+                  }
+                ]
+              }
+            },
+            "alias-to-exec": {
+              "kind": "aliased_import",
+              "has": {
+                "field": "name",
+                "regex": "^exec$"
+              },
+              "not": {
+                "inside": {
+                  "matches": "from-with-module"
+                }
+              }
+            },
+            "alias-to-other": {
+              "any": [
+                {
+                  "kind": "aliased_import",
+                  "not": {
+                    "matches": "alias-to-exec"
+                  }
+                },
+                {
+                  "kind": "dotted_name",
+                  "inside": {
+                    "matches": "from-with-module"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B102",
+        "anchor": "witness.span",
+        "message": "This exec call executes supplied text as Python code and is risky when that code is not fully trusted. Remove exec and implement the intended operation explicitly."
+      }
+    }
+  ]
+}

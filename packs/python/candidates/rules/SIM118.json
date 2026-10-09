@@ -1,0 +1,163 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:SIM118",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's SIM118 (in-dict-keys): `key in X.keys()` / `key not in X.keys()` (a single comparison), a non-async `for key in X.keys()` and a comprehension `for key in X.keys()`, where `.keys()` has no arguments and `X` is not the name `self`. Reported from the key (with its parentheses).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "in-dict-keys",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "self-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^self$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "self-name"
+                  }
+                }
+              ]
+            },
+            "keys-call": {
+              "any": [
+                {
+                  "kind": "call",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "argument_list",
+                        "regex": "^\\(\\s*\\)$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "not": {
+                          "follows": {
+                            "stopBy": "neighbor",
+                            "regex": "(?s)."
+                          }
+                        },
+                        "kind": "attribute",
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "identifier",
+                              "regex": "^keys$",
+                              "follows": {
+                                "stopBy": "neighbor",
+                                "regex": "^\\.$"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "not": {
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "(?s)."
+                                  }
+                                },
+                                "matches": "self-name"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "keys-call"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "comparison_operator",
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "(?s)."
+                  },
+                  "max": 3
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^(in|not\\s+in)$",
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "matches": "keys-call"
+                  }
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": "neighbor",
+                  "regex": "^for$"
+                },
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "regex": "^in$",
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "matches": "keys-call"
+                  }
+                },
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "for_statement",
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^async$"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "for_in_clause"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "SIM118",
+        "message": "Use `key in dict` instead of `key in dict.keys()`"
+      }
+    }
+  ]
+}

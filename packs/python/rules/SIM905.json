@@ -1,0 +1,540 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:SIM905",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's SIM905 (split-static-string): `.split(...)` or `.rsplit(...)` called on a str literal (implicit concatenations included; not bytes, f- or t-strings), where `sep` (keyword, else first positional argument) is absent, `None` or a str literal, and `maxsplit` (keyword, else second positional argument) is absent or an integer literal, optionally negated, that fits in an i32 (`get_maxsplit_value`). Reported on the call.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "split-static-string",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "part-t": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_start",
+                "regex": "^[A-Za-z]*[tT]"
+              }
+            },
+            "part-f": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_start",
+                "regex": "^[A-Za-z]*[fF]"
+              }
+            },
+            "part-b": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_start",
+                "regex": "^[A-Za-z]*[bB]"
+              }
+            },
+            "t-string": {
+              "any": [
+                {
+                  "kind": "string",
+                  "matches": "part-t"
+                },
+                {
+                  "kind": "concatenated_string",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "matches": "part-t"
+                  }
+                }
+              ]
+            },
+            "f-string": {
+              "not": {
+                "matches": "t-string"
+              },
+              "any": [
+                {
+                  "kind": "string",
+                  "matches": "part-f"
+                },
+                {
+                  "kind": "concatenated_string",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "matches": "part-f"
+                  }
+                }
+              ]
+            },
+            "plain-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "not": {
+                "any": [
+                  {
+                    "matches": "t-string"
+                  },
+                  {
+                    "matches": "f-string"
+                  }
+                ]
+              }
+            },
+            "bytes-string": {
+              "matches": "plain-string",
+              "any": [
+                {
+                  "kind": "string",
+                  "matches": "part-b"
+                },
+                {
+                  "kind": "concatenated_string",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "matches": "part-b"
+                  }
+                }
+              ]
+            },
+            "receiver": {
+              "any": [
+                {
+                  "matches": "plain-string",
+                  "not": {
+                    "matches": "bytes-string"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "receiver"
+                  }
+                }
+              ]
+            },
+            "int32": {
+              "any": [
+                {
+                  "kind": "integer",
+                  "value": {
+                    "type": "int",
+                    "le": 2147483647
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "int32"
+                  }
+                }
+              ]
+            },
+            "maxsplit": {
+              "any": [
+                {
+                  "matches": "int32"
+                },
+                {
+                  "matches": "neg-int32"
+                }
+              ]
+            },
+            "neg-int32": {
+              "any": [
+                {
+                  "kind": "unary_operator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^-$"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "int32"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "neg-int32"
+                  }
+                }
+              ]
+            },
+            "sep": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "none"
+                    },
+                    {
+                      "matches": "plain-string",
+                      "not": {
+                        "matches": "bytes-string"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "sep"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "attribute",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "receiver",
+                    "precedes": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      },
+                      "regex": "^\\.$"
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "regex": "^(split|rsplit)$",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^\\.$"
+                    }
+                  }
+                }
+              ]
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "keyword_argument",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "identifier",
+                              "regex": "^maxsplit$",
+                              "precedes": {
+                                "stopBy": "neighbor",
+                                "regex": "^=$"
+                              }
+                            },
+                            "all": [
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^=$"
+                                  },
+                                  "matches": "maxsplit"
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "keyword_argument",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "identifier",
+                                "regex": "^maxsplit$",
+                                "precedes": {
+                                  "stopBy": "neighbor",
+                                  "regex": "^=$"
+                                }
+                              }
+                            }
+                          },
+                          "any": [
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "not": {
+                                  "any": [
+                                    {
+                                      "regex": "^[\\[\\](){},]$"
+                                    },
+                                    {
+                                      "kind": "keyword_argument"
+                                    },
+                                    {
+                                      "kind": "list_splat"
+                                    },
+                                    {
+                                      "kind": "dictionary_splat"
+                                    },
+                                    {
+                                      "kind": "comment"
+                                    }
+                                  ]
+                                },
+                                "follows": {
+                                  "stopBy": "neighbor",
+                                  "regex": "^,$",
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "not": {
+                                      "any": [
+                                        {
+                                          "regex": "^[\\[\\](){},]$"
+                                        },
+                                        {
+                                          "kind": "keyword_argument"
+                                        },
+                                        {
+                                          "kind": "list_splat"
+                                        },
+                                        {
+                                          "kind": "dictionary_splat"
+                                        },
+                                        {
+                                          "kind": "comment"
+                                        }
+                                      ]
+                                    },
+                                    "follows": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^\\($"
+                                    }
+                                  }
+                                },
+                                "all": [
+                                  {
+                                    "matches": "maxsplit"
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "not": {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "not": {
+                                    "any": [
+                                      {
+                                        "regex": "^[\\[\\](){},]$"
+                                      },
+                                      {
+                                        "kind": "keyword_argument"
+                                      },
+                                      {
+                                        "kind": "list_splat"
+                                      },
+                                      {
+                                        "kind": "dictionary_splat"
+                                      },
+                                      {
+                                        "kind": "comment"
+                                      }
+                                    ]
+                                  },
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$",
+                                    "follows": {
+                                      "stopBy": "neighbor",
+                                      "not": {
+                                        "any": [
+                                          {
+                                            "regex": "^[\\[\\](){},]$"
+                                          },
+                                          {
+                                            "kind": "keyword_argument"
+                                          },
+                                          {
+                                            "kind": "list_splat"
+                                          },
+                                          {
+                                            "kind": "dictionary_splat"
+                                          },
+                                          {
+                                            "kind": "comment"
+                                          }
+                                        ]
+                                      },
+                                      "follows": {
+                                        "stopBy": "neighbor",
+                                        "regex": "^\\($"
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "any": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "keyword_argument",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "identifier",
+                              "regex": "^sep$",
+                              "precedes": {
+                                "stopBy": "neighbor",
+                                "regex": "^=$"
+                              }
+                            },
+                            "all": [
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^=$"
+                                  },
+                                  "matches": "sep"
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "keyword_argument",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "identifier",
+                                "regex": "^sep$",
+                                "precedes": {
+                                  "stopBy": "neighbor",
+                                  "regex": "^=$"
+                                }
+                              }
+                            }
+                          },
+                          "any": [
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "not": {
+                                  "any": [
+                                    {
+                                      "regex": "^[\\[\\](){},]$"
+                                    },
+                                    {
+                                      "kind": "keyword_argument"
+                                    },
+                                    {
+                                      "kind": "list_splat"
+                                    },
+                                    {
+                                      "kind": "dictionary_splat"
+                                    },
+                                    {
+                                      "kind": "comment"
+                                    }
+                                  ]
+                                },
+                                "follows": {
+                                  "stopBy": "neighbor",
+                                  "regex": "^\\($"
+                                },
+                                "all": [
+                                  {
+                                    "matches": "sep"
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "not": {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "not": {
+                                    "any": [
+                                      {
+                                        "regex": "^[\\[\\](){},]$"
+                                      },
+                                      {
+                                        "kind": "keyword_argument"
+                                      },
+                                      {
+                                        "kind": "list_splat"
+                                      },
+                                      {
+                                        "kind": "dictionary_splat"
+                                      },
+                                      {
+                                        "kind": "comment"
+                                      }
+                                    ]
+                                  },
+                                  "follows": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^\\($"
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "SIM905",
+        "message": "Consider using a list literal instead of `str.split`"
+      }
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit:b605",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect configured APIs that inherently spawn a command shell",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit-b605",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "os.system",
+                  "os.popen",
+                  "os.popen2",
+                  "os.popen3",
+                  "os.popen4",
+                  "popen2.popen2",
+                  "popen2.popen3",
+                  "popen2.popen4",
+                  "popen2.Popen3",
+                  "popen2.Popen4",
+                  "commands.getoutput",
+                  "commands.getstatusoutput"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B605",
+        "anchor": "witness.span",
+        "message": "Command is executed through a shell-spawning API"
+      }
+    }
+  ]
+}

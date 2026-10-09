@@ -16,7 +16,7 @@
     {
       "capability": "calls",
       "reason": "No pinned reference linter has a rule that reads callees transitively, which is what Rerail's calls capability answers.",
-      "evidence": "Checked Ruff 0.16.9 and Bandit 1.8.6. Ruff's rules that look at a call read only the call itself or the direct callee: flake8-async's ASYNC2xx and flake8-bugbear's call rules match the callee's resolved name; RET503 (crates/ruff_linter/src/rules/flake8_return/rules/function.rs, is_noreturn_func) reads only the direct callee's own `def` in the same file for a `NoReturn` annotation; Pyflakes' rules read bindings, not callees. Bandit's call tests (B3xx, B6xx, B113, B505, B506) match the callee's qualified name through its import. None answers whether a function reaches a call of X through any chain of calls.",
+      "evidence": "Checked Ruff 0.16.9 and Bandit 1.9.4. Ruff's rules that look at a call read only the call itself or the direct callee: flake8-async's ASYNC2xx and flake8-bugbear's call rules match the callee's resolved name; RET503 (crates/ruff_linter/src/rules/flake8_return/rules/function.rs, is_noreturn_func) reads only the direct callee's own `def` in the same file for a `NoReturn` annotation; Pyflakes' rules read bindings, not callees. Bandit's call tests (B3xx, B6xx, B113, B505, B506) match the callee's qualified name through its import. None answers whether a function reaches a call of X through any chain of calls.",
       "coveredBy": [
         "T2: fixtures/python/calls (calls::python_tests::python_calls_agree_with_the_runtime, against CPython 3.13.14 runtime traces)",
         "T3: benchmark_python_calls_corpus (Jedi 0.19.2 over django)"
@@ -41,61 +41,395 @@
     },
     {
       "name": "bandit",
-      "version": "1.8.6"
+      "version": "1.9.4"
     }
   ],
   "rules": [
     {
-      "id": "ruff-b011-assert-false",
+      "id": "ruff-async100-cancel-scope-no-checkpoint",
       "upstream": {
         "tool": "ruff",
-        "rule": "B011"
+        "rule": "ASYNC100"
       },
-      "policy": "rules/ruff-b011-assert-false.json",
+      "policy": "rules/ASYNC100.json",
       "capabilities": [
-        "syntax",
-        "suppression"
+        "scope"
       ],
       "match": "line+column"
     },
     {
-      "id": "ruff-b028-no-explicit-stacklevel",
+      "id": "ruff-async105-trio-sync-call",
       "upstream": {
         "tool": "ruff",
-        "rule": "B028"
+        "rule": "ASYNC105"
       },
-      "policy": "rules/ruff-b028-no-explicit-stacklevel.json",
+      "policy": "rules/ASYNC105.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-async115-async-zero-sleep",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ASYNC115"
+      },
+      "policy": "rules/ASYNC115.json",
       "capabilities": [
         "arguments",
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-async116-long-sleep-not-forever",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ASYNC116"
+      },
+      "policy": "rules/ASYNC116.json",
+      "capabilities": [
+        "arguments",
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-async210-blocking-http-call-in-async-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ASYNC210"
+      },
+      "policy": "rules/ASYNC210.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-async220-create-subprocess-in-async-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ASYNC220"
+      },
+      "policy": "rules/ASYNC220.json",
+      "capabilities": [
+        "arguments",
+        "compare",
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-async221-run-process-in-async-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ASYNC221"
+      },
+      "policy": "rules/ASYNC221.json",
+      "capabilities": [
+        "arguments",
+        "compare",
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-async222-wait-for-process-in-async-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ASYNC222"
+      },
+      "policy": "rules/ASYNC222.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-async230-blocking-open-call-in-async-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ASYNC230"
+      },
+      "policy": "rules/ASYNC230.json",
+      "capabilities": [
+        "compare",
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-async251-blocking-sleep-in-async-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ASYNC251"
+      },
+      "policy": "rules/ASYNC251.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b002-unary-prefix-increment-decrement",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B002"
+      },
+      "policy": "rules/B002.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b003-assignment-to-os-environ",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B003"
+      },
+      "policy": "rules/B003.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b004-unreliable-callable-check",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B004"
+      },
+      "policy": "rules/B004.json",
+      "capabilities": [
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b005-strip-with-multi-characters",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B005"
+      },
+      "policy": "rules/B005.json",
+      "capabilities": [
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b009-get-attr-with-constant",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B009"
+      },
+      "policy": "rules/B009.json",
+      "capabilities": [
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b010-set-attr-with-constant",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B010"
+      },
+      "policy": "rules/B010.json",
+      "capabilities": [
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b013-redundant-tuple-in-exception-handler",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B013"
+      },
+      "policy": "rules/B013.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b014-duplicate-handler-exception",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B014"
+      },
+      "policy": "rules/B014.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b016-raise-literal",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B016"
+      },
+      "policy": "rules/B016.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b017-assert-raises-exception",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B017"
+      },
+      "policy": "rules/B017.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b019-cached-instance-method",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B019"
+      },
+      "policy": "rules/B019.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b020-loop-variable-overrides-iterator",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B020"
+      },
+      "policy": "rules/B020.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b021-f-string-docstring",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B021"
+      },
+      "policy": "rules/B021.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b022-useless-contextlib-suppress",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B022"
+      },
+      "policy": "rules/B022.json",
+      "capabilities": [
         "scope",
         "suppression"
       ],
       "match": "line+column"
     },
     {
-      "id": "ruff-b905-zip-without-explicit-strict",
+      "id": "ruff-b023-function-uses-loop-variable",
       "upstream": {
         "tool": "ruff",
-        "rule": "B905"
+        "rule": "B023"
       },
-      "policy": "rules/ruff-b905-zip-without-explicit-strict.json",
+      "policy": "rules/B023.json",
       "capabilities": [
-        "arguments",
-        "scope",
-        "suppression"
+        "syntax"
       ],
       "match": "line+column"
     },
     {
-      "id": "ruff-e711-none-comparison",
+      "id": "ruff-b025-duplicate-try-block-exception",
       "upstream": {
         "tool": "ruff",
-        "rule": "E711"
+        "rule": "B025"
       },
-      "policy": "rules/ruff-e711-none-comparison.json",
+      "policy": "rules/B025.json",
       "capabilities": [
-        "syntax",
-        "suppression"
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b026-star-arg-unpacking-after-keyword-arg",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B026"
+      },
+      "policy": "rules/B026.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b029-except-with-empty-tuple",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B029"
+      },
+      "policy": "rules/B029.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b032-unintentional-type-annotation",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B032"
+      },
+      "policy": "rules/B032.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b033-duplicate-value",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B033"
+      },
+      "policy": "rules/B033.json",
+      "capabilities": [
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b039-mutable-contextvar-default",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B039"
+      },
+      "policy": "rules/B039.json",
+      "capabilities": [
+        "scope"
       ],
       "match": "line+column"
     },
@@ -113,6 +447,103 @@
       "match": "line+column"
     },
     {
+      "id": "ruff-f404-late-future-import",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F404"
+      },
+      "policy": "rules/F404.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f407-future-feature-not-defined",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F407"
+      },
+      "policy": "rules/F407.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f501-percent-format-invalid-format",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F501"
+      },
+      "policy": "rules/F501.json",
+      "capabilities": [
+        "formatArgs",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f502-percent-format-expected-mapping",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F502"
+      },
+      "policy": "rules/F502.json",
+      "capabilities": [
+        "formatArgs"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f503-percent-format-expected-sequence",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F503"
+      },
+      "policy": "rules/F503.json",
+      "capabilities": [
+        "formatArgs"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f504-percent-format-extra-named-arguments",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F504"
+      },
+      "policy": "rules/F504.json",
+      "capabilities": [
+        "formatArgs"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f505-percent-format-missing-argument",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F505"
+      },
+      "policy": "rules/F505.json",
+      "capabilities": [
+        "formatArgs"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f506-percent-format-mixed-positional-and-named",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F506"
+      },
+      "policy": "rules/F506.json",
+      "capabilities": [
+        "formatArgs"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "ruff-f507-percent-format-positional-count-mismatch",
       "upstream": {
         "tool": "ruff",
@@ -122,6 +553,55 @@
       "capabilities": [
         "formatArgs",
         "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f508-percent-format-star-requires-sequence",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F508"
+      },
+      "policy": "rules/F508.json",
+      "capabilities": [
+        "formatArgs"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f509-percent-format-unsupported-format-character",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F509"
+      },
+      "policy": "rules/F509.json",
+      "capabilities": [
+        "formatArgs",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f521-string-dot-format-invalid-format",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F521"
+      },
+      "policy": "rules/F521.json",
+      "capabilities": [
+        "formatArgs"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f522-string-dot-format-extra-named-arguments",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F522"
+      },
+      "policy": "rules/F522.json",
+      "capabilities": [
+        "formatArgs"
       ],
       "match": "line+column"
     },
@@ -152,6 +632,18 @@
       "match": "line+column"
     },
     {
+      "id": "ruff-f525-string-dot-format-mixing-automatic",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F525"
+      },
+      "policy": "rules/F525.json",
+      "capabilities": [
+        "formatArgs"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "ruff-f601-multi-value-repeated-key-literal",
       "upstream": {
         "tool": "ruff",
@@ -161,6 +653,42 @@
       "capabilities": [
         "compare",
         "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f602-multi-value-repeated-key-variable",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F602"
+      },
+      "policy": "rules/F602.json",
+      "capabilities": [
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f622-multiple-starred-expressions",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F622"
+      },
+      "policy": "rules/F622.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f631-assert-tuple",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F631"
+      },
+      "policy": "rules/F631.json",
+      "capabilities": [
+        "syntax"
       ],
       "match": "line+column"
     },
@@ -178,16 +706,74 @@
       "match": "line+column"
     },
     {
-      "id": "ruff-f722-forward-annotation-syntax-error",
+      "id": "ruff-f633-invalid-print-syntax",
       "upstream": {
         "tool": "ruff",
-        "rule": "F722"
+        "rule": "F633"
       },
-      "policy": "rules/ruff-f722-forward-annotation-syntax-error.json",
+      "policy": "rules/F633.json",
       "capabilities": [
-        "scope",
-        "annotation",
-        "suppression"
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f634-if-tuple",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F634"
+      },
+      "policy": "rules/F634.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f701-break-outside-loop",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F701"
+      },
+      "policy": "rules/F701.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f702-continue-outside-loop",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F702"
+      },
+      "policy": "rules/F702.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f706-return-outside-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F706"
+      },
+      "policy": "rules/F706.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f707-default-except-not-last",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F707"
+      },
+      "policy": "rules/F707.json",
+      "capabilities": [
+        "syntax"
       ],
       "match": "line+column"
     },
@@ -200,20 +786,6 @@
       "policy": "rules/ruff-f811-redefined-while-unused.json",
       "capabilities": [
         "scope",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "ruff-f821-undefined-name",
-      "upstream": {
-        "tool": "ruff",
-        "rule": "F821"
-      },
-      "policy": "rules/ruff-f821-undefined-name.json",
-      "capabilities": [
-        "scope",
-        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -232,15 +804,50 @@
       "match": "line+column"
     },
     {
-      "id": "ruff-f841-unused-variable",
+      "id": "ruff-f842-unused-annotation",
       "upstream": {
         "tool": "ruff",
-        "rule": "F841"
+        "rule": "F842"
       },
-      "policy": "rules/ruff-f841-unused-variable.json",
+      "policy": "rules/F842.json",
       "capabilities": [
-        "scope",
-        "suppression"
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f901-raise-not-implemented",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F901"
+      },
+      "policy": "rules/F901.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pie790-unnecessary-placeholder",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PIE790"
+      },
+      "policy": "rules/PIE790.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pie794-duplicate-class-field-definition",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PIE794"
+      },
+      "policy": "rules/PIE794.json",
+      "capabilities": [
+        "syntax"
       ],
       "match": "line+column"
     },
@@ -259,16 +866,236 @@
       "match": "line+column"
     },
     {
-      "id": "ruff-sim222-expr-or-true",
+      "id": "ruff-pie800-unnecessary-spread",
       "upstream": {
         "tool": "ruff",
-        "rule": "SIM222"
+        "rule": "PIE800"
       },
-      "policy": "rules/ruff-sim222-expr-or-true.json",
+      "policy": "rules/PIE800.json",
       "capabilities": [
-        "value",
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pie804-unnecessary-dict-kwargs",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PIE804"
+      },
+      "policy": "rules/PIE804.json",
+      "capabilities": [
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pie807-reimplemented-container-builtin",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PIE807"
+      },
+      "policy": "rules/PIE807.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pie808-unnecessary-range-start",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PIE808"
+      },
+      "policy": "rules/PIE808.json",
+      "capabilities": [
         "scope",
-        "suppression"
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pie810-multiple-starts-ends-with",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PIE810"
+      },
+      "policy": "rules/PIE810.json",
+      "capabilities": [
+        "compare",
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ret501-unnecessary-return-none",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RET501"
+      },
+      "policy": "rules/RET501.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim101-duplicate-isinstance-call",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM101"
+      },
+      "policy": "rules/SIM101.json",
+      "capabilities": [
+        "compare",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim107-return-in-try-except-finally",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM107"
+      },
+      "policy": "rules/SIM107.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim113-enumerate-for-loop",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM113"
+      },
+      "policy": "rules/SIM113.json",
+      "capabilities": [
+        "compare",
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim115-open-file-with-context-handler",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM115"
+      },
+      "policy": "rules/SIM115.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim201-negate-equal-op",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM201"
+      },
+      "policy": "rules/SIM201.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim202-negate-not-equal-op",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM202"
+      },
+      "policy": "rules/SIM202.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim208-double-negation",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM208"
+      },
+      "policy": "rules/SIM208.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim210-if-expr-with-true-false",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM210"
+      },
+      "policy": "rules/SIM210.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim211-if-expr-with-false-true",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM211"
+      },
+      "policy": "rules/SIM211.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim220-expr-and-not-expr",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM220"
+      },
+      "policy": "rules/SIM220.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim221-expr-or-not-expr",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM221"
+      },
+      "policy": "rules/SIM221.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim905-split-static-string",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM905"
+      },
+      "policy": "rules/SIM905.json",
+      "capabilities": [
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-t100-debugger",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "T100"
+      },
+      "policy": "rules/T100.json",
+      "capabilities": [
+        "scope"
       ],
       "match": "line+column"
     },
@@ -279,6 +1106,66 @@
         "rule": "B101"
       },
       "policy": "rules/bandit-b101-assert-used.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b102-exec-used",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B102"
+      },
+      "policy": "rules/exec.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b104-hardcoded-bind-all-interfaces",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B104"
+      },
+      "policy": "rules/b104.json",
+      "capabilities": [
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b108-hardcoded-tmp-directory",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B108"
+      },
+      "policy": "rules/b108.json",
+      "capabilities": [
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b110-try-except-pass",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B110"
+      },
+      "policy": "rules/try-except-pass.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b112-try-except-continue",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B112"
+      },
+      "policy": "rules/try-except-continue.json",
       "capabilities": [
         "syntax"
       ],
@@ -299,12 +1186,336 @@
       "match": "line+column"
     },
     {
-      "id": "bandit-b506-yaml-load",
+      "id": "bandit-b301-pickle",
       "upstream": {
         "tool": "bandit",
-        "rule": "B506"
+        "rule": "B301"
       },
-      "policy": "rules/bandit-b506-yaml-load.json",
+      "policy": "rules/b301.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b302-marshal",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B302"
+      },
+      "policy": "rules/b302.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b305-cipher-modes",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B305"
+      },
+      "policy": "rules/b305.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b306-mktemp-q",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B306"
+      },
+      "policy": "rules/b306.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b307-eval",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B307"
+      },
+      "policy": "rules/eval.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b310-urllib-urlopen",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B310"
+      },
+      "policy": "rules/b310.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b311-random",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B311"
+      },
+      "policy": "rules/b311.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b312-telnetlib",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B312"
+      },
+      "policy": "rules/b312.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b313-xml-bad-celementtree",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B313"
+      },
+      "policy": "rules/b313.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b314-xml-bad-elementtree",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B314"
+      },
+      "policy": "rules/b314.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b315-xml-bad-expatreader",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B315"
+      },
+      "policy": "rules/b315.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b316-xml-bad-expatbuilder",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B316"
+      },
+      "policy": "rules/b316.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b317-xml-bad-sax",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B317"
+      },
+      "policy": "rules/b317.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b318-xml-bad-minidom",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B318"
+      },
+      "policy": "rules/b318.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b319-xml-bad-pulldom",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B319"
+      },
+      "policy": "rules/b319.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b321-ftplib",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B321"
+      },
+      "policy": "rules/b321.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b323-unverified-context",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B323"
+      },
+      "policy": "rules/b323.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b401-import-telnetlib",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B401"
+      },
+      "policy": "rules/b401.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b402-import-ftplib",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B402"
+      },
+      "policy": "rules/b402.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b405-import-xml-etree",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B405"
+      },
+      "policy": "rules/b405.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b406-import-xml-sax",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B406"
+      },
+      "policy": "rules/b406.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b407-import-xml-expat",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B407"
+      },
+      "policy": "rules/b407.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b408-import-xml-minidom",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B408"
+      },
+      "policy": "rules/b408.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b409-import-xml-pulldom",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B409"
+      },
+      "policy": "rules/b409.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b411-import-xmlrpclib",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B411"
+      },
+      "policy": "rules/b411.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b413-import-pycrypto",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B413"
+      },
+      "policy": "rules/b413.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b415-import-pyghmi",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B415"
+      },
+      "policy": "rules/b415.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b502-ssl-with-bad-version",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B502"
+      },
+      "policy": "rules/b502.json",
       "capabilities": [
         "arguments",
         "scope"
@@ -326,6 +1537,30 @@
       "match": "line+column"
     },
     {
+      "id": "bandit-b507-ssh-no-host-key-verification",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B507"
+      },
+      "policy": "rules/b507.json",
+      "capabilities": [
+        "arguments"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b606-start-process-with-no-shell",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B606"
+      },
+      "policy": "rules/b606.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "bandit-b610-django-extra-used",
       "upstream": {
         "tool": "bandit",
@@ -334,6 +1569,33 @@
       "policy": "rules/bandit-b610-django-extra-used.json",
       "capabilities": [
         "arguments"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b615-huggingface-unsafe-download",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B615"
+      },
+      "policy": "rules/b615.json",
+      "capabilities": [
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b701-jinja2-autoescape-false",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B701"
+      },
+      "policy": "rules/b701.json",
+      "capabilities": [
+        "arguments",
+        "scope",
+        "value"
       ],
       "match": "line+column"
     }

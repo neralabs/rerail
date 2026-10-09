@@ -1,0 +1,45 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff:F541",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F541 (f-string-missing-placeholders) with default settings: every f-string part of a string expression (an implicit concatenation counts as one expression) when no f-string part of that expression has a replacement field. `{{`/`}}` escapes are not placeholders; nested f-strings inside a replacement field or format spec are their own expressions.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "f-string-missing-placeholders",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "has-placeholder": {
+              "kind": "string",
+              "has": { "stopBy": "neighbor", "kind": "interpolation" }
+            }
+          },
+          "rule": {
+            "kind": "string",
+            "has": { "stopBy": "neighbor", "kind": "string_start", "regex": "^[A-Za-z]*[fF]" },
+            "not": {
+              "any": [
+                { "matches": "has-placeholder" },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "concatenated_string",
+                    "has": { "stopBy": "neighbor", "matches": "has-placeholder" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F541",
+        "message": "f-string without any placeholders"
+      }
+    }
+  ]
+}

@@ -26,10 +26,11 @@ fn regex_matches_stop_at_the_deadline() {
     assert_eq!(regex_matches(&regex, "needle\n", 2), (Vec::new(), false));
 }
 
-/// A Python pack code rule, as the conformance runner registers it.
+/// A Python pack code rule (a path under `packs/python/`: `rules/` or `candidates/rules/`), as
+/// the conformance runner registers it.
 fn python_pack_code_rule(rule: &str) -> CompiledCodeRuleDsl {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../packs/python/rules")
+        .join("../packs/python")
         .join(rule);
     CodeRuleDslRuntime::compile(
         std::fs::read_to_string(&path).expect("pack policy"),
@@ -102,9 +103,9 @@ class C:
     z = sys
 ";
     for rule in [
-        "ruff-f811-redefined-while-unused.json",
-        "ruff-f821-undefined-name.json",
-        "ruff-f841-unused-variable.json",
+        "rules/ruff-f811-redefined-while-unused.json",
+        "candidates/rules/ruff-f821-undefined-name.json",
+        "candidates/rules/ruff-f841-unused-variable.json",
     ] {
         let compile = || python_pack_code_rule(rule);
         for file in &files {
@@ -126,7 +127,7 @@ class C:
 /// the budget units spent.
 #[test]
 fn f841_work_grows_linearly_with_assignments() {
-    let code_rule = python_pack_code_rule("ruff-f841-unused-variable.json");
+    let code_rule = python_pack_code_rule("candidates/rules/ruff-f841-unused-variable.json");
     let mut units = Vec::new();
     for assignments in [500, 1000, 2000] {
         let mut source = "def f(items):\n".to_owned();

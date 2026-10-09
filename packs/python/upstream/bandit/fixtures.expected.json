@@ -1,22 +1,99 @@
 {
  "tool": "bandit",
- "version": "1.8.6",
+ "version": "1.9.4",
  "source": {
   "kind": "fixtures",
-  "origin": "https://github.com/PyCQA/bandit@2d0b675b04c80ae42277e10500db06a0a37bae17",
+  "origin": "https://github.com/PyCQA/bandit@92ae8b82fb422a639f0ed8d99e96cea769594e08",
   "rules": [
    "B101",
+   "B102",
+   "B104",
+   "B108",
+   "B110",
+   "B112",
    "B113",
+   "B301",
+   "B302",
+   "B305",
+   "B306",
+   "B307",
+   "B310",
+   "B311",
+   "B312",
+   "B313",
+   "B314",
+   "B315",
+   "B316",
+   "B317",
+   "B318",
+   "B319",
+   "B321",
+   "B323",
+   "B401",
+   "B402",
+   "B405",
+   "B406",
+   "B407",
+   "B408",
+   "B409",
+   "B411",
+   "B413",
+   "B415",
+   "B502",
    "B505",
-   "B506",
-   "B610"
+   "B507",
+   "B606",
+   "B610",
+   "B615",
+   "B701"
   ],
   "files": [
    "assert.py",
+   "binding.py",
+   "cipher-modes.py",
+   "ciphers.py",
+   "crypto-md5.py",
+   "dill.py",
    "django_sql_injection_extra.py",
+   "eval.py",
+   "exec.py",
+   "ftplib.py",
+   "hardcoded-tmp.py",
+   "huggingface_unsafe_download.py",
+   "imports-aliases.py",
+   "jinja2_templating.py",
+   "jsonpickle.py",
+   "marshal_deserialize.py",
+   "mktemp.py",
+   "new_candidates-all.py",
+   "no_host_key_verification.py",
+   "os-chmod.py",
+   "os-exec.py",
+   "os-spawn.py",
+   "os-startfile.py",
+   "pandas_read_pickle.py",
+   "pickle_deserialize.py",
+   "pycrypto.py",
+   "pyghmi.py",
+   "random_module.py",
    "requests-missing-timeout.py",
+   "shelve_open.py",
+   "ssl-insecure-version.py",
+   "telnetlib.py",
+   "try_except_continue.py",
+   "try_except_pass.py",
+   "unverified_context.py",
+   "urlopen.py",
    "weak_cryptographic_key_sizes.py",
-   "yaml_load.py"
+   "wildcard-injection.py",
+   "xml_etree_celementtree.py",
+   "xml_etree_elementtree.py",
+   "xml_expatbuilder.py",
+   "xml_expatreader.py",
+   "xml_minidom.py",
+   "xml_pulldom.py",
+   "xml_sax.py",
+   "xml_xmlrpc.py"
   ]
  },
  "findings": [
@@ -25,6 +102,66 @@
    "path": "assert.py",
    "line": 1,
    "column": 1
+  },
+  {
+   "rule": "B102",
+   "path": "exec.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B104",
+   "path": "binding.py",
+   "line": 4,
+   "column": 9
+  },
+  {
+   "rule": "B108",
+   "path": "hardcoded-tmp.py",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "B108",
+   "path": "hardcoded-tmp.py",
+   "line": 8,
+   "column": 11
+  },
+  {
+   "rule": "B108",
+   "path": "hardcoded-tmp.py",
+   "line": 11,
+   "column": 11
+  },
+  {
+   "rule": "B108",
+   "path": "os-chmod.py",
+   "line": 15,
+   "column": 10
+  },
+  {
+   "rule": "B110",
+   "path": "try_except_pass.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B110",
+   "path": "try_except_pass.py",
+   "line": 11,
+   "column": 1
+  },
+  {
+   "rule": "B112",
+   "path": "try_except_continue.py",
+   "line": 5,
+   "column": 5
+  },
+  {
+   "rule": "B112",
+   "path": "try_except_continue.py",
+   "line": 13,
+   "column": 5
   },
   {
    "rule": "B113",
@@ -177,6 +314,708 @@
    "column": 12
   },
   {
+   "rule": "B301",
+   "path": "dill.py",
+   "line": 6,
+   "column": 7
+  },
+  {
+   "rule": "B301",
+   "path": "dill.py",
+   "line": 11,
+   "column": 7
+  },
+  {
+   "rule": "B301",
+   "path": "dill.py",
+   "line": 14,
+   "column": 7
+  },
+  {
+   "rule": "B301",
+   "path": "imports-aliases.py",
+   "line": 15,
+   "column": 1
+  },
+  {
+   "rule": "B301",
+   "path": "jsonpickle.py",
+   "line": 6,
+   "column": 7
+  },
+  {
+   "rule": "B301",
+   "path": "jsonpickle.py",
+   "line": 8,
+   "column": 7
+  },
+  {
+   "rule": "B301",
+   "path": "jsonpickle.py",
+   "line": 10,
+   "column": 7
+  },
+  {
+   "rule": "B301",
+   "path": "pandas_read_pickle.py",
+   "line": 12,
+   "column": 7
+  },
+  {
+   "rule": "B301",
+   "path": "pickle_deserialize.py",
+   "line": 7,
+   "column": 7
+  },
+  {
+   "rule": "B301",
+   "path": "pickle_deserialize.py",
+   "line": 12,
+   "column": 7
+  },
+  {
+   "rule": "B301",
+   "path": "pickle_deserialize.py",
+   "line": 15,
+   "column": 7
+  },
+  {
+   "rule": "B301",
+   "path": "shelve_open.py",
+   "line": 8,
+   "column": 10
+  },
+  {
+   "rule": "B301",
+   "path": "shelve_open.py",
+   "line": 11,
+   "column": 10
+  },
+  {
+   "rule": "B302",
+   "path": "marshal_deserialize.py",
+   "line": 6,
+   "column": 7
+  },
+  {
+   "rule": "B302",
+   "path": "marshal_deserialize.py",
+   "line": 11,
+   "column": 7
+  },
+  {
+   "rule": "B305",
+   "path": "cipher-modes.py",
+   "line": 6,
+   "column": 8
+  },
+  {
+   "rule": "B306",
+   "path": "mktemp.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B306",
+   "path": "mktemp.py",
+   "line": 8,
+   "column": 1
+  },
+  {
+   "rule": "B306",
+   "path": "mktemp.py",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "B306",
+   "path": "mktemp.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B307",
+   "path": "eval.py",
+   "line": 3,
+   "column": 7
+  },
+  {
+   "rule": "B307",
+   "path": "eval.py",
+   "line": 4,
+   "column": 7
+  },
+  {
+   "rule": "B307",
+   "path": "eval.py",
+   "line": 5,
+   "column": 7
+  },
+  {
+   "rule": "B310",
+   "path": "urlopen.py",
+   "line": 17,
+   "column": 5
+  },
+  {
+   "rule": "B310",
+   "path": "urlopen.py",
+   "line": 18,
+   "column": 5
+  },
+  {
+   "rule": "B310",
+   "path": "urlopen.py",
+   "line": 19,
+   "column": 14
+  },
+  {
+   "rule": "B310",
+   "path": "urlopen.py",
+   "line": 22,
+   "column": 14
+  },
+  {
+   "rule": "B310",
+   "path": "urlopen.py",
+   "line": 27,
+   "column": 5
+  },
+  {
+   "rule": "B310",
+   "path": "urlopen.py",
+   "line": 28,
+   "column": 5
+  },
+  {
+   "rule": "B310",
+   "path": "urlopen.py",
+   "line": 29,
+   "column": 14
+  },
+  {
+   "rule": "B310",
+   "path": "urlopen.py",
+   "line": 32,
+   "column": 14
+  },
+  {
+   "rule": "B311",
+   "path": "random_module.py",
+   "line": 5,
+   "column": 7
+  },
+  {
+   "rule": "B311",
+   "path": "random_module.py",
+   "line": 6,
+   "column": 7
+  },
+  {
+   "rule": "B311",
+   "path": "random_module.py",
+   "line": 7,
+   "column": 7
+  },
+  {
+   "rule": "B311",
+   "path": "random_module.py",
+   "line": 8,
+   "column": 7
+  },
+  {
+   "rule": "B311",
+   "path": "random_module.py",
+   "line": 9,
+   "column": 7
+  },
+  {
+   "rule": "B311",
+   "path": "random_module.py",
+   "line": 10,
+   "column": 7
+  },
+  {
+   "rule": "B311",
+   "path": "random_module.py",
+   "line": 11,
+   "column": 7
+  },
+  {
+   "rule": "B311",
+   "path": "random_module.py",
+   "line": 12,
+   "column": 7
+  },
+  {
+   "rule": "B311",
+   "path": "random_module.py",
+   "line": 13,
+   "column": 7
+  },
+  {
+   "rule": "B311",
+   "path": "random_module.py",
+   "line": 14,
+   "column": 7
+  },
+  {
+   "rule": "B311",
+   "path": "random_module.py",
+   "line": 15,
+   "column": 7
+  },
+  {
+   "rule": "B311",
+   "path": "random_module.py",
+   "line": 16,
+   "column": 7
+  },
+  {
+   "rule": "B312",
+   "path": "telnetlib.py",
+   "line": 8,
+   "column": 6
+  },
+  {
+   "rule": "B313",
+   "path": "xml_etree_celementtree.py",
+   "line": 7,
+   "column": 8
+  },
+  {
+   "rule": "B313",
+   "path": "xml_etree_celementtree.py",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "B313",
+   "path": "xml_etree_celementtree.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B313",
+   "path": "xml_etree_celementtree.py",
+   "line": 11,
+   "column": 5
+  },
+  {
+   "rule": "B314",
+   "path": "xml_etree_elementtree.py",
+   "line": 7,
+   "column": 8
+  },
+  {
+   "rule": "B314",
+   "path": "xml_etree_elementtree.py",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "B314",
+   "path": "xml_etree_elementtree.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B314",
+   "path": "xml_etree_elementtree.py",
+   "line": 11,
+   "column": 5
+  },
+  {
+   "rule": "B315",
+   "path": "xml_expatreader.py",
+   "line": 4,
+   "column": 5
+  },
+  {
+   "rule": "B316",
+   "path": "xml_expatbuilder.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B316",
+   "path": "xml_expatbuilder.py",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "B317",
+   "path": "new_candidates-all.py",
+   "line": 22,
+   "column": 5
+  },
+  {
+   "rule": "B317",
+   "path": "xml_sax.py",
+   "line": 21,
+   "column": 5
+  },
+  {
+   "rule": "B317",
+   "path": "xml_sax.py",
+   "line": 22,
+   "column": 5
+  },
+  {
+   "rule": "B317",
+   "path": "xml_sax.py",
+   "line": 23,
+   "column": 5
+  },
+  {
+   "rule": "B317",
+   "path": "xml_sax.py",
+   "line": 24,
+   "column": 5
+  },
+  {
+   "rule": "B317",
+   "path": "xml_sax.py",
+   "line": 30,
+   "column": 5
+  },
+  {
+   "rule": "B317",
+   "path": "xml_sax.py",
+   "line": 31,
+   "column": 5
+  },
+  {
+   "rule": "B318",
+   "path": "xml_minidom.py",
+   "line": 3,
+   "column": 5
+  },
+  {
+   "rule": "B318",
+   "path": "xml_minidom.py",
+   "line": 11,
+   "column": 5
+  },
+  {
+   "rule": "B319",
+   "path": "xml_pulldom.py",
+   "line": 3,
+   "column": 5
+  },
+  {
+   "rule": "B319",
+   "path": "xml_pulldom.py",
+   "line": 11,
+   "column": 5
+  },
+  {
+   "rule": "B321",
+   "path": "ftplib.py",
+   "line": 6,
+   "column": 7
+  },
+  {
+   "rule": "B323",
+   "path": "unverified_context.py",
+   "line": 7,
+   "column": 11
+  },
+  {
+   "rule": "B401",
+   "path": "telnetlib.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B402",
+   "path": "ftplib.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B402",
+   "path": "ftplib.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B405",
+   "path": "xml_etree_celementtree.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B405",
+   "path": "xml_etree_elementtree.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "xml_expatreader.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "xml_sax.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B406",
+   "path": "xml_sax.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B407",
+   "path": "xml_expatbuilder.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B408",
+   "path": "xml_minidom.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B408",
+   "path": "xml_minidom.py",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "B409",
+   "path": "xml_pulldom.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B409",
+   "path": "xml_pulldom.py",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "B411",
+   "path": "xml_xmlrpc.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "ciphers.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "ciphers.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "ciphers.py",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "ciphers.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "ciphers.py",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "ciphers.py",
+   "line": 11,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "ciphers.py",
+   "line": 12,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "ciphers.py",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "crypto-md5.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "crypto-md5.py",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "crypto-md5.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "crypto-md5.py",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "pycrypto.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "pycrypto.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "weak_cryptographic_key_sizes.py",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "weak_cryptographic_key_sizes.py",
+   "line": 6,
+   "column": 1
+  },
+  {
+   "rule": "B415",
+   "path": "pyghmi.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "ssl-insecure-version.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "ssl-insecure-version.py",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "ssl-insecure-version.py",
+   "line": 6,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "ssl-insecure-version.py",
+   "line": 8,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "ssl-insecure-version.py",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "ssl-insecure-version.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "ssl-insecure-version.py",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "ssl-insecure-version.py",
+   "line": 14,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "ssl-insecure-version.py",
+   "line": 15,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "ssl-insecure-version.py",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "ssl-insecure-version.py",
+   "line": 18,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "ssl-insecure-version.py",
+   "line": 19,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "ssl-insecure-version.py",
+   "line": 20,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "ssl-insecure-version.py",
+   "line": 21,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "ssl-insecure-version.py",
+   "line": 23,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "ssl-insecure-version.py",
+   "line": 24,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "ssl-insecure-version.py",
+   "line": 26,
+   "column": 1
+  },
+  {
+   "rule": "B502",
+   "path": "ssl-insecure-version.py",
+   "line": 27,
+   "column": 1
+  },
+  {
    "rule": "B505",
    "path": "weak_cryptographic_key_sizes.py",
    "line": 38,
@@ -261,15 +1100,171 @@
    "column": 1
   },
   {
-   "rule": "B506",
-   "path": "yaml_load.py",
-   "line": 9,
-   "column": 9
+   "rule": "B507",
+   "path": "no_host_key_verification.py",
+   "line": 6,
+   "column": 1
   },
   {
-   "rule": "B506",
-   "path": "yaml_load.py",
-   "line": 22,
+   "rule": "B507",
+   "path": "no_host_key_verification.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B507",
+   "path": "no_host_key_verification.py",
+   "line": 8,
+   "column": 1
+  },
+  {
+   "rule": "B507",
+   "path": "no_host_key_verification.py",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "B507",
+   "path": "no_host_key_verification.py",
+   "line": 11,
+   "column": 1
+  },
+  {
+   "rule": "B507",
+   "path": "no_host_key_verification.py",
+   "line": 12,
+   "column": 1
+  },
+  {
+   "rule": "B507",
+   "path": "no_host_key_verification.py",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "B507",
+   "path": "no_host_key_verification.py",
+   "line": 14,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-exec.py",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-exec.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-exec.py",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-exec.py",
+   "line": 6,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-exec.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-exec.py",
+   "line": 8,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-exec.py",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-exec.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-spawn.py",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-spawn.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-spawn.py",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-spawn.py",
+   "line": 6,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-spawn.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-spawn.py",
+   "line": 8,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-spawn.py",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-spawn.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-startfile.py",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-startfile.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "os-startfile.py",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "B606",
+   "path": "wildcard-injection.py",
+   "line": 16,
    "column": 1
   },
   {
@@ -335,6 +1330,126 @@
   {
    "rule": "B610",
    "path": "django_sql_injection_extra.py",
+   "line": 29,
+   "column": 1
+  },
+  {
+   "rule": "B615",
+   "path": "huggingface_unsafe_download.py",
+   "line": 10,
+   "column": 28
+  },
+  {
+   "rule": "B615",
+   "path": "huggingface_unsafe_download.py",
+   "line": 13,
+   "column": 21
+  },
+  {
+   "rule": "B615",
+   "path": "huggingface_unsafe_download.py",
+   "line": 19,
+   "column": 20
+  },
+  {
+   "rule": "B615",
+   "path": "huggingface_unsafe_download.py",
+   "line": 28,
+   "column": 32
+  },
+  {
+   "rule": "B615",
+   "path": "huggingface_unsafe_download.py",
+   "line": 31,
+   "column": 25
+  },
+  {
+   "rule": "B615",
+   "path": "huggingface_unsafe_download.py",
+   "line": 37,
+   "column": 24
+  },
+  {
+   "rule": "B615",
+   "path": "huggingface_unsafe_download.py",
+   "line": 46,
+   "column": 30
+  },
+  {
+   "rule": "B615",
+   "path": "huggingface_unsafe_download.py",
+   "line": 49,
+   "column": 23
+  },
+  {
+   "rule": "B615",
+   "path": "huggingface_unsafe_download.py",
+   "line": 52,
+   "column": 22
+  },
+  {
+   "rule": "B615",
+   "path": "huggingface_unsafe_download.py",
+   "line": 58,
+   "column": 27
+  },
+  {
+   "rule": "B615",
+   "path": "huggingface_unsafe_download.py",
+   "line": 64,
+   "column": 20
+  },
+  {
+   "rule": "B615",
+   "path": "huggingface_unsafe_download.py",
+   "line": 71,
+   "column": 19
+  },
+  {
+   "rule": "B615",
+   "path": "huggingface_unsafe_download.py",
+   "line": 81,
+   "column": 31
+  },
+  {
+   "rule": "B615",
+   "path": "huggingface_unsafe_download.py",
+   "line": 84,
+   "column": 24
+  },
+  {
+   "rule": "B615",
+   "path": "huggingface_unsafe_download.py",
+   "line": 90,
+   "column": 23
+  },
+  {
+   "rule": "B701",
+   "path": "jinja2_templating.py",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "B701",
+   "path": "jinja2_templating.py",
+   "line": 10,
+   "column": 15
+  },
+  {
+   "rule": "B701",
+   "path": "jinja2_templating.py",
+   "line": 11,
+   "column": 1
+  },
+  {
+   "rule": "B701",
+   "path": "jinja2_templating.py",
+   "line": 15,
+   "column": 1
+  },
+  {
+   "rule": "B701",
+   "path": "jinja2_templating.py",
    "line": 29,
    "column": 1
   }
