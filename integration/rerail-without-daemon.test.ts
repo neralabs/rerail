@@ -5,12 +5,11 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, test } from "vitest";
-import { openRerailDatabase } from "../src/database.js";
-import { resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
+import { openRerailDatabase, resolveRepositoryContext } from "../src/engine/index.js";
 import { startTestRepository, stopTestRepository } from "../test/support/started-repository.js";
 
 const run = promisify(execFile);
-const cli = join(process.cwd(), "dist", "cli.js");
+const cli = join(process.cwd(), "dist", "cli", "cli.js");
 const roots: string[] = [];
 
 afterEach(async () => {
@@ -31,7 +30,7 @@ async function rerailSession(root: string, env: NodeJS.ProcessEnv, args: readonl
 }
 
 async function claudeStatus(root: string, env: NodeJS.ProcessEnv): Promise<string> {
-  const child = spawn(process.execPath, [join(process.cwd(), "dist", "claude-status.js")], { cwd: root, env, stdio: ["pipe", "pipe", "ignore"] });
+  const child = spawn(process.execPath, [join(process.cwd(), "dist", "hosts", "claude", "claude-status.js")], { cwd: root, env, stdio: ["pipe", "pipe", "ignore"] });
   let output = "";
   child.stdout.setEncoding("utf8").on("data", (chunk: string) => { output += chunk; });
   child.stdin.end(JSON.stringify({ session_id: "abc", cwd: root }));

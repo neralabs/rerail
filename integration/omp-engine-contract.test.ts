@@ -2,10 +2,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { linkSteers, steerBlock } from "../src/rerail-steer.js";
-import { dashboardOrigin } from "../src/session-presentation.js";
-import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID } from "./contract-code-rule.js";
-import { OmpHost } from "./omp-host.js";
+import { linkSteers, steerBlock } from "../src/engine/index.js";
+import { dashboardOrigin } from "../src/presentation/index.js";
+import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID } from "./support/contract-code-rule.js";
+import { OmpHost } from "./support/omp-host.js";
 
 describe("OMP native code rule contract", () => {
   it("delivers code rule guidance before the next model call despite delayed execution notifications", async () => {

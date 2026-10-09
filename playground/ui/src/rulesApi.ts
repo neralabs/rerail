@@ -1,5 +1,4 @@
-import { conversationRuleSchema } from "@rerail/rule-schema";
-import { codeRuleSchema } from "@rerail/code-rule-schema";
+import { codeRuleSchema, conversationRuleSchema } from "@neralabs/rerail/schemas";
 import { ruleListSchema, type PlaygroundRuleSnapshot } from "@protocol";
 
 /** The supervisor proxies the daemon's rule list, so the browser never leaves its own origin. */

@@ -2,12 +2,12 @@ import { realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
-import type { CodeRuleViolation, CodeRuleViolationFix, CodeRuleSourceSpan } from "../code-rule.js";
-import type { AuditFailure } from "../audit.js";
-import type { AuditReader, AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../audit-store.js";
-import { withinCheckout } from "../checkout-control.js";
-import type { RerailDatabase } from "../database.js";
-import { listRepositories, repositorySetUp, setCheckoutState, startRepository, type RepositoryStartState } from "../repository-start.js";
+import type { CodeRuleViolation, CodeRuleViolationFix, CodeRuleSourceSpan } from "../engine/code-rule/code-rule.js";
+import type { AuditFailure } from "../engine/audit/audit.js";
+import type { AuditReader, AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../engine/audit/audit-store.js";
+import { withinCheckout } from "../engine/catalog/checkout-control.js";
+import type { RerailDatabase } from "../engine/storage/database.js";
+import { listRepositories, repositorySetUp, setCheckoutState, startRepository, type RepositoryStartState } from "../runtime/repository-start.js";
 import {
   audits,
   presentationPreferences,
@@ -17,26 +17,26 @@ import {
   RULE_ORIGINS,
   events,
   workLinks,
-} from "../schema.js";
+} from "../engine/storage/schema.js";
 import {
   auditControlsSchema,
   auditSettingsPatchSchema,
   repositoryAuditSchema,
   auditRequestInputSchema,
   auditRequestSchema,
-} from "../audit-control-schema.js";
-import type { SqliteAuditControlStore } from "../audit-control.js";
-import { CodeRuleCompileError, EngineUnavailableError } from "../code-rule-compile.js";
-import { LANGUAGE_NOT_SUPPORTED, codeRuleLanguageNotSupported, type CodeRuleLanguageNotSupported } from "../code-rule-language-support.js";
-import { codeRuleSchema } from "../code-rule-schema.js";
-import { RULE_MODES } from "../rule-mode.js";
-import { engineRegexIssues } from "../rule-regexes.js";
-import { conversationRuleSchema, SAMPLE_BOUNDARIES } from "../rule-schema.js";
-import { QuarantinedGlobalRuleError, type ScopedRuleCatalog, type ScopedRuleQuery } from "../scoped-rule-catalog.js";
-import { cachedRecommendRulePacks, loadRulePacks, rulePackIdOf } from "../rule-packs.js";
+} from "../engine/audit/audit-control-schema.js";
+import type { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
+import { CodeRuleCompileError, EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
+import { LANGUAGE_NOT_SUPPORTED, codeRuleLanguageNotSupported, type CodeRuleLanguageNotSupported } from "../engine/code-rule/code-rule-language-support.js";
+import { codeRuleSchema } from "../engine/code-rule/code-rule-schema.js";
+import { RULE_MODES } from "../engine/catalog/rule-mode.js";
+import { engineRegexIssues } from "../engine/catalog/rule-regexes.js";
+import { conversationRuleSchema, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-schema.js";
+import { QuarantinedGlobalRuleError, type ScopedRuleCatalog, type ScopedRuleQuery } from "../engine/catalog/scoped-rule-catalog.js";
+import { cachedRecommendRulePacks, loadRulePacks, rulePackIdOf } from "../engine/catalog/rule-packs.js";
 import { rulePackListSchema, rulePackRecommendationsSchema } from "./rule-pack-contracts.js";
-import { SESSION_EVENT_PAGE_LIMIT, type SqliteSessionReader, type SqliteSessionStore } from "../session-store.js";
-import type { SqlitePresentationPreferenceStore } from "../presentation-preference-store.js";
+import { SESSION_EVENT_PAGE_LIMIT, type SqliteSessionReader, type SqliteSessionStore } from "../runtime/session-store.js";
+import type { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
 import { presentationDaemonSchema, presentationResponseSchema, sessionResponseSchema, sessionSummarySchema } from "./session-contracts.js";
 
 /**

@@ -23,7 +23,7 @@ import { dirname, join } from "node:path";
 import ts from "typescript";
 import { z } from "zod";
 import { fixturesDirectory, fixturesRecordingPath, loadRecording, type LoadedPack } from "./pack.js";
-import { compareDeterministicStrings } from "../../src/stable-json.js";
+import { compareDeterministicStrings } from "../../src/engine/index.js";
 
 /** Globals and members a rule may legitimately target that are not in the ES lib: host, module system, React. */
 const HOST_NAMES = [

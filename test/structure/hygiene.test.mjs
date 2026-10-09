@@ -1,11 +1,11 @@
 // Structure gate, hygiene metrics (#19-#21, #25): each predicate on a tiny in-memory tree.
 
 import { describe, expect, it } from "vitest";
-import { memoryRepo } from "../../scripts/check-structure/repo.mjs";
-import { check as binariesLfs } from "../../scripts/check-structure/metrics/19-binaries-lfs.mjs";
-import { check as generatedMarked } from "../../scripts/check-structure/metrics/20-generated-marked.mjs";
-import { check as readmes } from "../../scripts/check-structure/metrics/21-top-level-readmes.mjs";
-import { check as manifest } from "../../scripts/check-structure/metrics/25-generated-manifest.mjs";
+import { memoryRepo } from "../../scripts/check/check-structure/repo.mjs";
+import { check as binariesLfs } from "../../scripts/check/check-structure/metrics/19-binaries-lfs.mjs";
+import { check as generatedMarked } from "../../scripts/check/check-structure/metrics/20-generated-marked.mjs";
+import { check as readmes } from "../../scripts/check/check-structure/metrics/21-top-level-readmes.mjs";
+import { check as manifest } from "../../scripts/check/check-structure/metrics/25-generated-manifest.mjs";
 
 const paths = (result) => result.findings.map((item) => item.path);
 const binary = (size) => Buffer.concat([Buffer.from([0]), Buffer.alloc(size - 1, 1)]);

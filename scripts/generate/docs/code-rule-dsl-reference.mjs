@@ -44,7 +44,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { fixturesPath } from "../../../test/oracles.ts";
+import { fixturesPath } from "../../../test/support/oracles.ts";
 
 const RERAIL = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const REFERENCE = join(RERAIL, "docs/code-rule-dsl-reference.html");
@@ -1034,7 +1034,7 @@ function entryPieces(literal) {
 }
 
 /** The zod sources a production may name: the code-rule schema and its semantic fields. */
-const SCHEMA_SOURCES = ["src/code-rule-schema.ts", "src/code-rule-schema-semantic.ts"];
+const SCHEMA_SOURCES = ["src/engine/code-rule/code-rule-schema.ts", "src/engine/code-rule/code-rule-schema-semantic.ts"];
 
 /** The entries a spread piece brings in, or undefined when `piece` is no spread. */
 function spreadEntries(schema, piece) {
@@ -1099,7 +1099,7 @@ function zodKeys(schema, spec) {
 }
 
 /** Where an enum's named value list may be declared: the schema sources and the language tables they import. */
-const ENUM_SOURCES = [...SCHEMA_SOURCES, "src/code-rule-languages.ts", "src/code-rule-language-registry.generated.ts", "src/rule-mode.ts"];
+const ENUM_SOURCES = [...SCHEMA_SOURCES, "src/engine/code-rule/code-rule-languages.ts", "src/engine/code-rule/code-rule-language-registry.generated.ts", "src/engine/catalog/rule-mode.ts"];
 
 /** The string values of an array literal's source, its `...NAME` spreads resolved in `sources`. */
 function arrayValues(sources, list) {
@@ -1358,7 +1358,7 @@ const COMMANDS = {
     if (options.write) writeCoverage(result);
   },
   examples: async options => {
-    const engine = typeof options.engine === "string" ? options.engine : (await import("../src/native.ts")).resolveNativeBindingPath();
+    const engine = typeof options.engine === "string" ? options.engine : (await import("../../../src/engine/index.ts")).resolveNativeBindingPath();
     process.exitCode = checkExamples(options, engine) ? 0 : 1;
   },
   locate,

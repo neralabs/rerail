@@ -1,13 +1,13 @@
 {
   "version": 1,
   "hooks": {
-    "sessionStart": [{ "command": "node ./dist/cursor-hook.js" }],
-    "sessionEnd": [{ "command": "node ./dist/cursor-hook.js" }],
-    "beforeSubmitPrompt": [{ "command": "node ./dist/cursor-hook.js" }],
-    "afterAgentResponse": [{ "command": "node ./dist/cursor-hook.js" }],
-    "preToolUse": [{ "command": "node ./dist/cursor-hook.js" }],
-    "postToolUse": [{ "command": "node ./dist/cursor-hook.js" }],
-    "postToolUseFailure": [{ "command": "node ./dist/cursor-hook.js" }],
-    "stop": [{ "command": "node ./dist/cursor-hook.js" }]
+    "sessionStart": [{ "command": "node ./dist/hosts/cursor/cursor-hook.js" }],
+    "sessionEnd": [{ "command": "node ./dist/hosts/cursor/cursor-hook.js" }],
+    "beforeSubmitPrompt": [{ "command": "node ./dist/hosts/cursor/cursor-hook.js" }],
+    "afterAgentResponse": [{ "command": "node ./dist/hosts/cursor/cursor-hook.js" }],
+    "preToolUse": [{ "command": "node ./dist/hosts/cursor/cursor-hook.js" }],
+    "postToolUse": [{ "command": "node ./dist/hosts/cursor/cursor-hook.js" }],
+    "postToolUseFailure": [{ "command": "node ./dist/hosts/cursor/cursor-hook.js" }],
+    "stop": [{ "command": "node ./dist/hosts/cursor/cursor-hook.js" }]
   }
 }

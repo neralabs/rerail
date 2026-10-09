@@ -1,10 +1,10 @@
 // Structure gate, naming metrics (#16-#18): each predicate on a tiny in-memory tree.
 
 import { describe, expect, it } from "vitest";
-import { memoryRepo } from "../../scripts/check-structure/repo.mjs";
-import { check as rulesDirs } from "../../scripts/check-structure/metrics/16-rules-dirs.mjs";
-import { check as supportDirs } from "../../scripts/check-structure/metrics/17-test-support-dirs.mjs";
-import { check as caseConvention } from "../../scripts/check-structure/metrics/18-case-convention.mjs";
+import { memoryRepo } from "../../scripts/check/check-structure/repo.mjs";
+import { check as rulesDirs } from "../../scripts/check/check-structure/metrics/16-rules-dirs.mjs";
+import { check as supportDirs } from "../../scripts/check/check-structure/metrics/17-test-support-dirs.mjs";
+import { check as caseConvention } from "../../scripts/check/check-structure/metrics/18-case-convention.mjs";
 
 const rule = (id) => JSON.stringify({ format: "rerail.policy/v1", id, clauses: [] });
 const paths = (result) => result.findings.map((item) => item.path);

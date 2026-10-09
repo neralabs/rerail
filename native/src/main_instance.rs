@@ -1,4 +1,4 @@
-//! The OS advisory lock behind Rerail's single main instance (`src/main-instance.ts`).
+//! The OS advisory lock behind Rerail's single main instance (`src/engine/native/main-instance.ts`).
 //!
 //! `std::fs::File::try_lock` is `flock(LOCK_EX | LOCK_NB)` on Unix and `LockFileEx` on Windows.
 //! Both belong to the open handle, so the OS drops the lock when the holder closes it or exits for

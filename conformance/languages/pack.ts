@@ -2,8 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, matchesGlob, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { CODE_RULE_LANGUAGE_FAMILIES } from "../../src/code-rule-languages.js";
-import { compareDeterministicStrings } from "../../src/stable-json.js";
+import { CODE_RULE_LANGUAGE_FAMILIES, compareDeterministicStrings } from "../../src/engine/index.js";
 
 export const HARNESS_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 export const RERAIL_ROOT = resolve(HARNESS_DIRECTORY, "..", "..");
@@ -207,7 +206,7 @@ export function loadPack(directory: string): LoadedPack {
   };
 }
 
-/** Every pack under packs/ whose rules this runner scores: a directory holding a conformance.json. Their tests are test/packs.test.ts. */
+/** Every pack under packs/ whose rules this runner scores: a directory holding a conformance.json. Their tests are test/engine/catalog/packs.test.ts. */
 export function listPortedPacks(): string[] {
   if (!existsSync(PACKS_ROOT)) return [];
   return readdirSync(PACKS_ROOT, { withFileTypes: true })

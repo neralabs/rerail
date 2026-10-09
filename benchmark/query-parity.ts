@@ -6,11 +6,16 @@ import { mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } fro
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { languageFor } from "../src/code-rule-enforcer.js";
-import { loadNativeBinding, resolveNativeBindingPath, type NativeBinding, type NativeCompiledCodeRuleDsl } from "../src/native.js";
+import {
+  languageFor,
+  loadNativeBinding,
+  resolveNativeBindingPath,
+  type NativeBinding,
+  type NativeCompiledCodeRuleDsl,
+} from "../src/engine/index.js";
 
 import { isSemanticWorkload, semanticWorkloads, type SemanticWorkload } from "./query-parity-semantic.js";
-import { fixturesPath } from "../test/oracles.js";
+import { fixturesPath } from "../test/support/oracles.js";
 
 const script = fileURLToPath(import.meta.url);
 const rerailRoot = resolve(dirname(script), "..");

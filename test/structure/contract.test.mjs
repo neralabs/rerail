@@ -1,11 +1,11 @@
 // Structure gate, contract metrics (#8-#11): each predicate on a tiny in-memory tree.
 
 import { describe, expect, it } from "vitest";
-import { memoryRepo } from "../../scripts/check-structure/repo.mjs";
-import { check as packFormat } from "../../scripts/check-structure/metrics/08-pack-format.mjs";
-import { check as packsImportEngine } from "../../scripts/check-structure/metrics/09-packs-import-engine.mjs";
-import { check as featureModules } from "../../scripts/check-structure/metrics/10-fixture-feature-modules.mjs";
-import { check as orphans } from "../../scripts/check-structure/metrics/11-orphan-families.mjs";
+import { memoryRepo } from "../../scripts/check/check-structure/repo.mjs";
+import { check as packFormat } from "../../scripts/check/check-structure/metrics/08-pack-format.mjs";
+import { check as packsImportEngine } from "../../scripts/check/check-structure/metrics/09-packs-import-engine.mjs";
+import { check as featureModules } from "../../scripts/check/check-structure/metrics/10-fixture-feature-modules.mjs";
+import { check as orphans } from "../../scripts/check/check-structure/metrics/11-orphan-families.mjs";
 
 const rule = (id) => JSON.stringify({ format: "rerail.policy/v1", id, clauses: [] });
 const paths = (result) => result.findings.map((item) => item.path);

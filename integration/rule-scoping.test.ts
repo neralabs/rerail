@@ -3,10 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { defaultRerailDatabasePath } from "../src/database.js";
-import { openScopedRuleCatalog, resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
-import { MOCK_CONVERSATION_RULES } from "../src/seed.js";
-import { SqliteSessionReader, SqliteSessionStore } from "../src/session-store.js";
+import { defaultRerailDatabasePath, openScopedRuleCatalog, resolveRepositoryContext } from "../src/engine/index.js";
+import { MOCK_CONVERSATION_RULES } from "../src/cli/index.js";
+import { SqliteSessionReader, SqliteSessionStore } from "../src/runtime/index.js";
 
 const roots: string[] = [];
 let previousRerailHome: string | undefined;

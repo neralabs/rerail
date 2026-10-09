@@ -1,11 +1,11 @@
 // Structure gate, layering metrics (#12-#15): each predicate on a tiny in-memory tree.
 
 import { describe, expect, it } from "vitest";
-import { memoryRepo } from "../../scripts/check-structure/repo.mjs";
-import { check as flatDirectories } from "../../scripts/check-structure/metrics/12-flat-directory-size.mjs";
-import { check as importDirection } from "../../scripts/check-structure/metrics/13-import-direction.mjs";
-import { check as fixturesRoot } from "../../scripts/check-structure/metrics/14-fixtures-root.mjs";
-import { check as duplicates } from "../../scripts/check-structure/metrics/15-duplicate-concepts.mjs";
+import { memoryRepo } from "../../scripts/check/check-structure/repo.mjs";
+import { check as flatDirectories } from "../../scripts/check/check-structure/metrics/12-flat-directory-size.mjs";
+import { check as importDirection } from "../../scripts/check/check-structure/metrics/13-import-direction.mjs";
+import { check as fixturesRoot } from "../../scripts/check/check-structure/metrics/14-fixtures-root.mjs";
+import { check as duplicates } from "../../scripts/check/check-structure/metrics/15-duplicate-concepts.mjs";
 
 const rule = (id) => JSON.stringify({ format: "rerail.policy/v1", id, clauses: [] });
 const paths = (result) => result.findings.map((item) => item.path);

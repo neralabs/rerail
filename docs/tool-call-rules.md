@@ -298,12 +298,11 @@ For each rule, list at least one command it must flag, one near-miss it must pas
 the command line — a tool *result* that echoes the command and must pass.
 
 **2. Run them through the engine.** Add the rule to `fixtures/host/tool-call-rules/rules.json` and its
-cases to `test/tool-call-rules.test.ts`, or try it ad hoc:
+cases to `test/engine/catalog/tool-call-rules.test.ts`, or try it ad hoc:
 
 ```ts
 import { resolve } from "node:path";
-import { ConversationRuleRegistry } from "./src/registry.js";
-import { stableJsonText } from "./src/stable-json.js";
+import { ConversationRuleRegistry, stableJsonText } from "./src/engine/index.js";
 
 const registry = new ConversationRuleRegistry({ modelPath: resolve("model") });
 registry.replace([rule]);
@@ -314,7 +313,7 @@ registry.match({ source: "tool:Bash", boundary: "tool-call", text: input, input 
 ```
 
 ```sh
-npx vitest run test/tool-call-rules.test.ts
+npx vitest run test/engine/catalog/tool-call-rules.test.ts
 ```
 
 **3. Measure noise before blocking.** `candidate-rules/oss-tool-rules/` checks each pattern against

@@ -189,7 +189,7 @@ Weak:
 
 ## Rerail database
 
-Rerail keeps one SQLite file per Rerail home: `$RERAIL_HOME/rerail.sqlite` (`~/.rerail/rerail.sqlite` when `RERAIL_HOME` is unset). It holds the rule catalog and the execution history of every repository on the machine; every harness adapter, runtime, and the daemon open it. The schema is a set of [Drizzle](https://orm.drizzle.team) tables in `src/schema.ts`; `npm run generate:schema` renders their DDL into `src/schema-sql.ts` (`RERAIL_SCHEMA_STATEMENTS`, committed, checked for drift by `test/rule-store.test.ts`), which `openRerailDatabase` applies to a fresh file. Rerail's database code runs only in Node processes and uses `drizzle-orm/better-sqlite3`. The OMP extension remains inside OMP's external Bun-based host; it never opens SQLite and reaches the database only through the daemon's native-session IPC.
+Rerail keeps one SQLite file per Rerail home: `$RERAIL_HOME/rerail.sqlite` (`~/.rerail/rerail.sqlite` when `RERAIL_HOME` is unset). It holds the rule catalog and the execution history of every repository on the machine; every harness adapter, runtime, and the daemon open it. The schema is a set of [Drizzle](https://orm.drizzle.team) tables in `src/engine/storage/schema.ts`; `npm run generate:schema` renders their DDL into `src/engine/storage/schema-sql.generated.ts` (`RERAIL_SCHEMA_STATEMENTS`, committed, checked for drift by `test/engine/catalog/rule-store.test.ts`), which `openRerailDatabase` applies to a fresh file. Rerail's database code runs only in Node processes and uses `drizzle-orm/better-sqlite3`. The OMP extension remains inside OMP's external Bun-based host; it never opens SQLite and reaches the database only through the daemon's native-session IPC.
 
 - Rule catalog — `catalog_rules`, `rule_projects`, `rule_repositories`, `rule_project_repositories`, and their bookkeeping tables; see [Rule scoping](docs/rule-scoping.md).
 - `sessions` — one row per harness session (`host`, `cwd`, `repository_id`, `started_at`, `ended_at`). `repository_id` is the stable identity of the checkout's repository (shared by its linked worktrees), and it is what attributes history to a repository.
@@ -227,11 +227,11 @@ Supported native targets:
 
 Host entrypoints:
 
-- OMP: `dist/default-extension.js`, declared in the package's `omp` manifest.
-- Pi: `dist/pi-extension.js`, declared in the package's `pi` manifest and loadable with `pi -e`.
-- Persistent event stream: `dist/event-stream.js` or `rerail events`.
+- OMP: `dist/hosts/omp/default-extension.js`, declared in the package's `omp` manifest.
+- Pi: `dist/hosts/pi/pi-extension.js`, declared in the package's `pi` manifest and loadable with `pi -e`.
+- Persistent event stream: `dist/harness/event-stream.js` or `rerail events`.
 - Claude Code and Codex: `createClaudeEventHandler(...)` and `createCodexEventHandler(...)` for harness-owned hook registration.
-- Cursor: `.cursor-plugin/plugin.json`, backed by `dist/cursor-hook.js`.
+- Cursor: `.cursor-plugin/plugin.json`, backed by `dist/hosts/cursor/cursor-hook.js`.
 
 Lifecycle ingestion is not an MCP tool surface. OMP and Pi own a session-scoped `RerailRuntime` inside their extension host. Claude Code, Codex, and Cursor command hooks send normalized events to the daemon's resident kernel over an owner-only Unix socket or a local Windows named pipe, so ending a hook process does not reset policy state. Harness-owned persistent integrations can also use the newline-delimited `RERAIL-EVENTS/1` stream. These paths share the same event runtime, cosine registry, and executable-policy bridge.
 
@@ -277,12 +277,12 @@ rerail update rollback    # swap back to the previous version
 
 ## Release
 
-`.github/workflows/release.yml` builds the package the updater installs. It compiles the native kernel for macOS, Linux glibc, and Windows MSVC on arm64 and x64, smoke-tests native loading and device storage on each host, rejects a Windows kernel that imports the Visual C++ runtime (the kernels link it statically, so a clean Windows install needs no redistributable), builds the runtime and bundled UI, refuses to pack unless all six `native/*.node` files are present, installs the tarball into a scratch prefix, and checks `rerail --help`, the bundled UI, and `nativeHealth()`. A Windows x64 job then installs that tarball the way a user would (`scripts/windows-install-smoke.ps1`) and exercises the managed runtime; nothing is published unless it passes.
+`.github/workflows/release.yml` builds the package the updater installs. It compiles the native kernel for macOS, Linux glibc, and Windows MSVC on arm64 and x64, smoke-tests native loading and device storage on each host, rejects a Windows kernel that imports the Visual C++ runtime (the kernels link it statically, so a clean Windows install needs no redistributable), builds the runtime and bundled UI, refuses to pack unless all six `native/*.node` files are present, installs the tarball into a scratch prefix, and checks `rerail --help`, the bundled UI, and `nativeHealth()`. A Windows x64 job then installs that tarball the way a user would (`scripts/host/windows-install-smoke.ps1`) and exercises the managed runtime; nothing is published unless it passes.
 
 - `workflow_dispatch` builds and uploads the tarball as a run artifact without publishing. Install it with `npm install <tarball>` to try a build.
 - A `v<version>` tag, which must equal `package.json`'s version, publishes `@neralabs/rerail` to npmjs through npm trusted publishing from the protected `release` environment. The tag names the channel, which is the npm dist-tag: `v0.2.0` → `latest`, `v0.2.0-beta.1` → `beta`, `v0.2.0-next.1` → `next`; any other prerelease suffix is rejected. `latest` is stable; `beta` and `next` are opt-in through `rerail update --channel <tag>`.
 
-To cut a release, bump `package.json` only (`npm version <version> --no-git-tag-version` also updates `package-lock.json`), add the release notes to `CHANGELOG.md`, merge, and push the tag. The Claude, Codex, and Cursor plugin manifests carry no version in the checkout: `npm pack` stamps `package.json`'s version into them (`prepack`) and restores the source form afterwards (`postpack`). If a pack fails partway, `node scripts/stamp-plugin-versions.mjs restore` puts them back.
+To cut a release, bump `package.json` only (`npm version <version> --no-git-tag-version` also updates `package-lock.json`), add the release notes to `CHANGELOG.md`, merge, and push the tag. The Claude, Codex, and Cursor plugin manifests carry no version in the checkout: `npm pack` stamps `package.json`'s version into them (`prepack`) and restores the source form afterwards (`postpack`). If a pack fails partway, `node scripts/build/stamp-plugin-versions.mjs restore` puts them back.
 
 ## Run
 
@@ -637,17 +637,17 @@ npm run build:native      # compile the native kernel into native/
 npm run build             # clean build: native kernel, runtime, host bundles, UI
 npm run check:all         # TypeScript, rustfmt + clippy, UI token and reference checks
 npm run test:all          # build, unit, conformance, reference, native, and integration suites
-npm run test:conformance  # conformance tests (the identifier-rename gate) and the language conformance gate, offline
+npm run test:conformance  # the language conformance gate, offline (the identifier-rename gate, test/conformance/, runs in npm test)
 npm run package:check     # build and dry-run the npm pack
 ```
 
 `npm run build:native` needs `cargo` on `PATH`; after a fresh rustup install, `export PATH="$HOME/.cargo/bin:$PATH"`.
 
-Everything run from a checkout (tests, benchmarks, `node dist/cli.js`) is a development build: its policy content store is `<checkout>/.rerail/content-v1.sqlite`, private to that checkout or worktree. Only the managed installation under `~/.rerail/versions/` opens the machine-wide `~/.cache/rerail/content-v1.sqlite`, so a checkout on a newer store schema cannot break the installed Rerail. `RERAIL_CONTENT_STORE_PATH` overrides the location; the test setup gives every test file its own store that way. See [Installing Rerail](docs/installation.md#after-setup).
+Everything run from a checkout (tests, benchmarks, `node dist/cli/cli.js`) is a development build: its policy content store is `<checkout>/.rerail/content-v1.sqlite`, private to that checkout or worktree. Only the managed installation under `~/.rerail/versions/` opens the machine-wide `~/.cache/rerail/content-v1.sqlite`, so a checkout on a newer store schema cannot break the installed Rerail. `RERAIL_CONTENT_STORE_PATH` overrides the location; the test setup gives every test file its own store that way. See [Installing Rerail](docs/installation.md#after-setup).
 
-To run a checkout's build in your harnesses instead of the published package, run `node dist/cli.js install --root "$PWD"` after `npm run build`. It activates the checkout as `~/.rerail/current`, the way `setup` activates a published version, writes the launcher, and registers the harnesses; run `npx @neralabs/rerail setup` again to return to the published package.
+To run a checkout's build in your harnesses instead of the published package, run `node dist/cli/cli.js install --root "$PWD"` after `npm run build`. It activates the checkout as `~/.rerail/current`, the way `setup` activates a published version, writes the launcher, and registers the harnesses; run `npx @neralabs/rerail setup` again to return to the published package.
 
-Rerail's own toolchain is Node only. OMP remains an external Bun-hosted runtime; its integration suites (`integration/omp-*.test.ts`, `integration/host-auth.test.ts`) use Vitest to drive a real standalone OMP executable. Set `RERAIL_OMP_EXECUTABLE` to its absolute path, or provision the release pinned to the SDK dependency with `node scripts/install-omp-host.mjs` (checksum-verified; uses a private local cache and prints the executable path). CI uses the same host. `npm run test:integration:built` skips the build step when `dist/` is current.
+Rerail's own toolchain is Node only. OMP remains an external Bun-hosted runtime; its integration suites (`integration/omp-*.test.ts`, `integration/host-auth.test.ts`) use Vitest to drive a real standalone OMP executable. Set `RERAIL_OMP_EXECUTABLE` to its absolute path, or provision the release pinned to the SDK dependency with `node scripts/host/install-omp-host.mjs` (checksum-verified; uses a private local cache and prints the executable path). CI uses the same host. `npm run test:integration:built` skips the build step when `dist/` is current.
 
 `scripts/generate/model/prepare_model.py` reproduces the bundled INT8 artifact from the revision and checksums recorded in `model/manifest.json`. Every generated file in the repository, with its generator and the command that rewrites it, is listed in [scripts/generate/README.md](scripts/generate/README.md).
 
@@ -688,7 +688,7 @@ The command builds the complete package first. Each harness gets a temporary wor
 Prerequisites:
 
 - macOS with `sandbox-exec`, and the selected harness CLIs installed. `RERAIL_CLAUDE_BIN` and `RERAIL_CURSOR_AGENT_BIN` can select non-PATH executables.
-- Provider credentials for each selected harness. `scripts/host-smoke.ts` documents the environment variables it reads; a missing credential or endpoint is a failure, never a skipped pass. OAuth tokens copied from a harness login must remain valid for at least ten minutes; refresh credentials are not copied.
+- Provider credentials for each selected harness. `scripts/host/host-smoke.ts` documents the environment variables it reads; a missing credential or endpoint is a failure, never a skipped pass. OAuth tokens copied from a harness login must remain valid for at least ten minutes; refresh credentials are not copied.
 
 Each provider-backed session has a 180-second limit by default; `RERAIL_SMOKE_TIMEOUT_MS` can raise that hard limit for a slower provider. Output is bounded and redacted; disposable profiles and workspaces are removed after each run. The command emits one JSON evidence record per harness and exits nonzero for any missing prerequisite or failed assertion. The existing user daemon and harness profiles are not replaced.
 
@@ -696,7 +696,7 @@ Claude's internal temporary directory is explicitly kept inside the sandbox with
 
 ### UI
 
-The browser view lives in `ui/` and has no toolchain: `index.html`, `app.css`, and native ES modules (`app.js`, `api.js`, `state.js`, `render/*.js`), served as bytes. No React, no Vite, no Tailwind, no TypeScript, not even as dev dependencies. Colours come from the committed `ui/tokens.generated.css` (and the terminal brand colour from `src/terminal-brand.generated.ts`); `npm run check:ui-tokens` fails when the UI references a `var(--…)` that neither the token sheet nor the page's own CSS declares.
+The browser view lives in `ui/` and has no toolchain: `index.html`, `app.css`, and native ES modules (`app.js`, `api.js`, `state.js`, `render/*.js`), served as bytes. No React, no Vite, no Tailwind, no TypeScript, not even as dev dependencies. Colours come from the committed `ui/tokens.generated.css` (and the terminal brand colour from `src/presentation/terminal-brand.generated.ts`); `npm run check:ui-tokens` fails when the UI references a `var(--…)` that neither the token sheet nor the page's own CSS declares.
 
 `npm run build:ui` copies `ui/` to `dist/ui`, which the daemon serves. A daemon started with `--dev`, or with `RERAIL_DEV=1` in its environment, serves `ui/` itself instead, so an edit needs only a browser reload; `rerail status` and `/healthz` report it as `dev` rather than `bundled`.
 

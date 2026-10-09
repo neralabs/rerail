@@ -22,15 +22,15 @@ structure review on PR #1 plus #25, the generated-file manifest.
 
 ```sh
 npm run check:structure                       # table, then every finding of each failing metric
-node scripts/check-structure.mjs --only 4,12  # selected metrics
-node scripts/check-structure.mjs --json       # machine output: [{ id, title, target, actual, pass, findings }]
+node scripts/check/check-structure.mjs --only 4,12  # selected metrics
+node scripts/check/check-structure.mjs --json       # machine output: [{ id, title, target, actual, pass, findings }]
 ```
 
 The gate exits 1 when any metric fails and prints each finding as `path[:line]: message`. Its only
 inputs are `git ls-files` (tracked files present in the working tree) and file contents: no build, no
 network, no clock. Two runs print the same bytes. New files count once they are tracked (`git add`).
 
-Each metric is a module, `scripts/check-structure/metrics/<NN>-<slug>.mjs`, exporting
+Each metric is a module, `scripts/check/check-structure/metrics/<NN>-<slug>.mjs`, exporting
 `{ id, title, target, check(repo) }`; `check` returns `{ actual, findings: [{ path, line?, message }] }`
 and the metric passes when there are no findings. The module's header comment is the authoritative
 predicate. Exemptions exist only as named rules inside a module, each with its reason. Shared code lives
@@ -135,7 +135,7 @@ recording), `fixture-data` (`fixtures/**`), `vendored` (`native/grammars/**`).
 
 ### 13. Import-direction violations — target 0
 
-When `scripts/check-boundaries.mjs` (the layer boundary lint) is tracked, this metric is its
+When `scripts/check/check-boundaries.mjs` (the layer boundary lint) is tracked, this metric is its
 `checkBoundaries(root, { files })` result. Otherwise a relative-import scan of JS/TS files (static,
 dynamic, `require`; NodeNext resolution) flags `engine-to-host` (`src/engine/` → `src/hosts/`),
 `host-to-host` (`src/hosts/<a>/` → `src/hosts/<b>/`), `src-outward` (`src/` → outside `src/`) and
@@ -273,5 +273,5 @@ The gate's first run, before the structure work:
 
 Change the metric module (predicate and header comment together), its test in `test/structure/`, and the
 section above. A new exemption is a named rule in the module with its reason, never a path list
-maintained elsewhere. A new metric is a new `scripts/check-structure/metrics/<NN>-<slug>.mjs`; the gate
+maintained elsewhere. A new metric is a new `scripts/check/check-structure/metrics/<NN>-<slug>.mjs`; the gate
 loads every module in that directory.

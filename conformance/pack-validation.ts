@@ -1,18 +1,24 @@
 /**
  * The pack validation contract (docs/pack-format.md, "The validation contract"): checks 1 to 6 over one
- * `packs/<id>/` directory. Test support, not runtime: test/packs.test.ts calls it for every pack, and it reuses the
+ * `packs/<id>/` directory. Test support, not runtime: test/engine/catalog/packs.test.ts calls it for every pack, and it reuses the
  * conformance runner for ported rules, so it lives beside that runner and stays out of the published core.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join, matchesGlob, relative, sep } from "node:path";
 import { z } from "zod";
-import { languageFor } from "../src/code-rule-enforcer.js";
-import { languageNotSupportedOf } from "../src/code-rule-language-support.js";
-import { codeRuleSchema } from "../src/code-rule-schema.js";
-import { parseJsonWithoutDuplicateKeys } from "../src/json-duplicate-keys.js";
-import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../src/native.js";
-import { rulePackFileSchema, rulePackPackageName, rulePackPackageSchema, type RulePackFile } from "../src/rule-packs.js";
-import { compareDeterministicStrings } from "../src/stable-json.js";
+import {
+  languageFor,
+  languageNotSupportedOf,
+  codeRuleSchema,
+  parseJsonWithoutDuplicateKeys,
+  loadNativeBinding,
+  type NativeCompiledCodeRuleDsl,
+  rulePackFileSchema,
+  rulePackPackageName,
+  rulePackPackageSchema,
+  type RulePackFile,
+  compareDeterministicStrings,
+} from "../src/engine/index.js";
 import { CONFORMANCE_FILE, defaultCorpusRoot, loadPack, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
 import { capabilitiesJson } from "./engine.js";
@@ -66,9 +72,9 @@ const UPSTREAM_LICENSE = /\bLicense: ([A-Za-z0-9][A-Za-z0-9.+-]*)/u;
 const UPSTREAM_ROW = /^\|\s*`([^`]+)`/u;
 
 let allowlist: ReadonlySet<string> | undefined;
-/** The repository's licence allowlist, the one `scripts/check-licenses.mjs` enforces. */
+/** The repository's licence allowlist, the one `scripts/check/check-licenses.mjs` enforces. */
 function allowedLicenses(): ReadonlySet<string> {
-  allowlist ??= new Set(z.array(z.string()).parse(JSON.parse(readFileSync(join(RERAIL_ROOT, "scripts", "licence-allowlist.json"), "utf8"))));
+  allowlist ??= new Set(z.array(z.string()).parse(JSON.parse(readFileSync(join(RERAIL_ROOT, "scripts", "check", "licence-allowlist.json"), "utf8"))));
   return allowlist;
 }
 

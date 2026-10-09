@@ -1,14 +1,14 @@
 // Structure gate, location metrics (#1-#7): each predicate on a tiny in-memory tree.
 
 import { describe, expect, it } from "vitest";
-import { memoryRepo } from "../../scripts/check-structure/repo.mjs";
-import { check as packJsonLocation } from "../../scripts/check-structure/metrics/01-pack-json-location.mjs";
-import { check as ruleDocLocation } from "../../scripts/check-structure/metrics/02-rule-doc-location.mjs";
-import { check as fixtureDataLocation } from "../../scripts/check-structure/metrics/03-fixture-data-location.mjs";
-import { check as engineRoots } from "../../scripts/check-structure/metrics/04-engine-source-roots.mjs";
-import { check as testRoots } from "../../scripts/check-structure/metrics/05-test-roots.mjs";
-import { check as generatorLocations } from "../../scripts/check-structure/metrics/06-generator-locations.mjs";
-import { check as packLicences } from "../../scripts/check-structure/metrics/07-pack-licence-annotations.mjs";
+import { memoryRepo } from "../../scripts/check/check-structure/repo.mjs";
+import { check as packJsonLocation } from "../../scripts/check/check-structure/metrics/01-pack-json-location.mjs";
+import { check as ruleDocLocation } from "../../scripts/check/check-structure/metrics/02-rule-doc-location.mjs";
+import { check as fixtureDataLocation } from "../../scripts/check/check-structure/metrics/03-fixture-data-location.mjs";
+import { check as engineRoots } from "../../scripts/check/check-structure/metrics/04-engine-source-roots.mjs";
+import { check as testRoots } from "../../scripts/check/check-structure/metrics/05-test-roots.mjs";
+import { check as generatorLocations } from "../../scripts/check/check-structure/metrics/06-generator-locations.mjs";
+import { check as packLicences } from "../../scripts/check/check-structure/metrics/07-pack-licence-annotations.mjs";
 
 const rule = (id) => JSON.stringify({ format: "rerail.policy/v1", id, clauses: [] });
 const paths = (result) => result.findings.map((item) => item.path);

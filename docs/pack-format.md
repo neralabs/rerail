@@ -1,9 +1,9 @@
 # Rule pack structure and validation contract
 
-Status: the layout and the validation contract (checks 1 to 6) are implemented. `test/packs.test.ts` validates every
+Status: the layout and the validation contract (checks 1 to 6) are implemented. `test/engine/catalog/packs.test.ts` validates every
 `packs/*` directory: `python`, `php`, `blade`, `typescript`, `react`, `node`, `next` and `tslint`. Core does not load
 installed packs yet: it ships the TSLint pack inside its own package (`packs/tslint/pack.json` and `packs/tslint/rules/`
-in its `files`, read from `CORE_RULE_PACKS` in `src/rule-bootstrap.ts`; see [rule packs](rule-packs.md)), and no pack
+in its `files`, read from `CORE_RULE_PACKS` in `src/engine/catalog/rule-bootstrap.ts`; see [rule packs](rule-packs.md)), and no pack
 is published. A pack introduces no new file format: it combines the two schemas the repository already has. To start
 one, see [language packs](language-packs.md#start-a-pack).
 
@@ -66,14 +66,14 @@ packs/<id>/
 - `files` publishes the pack and its licence records. `conformance.json`, `divergences.json`, `upstream/` and
   `candidates/` are validation material: they stay in the repository and never reach npm, which keeps copied
   upstream tests out of the package.
-- The schema is `rulePackPackageSchema` in `src/rule-packs.ts`.
+- The schema is `rulePackPackageSchema` in `src/engine/catalog/rule-packs.ts`.
 
 ### pack.json
 
 Today's `rerail.rule-pack/v1` ([format](rule-packs.md#format)): `id`, `name`, `category`, `covers`, `reason`,
 `match`, `honourSuppressionComments`, and per rule `id`, `title`, `group`, optional `mode`, `on` and
 `examples: { caught, passes }`. One change: a rule now names its document, `rules/<name>.json`, so a pack is
-self-contained. `document` is required (`rulePackFileSchema` in `src/rule-packs.ts`); core reads each rule's document
+self-contained. `document` is required (`rulePackFileSchema` in `src/engine/catalog/rule-packs.ts`); core reads each rule's document
 from the pack:
 
 ```json
@@ -110,14 +110,14 @@ recordings from `upstream/` unless `conformance.json` sets `oracles`:
 
 Implemented: `validatePack(directory, { corpora?, corpusRoot? })` in `conformance/pack-validation.ts` runs checks 1
 to 6 over one pack and returns each check's failures and each rule's status (`ok`, `failed` or `not-supported-yet`).
-`test/packs.test.ts` calls it for every directory under `packs/`, with one test per check and one per rule, and has
+`test/engine/catalog/packs.test.ts` calls it for every directory under `packs/`, with one test per check and one per rule, and has
 the validator's own tests over the fixture packs in `fixtures/packs/`. `npm test` runs it with the local core.
 Running it against the newest published core inside each pack's range is for pack CI, which does not exist yet.
 
 ```sh
-npx vitest run test/packs.test.ts                         # every pack: checks 1 to 6, each rule's status
-npx vitest run test/packs.test.ts -t "pack python"        # one pack
-RERAIL_PACK_CORPORA=1 npx vitest run test/packs.test.ts   # check 4 on every pinned corpus too
+npx vitest run test/engine/catalog/packs.test.ts                         # every pack: checks 1 to 6, each rule's status
+npx vitest run test/engine/catalog/packs.test.ts -t "pack python"        # one pack
+RERAIL_PACK_CORPORA=1 npx vitest run test/engine/catalog/packs.test.ts   # check 4 on every pinned corpus too
 ```
 
 Check 4 always scores ported rules on the tools' fixtures. It scores a pinned corpus when its checkout is present
@@ -159,7 +159,7 @@ Precisely:
    corpus) is listed instead in the tool's own `upstream/<tool>/UPSTREAM.md`, with the same table rows: it is Rerail's,
    so it adds no licence to `licenses/` or to the package's `license`. That record may list only files under its own
    `upstream/<tool>/`. Every listed file must exist, every recorded licence must be on the repository allowlist
-   (`scripts/licence-allowlist.json`), and the pack needs a `LICENSE`. `reuse lint` and `node scripts/check-licenses.mjs`
+   (`scripts/check/licence-allowlist.json`), and the pack needs a `LICENSE`. `reuse lint` and `node scripts/check/check-licenses.mjs`
    stay repository-wide gates in CI; annotate copied files in `REUSE.toml` as well, since `reuse lint` alone accepts
    a copied file the catch-all Apache-2.0 annotation covers.
 
@@ -223,7 +223,7 @@ Moved: `python`, `php`, `blade`, `typescript`, `react`, `node` and `next`, each 
 share is `conformance/recorders/eslint-record.mjs`, and the TypeScript grammar census is `conformance/t1/typescript-syntax.ts`.
 TSLint moved to `packs/tslint/` and still ships inside core's package; its tests are recorded and scored like every
 other tool's, and its harness is gone. The complexity rules moved to `packs/complexity/` the same way; their lizard
-parity test stays in `test/complexity-rules.test.ts`. Not moved yet: `rust`, `sql` and `vue`, which have upstream
+parity test stays in `test/engine/code-rule/complexity-rules.test.ts`. Not moved yet: `rust`, `sql` and `vue`, which have upstream
 recordings but no rules: they stay in `fixtures/<id>/upstream/` beside each language's draft manifest
 (`fixtures/rust/upstream/conformance.draft.json`, `fixtures/sql/upstream/conformance.draft.json`,
 `fixtures/vue/upstream/rules.json`) until their packs gain rules, when the draft becomes `packs/<id>/conformance.json`

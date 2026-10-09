@@ -213,7 +213,7 @@ Those frontends and execution backends remain separate work.
 The encoding checks read the example words directly from this document:
 
 ```bash
-python3 scripts/test_transducer_design.py
+python3 test/docs/test_transducer_design.py
 ```
 
 They check one-word encoding and its boundaries.

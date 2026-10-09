@@ -12,7 +12,7 @@ The pack follows the [pack structure and validation contract](../../docs/pack-fo
 its ports are scored the same way: against TSLint's own rule tests, recorded in `upstream/tslint/`.
 
 ```sh
-npx vitest run test/packs.test.ts -t "pack tslint"                          # checks 1 to 6
+npx vitest run test/engine/catalog/packs.test.ts -t "pack tslint"                          # checks 1 to 6
 node --import tsx conformance/languages/cli.ts --pack tslint --fixtures      # every port's TP/FP/FN
 node --import tsx conformance/languages/cli.ts --pack tslint --rule quotemark --rule quotemark--single
 npx vitest run test/conformance/identifier-rename.test.ts                   # the identifier-rename gate
@@ -42,7 +42,7 @@ port per document, and its `fixtures` globs select the variants it runs on. A ru
 an override; `candidates/<rule>/<variant>.json` (port id `<rule>--<variant>`, document id `tslint:<rule>/<variant>`)
 covers its variant. Findings match on line and column.
 
-Shipped ports are gated: `npm run test:conformance` and `test/packs.test.ts` fail on any unexplained false positive
+Shipped ports are gated: `npm run test:conformance` and `test/engine/catalog/packs.test.ts` fail on any unexplained false positive
 or false negative. Candidates are scored and reported, never gated. A few TSLint tests contain lines that are not valid
 TypeScript; TSLint's parser recovers, the grammar does not, and every finding that costs is declared in
 `divergences.json` with the invalid line.

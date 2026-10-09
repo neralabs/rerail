@@ -1,5 +1,5 @@
 import type { Divergence } from "./pack.js";
-import { compareDeterministicStrings } from "../../src/stable-json.js";
+import { compareDeterministicStrings } from "../../src/engine/index.js";
 
 /** A finding's position in upstream coordinates: 1-based line, 1-based code-point column. */
 export interface Point {

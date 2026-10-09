@@ -23,7 +23,7 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
 ~/.rerail/
 ├── versions/<version>/node_modules/@neralabs/rerail/   the installed package
 ├── current  →  versions/<version>/node_modules/@neralabs/rerail
-├── bin/rerail                                          launcher shim → current/dist/cli.js
+├── bin/rerail                                          launcher shim → current/dist/cli/cli.js
 ├── update-state.json                                  active + previous version, channel
 ├── daemon.json / daemon.log                           the running daemon
 └── versions/<older>/…                                 kept for `rerail update rollback`
@@ -40,9 +40,9 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
    updates never touch harness config:
    - OMP: symlink `~/.omp/agent/extensions/rerail → current`, plus a `rerail` MCP server entry in `~/.omp/agent/mcp.json`
    - Pi: `packages` entry in `~/.pi/agent/settings.json`
-   - Claude Code: `hooks` in `~/.claude/settings.json` running `current/dist/claude-hook.js` (on Windows as exec-form entries that Claude Code 2.1.139+ spawns without Git Bash: `node` from `PATH` starts `dist/hook-launcher.js`, which prefers the `node.exe` recorded at setup and falls back to the `PATH` node once that binary is gone), and the Rerail commands (`/rerail`, `/rerail-ui`, `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`, `/rerail-rage-quit`) under `~/.claude/commands/` (`/rerail-ui` opens the dashboard as a tab in the Orca or Cursor window before falling back to the system browser)
-   - Codex: `~/.codex/hooks.json` running `current/dist/codex-hook.js` (Codex asks you to trust it once via `/hooks`), plus one skill per Rerail command under `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-ui`, and so on
-   - Cursor: `~/.cursor/hooks.json` running `current/dist/cursor-hook.js`, plus the same Rerail commands under `~/.cursor/commands/` (`/rerail-ui` opens the dashboard as a tab in the Cursor window before falling back to the system browser)
+   - Claude Code: `hooks` in `~/.claude/settings.json` running `current/dist/hosts/claude/claude-hook.js` (on Windows as exec-form entries that Claude Code 2.1.139+ spawns without Git Bash: `node` from `PATH` starts `dist/harness/hook-launcher.js`, which prefers the `node.exe` recorded at setup and falls back to the `PATH` node once that binary is gone), and the Rerail commands (`/rerail`, `/rerail-ui`, `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`, `/rerail-rage-quit`) under `~/.claude/commands/` (`/rerail-ui` opens the dashboard as a tab in the Orca or Cursor window before falling back to the system browser)
+   - Codex: `~/.codex/hooks.json` running `current/dist/hosts/codex/codex-hook.js` (Codex asks you to trust it once via `/hooks`), plus one skill per Rerail command under `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-ui`, and so on
+   - Cursor: `~/.cursor/hooks.json` running `current/dist/hosts/cursor/cursor-hook.js`, plus the same Rerail commands under `~/.cursor/commands/` (`/rerail-ui` opens the dashboard as a tab in the Cursor window before falling back to the system browser)
 
    Existing entries from other tools are preserved byte-for-byte; a backup
    `<file>.<timestamp>.bak` is written only when a file changes. Re-running is
@@ -250,7 +250,7 @@ A source checkout builds and tests with Node.js 24+, npm, and Rust; see
 [Develop](../README.md#develop) in the README. After `npm run build`,
 
 ```sh
-node dist/cli.js install --root "$PWD"
+node dist/cli/cli.js install --root "$PWD"
 ```
 
 activates the checkout as `~/.rerail/current` the way `setup` activates a

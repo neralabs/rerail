@@ -10,8 +10,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@protocol": resolve(playgroundRoot, "src/protocol.ts"),
-      "@rerail/rule-schema": resolve(checkoutRoot, "src/rule-schema.ts"),
-      "@rerail/code-rule-schema": resolve(checkoutRoot, "src/code-rule-schema.ts"),
+      "@neralabs/rerail/schemas": resolve(checkoutRoot, "dist/engine/schemas.js"),
       "@": resolve(import.meta.dirname, "src"),
     },
   },

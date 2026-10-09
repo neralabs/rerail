@@ -5,7 +5,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { DEFAULT_DAEMON_PORT, RerailDaemon } from "../src/daemon.js";
+import { DEFAULT_DAEMON_PORT, RerailDaemon } from "../src/daemon/index.js";
 
 /** The bridge always dials the default daemon port; a daemon already running on this machine owns it. */
 async function defaultPortTaken(): Promise<boolean> {
@@ -42,7 +42,7 @@ it.skipIf(await defaultPortTaken())("bridges real MCP writes with split UTF-8 in
     host: "127.0.0.1",
     port: DEFAULT_DAEMON_PORT,
   });
-  const child = spawn(process.execPath, [resolve("dist/cli.js"), "mcp-bridge"], {
+  const child = spawn(process.execPath, [resolve("dist/cli/cli.js"), "mcp-bridge"], {
     cwd: root,
     env: { ...process.env, RERAIL_NATIVE_KERNEL_PATH: join(root, "no-host-addon.node") },
     stdio: ["pipe", "pipe", "pipe"],

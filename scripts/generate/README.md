@@ -35,9 +35,9 @@ and `<landing>` a checkout of nera-landing, whose design tokens the UI files pro
 
 | Generated file | Generator | Command |
 |---|---|---|
-| `src/code-rule-language-registry.generated.ts` | `scripts/generate/languages/registry.ts` | `npm run generate:languages`; `test/language-registry.test.ts` fails when it is stale |
-| `src/schema-sql.ts` | `scripts/generate/schema/schema-sql.ts` | `npm run generate:schema`; `test/rule-store.test.ts` fails when it is stale |
-| `src/terminal-brand.generated.ts` | `scripts/generate/ui/terminal-brand.mjs` | `node scripts/generate/ui/terminal-brand.mjs <landing>` |
+| `src/engine/code-rule/code-rule-language-registry.generated.ts` | `scripts/generate/languages/registry.ts` | `npm run generate:languages`; `test/engine/code-rule/language-registry.test.ts` fails when it is stale |
+| `src/engine/storage/schema-sql.generated.ts` | `scripts/generate/schema/schema-sql.ts` | `npm run generate:schema`; `test/engine/catalog/rule-store.test.ts` fails when it is stale |
+| `src/presentation/terminal-brand.generated.ts` | `scripts/generate/ui/terminal-brand.mjs` | `node scripts/generate/ui/terminal-brand.mjs <landing>` |
 | `ui/tokens.generated.css` | `scripts/generate/ui/tokens.mjs` | `node scripts/generate/ui/tokens.mjs <landing>`; `npm run check:ui-tokens` checks what the page references |
 
 ## Documentation

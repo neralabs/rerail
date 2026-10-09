@@ -1,10 +1,10 @@
 // Structure gate, metrics found during the review (#22-#24): each predicate on a tiny in-memory tree.
 
 import { describe, expect, it } from "vitest";
-import { memoryRepo } from "../../scripts/check-structure/repo.mjs";
-import { check as stalePaths } from "../../scripts/check-structure/metrics/22-stale-paths.mjs";
-import { check as shippedRules } from "../../scripts/check-structure/metrics/23-shipped-rules.mjs";
-import { check as harnessesInCi } from "../../scripts/check-structure/metrics/24-harnesses-in-ci.mjs";
+import { memoryRepo } from "../../scripts/check/check-structure/repo.mjs";
+import { check as stalePaths } from "../../scripts/check/check-structure/metrics/22-stale-paths.mjs";
+import { check as shippedRules } from "../../scripts/check/check-structure/metrics/23-shipped-rules.mjs";
+import { check as harnessesInCi } from "../../scripts/check/check-structure/metrics/24-harnesses-in-ci.mjs";
 
 const rule = (id) => JSON.stringify({ format: "rerail.policy/v1", id, clauses: [] });
 const paths = (result) => result.findings.map((item) => item.path);

@@ -3,11 +3,19 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, matchesGlob, relative, sep } from "node:path";
 import { z } from "zod";
-import type { CodeRuleSourceLanguage } from "../../src/code-rule.js";
-import { IGNORED_DIRECTORIES, languageFor } from "../../src/code-rule-enforcer.js";
-import { encodeCodeRuleWorkspaceRequest, loadNativeBinding, nativePlatformSuffix, type NativeCompiledCodeRuleDsl } from "../../src/native.js";
-import { CODE_RULE_AST_LANGUAGES, CODE_RULE_DIALECTS, codeRuleLanguageFamily } from "../../src/code-rule-languages.js";
-import { compareDeterministicStrings } from "../../src/stable-json.js";
+import type { CodeRuleSourceLanguage } from "../../src/engine/index.js";
+import {
+  IGNORED_DIRECTORIES,
+  languageFor,
+  encodeCodeRuleWorkspaceRequest,
+  loadNativeBinding,
+  nativePlatformSuffix,
+  type NativeCompiledCodeRuleDsl,
+  CODE_RULE_AST_LANGUAGES,
+  CODE_RULE_DIALECTS,
+  codeRuleLanguageFamily,
+  compareDeterministicStrings,
+} from "../../src/engine/index.js";
 import { capabilitiesJson, INFORMATIONAL_FAILURE_CODES } from "../engine.js";
 import {
   corpusRecordingPath,

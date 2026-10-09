@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
-import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../src/event-protocol.js";
+import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../src/runtime/index.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 
 const temporaryDirectories: string[] = [];
@@ -23,7 +23,7 @@ async function runFrames(storageRoot: string, frames: readonly string[]): Promis
   const workspace = `${storageRoot}.workspace`;
   await mkdir(workspace, { recursive: true });
   startTestRepository(workspace, join(`${storageRoot}.home`, "rerail.sqlite"));
-  const child = spawn(process.execPath, [resolve("dist/event-stream.js")], {
+  const child = spawn(process.execPath, [resolve("dist/harness/event-stream.js")], {
     cwd: workspace,
     env: { ...process.env, RERAIL_STORAGE_ROOT: storageRoot, RERAIL_HOME: `${storageRoot}.home` },
     stdio: ["pipe", "pipe", "pipe"],
