@@ -20,7 +20,7 @@ pub(crate) use super::with_adapter;
 pub(crate) use arguments::{ArgumentFeature, ArgumentRules};
 pub(crate) use calls::{CallFeature, CallRules};
 pub(crate) use format_args::{FormatArgFeature, FormatArgRules};
-pub(crate) use scope::{Globals, ScopeFeature, ScopeRules};
+pub(crate) use scope::{ScopeFeature, ScopeRules};
 pub(crate) use syntax::{SyntaxFeature, SyntaxRules};
 pub(crate) use value::{ValueFeature, ValueRules};
 

@@ -59,8 +59,8 @@ pub(super) use required_text::RequiredText;
 pub(super) use resolve::TABLE_BUILDS;
 pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved};
 pub(crate) use resolve::{
-    calls_tables, file_eslint_directives, file_lines, file_noqa, file_phpcs, file_phpstan,
-    file_psalm, table_reading,
+    calls_tables, file_eslint_directives, file_lines, file_module, file_noqa, file_phpcs,
+    file_phpstan, file_psalm, table_reading,
 };
 pub(super) use run::{Stopped, enumerate, node_at, run_clause};
 #[cfg(test)]

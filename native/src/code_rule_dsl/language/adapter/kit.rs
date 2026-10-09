@@ -6,7 +6,9 @@ use super::{
     Adapter, ArgumentRules, Blade, CallRules, Ecma, FormatArgRules, Php, Python, ScopeRules,
     ValueRules, with_adapter,
 };
-use crate::code_rule_dsl::language::{CodeRuleLanguage, Family, GrammarDialect, Semantic, Support};
+use crate::code_rule_dsl::language::{
+    CodeRuleLanguage, Family, GrammarDialect, Semantic, SourceType, Support,
+};
 use crate::code_rule_dsl::lines::Terminators;
 use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
 use crate::code_rule_dsl::value::{Lang, Value};
@@ -197,7 +199,11 @@ fn python() {
         },
         scope: super::scope::kit::Expect {
             flow: false,
-            globals: super::Globals::Ruff,
+            declared: (None, Some(10)),
+            unresolved: &[
+                ("print(undefined)\n", "undefined", true),
+                ("x = print\n", "print", false),
+            ],
             stubs: true,
             redefines_shadowed: true,
             reference_kinds: &["identifier"],
@@ -313,7 +319,11 @@ fn ecma() {
         },
         scope: super::scope::kit::Expect {
             flow: false,
-            globals: super::Globals::Eslint,
+            declared: (Some((2026, SourceType::Module)), None),
+            unresolved: &[
+                ("undefinedName;\n", "undefinedName", true),
+                ("Math;\n", "Math", false),
+            ],
             stubs: false,
             redefines_shadowed: false,
             reference_kinds: &[
@@ -469,7 +479,8 @@ fn php() {
         },
         scope: super::scope::kit::Expect {
             flow: true,
-            globals: super::Globals::Superglobals,
+            declared: (None, None),
+            unresolved: &[],
             stubs: false,
             redefines_shadowed: false,
             reference_kinds: &["variable_name"],
@@ -617,7 +628,8 @@ fn blade() {
         },
         scope: super::scope::kit::Expect {
             flow: true,
-            globals: super::Globals::Superglobals,
+            declared: (None, None),
+            unresolved: &[],
             stubs: false,
             redefines_shadowed: false,
             reference_kinds: &["variable_name"],
