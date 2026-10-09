@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const priorRerailHome = process.env.RERAIL_HOME;
 const priorContentStorePath = process.env.RERAIL_CONTENT_STORE_PATH;
@@ -29,16 +30,33 @@ function strandedDaemons(): Array<{ pid: number; home: string }> {
   return stranded;
 }
 
+/** Sends `signal` to `pid`; false when the process is already gone. */
+function signalProcess(pid: number, signal: NodeJS.Signals | 0): boolean {
+  try {
+    process.kill(pid, signal);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+/**
+ * Stops the process `ps` found rather than going through `stopDaemon(home)`: that signals whatever pid the home's
+ * state file records, which a test may have pointed at another process, and a test file's `vi.mock` can replace it.
+ */
+async function stopProcess(pid: number): Promise<void> {
+  if (!signalProcess(pid, "SIGTERM")) return;
+  const deadline = Date.now() + 2_000;
+  while (signalProcess(pid, 0) && Date.now() < deadline) await sleep(25);
+  signalProcess(pid, "SIGKILL");
+}
+
 afterAll(async () => {
   try {
     const stranded = strandedDaemons();
     if (stranded.length > 0) {
-      // Dynamic: a setup-file import is cached before test files run, so their vi.mock of these modules would not apply.
-      const { stopDaemon } = await import("../src/daemon-control.js");
-      for (const daemon of stranded) {
-        // A test that removed the home took the state file with it; the pid is all that is left to stop.
-        if (await stopDaemon(daemon.home) === "not-running") process.kill(daemon.pid, "SIGTERM");
-      }
+      for (const daemon of stranded) await stopProcess(daemon.pid);
       throw new Error(`Test file left ${stranded.length} Rerail daemon(s) running (stopped now): ${stranded.map(daemon => `pid ${daemon.pid} in ${daemon.home}`).join(", ")}`);
     }
   } finally {
