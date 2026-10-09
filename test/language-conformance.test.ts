@@ -1,30 +1,22 @@
 /**
- * The language-pack conformance standard's CI tier (docs/design/rerail-language-conformance.md): every pack under
- * conformance/languages/ scores its ported rules against the upstream rule fixtures with no unexplained FP or FN,
- * through the production workspace path. The sample pack pins the runner's scoring end to end.
+ * The language-pack conformance runner (docs/design/rerail-language-conformance.md): the sample pack pins its scoring
+ * end to end, through the production workspace path. Every pack's own ports are scored by test/packs.test.ts (check 4).
  */
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { listPacks, loadPack, packDirectory, packSchema, type CapabilityExemption, type Divergence } from "../conformance/languages/pack.js";
+import { loadPack, packSchema, type CapabilityExemption, type Divergence } from "../conformance/languages/pack.js";
 import { reportFailures, runPack } from "../conformance/languages/runner.js";
 import { precisionRecall, scoreSource } from "../conformance/languages/score.js";
+import { fixturesPath } from "./oracles.js";
 
-const SAMPLE = fileURLToPath(new URL("./fixtures/language-conformance/sample-php/", import.meta.url));
+const SAMPLE = fixturesPath("packs", "sample-php");
 const DATE = "2026-01-01";
-
-describe.each(listPacks())("language pack %s", pack => {
-  it("passes the fixture tier", async () => {
-    const report = await runPack(loadPack(packDirectory(pack)), { fixtures: true, corpora: [], date: DATE });
-    expect(reportFailures(report)).toEqual([]);
-  }, 300_000);
-});
 
 describe("language conformance runner", () => {
   it("scores the sample ports against PHP_CodeSniffer's recordings on fixtures and corpus", async () => {
-    const report = await runPack(loadPack(SAMPLE), { fixtures: true, corpora: ["mini"], corpusRoot: `${SAMPLE}corpora`, date: DATE });
+    const report = await runPack(loadPack(SAMPLE), { fixtures: true, corpora: ["mini"], corpusRoot: join(SAMPLE, "corpora"), date: DATE });
     expect(report.rules.map(({ rule, source, tp, fp, fn, precision, recall }) => ({ rule, source, tp, fp, fn, precision, recall }))).toEqual([
       // The regex port runs around broken.php's syntax error and finds its sizeof call.
       { rule: "forbidden-functions", source: "fixtures", tp: 6, fp: 0, fn: 0, precision: 1, recall: 1 },
@@ -75,7 +67,7 @@ describe("language conformance runner", () => {
       const recording = JSON.parse(readFileSync(path, "utf8")) as { source: Record<string, unknown>; findings: unknown[] };
       // The tool stopped analysing `of()` (lines 7-10), so it is silent on the `sizeof` call Rerail finds on line 9.
       const silent = (unanalysed: unknown[]) => writeFileSync(path, JSON.stringify({ ...recording, source: { ...recording.source, unanalysed }, findings: [] }));
-      const run = async () => (await runPack({ ...sample, oraclesDirectory: oracles }, { fixtures: false, corpora: ["mini"], corpusRoot: `${SAMPLE}corpora`, date: DATE })).rules;
+      const run = async () => (await runPack({ ...sample, oraclesDirectory: oracles }, { fixtures: false, corpora: ["mini"], corpusRoot: join(SAMPLE, "corpora"), date: DATE })).rules;
       silent([]);
       expect((await run()).map(({ rule, tp, fp, unanalysed }) => ({ rule, tp, fp, unanalysed }))).toEqual([
         { rule: "forbidden-functions", tp: 0, fp: 1, unanalysed: 0 },
@@ -95,7 +87,7 @@ describe("language conformance runner", () => {
   });
 
   describe("capability exemptions", () => {
-    const raw = JSON.parse(readFileSync(`${SAMPLE}conformance.json`, "utf8")) as Record<string, unknown>;
+    const raw = JSON.parse(readFileSync(join(SAMPLE, "conformance.json"), "utf8")) as Record<string, unknown>;
     const exemption = (capability: string, coveredBy = ["T2: fixtures/php/calls/", "T3: benchmark_php_calls_corpus"]): CapabilityExemption => ({
       capability,
       reason: "no pinned linter reads callees transitively",

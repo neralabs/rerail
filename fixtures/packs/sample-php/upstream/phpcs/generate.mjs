@@ -49,6 +49,6 @@ const corpusFiles = readdirSync(join(corpus, "src"))
 write("corpus-mini.expected.json", {
   tool: "phpcs",
   version: VERSION,
-  source: { kind: "corpus", name: "mini", repository: "test/fixtures/language-conformance/sample-php/corpora/mini", commit: "fixture", rules: RULES, skipped: [] },
+  source: { kind: "corpus", name: "mini", repository: "fixtures/packs/sample-php/corpora/mini", commit: "fixture", rules: RULES, skipped: [] },
   findings: record(corpus, corpusFiles),
 });

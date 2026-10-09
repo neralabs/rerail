@@ -8,7 +8,7 @@
   "corpora": [
     {
       "name": "mini",
-      "repository": "test/fixtures/language-conformance/sample-php/corpora/mini",
+      "repository": "fixtures/packs/sample-php/corpora/mini",
       "commit": "fixture",
       "paths": [
         "src"

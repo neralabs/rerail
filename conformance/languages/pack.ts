@@ -9,10 +9,8 @@ export const HARNESS_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 export const RERAIL_ROOT = resolve(HARNESS_DIRECTORY, "..", "..");
 /** Rule packs in their own packages (docs/pack-format.md); a ported pack holds its conformance pack as conformance.json. */
 export const PACKS_ROOT = join(RERAIL_ROOT, "packs");
-/** A pack moved to `packs/<id>/` names its conformance pack this; one still under conformance/languages/, `pack.json`. */
+/** A conformance pack's manifest: `packs/<id>/conformance.json`, and the same in a pack's `candidates/` and probes. */
 export const CONFORMANCE_FILE = "conformance.json";
-/** The conformance fixtures: `RERAIL_FIXTURES_DIR` (relative to the repository root) or the repository's `fixtures/`. */
-export const ORACLES_ROOT = resolve(RERAIL_ROOT, process.env.RERAIL_FIXTURES_DIR || "fixtures");
 /** Where `--write` puts reports: `.rerail/` is gitignored, so reports are never committed. */
 export const REPORTS_DIRECTORY = join(RERAIL_ROOT, ".rerail", "reports");
 
@@ -71,7 +69,7 @@ export const packSchema = z
     corpora: z.array(corpusSchema),
     tools: z.array(toolSchema),
     rules: z.array(ruleSchema),
-    /** Recordings directory, relative to the pack directory; default `upstream/` beside conformance.json, else `<fixtures>/<pack>/upstream`. */
+    /** Recordings directory, relative to the pack directory; default `upstream/` beside conformance.json. */
     oracles: nonEmpty.optional(),
   })
   .superRefine((pack, context) => {
@@ -176,40 +174,21 @@ function parseJson<T>(path: string, schema: z.ZodType<T>): T {
   return parsed.data;
 }
 
-/** `packs/<name>/` once the pack has moved there (it holds conformance.json), else `conformance/languages/<name>/`. */
-export function packDirectory(name: string): string {
-  const moved = join(PACKS_ROOT, name);
-  return existsSync(join(moved, CONFORMANCE_FILE)) ? moved : join(HARNESS_DIRECTORY, name);
-}
-
-/**
- * The conformance pack in `directory`: `packs/<id>/` (conformance.json, recordings under `upstream/` by default) or
- * `conformance/languages/<name>/` (pack.json, recordings under `<fixtures>/<pack>/upstream` by default).
- */
+/** The conformance pack in `directory` (its conformance.json; recordings under `upstream/` unless it sets `oracles`). */
 export function loadPack(directory: string): LoadedPack {
-  const moved = existsSync(join(directory, CONFORMANCE_FILE));
-  const pack = parseJson(join(directory, moved ? CONFORMANCE_FILE : "pack.json"), packSchema);
+  const pack = parseJson(join(directory, CONFORMANCE_FILE), packSchema);
   const divergencesPath = join(directory, "divergences.json");
   const divergences = existsSync(divergencesPath) ? parseJson(divergencesPath, divergencesSchema) : [];
   const ids = new Set(pack.rules.map(rule => rule.id));
   for (const divergence of divergences) {
     if (!ids.has(divergence.rule)) throw new Error(`${divergencesPath}: divergence names unknown rule ${divergence.rule}`);
   }
-  const defaultOracles = moved ? join(directory, "upstream") : join(ORACLES_ROOT, pack.pack, "upstream");
   return {
     pack,
     directory,
-    oraclesDirectory: pack.oracles === undefined ? defaultOracles : resolve(directory, pack.oracles),
+    oraclesDirectory: resolve(directory, pack.oracles ?? "upstream"),
     divergences,
   };
-}
-
-/** Every pack still under conformance/languages/: a directory holding a pack.json. */
-export function listPacks(): string[] {
-  return readdirSync(HARNESS_DIRECTORY, { withFileTypes: true })
-    .filter(entry => entry.isDirectory() && existsSync(join(HARNESS_DIRECTORY, entry.name, "pack.json")))
-    .map(entry => entry.name)
-    .sort(compareDeterministicStrings);
 }
 
 /**

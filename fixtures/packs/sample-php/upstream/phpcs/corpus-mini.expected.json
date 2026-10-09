@@ -4,7 +4,7 @@
   "source": {
     "kind": "corpus",
     "name": "mini",
-    "repository": "test/fixtures/language-conformance/sample-php/corpora/mini",
+    "repository": "fixtures/packs/sample-php/corpora/mini",
     "commit": "fixture",
     "rules": [
       "Generic.PHP.ForbiddenFunctions.Found",
