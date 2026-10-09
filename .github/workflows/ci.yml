@@ -69,11 +69,59 @@ jobs:
           npm run check:ui-tokens
           npm run check:reference
 
-  # rustfmt, clippy and the engine's own tests; nothing downstream waits for this job.
+  # Pull requests that touch none of the engine's inputs skip the Rust jobs. The engine's tests also
+  # read code-rule-dsl/, conformance/ and fixtures/; package.json holds the cargo commands. Pushes to
+  # main run everything (the filter step is skipped and the output is empty).
+  changes:
+    name: Detect engine changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.3
+        with:
+          filters: |
+            rust:
+              - 'native/**'
+              - 'code-rule-dsl/**'
+              - 'conformance/**'
+              - 'fixtures/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.cargo/**'
+              - 'package.json'
+              - '.github/workflows/ci.yml'
+
+  # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
+  # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts.
   rust:
-    name: Rust engine (fmt, clippy, tests)
+    name: Rust engine (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.rust != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - task: clippy
+            name: fmt, clippy
+            run: npm run check:native
+          - task: test
+            name: tests
+            run: npm run test:native
+    # Line tables keep file:line in panics at a fraction of full debuginfo; incremental state only
+    # bloats the cache, since dependencies never build incrementally.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -100,15 +148,12 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rerail-dev-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
+          key: rerail-${{ matrix.task }}-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            rerail-dev-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-
+            rerail-${{ matrix.task }}-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-
 
-      - name: Check the engine
-        run: npm run check:native
-
-      - name: Test the engine
-        run: npm run test:native
+      - name: Run ${{ matrix.name }}
+        run: ${{ matrix.run }}
 
   # Builds the package once: dist/ and the release native engine, handed to every test job.
   build:
