@@ -1,0 +1,97 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint:no-negated-condition",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of ESLint's `no-negated-condition` (https://eslint.org/docs/latest/rules/no-negated-condition). Flags `if` with a plain `else` and ternaries whose test is `!x`, `!=` or `!==`.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "negated-condition",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "if_statement",
+                "all": [
+                  {
+                    "has": {
+                      "kind": "parenthesized_expression",
+                      "stopBy": "neighbor",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "negated"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "else_clause",
+                      "stopBy": "neighbor",
+                      "not": {
+                        "has": {
+                          "kind": "if_statement",
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "ternary_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "negated",
+                  "precedes": {
+                    "regex": "^\\?$",
+                    "stopBy": "neighbor"
+                  }
+                }
+              }
+            ]
+          },
+          "utils": {
+            "negated": {
+              "any": [
+                {
+                  "kind": "unary_expression",
+                  "has": {
+                    "regex": "^!$",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "kind": "binary_expression",
+                  "has": {
+                    "regex": "^!==?$",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "negated"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_NEGATED_CONDITION",
+        "message": "Unexpected negated condition."
+      }
+    }
+  ]
+}

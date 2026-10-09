@@ -1,0 +1,61 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint:no-var",
+  "revision": 1,
+  "mode": "steer",
+  "description": "A `var` declaration; `let` and `const` are block-scoped.",
+  "scope": {
+    "include": [
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.config.js",
+      "**/*.config.mjs",
+      "**/*.config.cjs",
+      "**/.*rc.js",
+      "**/.*rc.cjs"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "var",
+      "forbid": {
+        "ast": {
+          "language": "javascript",
+          "rule": {
+            "kind": "variable_declaration"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_VAR",
+        "message": "Unexpected var, use let or const instead.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-var"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

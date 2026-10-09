@@ -1,0 +1,15 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint:no-octal",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of ESLint's `no-octal` rule (https://eslint.org/docs/latest/rules/no-octal). Disallows legacy octal (and 0-prefixed decimal) numeric literals: a number whose raw text is 0 followed by a digit.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "octal-literal",
+      "forbid": { "ast": { "language": "typescript", "rule": { "kind": "number", "regex": "^0[0-9]" } } },
+      "violation": { "anchor": "witness.span", "code": "NO_OCTAL", "message": "Octal literals should not be used." }
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "unicorn:filename-case",
+  "revision": 1,
+  "mode": "steer",
+  "description": "A JavaScript file name that is not kebab-case (leading `_` and `.` are ignored).",
+  "scope": {
+    "include": [
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.config.js",
+      "**/*.config.mjs",
+      "**/*.config.cjs",
+      "**/.*rc.js",
+      "**/.*rc.cjs"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "case",
+      "forbid": {
+        "regex": {
+          "source": "file.path",
+          "pattern": "(?:^|/)[._]*(?:[^/]*[A-Z ]|[^/._][^/]*_)[^/]*$"
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "FILENAME_CASE",
+        "message": "File names should be kebab-case, for example cart-total.js."
+      }
+    }
+  ]
+}

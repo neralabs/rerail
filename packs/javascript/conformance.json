@@ -1,0 +1,89 @@
+{
+  "pack": "javascript",
+  "family": "ecma",
+  "capabilities": [
+    "syntax",
+    "value",
+    "compare",
+    "scope",
+    "suppression"
+  ],
+  "corpora": [],
+  "tools": [
+    {
+      "name": "eslint",
+      "version": "10.11.0"
+    }
+  ],
+  "rules": [
+    {
+      "id": "eslint-no-compare-neg-zero",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-compare-neg-zero"
+      },
+      "policy": "rules/eslint-no-compare-neg-zero.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-debugger",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-debugger"
+      },
+      "policy": "rules/eslint-no-debugger.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-dupe-keys",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-dupe-keys"
+      },
+      "policy": "rules/eslint-no-dupe-keys.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-duplicate-case",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-duplicate-case"
+      },
+      "policy": "rules/eslint-no-duplicate-case.json",
+      "capabilities": [
+        "syntax",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-use-isnan",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "use-isnan"
+      },
+      "policy": "rules/eslint-use-isnan.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    }
+  ]
+}

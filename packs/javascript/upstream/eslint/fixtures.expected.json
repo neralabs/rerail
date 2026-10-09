@@ -1,0 +1,1191 @@
+{
+  "tool": "eslint",
+  "version": "10.11.0",
+  "source": {
+    "kind": "fixtures",
+    "origin": "https://github.com/eslint/eslint@3c0b7c6e1fe2dec778b97a996018126f22d437ae",
+    "rules": [
+      "no-compare-neg-zero",
+      "no-debugger",
+      "no-dupe-keys",
+      "no-duplicate-case",
+      "use-isnan"
+    ],
+    "files": [
+      "no-compare-neg-zero/001.js",
+      "no-compare-neg-zero/002.js",
+      "no-compare-neg-zero/003.js",
+      "no-compare-neg-zero/004.js",
+      "no-compare-neg-zero/005.js",
+      "no-compare-neg-zero/006.js",
+      "no-compare-neg-zero/007.js",
+      "no-compare-neg-zero/008.js",
+      "no-compare-neg-zero/009.js",
+      "no-compare-neg-zero/010.js",
+      "no-compare-neg-zero/011.js",
+      "no-compare-neg-zero/012.js",
+      "no-compare-neg-zero/013.js",
+      "no-compare-neg-zero/014.js",
+      "no-compare-neg-zero/015.js",
+      "no-compare-neg-zero/016.js",
+      "no-compare-neg-zero/017.js",
+      "no-compare-neg-zero/018.js",
+      "no-compare-neg-zero/019.js",
+      "no-compare-neg-zero/020.js",
+      "no-compare-neg-zero/021.js",
+      "no-compare-neg-zero/022.js",
+      "no-compare-neg-zero/023.js",
+      "no-compare-neg-zero/024.js",
+      "no-compare-neg-zero/025.js",
+      "no-compare-neg-zero/026.js",
+      "no-compare-neg-zero/027.js",
+      "no-compare-neg-zero/028.js",
+      "no-compare-neg-zero/029.js",
+      "no-compare-neg-zero/030.js",
+      "no-compare-neg-zero/031.js",
+      "no-compare-neg-zero/032.js",
+      "no-compare-neg-zero/033.js",
+      "no-compare-neg-zero/034.js",
+      "no-compare-neg-zero/035.js",
+      "no-compare-neg-zero/036.js",
+      "no-compare-neg-zero/037.js",
+      "no-compare-neg-zero/038.js",
+      "no-compare-neg-zero/039.js",
+      "no-compare-neg-zero/040.js",
+      "no-compare-neg-zero/041.js",
+      "no-compare-neg-zero/042.js",
+      "no-compare-neg-zero/043.js",
+      "no-compare-neg-zero/044.js",
+      "no-compare-neg-zero/045.js",
+      "no-compare-neg-zero/046.js",
+      "no-compare-neg-zero/047.js",
+      "no-compare-neg-zero/048.js",
+      "no-compare-neg-zero/049.js",
+      "no-compare-neg-zero/050.js",
+      "no-debugger/001.js",
+      "no-debugger/002.js",
+      "no-dupe-keys/001.js",
+      "no-dupe-keys/002.js",
+      "no-dupe-keys/003.js",
+      "no-dupe-keys/004.js",
+      "no-dupe-keys/005.js",
+      "no-dupe-keys/006.js",
+      "no-dupe-keys/007.js",
+      "no-dupe-keys/008.js",
+      "no-dupe-keys/009.js",
+      "no-dupe-keys/010.js",
+      "no-dupe-keys/011.js",
+      "no-dupe-keys/012.js",
+      "no-dupe-keys/013.js",
+      "no-dupe-keys/014.js",
+      "no-dupe-keys/015.js",
+      "no-dupe-keys/016.js",
+      "no-dupe-keys/017.js",
+      "no-dupe-keys/018.js",
+      "no-dupe-keys/019.js",
+      "no-dupe-keys/020.js",
+      "no-dupe-keys/021.js",
+      "no-dupe-keys/022.js",
+      "no-dupe-keys/023.js",
+      "no-dupe-keys/024.js",
+      "no-dupe-keys/025.js",
+      "no-dupe-keys/026.js",
+      "no-dupe-keys/027.js",
+      "no-dupe-keys/028.js",
+      "no-dupe-keys/029.js",
+      "no-dupe-keys/030.js",
+      "no-dupe-keys/031.js",
+      "no-dupe-keys/032.js",
+      "no-dupe-keys/033.js",
+      "no-dupe-keys/034.js",
+      "no-dupe-keys/035.js",
+      "no-dupe-keys/036.js",
+      "no-dupe-keys/037.js",
+      "no-dupe-keys/038.js",
+      "no-dupe-keys/039.js",
+      "no-dupe-keys/040.js",
+      "no-dupe-keys/041.js",
+      "no-dupe-keys/042.js",
+      "no-dupe-keys/043.js",
+      "no-dupe-keys/044.js",
+      "no-dupe-keys/045.js",
+      "no-dupe-keys/046.js",
+      "no-dupe-keys/047.js",
+      "no-dupe-keys/048.js",
+      "no-dupe-keys/049.js",
+      "no-dupe-keys/050.js",
+      "no-duplicate-case/001.js",
+      "no-duplicate-case/002.js",
+      "no-duplicate-case/003.js",
+      "no-duplicate-case/004.js",
+      "no-duplicate-case/005.js",
+      "no-duplicate-case/006.js",
+      "no-duplicate-case/007.js",
+      "no-duplicate-case/008.js",
+      "no-duplicate-case/009.js",
+      "no-duplicate-case/010.js",
+      "no-duplicate-case/011.js",
+      "no-duplicate-case/012.js",
+      "no-duplicate-case/013.js",
+      "no-duplicate-case/014.js",
+      "no-duplicate-case/015.js",
+      "no-duplicate-case/016.js",
+      "no-duplicate-case/017.js",
+      "no-duplicate-case/018.js",
+      "no-duplicate-case/019.js",
+      "no-duplicate-case/020.js",
+      "no-duplicate-case/021.js",
+      "no-duplicate-case/022.js",
+      "no-duplicate-case/023.js",
+      "no-duplicate-case/024.js",
+      "no-duplicate-case/025.js",
+      "no-duplicate-case/026.js",
+      "no-duplicate-case/027.js",
+      "no-duplicate-case/028.js",
+      "no-duplicate-case/029.js",
+      "use-isnan/001.js",
+      "use-isnan/002.js",
+      "use-isnan/003.js",
+      "use-isnan/004.js",
+      "use-isnan/005.js",
+      "use-isnan/006.js",
+      "use-isnan/007.js",
+      "use-isnan/008.js",
+      "use-isnan/009.js",
+      "use-isnan/010.js",
+      "use-isnan/011.js",
+      "use-isnan/012.js",
+      "use-isnan/013.js",
+      "use-isnan/014.js",
+      "use-isnan/015.js",
+      "use-isnan/016.js",
+      "use-isnan/017.js",
+      "use-isnan/018.js",
+      "use-isnan/019.js",
+      "use-isnan/020.js",
+      "use-isnan/021.js",
+      "use-isnan/022.js",
+      "use-isnan/023.js",
+      "use-isnan/024.js",
+      "use-isnan/025.js",
+      "use-isnan/026.js",
+      "use-isnan/027.js",
+      "use-isnan/028.js",
+      "use-isnan/029.js",
+      "use-isnan/030.js",
+      "use-isnan/031.js",
+      "use-isnan/032.js",
+      "use-isnan/033.js",
+      "use-isnan/034.js",
+      "use-isnan/035.js",
+      "use-isnan/036.js",
+      "use-isnan/037.js",
+      "use-isnan/038.js",
+      "use-isnan/039.js",
+      "use-isnan/040.js",
+      "use-isnan/041.js",
+      "use-isnan/042.js",
+      "use-isnan/043.js",
+      "use-isnan/044.js",
+      "use-isnan/045.js",
+      "use-isnan/046.js",
+      "use-isnan/047.js",
+      "use-isnan/048.js",
+      "use-isnan/049.js",
+      "use-isnan/050.js",
+      "use-isnan/051.js",
+      "use-isnan/052.js",
+      "use-isnan/053.js",
+      "use-isnan/054.js",
+      "use-isnan/055.js",
+      "use-isnan/056.js",
+      "use-isnan/057.js",
+      "use-isnan/058.js",
+      "use-isnan/059.js",
+      "use-isnan/060.js",
+      "use-isnan/061.js",
+      "use-isnan/062.js",
+      "use-isnan/063.js",
+      "use-isnan/064.js",
+      "use-isnan/065.js",
+      "use-isnan/066.js",
+      "use-isnan/067.js",
+      "use-isnan/068.js",
+      "use-isnan/069.js",
+      "use-isnan/070.js",
+      "use-isnan/071.js",
+      "use-isnan/072.js",
+      "use-isnan/073.js",
+      "use-isnan/074.js",
+      "use-isnan/075.js",
+      "use-isnan/076.js",
+      "use-isnan/077.js",
+      "use-isnan/078.js",
+      "use-isnan/079.js",
+      "use-isnan/080.js",
+      "use-isnan/081.js",
+      "use-isnan/082.js",
+      "use-isnan/083.js",
+      "use-isnan/084.js",
+      "use-isnan/085.js",
+      "use-isnan/086.js",
+      "use-isnan/087.js",
+      "use-isnan/088.js",
+      "use-isnan/089.js",
+      "use-isnan/090.js",
+      "use-isnan/091.js",
+      "use-isnan/092.js",
+      "use-isnan/093.js",
+      "use-isnan/094.js",
+      "use-isnan/095.js",
+      "use-isnan/096.js",
+      "use-isnan/097.js",
+      "use-isnan/098.js",
+      "use-isnan/099.js",
+      "use-isnan/100.js",
+      "use-isnan/101.js",
+      "use-isnan/102.js",
+      "use-isnan/103.js",
+      "use-isnan/104.js",
+      "use-isnan/105.js",
+      "use-isnan/106.js",
+      "use-isnan/107.js",
+      "use-isnan/108.js",
+      "use-isnan/109.js",
+      "use-isnan/110.js",
+      "use-isnan/111.js",
+      "use-isnan/112.js",
+      "use-isnan/113.js",
+      "use-isnan/114.js",
+      "use-isnan/115.js",
+      "use-isnan/116.js",
+      "use-isnan/117.js",
+      "use-isnan/118.js",
+      "use-isnan/119.js",
+      "use-isnan/120.js",
+      "use-isnan/121.js",
+      "use-isnan/122.js",
+      "use-isnan/123.js",
+      "use-isnan/124.js",
+      "use-isnan/125.js",
+      "use-isnan/126.js",
+      "use-isnan/127.js",
+      "use-isnan/128.js",
+      "use-isnan/129.js",
+      "use-isnan/130.js",
+      "use-isnan/131.js",
+      "use-isnan/132.js",
+      "use-isnan/133.js",
+      "use-isnan/134.js",
+      "use-isnan/135.js",
+      "use-isnan/136.js",
+      "use-isnan/137.js",
+      "use-isnan/138.js",
+      "use-isnan/139.js",
+      "use-isnan/140.js",
+      "use-isnan/141.js",
+      "use-isnan/142.js",
+      "use-isnan/143.js",
+      "use-isnan/144.js",
+      "use-isnan/145.js",
+      "use-isnan/146.js",
+      "use-isnan/147.js",
+      "use-isnan/148.js",
+      "use-isnan/149.js",
+      "use-isnan/150.js",
+      "use-isnan/151.js",
+      "use-isnan/152.js",
+      "use-isnan/153.js",
+      "use-isnan/154.js",
+      "use-isnan/155.js",
+      "use-isnan/156.js",
+      "use-isnan/157.js",
+      "use-isnan/158.js",
+      "use-isnan/159.js",
+      "use-isnan/160.js",
+      "use-isnan/161.js",
+      "use-isnan/162.js",
+      "use-isnan/163.js",
+      "use-isnan/164.js",
+      "use-isnan/165.js",
+      "use-isnan/166.js",
+      "use-isnan/167.js",
+      "use-isnan/168.js",
+      "use-isnan/169.js",
+      "use-isnan/170.js",
+      "use-isnan/171.js",
+      "use-isnan/172.js",
+      "use-isnan/173.js",
+      "use-isnan/174.js",
+      "use-isnan/175.js",
+      "use-isnan/176.js",
+      "use-isnan/177.js",
+      "use-isnan/178.js",
+      "use-isnan/179.js",
+      "use-isnan/180.js",
+      "use-isnan/181.js",
+      "use-isnan/182.js",
+      "use-isnan/183.js",
+      "use-isnan/184.js",
+      "use-isnan/185.js",
+      "use-isnan/186.js",
+      "use-isnan/187.js",
+      "use-isnan/188.js",
+      "use-isnan/189.js",
+      "use-isnan/190.js",
+      "use-isnan/191.js",
+      "use-isnan/192.js",
+      "use-isnan/193.js",
+      "use-isnan/194.js",
+      "use-isnan/195.js",
+      "use-isnan/196.js",
+      "use-isnan/197.js",
+      "use-isnan/198.js",
+      "use-isnan/199.js",
+      "use-isnan/200.js",
+      "use-isnan/201.js",
+      "use-isnan/202.js",
+      "use-isnan/203.js",
+      "use-isnan/204.js",
+      "use-isnan/205.js",
+      "use-isnan/206.js",
+      "use-isnan/207.js"
+    ]
+  },
+  "findings": [
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/028.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/029.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/030.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/031.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/032.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/033.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/034.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/035.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/036.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/037.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/038.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/039.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/040.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/041.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/042.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/043.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/044.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/045.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/046.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/047.js",
+      "line": 1,
+      "column": 5
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/048.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/049.js",
+      "line": 1,
+      "column": 29
+    },
+    {
+      "rule": "no-compare-neg-zero",
+      "path": "no-compare-neg-zero/050.js",
+      "line": 1,
+      "column": 29
+    },
+    {
+      "rule": "no-debugger",
+      "path": "no-debugger/002.js",
+      "line": 1,
+      "column": 10
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/029.js",
+      "line": 1,
+      "column": 18
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/030.js",
+      "line": 1,
+      "column": 17
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/031.js",
+      "line": 1,
+      "column": 18
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/032.js",
+      "line": 1,
+      "column": 19
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/033.js",
+      "line": 1,
+      "column": 21
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/034.js",
+      "line": 1,
+      "column": 19
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/035.js",
+      "line": 1,
+      "column": 19
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/036.js",
+      "line": 1,
+      "column": 19
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/037.js",
+      "line": 1,
+      "column": 18
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/038.js",
+      "line": 1,
+      "column": 19
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/039.js",
+      "line": 1,
+      "column": 19
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/040.js",
+      "line": 3,
+      "column": 3
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/041.js",
+      "line": 1,
+      "column": 21
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/042.js",
+      "line": 1,
+      "column": 21
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/043.js",
+      "line": 1,
+      "column": 34
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/044.js",
+      "line": 1,
+      "column": 32
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/045.js",
+      "line": 1,
+      "column": 33
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/046.js",
+      "line": 1,
+      "column": 32
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/047.js",
+      "line": 1,
+      "column": 32
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/048.js",
+      "line": 1,
+      "column": 36
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/049.js",
+      "line": 1,
+      "column": 36
+    },
+    {
+      "rule": "no-dupe-keys",
+      "path": "no-dupe-keys/050.js",
+      "line": 1,
+      "column": 34
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/013.js",
+      "line": 1,
+      "column": 39
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/014.js",
+      "line": 1,
+      "column": 43
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/015.js",
+      "line": 1,
+      "column": 50
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/016.js",
+      "line": 1,
+      "column": 69
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/017.js",
+      "line": 1,
+      "column": 103
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/018.js",
+      "line": 1,
+      "column": 87
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/019.js",
+      "line": 1,
+      "column": 97
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/020.js",
+      "line": 1,
+      "column": 83
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/021.js",
+      "line": 1,
+      "column": 70
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/022.js",
+      "line": 1,
+      "column": 22
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/023.js",
+      "line": 1,
+      "column": 44
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/023.js",
+      "line": 1,
+      "column": 74
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/024.js",
+      "line": 1,
+      "column": 69
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/025.js",
+      "line": 3,
+      "column": 13
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/026.js",
+      "line": 3,
+      "column": 13
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/027.js",
+      "line": 1,
+      "column": 69
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/027.js",
+      "line": 2,
+      "column": 14
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/028.js",
+      "line": 1,
+      "column": 87
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "no-duplicate-case/029.js",
+      "line": 3,
+      "column": 14
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/031.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/032.js",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/033.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/033.js",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/034.js",
+      "line": 1,
+      "column": 32
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/047.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/048.js",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/049.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/049.js",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/050.js",
+      "line": 1,
+      "column": 32
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/107.js",
+      "line": 1,
+      "column": 5
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/108.js",
+      "line": 1,
+      "column": 5
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/123.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/124.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/125.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/126.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/127.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/128.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/129.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/130.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/131.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/132.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/133.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/134.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/135.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/136.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/137.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/138.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/139.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/140.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/141.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/142.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/143.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/144.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/145.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/146.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/147.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/148.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/149.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/150.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/151.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/152.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/153.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/154.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/155.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/156.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/157.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/158.js",
+      "line": 2,
+      "column": 27
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/159.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/160.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/161.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/162.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/163.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/164.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/165.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/166.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/167.js",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/168.js",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/169.js",
+      "line": 1,
+      "column": 25
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/170.js",
+      "line": 1,
+      "column": 32
+    },
+    {
+      "rule": "no-duplicate-case",
+      "path": "use-isnan/170.js",
+      "line": 1,
+      "column": 66
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/170.js",
+      "line": 1,
+      "column": 66
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/171.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/172.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/173.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/174.js",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/175.js",
+      "line": 1,
+      "column": 15
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/176.js",
+      "line": 1,
+      "column": 25
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/177.js",
+      "line": 1,
+      "column": 32
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/177.js",
+      "line": 1,
+      "column": 66
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/178.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/178.js",
+      "line": 1,
+      "column": 22
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/179.js",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "use-isnan",
+      "path": "use-isnan/180.js",
+      "line": 1,
+      "column": 1
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint:no-empty-static-block",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of ESLint's `no-empty-static-block` rule (https://eslint.org/docs/latest/rules/no-empty-static-block). Reports a class static block with no statements and no comment inside its braces (a trailing comment the grammar attaches after the closing brace does not count).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "empty-static-block",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "statement_block",
+            "inside": {
+              "kind": "class_static_block",
+              "stopBy": "neighbor"
+            },
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "not": {
+                  "regex": "^[{}]$"
+                },
+                "precedes": {
+                  "regex": "^}$",
+                  "stopBy": "end"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_EMPTY_STATIC_BLOCK",
+        "message": "Unexpected empty static block."
+      }
+    }
+  ]
+}

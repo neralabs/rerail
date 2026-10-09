@@ -1,0 +1,127 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint:guard-for-in",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of ESLint's `guard-for-in` rule (https://eslint.org/docs/latest/rules/guard-for-in). A for-in body must be empty, an if statement, or a block whose first statement is an if that is either the only statement or whose consequent is `continue` / `{ continue; }`.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unguarded-for-in",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "utils": {
+            "statement": {
+              "all": [
+                {
+                  "not": {
+                    "kind": "comment"
+                  }
+                },
+                {
+                  "not": {
+                    "regex": "^[{}]$"
+                  }
+                }
+              ]
+            },
+            "continue-only": {
+              "any": [
+                {
+                  "kind": "continue_statement"
+                },
+                {
+                  "kind": "statement_block",
+                  "has": {
+                    "kind": "continue_statement"
+                  },
+                  "not": {
+                    "has": {
+                      "all": [
+                        {
+                          "matches": "statement"
+                        },
+                        {
+                          "not": {
+                            "kind": "continue_statement"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "guarded-body": {
+              "any": [
+                {
+                  "kind": "empty_statement"
+                },
+                {
+                  "kind": "if_statement"
+                },
+                {
+                  "kind": "statement_block",
+                  "not": {
+                    "has": {
+                      "matches": "statement"
+                    }
+                  }
+                },
+                {
+                  "kind": "statement_block",
+                  "has": {
+                    "kind": "if_statement",
+                    "not": {
+                      "follows": {
+                        "matches": "statement",
+                        "stopBy": "end"
+                      }
+                    },
+                    "any": [
+                      {
+                        "not": {
+                          "precedes": {
+                            "matches": "statement",
+                            "stopBy": "end"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "matches": "continue-only"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "for_in_statement",
+            "has": {
+              "regex": "^in$"
+            },
+            "not": {
+              "has": {
+                "matches": "guarded-body"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "GUARD_FOR_IN",
+        "message": "The body of a for-in should be wrapped in an if statement to filter unwanted properties from the prototype."
+      }
+    }
+  ]
+}

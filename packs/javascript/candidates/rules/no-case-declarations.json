@@ -1,0 +1,84 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "eslint:no-case-declarations",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of ESLint's `no-case-declarations` rule (https://eslint.org/docs/latest/rules/no-case-declarations). Flags a let/const, function or class declaration that is a direct statement of a `case` or `default` clause. `using` declarations, which tree-sitter-typescript 0.23.2 parses as assignments with a `using` token, count as lexical declarations.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "case-declaration",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "rule": {
+      "any": [
+       {
+        "kind": "lexical_declaration"
+       },
+       {
+        "kind": "function_declaration"
+       },
+       {
+        "kind": "generator_function_declaration"
+       },
+       {
+        "kind": "class_declaration"
+       },
+       {
+        "kind": "abstract_class_declaration"
+       },
+       {
+        "kind": "expression_statement",
+        "has": {
+         "stopBy": "neighbor",
+         "any": [
+          {
+           "kind": "assignment_expression",
+           "has": {
+            "stopBy": "neighbor",
+            "regex": "^using$"
+           }
+          },
+          {
+           "kind": "await_expression",
+           "has": {
+            "stopBy": "neighbor",
+            "kind": "assignment_expression",
+            "has": {
+             "stopBy": "neighbor",
+             "regex": "^using$"
+            }
+           }
+          }
+         ]
+        }
+       }
+      ],
+      "inside": {
+       "any": [
+        {
+         "kind": "switch_case"
+        },
+        {
+         "kind": "switch_default"
+        }
+       ],
+       "stopBy": "neighbor"
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "NO_CASE_DECLARATIONS",
+    "message": "Unexpected lexical declaration in case block."
+   }
+  }
+ ]
+}

@@ -1,0 +1,101 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "javascript",
+  "name": "JavaScript",
+  "category": "language",
+  "covers": "5 ESLint core rules ported to Rerail, each scored against ESLint's own recorded findings on its test cases.",
+  "reason": "matches JavaScript",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "**/*.js",
+          "**/*.jsx",
+          "**/*.mjs",
+          "**/*.cjs"
+        ],
+        "exclude": [
+          "**/test/**",
+          "**/tests/**",
+          "**/__tests__/**",
+          "**/__mocks__/**",
+          "**/spec/**",
+          "**/e2e/**",
+          "**/*.test.*",
+          "**/*.spec.*",
+          "**/scripts/**",
+          "**/*.config.*",
+          "**/.*rc.*",
+          "**/gulpfile.*",
+          "**/Gulpfile.*",
+          "**/Gruntfile.*",
+          "**/*.min.js"
+        ],
+        "label": "JavaScript source files"
+      },
+      {
+        "files": [
+          "**/*.ts",
+          "**/*.tsx",
+          "**/*.mts",
+          "**/*.cts"
+        ],
+        "exclude": [
+          "**/*.d.ts",
+          "**/test/**",
+          "**/tests/**",
+          "**/__tests__/**",
+          "**/__mocks__/**",
+          "**/spec/**",
+          "**/e2e/**",
+          "**/*.test.*",
+          "**/*.spec.*",
+          "**/scripts/**",
+          "**/*.config.*",
+          "**/.*rc.*",
+          "**/gulpfile.*",
+          "**/Gulpfile.*",
+          "**/Gruntfile.*"
+        ],
+        "label": "TypeScript source files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "eslint-no-compare-neg-zero",
+      "document": "rules/eslint-no-compare-neg-zero.json",
+      "title": "ESLint no-compare-neg-zero: Disallow comparing against -0",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-no-debugger",
+      "document": "rules/eslint-no-debugger.json",
+      "title": "ESLint no-debugger: Disallow the use of debugger",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-no-dupe-keys",
+      "document": "rules/eslint-no-dupe-keys.json",
+      "title": "ESLint no-dupe-keys: Disallow duplicate keys in object literals",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-no-duplicate-case",
+      "document": "rules/eslint-no-duplicate-case.json",
+      "title": "ESLint no-duplicate-case: Disallow duplicate case labels",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-use-isnan",
+      "document": "rules/eslint-use-isnan.json",
+      "title": "ESLint use-isnan: Require calls to isNaN() when checking for NaN",
+      "group": "ESLint",
+      "on": false
+    }
+  ]
+}

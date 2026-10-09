@@ -1,0 +1,109 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "eslint:no-prototype-builtins",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of ESLint's `no-prototype-builtins` rule (https://eslint.org/docs/latest/rules/no-prototype-builtins). Flags calling hasOwnProperty, isPrototypeOf or propertyIsEnumerable as a method of an object, reported at the property. Scope only matters to ESLint's suggestion, which is not a fix.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "prototype-builtin",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "rule": {
+      "kind": "call_expression",
+      "has": {
+       "matches": "member-callee"
+      }
+     },
+     "utils": {
+      "member-callee": {
+       "any": [
+        {
+         "kind": "member_expression",
+         "has": {
+          "kind": "property_identifier",
+          "regex": "^(hasOwnProperty|isPrototypeOf|propertyIsEnumerable)$",
+          "pattern": "$PROP"
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "member-callee"
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.PROP",
+    "code": "NO_PROTOTYPE_BUILTINS",
+    "message": "Do not access Object.prototype method '$PROP' from target object."
+   }
+  },
+  {
+   "id": "prototype-builtin-computed",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "rule": {
+      "kind": "call_expression",
+      "has": {
+       "matches": "computed-callee"
+      }
+     },
+     "utils": {
+      "computed-callee": {
+       "any": [
+        {
+         "kind": "subscript_expression",
+         "has": {
+          "any": [
+           {
+            "kind": "string"
+           },
+           {
+            "kind": "template_string",
+            "not": {
+             "has": {
+              "kind": "template_substitution"
+             }
+            }
+           }
+          ],
+          "has": {
+           "kind": "string_fragment",
+           "regex": "^(hasOwnProperty|isPrototypeOf|propertyIsEnumerable)$",
+           "pattern": "$NAME"
+          },
+          "pattern": "$PROP"
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "computed-callee"
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.PROP",
+    "code": "NO_PROTOTYPE_BUILTINS",
+    "message": "Do not access Object.prototype method '$NAME' from target object."
+   }
+  }
+ ]
+}

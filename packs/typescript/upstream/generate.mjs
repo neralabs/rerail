@@ -1,20 +1,18 @@
-// Records where ESLint 10.11.0 and typescript-eslint 8.70.1 report the TypeScript pack's T4 rules
+// Records where typescript-eslint 8.70.1 (on ESLint 10.11.0) reports the TypeScript pack's T4 rules
 // (rerail/packs/typescript/conformance.json), in the format rerail/conformance/languages/pack.ts reads:
-//   eslint/fixtures.expected.json, typescript-eslint/fixtures.expected.json  (the rules' own RuleTester cases)
-//   <tool>/corpus-<name>.expected.json                                       (the pack's pinned corpora)
+//   typescript-eslint/fixtures.expected.json    (the rules' own RuleTester cases)
+//   <tool>/corpus-<name>.expected.json          (the pack's pinned corpora)
 // Run offline by a maintainer, never in CI:
-//   node generate.mjs --tools <dir> --eslint <checkout> --typescript-eslint <checkout> [--fixtures] [--corpus <name>=<checkout>]...
+//   node generate.mjs --tools <dir> --typescript-eslint <checkout> [--fixtures] [--corpus <name>=<checkout>]...
 // <dir> holds node_modules with exactly eslint@10.11.0, @typescript-eslint/parser and
 // @typescript-eslint/eslint-plugin @8.70.1, typescript@5.9.3 and tsx (to load typescript-eslint's .ts tests).
-// The checkouts are github.com/eslint/eslint at v10.11.0 (3c0b7c6e1fe2dec778b97a996018126f22d437ae) and
-// github.com/typescript-eslint/typescript-eslint at v8.70.1 (23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7).
+// The checkout is github.com/typescript-eslint/typescript-eslint at v8.70.1 (23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7).
 //
 // Fixtures: each rule's test file is loaded with a stub RuleTester that records its cases instead of linting.
 // A case with rule options is left out (the pack's port is the rule with its default options). Every other case's
 // code is written to <tool>/fixtures/<rule>/<n>.<ext> and linted, with every pack rule of the tool on, under the
-// tool's configuration (optionsModule below: ESLint's defaults, with typescript-eslint's parser for TypeScript files
-// when ESLint's rules record, and for every file when typescript-eslint's rules record, as typescript-eslint's
-// approved `base` configuration sets it), so the recording is the linter's answer under the configuration the ports
+// tool's configuration (optionsModule below: ESLint's defaults, with typescript-eslint's parser for every file, as
+// typescript-eslint's approved `base` configuration sets it), so the recording is the linter's answer under the configuration the ports
 // read, not the case's own expectation. A case that asks for type information is left out when its rule requires
 // type checking; for any other rule its code is kept, since the rule reads no types (typescript-eslint runs some
 // rules' whole test files with types on, as no-dynamic-delete's).
@@ -35,7 +33,6 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PACK = JSON.parse(readFileSync(join(HERE, "..", "conformance.json"), "utf8"));
 const VERSIONS = { eslint: "10.11.0", "@typescript-eslint/parser": "8.70.1", "@typescript-eslint/eslint-plugin": "8.70.1", typescript: "5.9.3" };
 const CHECKOUTS = {
-  eslint: { repository: "https://github.com/eslint/eslint", commit: "3c0b7c6e1fe2dec778b97a996018126f22d437ae" },
   "typescript-eslint": { repository: "https://github.com/typescript-eslint/typescript-eslint", commit: "23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7" },
 };
 /** The host's `IGNORED_DIRECTORIES` (rerail/src/code-rule-enforcer.ts), which the runner's walk skips. */
@@ -51,10 +48,10 @@ function parseArguments(argv) {
     else if (flag === "--corpus") {
       const [name, directory] = argv[++index].split("=");
       options.corpora.set(name, resolve(directory));
-    } else if (["--tools", "--eslint", "--typescript-eslint"].includes(flag)) options[flag.slice(2)] = resolve(argv[++index]);
+    } else if (["--tools", "--typescript-eslint"].includes(flag)) options[flag.slice(2)] = resolve(argv[++index]);
     else throw new Error(`unknown argument ${flag}`);
   }
-  for (const key of ["tools", "eslint", "typescript-eslint"]) if (options[key] === undefined) throw new Error(`--${key} is required`);
+  for (const key of ["tools", "typescript-eslint"]) if (options[key] === undefined) throw new Error(`--${key} is required`);
   return options;
 }
 
@@ -74,7 +71,7 @@ const tsParser = toolsRequire("@typescript-eslint/parser");
 const tsPlugin = toolsRequire("@typescript-eslint/eslint-plugin");
 const PLUGIN_PREFIX = "@typescript-eslint/";
 
-/** Pack rules by tool: `upstream.rule` is the rule id ESLint reports (`no-debugger`, `@typescript-eslint/no-namespace`). */
+/** Pack rules by tool: `upstream.rule` is the rule id ESLint reports (`@typescript-eslint/no-namespace`). */
 const RULES = new Map();
 for (const rule of PACK.rules) {
   if (!RULES.has(rule.upstream.tool)) RULES.set(rule.upstream.tool, []);
@@ -90,7 +87,7 @@ let optionsRuns = 0;
  * parser with no `files`). Concurrent linting needs cloneable options, so it is an options module that ESLint's
  * worker threads import; `rules` reach it through the environment.
  */
-function optionsModule(cwd, rules, concurrency, tool) {
+function optionsModule(cwd, rules, concurrency) {
   const path = join(options.tools, ".generate-shims", "eslint-options.mjs");
   mkdirSync(dirname(path), { recursive: true });
   const from = name => JSON.stringify(pathToFileURL(toolsRequire.resolve(name)).href);
@@ -112,7 +109,7 @@ export default {
       rules: Object.fromEntries(rules.map(rule => [rule, "error"])),
     },
     { files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } },
-    { files: ${JSON.stringify(tool === "typescript-eslint" ? ECMA_EXTENSIONS.map(extension => `**/*${extension}`) : ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"])}, languageOptions: { parser: tsParser } },
+    { files: ${JSON.stringify(ECMA_EXTENSIONS.map(extension => `**/*${extension}`))}, languageOptions: { parser: tsParser } },
     { files: ["**/*.tsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } },
   ],
 };
@@ -135,8 +132,8 @@ function codePointColumn(lines, line, column) {
 const splitLines = text => text.split(/\r\n|[\r\n\u2028\u2029]/u);
 
 /** Lints `files` (relative to `cwd`) with `rules` on; returns findings and the files ESLint could not parse. */
-async function lint(cwd, files, rules, tool) {
-  const eslint = await ESLint.fromOptionsModule(optionsModule(cwd, rules, files.length > 1000 ? "auto" : "off", tool));
+async function lint(cwd, files, rules) {
+  const eslint = await ESLint.fromOptionsModule(optionsModule(cwd, rules, files.length > 1000 ? "auto" : "off"));
   const findings = [];
   const unparsed = [];
   const wanted = new Set(rules);
@@ -168,19 +165,6 @@ function writeJson(path, value) {
 // Fixture extraction: stub RuleTesters record each test file's runs.
 
 const RUNS = [];
-class EslintRuleTesterStub {
-  constructor(config = {}) {
-    this.config = config;
-  }
-  static describe = (_text, method) => method();
-  static it = () => undefined;
-  static itOnly = () => undefined;
-  static only = item => (typeof item === "object" ? { ...item, only: true } : { code: item, only: true });
-  static setDefaultConfig() {}
-  run(name, _rule, tests) {
-    RUNS.push({ source: "eslint", name, config: this.config, tests });
-  }
-}
 class TypescriptEslintRuleTesterStub {
   constructor(config = {}) {
     this.config = config;
@@ -200,7 +184,7 @@ class TypescriptEslintRuleTesterStub {
 }
 const noFormat = (raw, ...keys) => String.raw({ raw }, ...keys);
 const STUBS = Symbol.for("rerail.typescriptPack.ruleTesterStubs");
-globalThis[STUBS] = { eslint: EslintRuleTesterStub, typescriptEslint: { RuleTester: TypescriptEslintRuleTesterStub, noFormat } };
+globalThis[STUBS] = { RuleTester: TypescriptEslintRuleTesterStub, noFormat };
 for (const name of ["describe", "it", "test"]) globalThis[name] ??= Object.assign((_text, method) => (name === "describe" ? method() : undefined), { skip: () => undefined, only: () => undefined, each: () => () => undefined, for: () => () => undefined });
 
 function installHooks() {
@@ -210,11 +194,9 @@ function installHooks() {
     writeFileSync(path, body);
     return pathToFileURL(path).href;
   };
-  const eslintShim = shim("eslint-rule-tester.cjs", `module.exports = globalThis[Symbol.for("rerail.typescriptPack.ruleTesterStubs")].eslint;\n`);
-  const typescriptShim = shim("typescript-eslint-rule-tester.cjs", `module.exports = globalThis[Symbol.for("rerail.typescriptPack.ruleTesterStubs")].typescriptEslint;\n`);
+  const typescriptShim = shim("typescript-eslint-rule-tester.cjs", `module.exports = globalThis[Symbol.for("rerail.typescriptPack.ruleTesterStubs")];\n`);
   const emptyShim = shim("rule.cjs", "module.exports = { meta: {}, create() { return {}; } };\n");
-  const eslintTester = pathToFileURL(join(options.eslint, "lib", "rule-tester")).href;
-  const ruleDirectories = [join(options.eslint, "lib", "rules"), join(options["typescript-eslint"], "packages", "eslint-plugin", "src", "rules")].map(path => pathToFileURL(path).href);
+  const ruleDirectory = pathToFileURL(join(options["typescript-eslint"], "packages", "eslint-plugin", "src", "rules")).href;
   const toolsUrl = pathToFileURL(join(options.tools, "package.json")).href;
   registerHooks({
     resolve(specifier, context, nextResolve) {
@@ -227,15 +209,13 @@ function installHooks() {
         if (specifier.startsWith(".") || specifier.startsWith("/")) throw error;
         resolved = nextResolve(specifier, { ...context, parentURL: toolsUrl });
       }
-      if (resolved.url.startsWith(eslintTester)) return { url: eslintShim, format: "commonjs", shortCircuit: true };
-      if (ruleDirectories.some(directory => resolved.url.startsWith(`${directory}/`))) return { url: emptyShim, format: "commonjs", shortCircuit: true };
+      if (resolved.url.startsWith(`${ruleDirectory}/`)) return { url: emptyShim, format: "commonjs", shortCircuit: true };
       return resolved;
     },
   });
 }
 
 function testFile(tool, rule) {
-  if (tool === "eslint") return join(options.eslint, "tests", "lib", "rules", `${rule}.js`);
   const name = rule.slice(PLUGIN_PREFIX.length);
   const directory = join(options["typescript-eslint"], "packages", "eslint-plugin", "tests", "rules");
   return [join(directory, `${name}.test.ts`), join(directory, name, `${name}.test.ts`)].find(existsSync);
@@ -251,8 +231,8 @@ const merge = (...layers) =>
   }, {});
 
 /** The extension a case is written with, or why it is left out. */
-function extensionOf(source, test, languageOptions, typeChecked) {
-  const parser = languageOptions.parser ?? (source === "typescript-eslint" ? tsParser : undefined);
+function extensionOf(test, languageOptions, typeChecked) {
+  const parser = languageOptions.parser ?? tsParser;
   if (parser !== undefined && parser !== tsParser) return { skip: "custom parser" };
   const parserOptions = languageOptions.parserOptions ?? {};
   const typed = parserOptions.project !== undefined || parserOptions.projectService !== undefined || parserOptions.programs !== undefined;
@@ -274,7 +254,7 @@ function extractFixtures(tool) {
   const files = [];
   const counts = {};
   for (const rule of RULES.get(tool)) {
-    const name = tool === "eslint" ? rule : rule.slice(PLUGIN_PREFIX.length);
+    const name = rule.slice(PLUGIN_PREFIX.length);
     const path = testFile(tool, rule);
     if (path === undefined) throw new Error(`${rule}: no test file`);
     RUNS.length = 0;
@@ -283,7 +263,7 @@ function extractFixtures(tool) {
     if (runs.length === 0) throw new Error(`${rule}: ${path} ran no RuleTester for ${name}`);
     const seen = new Set();
     const count = (counts[rule] = { cases: 0, withOptions: 0, skipped: {}, written: 0, duplicate: 0 });
-    const typeChecked = tool === "typescript-eslint" && tsPlugin.rules[name].meta.docs?.requiresTypeChecking === true;
+    const typeChecked = tsPlugin.rules[name].meta.docs?.requiresTypeChecking === true;
     for (const run of runs) {
       for (const kind of ["valid", "invalid"]) {
         for (const entry of run.tests[kind] ?? []) {
@@ -298,7 +278,7 @@ function extractFixtures(tool) {
             continue;
           }
           const languageOptions = merge(run.config.languageOptions, test.languageOptions);
-          const chosen = extensionOf(tool, test, languageOptions, typeChecked);
+          const chosen = extensionOf(test, languageOptions, typeChecked);
           if (chosen.skip !== undefined) {
             count.skipped[chosen.skip] = (count.skipped[chosen.skip] ?? 0) + 1;
             continue;
@@ -323,12 +303,12 @@ function extractFixtures(tool) {
 
 async function recordFixtures(tool) {
   const { fixtures, files, counts } = extractFixtures(tool);
-  const { findings, unparsed } = await lint(fixtures, files, RULES.get(tool), tool);
+  const { findings, unparsed } = await lint(fixtures, files, RULES.get(tool));
   for (const path of unparsed) rmSync(join(fixtures, path));
   const unparsedSet = new Set(unparsed);
   const kept = files.filter(file => !unparsedSet.has(file));
   for (const path of unparsed) {
-    const count = counts[tool === "eslint" ? path.split("/")[0] : `${PLUGIN_PREFIX}${path.split("/")[0]}`];
+    const count = counts[`${PLUGIN_PREFIX}${path.split("/")[0]}`];
     count.unparsed = (count.unparsed ?? 0) + 1;
   }
   const source = CHECKOUTS[tool];
@@ -378,7 +358,7 @@ async function recordCorpus(name, directory) {
   console.log(`corpus ${name}: ${files.length} files`);
   for (const [tool, rules] of RULES) {
     const started = performance.now();
-    const { findings, unparsed } = await lint(directory, files, rules, tool);
+    const { findings, unparsed } = await lint(directory, files, rules);
     writeJson(join(HERE, tool, `corpus-${name}.expected.json`), {
       tool,
       version: versionOf(tool),

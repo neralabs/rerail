@@ -1,0 +1,1 @@
+switch(foo(Number.NaN)) {}

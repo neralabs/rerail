@@ -1,0 +1,1098 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint:no-eval",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Port of ESLint's `no-eval` rule (https://eslint.org/docs/latest/rules/no-eval). Flags `eval(...)` calls and, by default, indirect uses: references to the global eval, `eval` read from a global object (global/window/globalThis, when declared by the configured languageOptions or declared at the top level of a script), and `this.eval` where `this` is the global object: the top level of a script or CommonJS file, or a non-strict function (`resolves.this` with `sloppyFunctions`, strictness from the case's languageOptions) whose call binds the default `this`. Which calls rebind `this` (methods, bind/call/apply, thisArg callbacks, capitalized constructors) is ESLint's heuristic, approximated structurally. Shadowing is resolved with `resolves`. Default options: allowIndirect false. Options are declared in the `options` define (the rule's defaults); a variant is a config patch.",
+  "scope": {
+    "include": [
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.config.js",
+      "**/*.config.mjs",
+      "**/*.config.cjs",
+      "**/.*rc.js",
+      "**/.*rc.cjs"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "allowIndirect": {
+            "type": "boolean",
+            "nullable": true,
+            "default": null
+          }
+        }
+      }
+    },
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "direct-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^eval$",
+                "pattern": "$P"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "direct-callee"
+                }
+              }
+            ]
+          },
+          "r1": {
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier",
+                  "pattern": "$P",
+                  "regex": "^eval$"
+                },
+                {
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "kind": "template_string",
+                          "not": {
+                            "has": {
+                              "kind": "template_substitution"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "has": {
+                        "kind": "string_fragment",
+                        "regex": "^eval$"
+                      }
+                    },
+                    {
+                      "pattern": "$P"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "r2": {
+            "any": [
+              {
+                "kind": "member_expression"
+              },
+              {
+                "kind": "subscript_expression"
+              }
+            ]
+          },
+          "r3": {
+            "has": {
+              "matches": "direct-callee"
+            },
+            "kind": "call_expression"
+          }
+        }
+      }
+    },
+    {
+      "id": "direct-call",
+      "forbid": {
+        "ast": {
+          "$option": "allowIndirect",
+          "cases": {
+            "true": {
+              "language": "typescript",
+              "rule": {
+                "kind": "call_expression",
+                "has": {
+                  "matches": "direct-callee"
+                },
+                "not": {
+                  "has": {
+                    "regex": "^\\?\\.$"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "language": "typescript",
+            "languageOptions": {},
+            "rule": {
+              "matches": "r3"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.P",
+        "code": "NO_EVAL",
+        "message": "`eval` can be harmful.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-eval"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "eval-reference",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {},
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "shorthand_property_identifier"
+                  }
+                ]
+              },
+              {
+                "resolves": {
+                  "global": [
+                    "eval"
+                  ],
+                  "directives": "eslint",
+                  "scriptDeclarations": true
+                }
+              },
+              {
+                "pattern": "$G"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "matches": "r3"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "parenthesized_expression",
+                    "inside": {
+                      "matches": "r3"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "when": {
+            "option": {
+              "allowIndirect": null
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_EVAL",
+        "message": "`eval` can be harmful.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-eval"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "global-object-eval",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {},
+          "rule": {
+            "all": [
+              {
+                "matches": "r2"
+              },
+              {
+                "has": {
+                  "matches": "global-obj"
+                }
+              },
+              {
+                "matches": "r1"
+              }
+            ]
+          },
+          "utils": {
+            "global-obj": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$G",
+                  "resolves": {
+                    "global": [
+                      "global",
+                      "window",
+                      "globalThis"
+                    ],
+                    "directives": "eslint",
+                    "scriptDeclarations": true
+                  }
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "matches": "global-obj"
+                      }
+                    },
+                    {
+                      "has": {
+                        "kind": "property_identifier",
+                        "pattern": "$G"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "subscript_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "matches": "global-obj"
+                      }
+                    },
+                    {
+                      "has": {
+                        "kind": "string_fragment",
+                        "pattern": "$G"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "global-obj"
+                  }
+                }
+              ]
+            }
+          },
+          "when": {
+            "option": {
+              "allowIndirect": null
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.P",
+        "code": "NO_EVAL",
+        "message": "`eval` can be harmful.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-eval"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "this-eval",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {},
+          "rule": {
+            "all": [
+              {
+                "matches": "r2"
+              },
+              {
+                "has": {
+                  "kind": "this",
+                  "resolves": {
+                    "this": "global",
+                    "sloppyFunctions": true
+                  },
+                  "not": {
+                    "inside": {
+                      "stopBy": {
+                        "matches": "function"
+                      },
+                      "all": [
+                        {
+                          "matches": "function"
+                        },
+                        {
+                          "matches": "non-default-this"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "matches": "r1"
+              }
+            ]
+          },
+          "utils": {
+            "function": {
+              "any": [
+                {
+                  "kind": "function_declaration"
+                },
+                {
+                  "kind": "generator_function_declaration"
+                },
+                {
+                  "kind": "function_expression"
+                },
+                {
+                  "kind": "generator_function"
+                }
+              ]
+            },
+            "any-fn": {
+              "any": [
+                {
+                  "matches": "function"
+                },
+                {
+                  "kind": "arrow_function"
+                },
+                {
+                  "kind": "method_definition"
+                }
+              ]
+            },
+            "arg": {
+              "not": {
+                "any": [
+                  {
+                    "regex": "^[(),]$"
+                  },
+                  {
+                    "kind": "comment"
+                  }
+                ]
+              }
+            },
+            "a0": {
+              "all": [
+                {
+                  "matches": "arg"
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "regex": "^,$",
+                      "stopBy": "end"
+                    }
+                  }
+                }
+              ]
+            },
+            "a1": {
+              "all": [
+                {
+                  "matches": "arg"
+                },
+                {
+                  "follows": {
+                    "regex": "^,$",
+                    "follows": {
+                      "matches": "a0"
+                    }
+                  }
+                }
+              ]
+            },
+            "a2": {
+              "all": [
+                {
+                  "matches": "arg"
+                },
+                {
+                  "follows": {
+                    "regex": "^,$",
+                    "follows": {
+                      "matches": "a1"
+                    }
+                  }
+                }
+              ]
+            },
+            "last": {
+              "all": [
+                {
+                  "matches": "arg"
+                },
+                {
+                  "not": {
+                    "precedes": {
+                      "stopBy": "end",
+                      "matches": "arg"
+                    }
+                  }
+                }
+              ]
+            },
+            "this-arg": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "null"
+                  },
+                  {
+                    "kind": "undefined"
+                  },
+                  {
+                    "kind": "unary_expression",
+                    "regex": "^void\\b"
+                  }
+                ]
+              }
+            },
+            "wrapper": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression"
+                },
+                {
+                  "kind": "ternary_expression"
+                },
+                {
+                  "kind": "binary_expression",
+                  "has": {
+                    "regex": "^(&&|\\|\\||\\?\\?)$"
+                  }
+                }
+              ]
+            },
+            "decisive": {
+              "any": [
+                {
+                  "inside": {
+                    "kind": "pair"
+                  },
+                  "follows": {
+                    "regex": "^:$"
+                  }
+                },
+                {
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "assignment_expression"
+                      },
+                      {
+                        "kind": "augmented_assignment_expression"
+                      },
+                      {
+                        "kind": "assignment_pattern"
+                      }
+                    ],
+                    "has": {
+                      "all": [
+                        {
+                          "matches": "r2"
+                        },
+                        {
+                          "not": {
+                            "follows": {
+                              "regex": "[\\s\\S]"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "member_expression"
+                      },
+                      {
+                        "kind": "subscript_expression"
+                      }
+                    ],
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "property_identifier",
+                          "regex": "^(bind|call|apply)$"
+                        },
+                        {
+                          "kind": "string",
+                          "has": {
+                            "kind": "string_fragment",
+                            "regex": "^(bind|call|apply)$"
+                          }
+                        }
+                      ]
+                    },
+                    "inside": {
+                      "kind": "call_expression",
+                      "has": {
+                        "kind": "arguments",
+                        "has": {
+                          "all": [
+                            {
+                              "matches": "a0"
+                            },
+                            {
+                              "matches": "this-arg"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "all": [
+                    {
+                      "matches": "a0"
+                    },
+                    {
+                      "inside": {
+                        "kind": "arguments",
+                        "has": {
+                          "all": [
+                            {
+                              "matches": "a1"
+                            },
+                            {
+                              "matches": "last"
+                            },
+                            {
+                              "matches": "this-arg"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "arguments",
+                        "inside": {
+                          "kind": "call_expression",
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "member_expression"
+                              },
+                              {
+                                "kind": "subscript_expression"
+                              }
+                            ],
+                            "all": [
+                              {
+                                "has": {
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(every|filter|find(Last)?(Index)?|flatMap|forEach|map|some)$"
+                                    },
+                                    {
+                                      "kind": "string",
+                                      "has": {
+                                        "kind": "string_fragment",
+                                        "regex": "^(every|filter|find(Last)?(Index)?|flatMap|forEach|map|some)$"
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "matches": "a0"
+                    },
+                    {
+                      "inside": {
+                        "kind": "arguments",
+                        "all": [
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "matches": "a1"
+                                },
+                                {
+                                  "matches": "this-arg"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "matches": "a2"
+                                },
+                                {
+                                  "matches": "last"
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "arguments",
+                        "inside": {
+                          "kind": "call_expression",
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "member_expression"
+                              },
+                              {
+                                "kind": "subscript_expression"
+                              }
+                            ],
+                            "all": [
+                              {
+                                "has": {
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^apply$"
+                                    },
+                                    {
+                                      "kind": "string",
+                                      "has": {
+                                        "kind": "string_fragment",
+                                        "regex": "^apply$"
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "^Reflect$"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "matches": "a1"
+                    },
+                    {
+                      "inside": {
+                        "kind": "arguments",
+                        "has": {
+                          "all": [
+                            {
+                              "matches": "a2"
+                            },
+                            {
+                              "matches": "last"
+                            },
+                            {
+                              "matches": "this-arg"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "arguments",
+                        "inside": {
+                          "kind": "call_expression",
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "member_expression"
+                              },
+                              {
+                                "kind": "subscript_expression"
+                              }
+                            ],
+                            "all": [
+                              {
+                                "has": {
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(from|fromAsync)$"
+                                    },
+                                    {
+                                      "kind": "string",
+                                      "has": {
+                                        "kind": "string_fragment",
+                                        "regex": "^(from|fromAsync)$"
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "has": {
+                                  "kind": "identifier",
+                                  "regex": "Array$"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "up": {
+              "any": [
+                {
+                  "matches": "decisive"
+                },
+                {
+                  "inside": {
+                    "all": [
+                      {
+                        "matches": "wrapper"
+                      },
+                      {
+                        "matches": "up"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "return_statement",
+                    "inside": {
+                      "stopBy": {
+                        "matches": "any-fn"
+                      },
+                      "all": [
+                        {
+                          "matches": "any-fn"
+                        },
+                        {
+                          "matches": "callee-up"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "arrow_function",
+                    "matches": "callee-up"
+                  }
+                }
+              ]
+            },
+            "callee-up": {
+              "any": [
+                {
+                  "inside": {
+                    "kind": "call_expression",
+                    "matches": "up"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "parenthesized_expression",
+                    "matches": "callee-up"
+                  }
+                }
+              ]
+            },
+            "up-anonymous": {
+              "any": [
+                {
+                  "matches": "decisive"
+                },
+                {
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "variable_declarator"
+                      },
+                      {
+                        "kind": "assignment_expression"
+                      },
+                      {
+                        "kind": "augmented_assignment_expression"
+                      },
+                      {
+                        "kind": "assignment_pattern"
+                      },
+                      {
+                        "kind": "object_assignment_pattern"
+                      },
+                      {
+                        "kind": "required_parameter"
+                      }
+                    ],
+                    "has": {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "shorthand_property_identifier_pattern"
+                            }
+                          ]
+                        },
+                        {
+                          "regex": "^[\\p{Lu}\\p{Lt}]"
+                        },
+                        {
+                          "not": {
+                            "follows": {
+                              "regex": "[\\s\\S]"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "all": [
+                      {
+                        "matches": "wrapper"
+                      },
+                      {
+                        "matches": "up-anonymous"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "return_statement",
+                    "inside": {
+                      "stopBy": {
+                        "matches": "any-fn"
+                      },
+                      "all": [
+                        {
+                          "matches": "any-fn"
+                        },
+                        {
+                          "matches": "callee-up-anonymous"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "arrow_function",
+                    "matches": "callee-up-anonymous"
+                  }
+                }
+              ]
+            },
+            "callee-up-anonymous": {
+              "any": [
+                {
+                  "inside": {
+                    "kind": "call_expression",
+                    "matches": "up-anonymous"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "parenthesized_expression",
+                    "matches": "callee-up-anonymous"
+                  }
+                }
+              ]
+            },
+            "non-default-this": {
+              "any": [
+                {
+                  "has": {
+                    "kind": "identifier",
+                    "regex": "^[\\p{Lu}\\p{Lt}]"
+                  }
+                },
+                {
+                  "has": {
+                    "kind": "formal_parameters",
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "required_parameter"
+                        },
+                        {
+                          "kind": "optional_parameter"
+                        }
+                      ],
+                      "has": {
+                        "kind": "this"
+                      }
+                    }
+                  }
+                },
+                {
+                  "follows": {
+                    "kind": "comment",
+                    "regex": "(?m)^(/\\*|//)?[\\s*]*@this"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "function_expression"
+                    },
+                    {
+                      "kind": "generator_function"
+                    }
+                  ],
+                  "not": {
+                    "inside": {
+                      "kind": "arguments"
+                    }
+                  },
+                  "inside": {
+                    "stopBy": {
+                      "any": [
+                        {
+                          "matches": "any-fn"
+                        },
+                        {
+                          "kind": "pair"
+                        },
+                        {
+                          "follows": {
+                            "kind": "comment"
+                          }
+                        }
+                      ]
+                    },
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "function_declaration"
+                        },
+                        {
+                          "kind": "method_definition"
+                        }
+                      ]
+                    },
+                    "follows": {
+                      "kind": "comment",
+                      "all": [
+                        {
+                          "regex": "^/\\*\\*"
+                        },
+                        {
+                          "regex": "(?m)^(/\\*)?[\\s*]*@this"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "all": [
+                    {
+                      "not": {
+                        "has": {
+                          "kind": "identifier"
+                        }
+                      }
+                    },
+                    {
+                      "matches": "up-anonymous"
+                    }
+                  ]
+                },
+                {
+                  "matches": "up"
+                }
+              ]
+            }
+          },
+          "when": {
+            "option": {
+              "allowIndirect": null
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.P",
+        "code": "NO_EVAL",
+        "message": "`eval` can be harmful.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-eval"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,863 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "eslint:no-extra-bind",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of ESLint's `no-extra-bind` rule (https://eslint.org/docs/latest/rules/no-extra-bind). Reports `.bind(x)` with one argument on an arrow function or on a function expression that does not use its own `this`; removes the call when the argument is side-effect free and no comment is inside.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "bind-call",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "utils": {
+      "own-this-boundary": {
+       "any": [
+        {
+         "kind": "function_declaration"
+        },
+        {
+         "kind": "function_expression"
+        },
+        {
+         "kind": "generator_function_declaration"
+        },
+        {
+         "kind": "generator_function"
+        },
+        {
+         "kind": "method_definition"
+        },
+        {
+         "kind": "class_static_block"
+        },
+        {
+         "inside": {
+          "kind": "public_field_definition",
+          "stopBy": "neighbor"
+         },
+         "follows": {
+          "regex": "^=$",
+          "stopBy": "end"
+         }
+        }
+       ]
+      },
+      "bound-function": {
+       "any": [
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "bound-function",
+          "stopBy": "neighbor"
+         }
+        },
+        {
+         "kind": "arrow_function"
+        },
+        {
+         "any": [
+          {
+           "kind": "function_expression"
+          },
+          {
+           "kind": "generator_function"
+          }
+         ],
+         "not": {
+          "has": {
+           "kind": "this",
+           "stopBy": {
+            "matches": "own-this-boundary"
+           }
+          }
+         }
+        }
+       ]
+      },
+      "bind-member": {
+       "any": [
+        {
+         "kind": "member_expression",
+         "all": [
+          {
+           "has": {
+            "matches": "bound-function",
+            "pattern": "$OBJ",
+            "stopBy": "neighbor"
+           }
+          },
+          {
+           "has": {
+            "kind": "property_identifier",
+            "regex": "^bind$",
+            "pattern": "$PROP",
+            "stopBy": "neighbor"
+           }
+          }
+         ]
+        },
+        {
+         "kind": "subscript_expression",
+         "all": [
+          {
+           "has": {
+            "matches": "bound-function",
+            "pattern": "$OBJ",
+            "stopBy": "neighbor"
+           }
+          },
+          {
+           "has": {
+            "any": [
+             {
+              "kind": "string"
+             },
+             {
+              "kind": "template_string",
+              "not": {
+               "has": {
+                "kind": "template_substitution",
+                "stopBy": "neighbor"
+               }
+              }
+             }
+            ],
+            "pattern": "$PROP",
+            "has": {
+             "kind": "string_fragment",
+             "regex": "^bind$",
+             "stopBy": "neighbor"
+            },
+            "stopBy": "neighbor"
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "single-argument": {
+       "kind": "arguments",
+       "all": [
+        {
+         "has": {
+          "not": {
+           "any": [
+            {
+             "kind": "comment"
+            },
+            {
+             "regex": "^[(),]$"
+            }
+           ]
+          },
+          "pattern": "$ARG",
+          "stopBy": "neighbor"
+         }
+        },
+        {
+         "count": {
+          "has": {
+           "not": {
+            "any": [
+             {
+              "kind": "comment"
+             },
+             {
+              "regex": "^[(),]$"
+             }
+            ]
+           },
+           "stopBy": "neighbor"
+          },
+          "max": 1
+         }
+        },
+        {
+         "not": {
+          "has": {
+           "kind": "spread_element",
+           "stopBy": "neighbor"
+          }
+         }
+        }
+       ]
+      },
+      "side-effect-free": {
+       "any": [
+        {
+         "kind": "number"
+        },
+        {
+         "kind": "string"
+        },
+        {
+         "kind": "true"
+        },
+        {
+         "kind": "false"
+        },
+        {
+         "kind": "null"
+        },
+        {
+         "kind": "regex"
+        },
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "undefined"
+        },
+        {
+         "kind": "this"
+        },
+        {
+         "kind": "function_expression"
+        }
+       ]
+      },
+      "commented": {
+       "has": {
+        "kind": "comment",
+        "stopBy": "end"
+       }
+      }
+     },
+     "rule": {
+      "kind": "call_expression",
+      "all": [
+       {
+        "has": {
+         "matches": "bind-member",
+         "stopBy": "neighbor"
+        }
+       },
+       {
+        "has": {
+         "matches": "single-argument",
+         "stopBy": "neighbor"
+        }
+       },
+       {
+        "has": {
+         "kind": "arguments",
+         "has": {
+          "not": {
+           "any": [
+            {
+             "kind": "comment"
+            },
+            {
+             "regex": "^[(),]$"
+            }
+           ]
+          },
+          "matches": "side-effect-free",
+          "stopBy": "neighbor"
+         },
+         "stopBy": "neighbor"
+        }
+       },
+       {
+        "not": {
+         "matches": "commented"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.PROP",
+    "code": "NO_EXTRA_BIND",
+    "message": "The function binding is unnecessary.",
+    "fix": "$OBJ"
+   }
+  },
+  {
+   "id": "parenthesized-bind-call",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "utils": {
+      "own-this-boundary": {
+       "any": [
+        {
+         "kind": "function_declaration"
+        },
+        {
+         "kind": "function_expression"
+        },
+        {
+         "kind": "generator_function_declaration"
+        },
+        {
+         "kind": "generator_function"
+        },
+        {
+         "kind": "method_definition"
+        },
+        {
+         "kind": "class_static_block"
+        },
+        {
+         "inside": {
+          "kind": "public_field_definition",
+          "stopBy": "neighbor"
+         },
+         "follows": {
+          "regex": "^=$",
+          "stopBy": "end"
+         }
+        }
+       ]
+      },
+      "bound-function": {
+       "any": [
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "bound-function",
+          "stopBy": "neighbor"
+         }
+        },
+        {
+         "kind": "arrow_function"
+        },
+        {
+         "any": [
+          {
+           "kind": "function_expression"
+          },
+          {
+           "kind": "generator_function"
+          }
+         ],
+         "not": {
+          "has": {
+           "kind": "this",
+           "stopBy": {
+            "matches": "own-this-boundary"
+           }
+          }
+         }
+        }
+       ]
+      },
+      "bind-member": {
+       "any": [
+        {
+         "kind": "member_expression",
+         "all": [
+          {
+           "has": {
+            "matches": "bound-function",
+            "pattern": "$OBJ",
+            "stopBy": "neighbor"
+           }
+          },
+          {
+           "has": {
+            "kind": "property_identifier",
+            "regex": "^bind$",
+            "pattern": "$PROP",
+            "stopBy": "neighbor"
+           }
+          }
+         ]
+        },
+        {
+         "kind": "subscript_expression",
+         "all": [
+          {
+           "has": {
+            "matches": "bound-function",
+            "pattern": "$OBJ",
+            "stopBy": "neighbor"
+           }
+          },
+          {
+           "has": {
+            "any": [
+             {
+              "kind": "string"
+             },
+             {
+              "kind": "template_string",
+              "not": {
+               "has": {
+                "kind": "template_substitution",
+                "stopBy": "neighbor"
+               }
+              }
+             }
+            ],
+            "pattern": "$PROP",
+            "has": {
+             "kind": "string_fragment",
+             "regex": "^bind$",
+             "stopBy": "neighbor"
+            },
+            "stopBy": "neighbor"
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "single-argument": {
+       "kind": "arguments",
+       "all": [
+        {
+         "has": {
+          "not": {
+           "any": [
+            {
+             "kind": "comment"
+            },
+            {
+             "regex": "^[(),]$"
+            }
+           ]
+          },
+          "pattern": "$ARG",
+          "stopBy": "neighbor"
+         }
+        },
+        {
+         "count": {
+          "has": {
+           "not": {
+            "any": [
+             {
+              "kind": "comment"
+             },
+             {
+              "regex": "^[(),]$"
+             }
+            ]
+           },
+           "stopBy": "neighbor"
+          },
+          "max": 1
+         }
+        },
+        {
+         "not": {
+          "has": {
+           "kind": "spread_element",
+           "stopBy": "neighbor"
+          }
+         }
+        }
+       ]
+      },
+      "side-effect-free": {
+       "any": [
+        {
+         "kind": "number"
+        },
+        {
+         "kind": "string"
+        },
+        {
+         "kind": "true"
+        },
+        {
+         "kind": "false"
+        },
+        {
+         "kind": "null"
+        },
+        {
+         "kind": "regex"
+        },
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "undefined"
+        },
+        {
+         "kind": "this"
+        },
+        {
+         "kind": "function_expression"
+        }
+       ]
+      },
+      "commented": {
+       "has": {
+        "kind": "comment",
+        "stopBy": "end"
+       }
+      }
+     },
+     "rule": {
+      "kind": "call_expression",
+      "all": [
+       {
+        "has": {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "bind-member",
+          "stopBy": "neighbor"
+         },
+         "stopBy": "neighbor"
+        }
+       },
+       {
+        "has": {
+         "matches": "single-argument",
+         "stopBy": "neighbor"
+        }
+       },
+       {
+        "has": {
+         "kind": "arguments",
+         "has": {
+          "not": {
+           "any": [
+            {
+             "kind": "comment"
+            },
+            {
+             "regex": "^[(),]$"
+            }
+           ]
+          },
+          "matches": "side-effect-free",
+          "stopBy": "neighbor"
+         },
+         "stopBy": "neighbor"
+        }
+       },
+       {
+        "not": {
+         "matches": "commented"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.PROP",
+    "code": "NO_EXTRA_BIND",
+    "message": "The function binding is unnecessary.",
+    "fix": "($OBJ)"
+   }
+  },
+  {
+   "id": "bind-call-not-fixed",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "utils": {
+      "own-this-boundary": {
+       "any": [
+        {
+         "kind": "function_declaration"
+        },
+        {
+         "kind": "function_expression"
+        },
+        {
+         "kind": "generator_function_declaration"
+        },
+        {
+         "kind": "generator_function"
+        },
+        {
+         "kind": "method_definition"
+        },
+        {
+         "kind": "class_static_block"
+        },
+        {
+         "inside": {
+          "kind": "public_field_definition",
+          "stopBy": "neighbor"
+         },
+         "follows": {
+          "regex": "^=$",
+          "stopBy": "end"
+         }
+        }
+       ]
+      },
+      "bound-function": {
+       "any": [
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "bound-function",
+          "stopBy": "neighbor"
+         }
+        },
+        {
+         "kind": "arrow_function"
+        },
+        {
+         "any": [
+          {
+           "kind": "function_expression"
+          },
+          {
+           "kind": "generator_function"
+          }
+         ],
+         "not": {
+          "has": {
+           "kind": "this",
+           "stopBy": {
+            "matches": "own-this-boundary"
+           }
+          }
+         }
+        }
+       ]
+      },
+      "bind-member": {
+       "any": [
+        {
+         "kind": "member_expression",
+         "all": [
+          {
+           "has": {
+            "matches": "bound-function",
+            "pattern": "$OBJ",
+            "stopBy": "neighbor"
+           }
+          },
+          {
+           "has": {
+            "kind": "property_identifier",
+            "regex": "^bind$",
+            "pattern": "$PROP",
+            "stopBy": "neighbor"
+           }
+          }
+         ]
+        },
+        {
+         "kind": "subscript_expression",
+         "all": [
+          {
+           "has": {
+            "matches": "bound-function",
+            "pattern": "$OBJ",
+            "stopBy": "neighbor"
+           }
+          },
+          {
+           "has": {
+            "any": [
+             {
+              "kind": "string"
+             },
+             {
+              "kind": "template_string",
+              "not": {
+               "has": {
+                "kind": "template_substitution",
+                "stopBy": "neighbor"
+               }
+              }
+             }
+            ],
+            "pattern": "$PROP",
+            "has": {
+             "kind": "string_fragment",
+             "regex": "^bind$",
+             "stopBy": "neighbor"
+            },
+            "stopBy": "neighbor"
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "single-argument": {
+       "kind": "arguments",
+       "all": [
+        {
+         "has": {
+          "not": {
+           "any": [
+            {
+             "kind": "comment"
+            },
+            {
+             "regex": "^[(),]$"
+            }
+           ]
+          },
+          "pattern": "$ARG",
+          "stopBy": "neighbor"
+         }
+        },
+        {
+         "count": {
+          "has": {
+           "not": {
+            "any": [
+             {
+              "kind": "comment"
+             },
+             {
+              "regex": "^[(),]$"
+             }
+            ]
+           },
+           "stopBy": "neighbor"
+          },
+          "max": 1
+         }
+        },
+        {
+         "not": {
+          "has": {
+           "kind": "spread_element",
+           "stopBy": "neighbor"
+          }
+         }
+        }
+       ]
+      },
+      "side-effect-free": {
+       "any": [
+        {
+         "kind": "number"
+        },
+        {
+         "kind": "string"
+        },
+        {
+         "kind": "true"
+        },
+        {
+         "kind": "false"
+        },
+        {
+         "kind": "null"
+        },
+        {
+         "kind": "regex"
+        },
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "undefined"
+        },
+        {
+         "kind": "this"
+        },
+        {
+         "kind": "function_expression"
+        }
+       ]
+      },
+      "commented": {
+       "has": {
+        "kind": "comment",
+        "stopBy": "end"
+       }
+      }
+     },
+     "rule": {
+      "all": [
+       {
+        "any": [
+         {
+          "kind": "call_expression",
+          "all": [
+           {
+            "has": {
+             "matches": "bind-member",
+             "stopBy": "neighbor"
+            }
+           },
+           {
+            "has": {
+             "matches": "single-argument",
+             "stopBy": "neighbor"
+            }
+           }
+          ]
+         },
+         {
+          "kind": "call_expression",
+          "all": [
+           {
+            "has": {
+             "kind": "parenthesized_expression",
+             "has": {
+              "matches": "bind-member",
+              "stopBy": "neighbor"
+             },
+             "stopBy": "neighbor"
+            }
+           },
+           {
+            "has": {
+             "matches": "single-argument",
+             "stopBy": "neighbor"
+            }
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "not": {
+         "all": [
+          {
+           "has": {
+            "kind": "arguments",
+            "has": {
+             "not": {
+              "any": [
+               {
+                "kind": "comment"
+               },
+               {
+                "regex": "^[(),]$"
+               }
+              ]
+             },
+             "matches": "side-effect-free",
+             "stopBy": "neighbor"
+            },
+            "stopBy": "neighbor"
+           }
+          },
+          {
+           "not": {
+            "matches": "commented"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.PROP",
+    "code": "NO_EXTRA_BIND",
+    "message": "The function binding is unnecessary."
+   }
+  }
+ ]
+}

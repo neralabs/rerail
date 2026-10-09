@@ -1,0 +1,239 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint:prefer-const",
+  "revision": 1,
+  "mode": "log",
+  "description": "A `let` binding with an initial value, or a `for\u2026in`/`for\u2026of` `let`, that is never reassigned.",
+  "scope": {
+    "include": [
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.config.js",
+      "**/*.config.mjs",
+      "**/*.config.cjs",
+      "**/.*rc.js",
+      "**/.*rc.cjs"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "never-reassigned",
+      "forbid": {
+        "ast": {
+          "language": "javascript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "shorthand_property_identifier_pattern"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "kind": "variable_declarator",
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "has": {
+                        "field": "value",
+                        "regex": "."
+                      },
+                      "inside": {
+                        "kind": "lexical_declaration",
+                        "regex": "^let\\b",
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "any": [
+                        {
+                          "kind": "array_pattern"
+                        },
+                        {
+                          "kind": "object_pattern"
+                        },
+                        {
+                          "kind": "pair_pattern"
+                        },
+                        {
+                          "kind": "rest_pattern"
+                        },
+                        {
+                          "kind": "assignment_pattern"
+                        },
+                        {
+                          "kind": "object_assignment_pattern"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "array_pattern"
+                              },
+                              {
+                                "kind": "object_pattern"
+                              },
+                              {
+                                "kind": "pair_pattern"
+                              },
+                              {
+                                "kind": "rest_pattern"
+                              },
+                              {
+                                "kind": "assignment_pattern"
+                              },
+                              {
+                                "kind": "object_assignment_pattern"
+                              }
+                            ]
+                          }
+                        },
+                        "kind": "variable_declarator",
+                        "has": {
+                          "field": "value",
+                          "regex": "."
+                        },
+                        "inside": {
+                          "kind": "lexical_declaration",
+                          "regex": "^let\\b",
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "for_in_statement",
+                      "stopBy": "neighbor",
+                      "field": "left",
+                      "regex": "^for\\s*(?:await\\s*)?\\(\\s*let\\b"
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "pair_pattern",
+                    "stopBy": "neighbor",
+                    "field": "key"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "binds": {
+                    "occurrence": {
+                      "any": [
+                        {
+                          "inside": {
+                            "kind": "assignment_expression",
+                            "field": "left",
+                            "stopBy": {
+                              "not": {
+                                "any": [
+                                  {
+                                    "kind": "array_pattern"
+                                  },
+                                  {
+                                    "kind": "object_pattern"
+                                  },
+                                  {
+                                    "kind": "pair_pattern"
+                                  },
+                                  {
+                                    "kind": "shorthand_property_identifier_pattern"
+                                  },
+                                  {
+                                    "kind": "parenthesized_expression"
+                                  },
+                                  {
+                                    "kind": "assignment_pattern"
+                                  },
+                                  {
+                                    "kind": "object_assignment_pattern"
+                                  },
+                                  {
+                                    "kind": "rest_pattern"
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "kind": "augmented_assignment_expression",
+                            "field": "left",
+                            "stopBy": "neighbor"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "kind": "update_expression",
+                            "stopBy": "neighbor"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "kind": "for_in_statement",
+                            "field": "left",
+                            "stopBy": "neighbor",
+                            "not": {
+                              "regex": "^for\\s*(?:await\\s*)?\\(\\s*(let|const|var)\\b"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PREFER_CONST",
+        "message": "This binding is never reassigned. Use const instead.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "prefer-const"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

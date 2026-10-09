@@ -1,0 +1,37 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint:no-nonoctal-decimal-escape",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of ESLint's `no-nonoctal-decimal-escape` rule (https://eslint.org/docs/latest/rules/no-nonoctal-decimal-escape). Reports each \\8 or \\9 escape sequence in a string literal.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "decimal-escape",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "escape_sequence",
+            "regex": "^\\\\[89]$",
+            "inside": {
+              "kind": "string",
+              "stopBy": "neighbor"
+            },
+            "pattern": "$ESC"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NO_NONOCTAL_DECIMAL_ESCAPE",
+        "message": "Don't use '$ESC' escape sequence."
+      }
+    }
+  ]
+}
