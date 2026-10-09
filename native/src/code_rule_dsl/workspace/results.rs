@@ -820,7 +820,7 @@ mod tests {
         let compiled =
             CodeRuleDslRuntime::compile(code_rule.to_owned(), "json".into(), CAPABILITIES.into())
                 .unwrap();
-        workspace.add_code_rule(&compiled).unwrap();
+        workspace.add_code_rule(&compiled, None).unwrap();
         workspace
     }
 
@@ -927,7 +927,7 @@ mod tests {
             serde_json::from_str(&task.compute().unwrap()).unwrap()
         };
         let mut workspace = CodeRuleDslWorkspace::new();
-        workspace.add_code_rule(&compiled).unwrap();
+        workspace.add_code_rule(&compiled, None).unwrap();
         run(&workspace, 1, &files);
         let edited = file("b.py", "x = 1\nprint(1)\nf()\n");
         RESULT_RENDERS.set(0);
@@ -935,7 +935,7 @@ mod tests {
         let result = run(&workspace, 2, std::slice::from_ref(&edited));
         assert_eq!((RESULT_RENDERS.get(), RESULT_SORTS.get()), (1, 0));
         let mut fresh = CodeRuleDslWorkspace::new();
-        fresh.add_code_rule(&compiled).unwrap();
+        fresh.add_code_rule(&compiled, None).unwrap();
         let expected = run(&fresh, 1, &[files[1].clone(), edited, files[2].clone()]);
         assert_eq!(
             result["evaluation"]["violations"],

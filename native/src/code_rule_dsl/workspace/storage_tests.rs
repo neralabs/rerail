@@ -163,7 +163,7 @@ fn storage_attaches_after_code_rule_registration_until_the_first_apply() {
     let store = repository.store("content.sqlite");
 
     let mut registered = CodeRuleDslWorkspace::new();
-    registered.add_code_rule(&needle_code_rule()).unwrap();
+    registered.add_code_rule(&needle_code_rule(), None).unwrap();
     let attached = registered
         .storage_task(repository.root(), store_argument(&store))
         .unwrap()
@@ -176,7 +176,7 @@ fn storage_attaches_after_code_rule_registration_until_the_first_apply() {
     registered.close();
 
     let mut applied = CodeRuleDslWorkspace::new();
-    applied.add_code_rule(&needle_code_rule()).unwrap();
+    applied.add_code_rule(&needle_code_rule(), None).unwrap();
     assert_eq!(apply_source(&applied, 1, "NEEDLE\n"), ["NEEDLE"]);
     assert!(
         applied

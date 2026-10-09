@@ -27,15 +27,19 @@ import type {
   PlaygroundRunInput,
   PlaygroundTrace,
 } from "./protocol.js";
-import { storedRuleSchema } from "../../dist/api/operations.js";
+import { libraryRuleRecordSchema, rerailRuleSchema } from "../../dist/api/repository-contracts.js";
 import { ruleDocumentDigest } from "../../dist/stable-json.js";
+import type { RuleDocument } from "../../dist/rule-store.js";
 import { createSandbox, managedProcess, spawnProcess, spawnPty, ompExecutable } from "./process.js";
 import type { ManagedProcess, PlaygroundProcess, Sandbox } from "./process.js";
 import { createWorkerChannel } from "./ipc.js";
 import type { WorkerChannel } from "./ipc.js";
-import { defaultRerailDatabasePath } from "../../dist/database.js";
-import { openScopedRuleCatalog } from "../../dist/scoped-rule-catalog.js";
-import { loadBundledRules } from "../../dist/rule-bootstrap.js";
+import { defaultRerailDatabasePath, openRerailDatabase } from "../../dist/database.js";
+import { loadBundledCatalog } from "../../dist/bundled-rules.js";
+import { recordCheckout } from "../../dist/repository-registry.js";
+import { setRepositoryStarted } from "../../dist/repository-start.js";
+import { setUpRepository } from "../../dist/rule-configuration.js";
+import { upsertLibraryRule } from "../../dist/rule-library.js";
 import { parseConversationRule } from "../../dist/rule-schema.js";
 import { codeRuleSchema } from "../../dist/code-rule-schema.js";
 import { startDaemon, stopDaemon } from "../../dist/daemon-control.js";
@@ -130,42 +134,49 @@ function describeFailure(error: unknown): string {
   }
   return lines.join("\n  caused by: ");
 }
-/** One daemon rule row as the client and worker see it; the daemon schema is the only parser. */
-function toSnapshot(value: unknown): PlaygroundRuleSnapshot {
-  const stored = storedRuleSchema.parse(value);
+/** One daemon rule as the client and worker see it; the daemon schemas are the only parsers. */
+function toSnapshot(document: RuleDocument, updatedAt: string, source: PlaygroundRuleSnapshot["source"]): PlaygroundRuleSnapshot {
   return {
-    id: stored.rule.id,
-    kind: stored.kind,
-    definition: JSON.stringify(stored.rule),
-    digest: ruleDocumentDigest(stored),
-    updatedAt: String(stored.updatedAt),
-    enabled: stored.enabled,
+    id: document.rule.id,
+    kind: document.kind,
+    definition: JSON.stringify(document.rule),
+    digest: ruleDocumentDigest({ kind: document.kind, rule: document.rule } as RuleDocument),
+    updatedAt,
+    source,
+  };
+}
+/** The `rules` array of a daemon list answer. */
+async function daemonRuleList(path: string, failure: string): Promise<unknown[]> {
+  const body = await daemonJson(`${daemonOrigin}${path}`, 5_000, failure);
+  const rules = typeof body === "object" && body !== null && "rules" in body ? body.rules : undefined;
+  if (!Array.isArray(rules)) throw new Error(`Development daemon returned no rule list for ${path}`);
+  return rules;
+}
+/**
+ * The rule picker reads through the supervisor so the browser stays on one origin: every By Rerail rule, then every
+ * rule created by you, each parsed by the daemon's own schema. A By Rerail rule changes only with the bundle. A rule
+ * created by you wins over a By Rerail rule with its id, as it does in a repository, so each id names one rule.
+ */
+async function readRules(): Promise<PlaygroundRuleList> {
+  const [rerail, library] = await Promise.all([
+    daemonRuleList("/api/rerail-rules", "By Rerail rules unavailable; check the development daemon"),
+    daemonRuleList("/api/library-rules", "Rules created by you unavailable; check the development daemon"),
+  ]);
+  const libraryRules = library.map(value => libraryRuleRecordSchema.parse(value));
+  const libraryIds = new Set(libraryRules.map(record => record.rule.id));
+  return {
+    rules: [
+      ...rerail.map(value => rerailRuleSchema.parse(value))
+        .filter(document => !libraryIds.has(document.rule.id))
+        .map(document => toSnapshot(document, "bundled", "rerail")),
+      ...libraryRules.map(record => toSnapshot(record, String(record.updatedAt), "library")),
+    ],
   };
 }
 async function readRule(id: string): Promise<PlaygroundRuleSnapshot> {
-  const body = await daemonJson(
-    `${daemonOrigin}/api/rules/${encodeURIComponent(id)}`,
-    5_000,
-    "Saved rule unavailable; check the development daemon and selected rule",
-  );
-  return toSnapshot(typeof body === "object" && body !== null && "rule" in body ? body.rule : undefined);
-}
-/** List rows annotate each stored rule with its pack; the snapshot, and so its digest, is the stored rule alone. */
-function storedRuleOfListRow(row: unknown): unknown {
-  if (typeof row !== "object" || row === null || !("packId" in row)) return row;
-  const { packId: _packId, ...stored } = row;
-  return stored;
-}
-/** The rule picker reads through the supervisor so the browser stays on one origin. */
-async function readRules(): Promise<PlaygroundRuleList> {
-  const body = await daemonJson(
-    `${daemonOrigin}/api/rules`,
-    5_000,
-    "Saved rules unavailable; check the development daemon",
-  );
-  const rules = typeof body === "object" && body !== null && "rules" in body ? body.rules : undefined;
-  if (!Array.isArray(rules)) throw new Error("Development daemon returned no rule list");
-  return { rules: rules.map((row: unknown) => toSnapshot(storedRuleOfListRow(row))) };
+  const found = (await readRules()).rules.find(candidate => candidate.id === id);
+  if (found === undefined) throw new Error(`Saved rule ${id} unavailable; check the development daemon and selected rule`);
+  return found;
 }
 function stopReplay(): Promise<void> {
   clearTimeout(activeDeadline);
@@ -264,13 +275,18 @@ function activateSandboxRule(current: PlaygroundRuleSnapshot, sandbox: Sandbox):
     : { kind: "file" as const, rule: codeRuleSchema.parse(definition) };
   if (document.rule.id !== current.id || ruleDocumentDigest(document) !== current.digest)
     throw new Error("Selected rule definition does not match its id and digest.");
-  const catalog = openScopedRuleCatalog(sandbox.cwd, defaultRerailDatabasePath(sandbox.env));
+  // The sandbox's repository runs this one rule: a By Rerail rule by reference, a rule created by you from the library.
+  const database = openRerailDatabase(defaultRerailDatabasePath(sandbox.env));
   try {
-    catalog.seed(loadBundledRules());
-    catalog.setEnabled({ filter: {} }, false);
-    if (catalog.get(document.rule.id)?.kind !== document.kind) catalog.remove([document.rule.id]);
-    catalog.upsertDocument(document, { enabled: true, sourceDigest: null });
-  } finally { catalog.close(); }
+    const bundle = loadBundledCatalog();
+    const { repositoryKey } = recordCheckout(database, sandbox.cwd);
+    if (current.source === "library") upsertLibraryRule(database, bundle, document.rule, document.kind);
+    const sourceKind = current.source === "library" ? "library_rule" as const : "rerail_rule" as const;
+    setUpRepository(database, repositoryKey, { packs: [], rules: [{ sourceKind, sourceId: document.rule.id, folder: "" }] });
+    setRepositoryStarted(database, repositoryKey, true);
+  } finally {
+    database.$client.close();
+  }
 }
 
 async function run(version: number): Promise<void> {
@@ -476,7 +492,7 @@ const poll = setInterval(() => {
   void readRule(id)
     .then((current) => {
       if (!experiment || experiment.ruleId !== id || version !== revision || closing) return;
-      if (current.digest !== rule?.digest || current.updatedAt !== rule.updatedAt || current.enabled !== rule.enabled) {
+      if (current.digest !== rule?.digest || current.updatedAt !== rule.updatedAt || current.source !== rule.source) {
         rule = current;
         publishExperiment();
       }

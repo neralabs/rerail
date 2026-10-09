@@ -28,6 +28,8 @@ const ConfigurationSchema = z
     /** Absent selects the engine service's own database. */
     databasePath: z.string().min(1).optional(),
     workspaceRoot: z.string().min(1).optional(),
+    /** False for a caller without the daemon token: its runtime records, sets up and imports nothing. */
+    trusted: z.boolean().optional(),
   })
   .strict();
 export type EngineRuntimeConfiguration = z.infer<typeof ConfigurationSchema>;
@@ -86,6 +88,7 @@ function resolveRuntimeRoute(
         resolvePath(configuration.storageRoot),
         resolvePath(configuration.modelPath),
         resolvePath(configuration.databasePath ?? options.databasePath ?? defaultRerailDatabasePath()),
+        configuration.trusted ?? true,
       ]);
   if (workspaceRoot === undefined) {
     const configuredRuntimeKey = configurationKey === undefined
@@ -109,12 +112,15 @@ function resolveRuntimeRoute(
         modelPath: resolvePath(configuration.modelPath),
         databasePath: resolvePath(configuration.databasePath ?? options.databasePath ?? defaultRerailDatabasePath()),
         workspaceRoot: resolvePath(workspaceRoot),
+        trusted: configuration.trusted ?? true,
       };
+  // A trusted and an untrusted caller never share a runtime.
   const runtimeKey = JSON.stringify([
     runtimeOptions.storageRoot,
     runtimeOptions.modelPath,
     runtimeOptions.databasePath,
     runtimeOptions.workspaceRoot,
+    runtimeOptions.trusted ?? true,
   ]);
   if (configurationKey !== undefined) state.runtimeKeysByConfiguration.set(configurationKey, runtimeKey);
   return { runtimeKey, runtimeOptions };

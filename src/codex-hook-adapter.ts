@@ -11,7 +11,7 @@ import {
   type HookOutput,
 } from "./hook-adapter.js";
 import { sessionStartNote, steerHeadlines } from "./rerail-steer.js";
-import { dashboardOrigin, linkDeliveries } from "./session-presentation.js";
+import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules } from "./session-presentation.js";
 
 const CODEX_EVENTS: EventTable = {
   SessionStart: true,
@@ -68,6 +68,6 @@ export async function handleCodexEvent(
   const path = pendingPath(storageRoot, "codex", sessionId);
   // The runtime keeps steer links relative; they point at this checkout's dashboard only here.
   const cwd = requiredText(input, "cwd");
-  const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "codex", sessionId) : undefined;
+  const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "codex", sessionId, await presentedSessionNoteRules({ host: "codex", sessionId, cwd })) : undefined;
   return codexHookOutput(hook, await linkDeliveries(await routeDeliveries(path, hook, deliveries, CARRY_EVENTS), cwd), note);
 }

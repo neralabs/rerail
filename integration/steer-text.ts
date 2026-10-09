@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { linkSteers, steerBlock, steerHeadlines } from "../src/rerail-steer.js";
-import { dashboardOrigin } from "../src/session-presentation.js";
+import { steerDashboard } from "../src/session-presentation.js";
 
 /**
  * The steer block a rule delivers. Runtime/kernel deliveries carry the relative `Why?` link; pass the checkout
@@ -8,7 +8,7 @@ import { dashboardOrigin } from "../src/session-presentation.js";
  */
 export async function steerText(ruleId: string, guidance: string, cwd?: string): Promise<string> {
   const block = steerBlock(ruleId, guidance);
-  return cwd === undefined ? block : linkSteers(block, await dashboardOrigin(cwd));
+  return cwd === undefined ? block : linkSteers(block, await steerDashboard(cwd));
 }
 
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);

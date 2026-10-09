@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,7 +9,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createRerailApi } from "../src/api/http.js";
 import { languageFor } from "../src/code-rule-enforcer.js";
 import { loadNativeBinding } from "../src/native.js";
-import { operations, type RerailApiStores } from "../src/api/operations.js";
+import { operations } from "../src/api/operations.js";
+import { DatabaseApiStores } from "../src/api/stores.js";
 import { rulePackListSchema, rulePackRecommendationsSchema } from "../src/api/rule-pack-contracts.js";
 import { globPattern } from "../src/rule-pack-matcher.js";
 import {
@@ -20,8 +21,9 @@ import {
   recommendRulePacks,
   type RulePack,
 } from "../src/rule-packs.js";
-import { corePackDirectories, loadBundledRules } from "../src/rule-bootstrap.js";
-import { ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
+import { bundledRulesDirectory, corePackDirectories, loadBundledRules } from "../src/bundled-rule-documents.js";
+import { openRerailDatabase } from "../src/database.js";
+import { recordCheckout } from "../src/repository-registry.js";
 import { MOCK_CONVERSATION_RULES } from "../src/seed.js";
 
 const temporaryDirectories: string[] = [];
@@ -48,7 +50,7 @@ const pack = (id: string): RulePack => packs.find(candidate => candidate.id === 
 const ids = (found: RulePack) => found.rules.map(rule => rule.id).sort();
 const tslint = pack("tslint");
 const complexity = pack("complexity");
-const optInIds = bundled.filter(document => document.enabledByDefault === false).map(document => document.rule.id).sort();
+const optInIds = bundled.map(document => document.rule.id).sort();
 const tslintIds = optInIds.filter(id => id.startsWith("tslint:"));
 const complexityIds = optInIds.filter(id => !id.startsWith("tslint:"));
 
@@ -198,7 +200,7 @@ describe("globPattern", () => {
 
 describe("recommendRulePacks", () => {
   const reasons = (root: string, from: readonly RulePack[] = packs) =>
-    recommendRulePacks(root, from).map(({ pack: found, ruleCount, reason }) => [found.name, ruleCount, reason]);
+    recommendRulePacks(root, from).map(({ pack: found, ruleCount, reason, folder }) => [found.name, ruleCount, reason, folder]);
 
   it("picks TSLint for a TypeScript repository from its files and package.json, with the reason", async () => {
     const root = await temporaryDirectory("rerail-acme-web-");
@@ -211,10 +213,10 @@ describe("recommendRulePacks", () => {
     });
     execFileSync("git", ["init", "-q", root]);
 
-    expect(reasons(root)).toEqual([["TSLint", tslint.rules.length, "matches the typescript dependency in package.json and *.ts files in src"]]);
+    expect(reasons(root)).toEqual([["TSLint", tslint.rules.length, "matches the typescript dependency in package.json and *.ts files in src", ""]]);
   });
 
-  it("picks a repository pack only for the repository it matches, after the language packs", async () => {
+  it("picks a repository pack only for the repository it matches, after the language packs, for the whole repository", async () => {
     const root = await temporaryDirectory("rerail-acme-like-");
     writeFiles(root, {
       "api/acme_api/app.py": "app = None\n",
@@ -223,11 +225,27 @@ describe("recommendRulePacks", () => {
     });
     const withAcme = await withRepositoryPack();
 
+    // A language pack goes where its evidence is; a repository pack covers the whole repository.
     expect(reasons(root, withAcme)).toEqual([
-      ["TSLint", tslint.rules.length, "matches *.tsx files in web/src"],
-      ["acme-api", 1, "matches the acme_api package in api/acme_api"],
+      ["TSLint", tslint.rules.length, "matches *.tsx files in web/src", "web/src"],
+      ["acme-api", 1, "matches the acme_api package in api/acme_api", ""],
     ]);
-    expect(reasons(root)).toEqual([["TSLint", tslint.rules.length, "matches *.tsx files in web/src"]]);
+    expect(reasons(root)).toEqual([["TSLint", tslint.rules.length, "matches *.tsx files in web/src", "web/src"]]);
+  });
+
+  it("places a pack at the folder holding every manifest that matched, naming the shallowest in the reason", async () => {
+    const root = await temporaryDirectory("rerail-two-manifests-");
+    const typescriptManifest = JSON.stringify({ devDependencies: { typescript: "^5.9.0" } });
+    writeFiles(root, {
+      "packages/web/admin/package.json": typescriptManifest,
+      "packages/web/package.json": typescriptManifest,
+      "packages/web/README.md": "web\n",
+      "api/app.py": "print(1)\n",
+    });
+
+    expect(reasons(root)).toEqual([["TSLint", tslint.rules.length, "matches the typescript dependency in packages/web/package.json", "packages/web"]]);
+    writeFiles(root, { "tools/build.ts": "export {};\n" });
+    expect(recommendRulePacks(root).map(({ folder }) => folder)).toEqual([""]);
   });
 
   it("recommends nothing for a stack no matching pack covers, not even the hand-picked complexity pack, outside Git and ignoring dependency folders", async () => {
@@ -295,14 +313,25 @@ describe("recommendRulePacks", () => {
 });
 
 describe("rule pack API", () => {
-  it("lists the packs, recommends packs for the daemon's repository, and tags listed rules with their pack", async () => {
-    const root = await temporaryDirectory("rerail-rule-pack-api-");
-    writeFiles(root, { "src/main.ts": "export {};\n" });
-    const catalog = ScopedRuleCatalog.open(join(root, "rerail.sqlite"), { repositoryId: "repo-a", workspaceRoot: root });
-    catalog.seed(bundled.filter(document => document.rule.id === "tslint:triple-equals"));
-    catalog.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0]!, id: "ours" });
-    const app = createRerailApi({ rules: () => catalog } as unknown as RerailApiStores, operations, { version: "0.0.0-test" });
-    const listedRules = z.object({ rules: z.array(z.object({ rule: z.object({ id: z.string() }), packId: z.string().nullable() })) });
+  it("lists the packs, recommends packs with their folders for a checkout, and tags By Rerail rules with their pack", async () => {
+    const root = realpathSync(await temporaryDirectory("rerail-rule-pack-api-"));
+    const checkout = join(root, "web-app");
+    writeFiles(checkout, { "src/main.ts": "export {};\n" });
+    execFileSync("git", ["init", "-q", checkout]);
+    const databasePath = join(root, "rerail.sqlite");
+    const database = openRerailDatabase(databasePath);
+    let repositoryKey: string;
+    try {
+      repositoryKey = recordCheckout(database, checkout).repositoryKey;
+    } finally {
+      database.$client.close();
+    }
+    const stores = new DatabaseApiStores(databasePath, {
+      health: () => ({ pid: process.pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
+      origin: () => "http://127.0.0.1:4737",
+    });
+    const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
+    const rerailRules = z.object({ rules: z.array(z.object({ rule: z.object({ id: z.string() }), packId: z.string().nullable() })) });
     const get = async <T>(url: string, schema: z.ZodType<T>): Promise<T> => schema.parse(await (await app.request(url)).json());
     try {
       const listed = await get("/api/rule-packs", rulePackListSchema);
@@ -311,14 +340,17 @@ describe("rule pack API", () => {
       expect(listed.packs.find(found => found.id === "tslint")!.rules.find(rule => rule.id === "tslint:triple-equals"))
         .toEqual({ id: "tslint:triple-equals", kind: "file", title: tslint.rules.find(rule => rule.id === "tslint:triple-equals")!.title, group: "TSLint", mode: "steer", on: true });
 
-      const recommended = await get("/api/rule-packs/recommendations", rulePackRecommendationsSchema);
-      expect(recommended).toEqual({ repositoryId: "repo-a", recommendations: [{ packId: "tslint", ruleCount: tslint.rules.length, reason: "matches *.ts files in src" }] });
+      const recommended = await get(`/api/rule-packs/recommendations?checkout=${encodeURIComponent(checkout)}`, rulePackRecommendationsSchema);
+      expect(recommended).toEqual({
+        repositoryKey, checkoutPath: checkout,
+        recommendations: [{ packId: "tslint", ruleCount: tslint.rules.length, reason: "matches *.ts files in src", folder: "src" }],
+      });
 
-      const { rules } = await get("/api/rules", listedRules);
-      expect(Object.fromEntries(rules.map(stored => [stored.rule.id, stored.packId])))
-        .toEqual({ "tslint:triple-equals": "tslint", ours: null });
+      const { rules } = await get("/api/rerail-rules", rerailRules);
+      const packOf = Object.fromEntries(rules.map(listedRule => [listedRule.rule.id, listedRule.packId]));
+      expect(packOf["tslint:triple-equals"]).toBe("tslint");
     } finally {
-      catalog.close();
+      stores.close();
     }
   });
 });

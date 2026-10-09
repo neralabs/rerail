@@ -119,7 +119,6 @@ pub struct GitWorkspace {
     pub base_files: Vec<BaseFile>,
     pub overlays: Vec<WorkspaceOverlay>,
     pub nested_roots: Vec<PathBuf>,
-    repositories: Vec<(String, std::sync::Arc<gix::ThreadSafeRepository>)>,
 }
 
 #[derive(Debug)]
@@ -592,18 +591,6 @@ impl GitWorkspace {
 /// The result is sorted by path and object identity. The caller can use the
 /// Git object IDs as aliases only after it compares them with evaluated bytes.
 pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
-    let mut discovered_worktrees = BTreeSet::new();
-    discover_inner(root, &mut discovered_worktrees)?.ok_or_else(|| {
-        DiscoveryError::Failed(
-            "Git repository discovery returned an already-discovered worktree".to_owned(),
-        )
-    })
-}
-
-fn discover_inner(
-    root: &Path,
-    discovered_worktrees: &mut BTreeSet<PathBuf>,
-) -> Result<Option<GitWorkspace>, DiscoveryError> {
     let repository = gix::discover(root).map_err(|error| {
         let message = format!("cannot discover Git repository: {error}");
         match error {
@@ -622,9 +609,6 @@ fn discover_inner(
         })?
         .canonicalize()
         .map_err(|error| discovery_error("cannot resolve Git worktree", error))?;
-    if !discovered_worktrees.insert(worktree.clone()) {
-        return Ok(None);
-    }
     let case = if repository
         .filesystem_options()
         .map_err(|error| discovery_error("cannot read core.ignoreCase", error))?
@@ -780,69 +764,32 @@ fn discover_inner(
             WorkspaceOverlay { path, kind }
         })
         .collect();
+    // A nested checkout (a gitlink or an untracked repository) is judged by its own repository,
+    // never folded into this one; its directory is overlaid so no clean tree claims it.
     let nested_roots = nested_paths
         .into_iter()
         .filter(|path| !mandatory_nested_ignored(&ignore, path))
-        .map(|path| worktree.join(path))
-        .filter(|path| path.is_dir() && path.join(".git").exists())
-        .collect::<Vec<_>>();
-    let mut repositories = Vec::new();
-    for nested_root in &nested_roots {
-        let prefix = nested_root
-            .strip_prefix(&worktree)
-            .map_err(|error| discovery_error("cannot resolve nested repository path", error))?
-            .to_string_lossy()
-            .replace('\\', "/");
-        let nested = match discover_inner(nested_root, discovered_worktrees) {
-            Ok(Some(nested)) => nested,
-            Ok(None) => continue,
-            // A nested repository Git cannot describe (a scratch `git init` without commits) is
-            // untracked content of this worktree: overlaid, so its files are read, never restored.
-            Err(_) => {
-                if !overlays.iter().any(|overlay| overlay.path == prefix) {
-                    overlays.push(WorkspaceOverlay {
-                        path: prefix,
-                        kind: OverlayKind::Untracked,
-                    });
-                }
-                continue;
+        .filter(|path| {
+            let root = worktree.join(path);
+            root.is_dir() && root.join(".git").exists()
+        })
+        .map(|path| {
+            if !overlays.iter().any(|overlay| overlay.path == path) {
+                overlays.push(WorkspaceOverlay {
+                    path: path.clone(),
+                    kind: OverlayKind::Untracked,
+                });
             }
-        };
-        base_files.extend(nested.base_files.into_iter().filter_map(|mut file| {
-            file.path = format!("{prefix}/{}", file.path);
-            (!ignored(&ignore, &file.path)).then_some(file)
-        }));
-        overlays.extend(nested.overlays.into_iter().filter_map(|mut overlay| {
-            overlay.path = format!("{prefix}/{}", overlay.path);
-            (!ignored(&ignore, &overlay.path)).then_some(overlay)
-        }));
-        trees.extend(nested.trees.into_iter().map(|mut tree| {
-            tree.prefix = if tree.prefix.is_empty() {
-                prefix.clone()
-            } else {
-                format!("{prefix}/{}", tree.prefix)
-            };
-            tree
-        }));
-        repositories.extend(nested.repositories.into_iter().map(
-            |(repository_prefix, repository)| {
-                let repository_prefix = if repository_prefix.is_empty() {
-                    prefix.clone()
-                } else {
-                    format!("{prefix}/{repository_prefix}")
-                };
-                (repository_prefix, repository)
-            },
-        ));
-    }
+            worktree.join(path)
+        })
+        .collect::<Vec<_>>();
     let common_directory = repository.common_dir().to_path_buf();
     let repository_hash_algorithm = hash_algorithm(repository.object_hash())?;
-    repositories.push((String::new(), std::sync::Arc::new(repository.into_sync())));
     overlays.sort_by(|left, right| left.path.cmp(&right.path));
     trees.sort_by_key(|tree| tree.id);
     base_files.sort_by(|left, right| left.path.cmp(&right.path));
 
-    Ok(Some(GitWorkspace {
+    Ok(GitWorkspace {
         worktree_root: worktree,
         common_directory,
         hash_algorithm: repository_hash_algorithm,
@@ -851,8 +798,7 @@ fn discover_inner(
         base_files,
         overlays,
         nested_roots,
-        repositories,
-    }))
+    })
 }
 
 #[cfg(test)]
@@ -1116,10 +1062,11 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// A submodule checkout discovery cannot describe is untracked content of the outer worktree:
-    /// its directory is overlaid, so neither it nor its ancestors are clean.
+    /// A submodule checkout is a separate repository, never folded into the outer worktree: its
+    /// files are not base files, and its directory is an overlaid nested root, so neither it nor
+    /// its ancestors are clean.
     #[test]
-    fn an_undiscoverable_submodule_checkout_is_untracked_content() {
+    fn a_submodule_checkout_is_an_overlaid_nested_root() {
         let root = fixture_directory("undiscoverable-submodule");
         let submodule = root.join("submodule");
         let parent = root.join("parent");
@@ -1145,13 +1092,13 @@ mod tests {
             ],
         );
         run_git(&parent, &["commit", "-am", "add submodule"]);
-        // The checkout's own .rerailignore cannot be read.
-        std::fs::create_dir(parent.join("vendor/sub/.rerailignore")).unwrap();
 
-        let workspace = match discover(&parent) {
-            Ok(workspace) => workspace,
-            Err(error) => panic!("an undiscoverable submodule failed discovery: {error}"),
-        };
+        let workspace = discover(&parent).unwrap();
+
+        assert_eq!(
+            workspace.nested_roots,
+            [parent.canonicalize().unwrap().join("vendor/sub")]
+        );
 
         assert_eq!(
             workspace.overlays,
@@ -1161,6 +1108,12 @@ mod tests {
             }]
         );
         assert_eq!(workspace.clean_source_alias("vendor/sub/nested.py"), None);
+        assert!(
+            !workspace
+                .base_files
+                .iter()
+                .any(|file| file.path.starts_with("vendor/sub/"))
+        );
         assert!(workspace.clean_source_alias("vendor/other.py").is_some());
         let clean = workspace
             .clean_trees()
@@ -1168,127 +1121,6 @@ mod tests {
             .map(|(prefix, _)| prefix)
             .collect::<Vec<_>>();
         assert_eq!(clean, ["lib"]);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn parent_rerailignore_excludes_nested_repository_files() {
-        let root = fixture_directory("nested-ignore");
-        let submodule = root.join("submodule");
-        let parent = root.join("parent");
-        initialize_repository(&submodule, &[("nested.py", b"print('nested')\n")]);
-        initialize_repository(
-            &parent,
-            &[
-                (".rerailignore", b"nested/**\n"),
-                ("root.py", b"print('root')\n"),
-            ],
-        );
-        run_git(
-            &parent,
-            &[
-                "-c",
-                "protocol.file.allow=always",
-                "submodule",
-                "add",
-                "../submodule",
-                "nested",
-            ],
-        );
-        run_git(&parent, &["commit", "-am", "add submodule"]);
-
-        let workspace = discover(&parent).unwrap();
-
-        assert!(
-            !workspace
-                .index_files()
-                .iter()
-                .any(|(path, _)| path.starts_with("nested/"))
-        );
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn parent_rerailignore_reincludes_nested_descendants() {
-        let root = fixture_directory("nested-negation");
-        let submodule = root.join("submodule");
-        let parent = root.join("parent");
-        initialize_repository(
-            &submodule,
-            &[
-                ("drop.py", b"print('drop')\n"),
-                ("keep.py", b"print('keep')\n"),
-            ],
-        );
-        initialize_repository(
-            &parent,
-            &[
-                (".rerailignore", b"nested/**\n!nested/keep.py\n"),
-                ("root.py", b"print('root')\n"),
-            ],
-        );
-        run_git(
-            &parent,
-            &[
-                "-c",
-                "protocol.file.allow=always",
-                "submodule",
-                "add",
-                "../submodule",
-                "nested",
-            ],
-        );
-        run_git(&parent, &["commit", "-am", "add submodule"]);
-
-        let workspace = discover(&parent).unwrap();
-
-        assert!(
-            workspace
-                .index_files()
-                .contains(&("nested/keep.py".to_owned(), true))
-        );
-        assert!(
-            !workspace
-                .index_files()
-                .iter()
-                .any(|(path, _)| path == "nested/drop.py")
-        );
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn parent_rerailignore_does_not_prune_nested_repositories_for_rerail_files() {
-        let root = fixture_directory("nested-rerail-file");
-        let submodule = root.join("submodule");
-        let parent = root.join("parent");
-        initialize_repository(&submodule, &[("source.py", b"print('nested')\n")]);
-        initialize_repository(
-            &parent,
-            &[
-                (".rerailignore", b"nested/.rerail\n"),
-                ("root.py", b"print('root')\n"),
-            ],
-        );
-        run_git(
-            &parent,
-            &[
-                "-c",
-                "protocol.file.allow=always",
-                "submodule",
-                "add",
-                "../submodule",
-                "nested",
-            ],
-        );
-        run_git(&parent, &["commit", "-am", "add submodule"]);
-
-        let workspace = discover(&parent).unwrap();
-
-        assert!(
-            workspace
-                .index_files()
-                .contains(&("nested/source.py".to_owned(), true))
-        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -1371,22 +1203,22 @@ mod tests {
         let workspace = discover(&linked).unwrap();
         assert_eq!(workspace.worktree_root, linked_root);
         assert!(
-            workspace
+            !workspace
                 .base_files
                 .iter()
-                .any(|file| file.path == "nested/nested.rs")
+                .any(|file| file.path.starts_with("nested/"))
         );
+        assert_eq!(workspace.nested_roots, [linked_root.join("nested")]);
         assert!(
             workspace
-                .repositories
+                .overlays
                 .iter()
-                .any(|(prefix, _)| prefix == "nested")
+                .any(|overlay| overlay.path == "nested")
         );
 
         std::fs::copy(parent.join("nested/.git"), linked.join("nested/.git")).unwrap();
         let workspace = discover(&linked).unwrap();
         assert_eq!(workspace.worktree_root, linked.canonicalize().unwrap());
-        assert_eq!(workspace.repositories.len(), 1);
         assert!(
             !workspace
                 .base_files
@@ -1423,7 +1255,6 @@ mod tests {
                 kind: OverlayKind::Untracked,
             }],
             nested_roots: Vec::new(),
-            repositories: Vec::new(),
         };
         assert!(workspace.read_source("escape/source.py", u64::MAX).is_err());
         std::fs::remove_dir_all(root).unwrap();
@@ -1450,7 +1281,6 @@ mod tests {
                 kind: OverlayKind::Untracked,
             }],
             nested_roots: Vec::new(),
-            repositories: Vec::new(),
         };
         let (sender, receiver) = std::sync::mpsc::channel();
         let reader = std::thread::spawn(move || {
@@ -1521,7 +1351,6 @@ mod tests {
                 })
                 .collect(),
             nested_roots: Vec::new(),
-            repositories: Vec::new(),
         };
         let clean = workspace
             .clean_trees()
@@ -1560,7 +1389,6 @@ mod tests {
                 kind: OverlayKind::Untracked,
             }],
             nested_roots: Vec::new(),
-            repositories: Vec::new(),
         };
         let clean = workspace
             .clean_trees()
@@ -1611,7 +1439,6 @@ mod tests {
             base_files: Vec::new(),
             overlays: Vec::new(),
             nested_roots: Vec::new(),
-            repositories: Vec::new(),
         }
     }
 

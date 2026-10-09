@@ -256,7 +256,7 @@ fn stored_workspace(
         owner,
         _maintenance: None,
     });
-    workspace.add_code_rule(code_rule).unwrap();
+    workspace.add_code_rule(code_rule, None).unwrap();
     workspace
 }
 
@@ -366,7 +366,7 @@ fn package_marker_changes_refresh_unchanged_siblings_and_match_a_fresh_index() {
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace.state.lock().unwrap().storage =
         Some(storage_context_in(root.to_str().unwrap(), directory.store()).unwrap());
-    workspace.add_code_rule(&code_rule).unwrap();
+    workspace.add_code_rule(&code_rule, None).unwrap();
     index_workspace(&workspace);
     assert_eq!(all_pages(&workspace, MAXIMUM_PAGE_BYTES), json!([]));
     workspace.completion_task().compute().unwrap();
@@ -381,7 +381,7 @@ fn package_marker_changes_refresh_unchanged_siblings_and_match_a_fresh_index() {
             )
             .unwrap(),
         );
-        fresh.add_code_rule(&code_rule).unwrap();
+        fresh.add_code_rule(&code_rule, None).unwrap();
         index_workspace(&fresh);
         let results = all_pages(&fresh, MAXIMUM_PAGE_BYTES);
         fresh.close();
@@ -435,7 +435,7 @@ fn directory_reuse_restores_results_and_evidence_on_a_second_workspace() {
     let mut first = CodeRuleDslWorkspace::new();
     first.state.lock().unwrap().storage =
         Some(storage_context_in(root.to_str().unwrap(), directory.store()).unwrap());
-    first.add_code_rule(&code_rule).unwrap();
+    first.add_code_rule(&code_rule, None).unwrap();
     let cold = index_workspace(&first);
     let expected = all_pages(&first, MAXIMUM_PAGE_BYTES);
     first.completion_task().compute().unwrap();
@@ -444,7 +444,7 @@ fn directory_reuse_restores_results_and_evidence_on_a_second_workspace() {
     let mut second = CodeRuleDslWorkspace::new();
     second.state.lock().unwrap().storage =
         Some(storage_context_in(root.to_str().unwrap(), directory.store()).unwrap());
-    second.add_code_rule(&code_rule).unwrap();
+    second.add_code_rule(&code_rule, None).unwrap();
     let reused = index_workspace(&second);
     assert_eq!(all_pages(&second, MAXIMUM_PAGE_BYTES), expected);
     assert!(
@@ -475,7 +475,7 @@ fn warm_index_after_hidden_edit(
     let root = directory.0.join("repo");
     let code_rule = print_code_rule();
     let mut first = storage_workspace(&root, directory.store());
-    first.add_code_rule(&code_rule).unwrap();
+    first.add_code_rule(&code_rule, None).unwrap();
     index_workspace(&first);
     assert_eq!(all_pages(&first, MAXIMUM_PAGE_BYTES), json!([]));
     first.completion_task().compute().unwrap();
@@ -483,7 +483,7 @@ fn warm_index_after_hidden_edit(
 
     hide(&root);
     let mut second = storage_workspace(&root, directory.store());
-    second.add_code_rule(&code_rule).unwrap();
+    second.add_code_rule(&code_rule, None).unwrap();
     let indexed = index_workspace(&second);
     let violations = located(&all_pages(&second, MAXIMUM_PAGE_BYTES));
     second.close();
@@ -538,15 +538,15 @@ fn an_interactive_apply_runs_while_a_repository_index_plans_its_restore() {
     let root = directory.0.join("repo");
     let code_rule = helper_call_code_rule();
     let mut warm = storage_workspace(&root, directory.store());
-    warm.add_code_rule(&code_rule).unwrap();
+    warm.add_code_rule(&code_rule, None).unwrap();
     index_workspace(&warm);
     warm.completion_task().compute().unwrap();
     warm.close();
 
     let mut scan = storage_workspace(&root, directory.store());
-    scan.add_code_rule(&code_rule).unwrap();
+    scan.add_code_rule(&code_rule, None).unwrap();
     let mut session = CodeRuleDslWorkspace::new();
-    session.add_code_rule(&code_rule).unwrap();
+    session.add_code_rule(&code_rule, None).unwrap();
     let interactive = std::rc::Rc::new(std::cell::RefCell::new(None));
     let mut edit = WorkspaceApplyTask {
         state: Arc::clone(&session.state),
@@ -625,6 +625,71 @@ fn storage_workspace(root: &std::path::Path, store: PathBuf) -> CodeRuleDslWorks
 }
 
 #[test]
+fn repository_index_skips_only_the_nested_checkouts_the_host_names() {
+    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let directory = committed_repository("nested-checkouts", &[("main.py", b"print(1)\n")]);
+    let root = directory.0.join("repo");
+    for path in [
+        "vendor/cloned/lib.py",
+        "vendor/linked/lib.py",
+        "node_modules/x/lib.py",
+    ] {
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, b"print(2)\n").unwrap();
+    }
+    git(&root.join("vendor/cloned"), &["init", "-q"]);
+    std::fs::write(
+        root.join("vendor/linked/.git"),
+        b"gitdir: ../../elsewhere\n",
+    )
+    .unwrap();
+    std::fs::create_dir(root.join("node_modules/x/.git")).unwrap();
+    let mut workspace = storage_workspace(&root, directory.store());
+    workspace.add_code_rule(&print_code_rule(), None).unwrap();
+
+    let mut responses = Vec::new();
+    loop {
+        let mut task = WorkspaceIndexTask::for_test(
+            Arc::clone(&workspace.state),
+            Arc::clone(&workspace.closed),
+            u32::MAX,
+        );
+        task.options.ignored_directories = vec!["node_modules".to_owned()];
+        // `vendor/linked` holds a `.git` entry too, but only the host decides what is a checkout of its own.
+        task.options.nested_checkouts = vec!["vendor/cloned".to_owned()];
+        let response: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
+        let done = response["done"] != json!(false);
+        responses.push(response);
+        if done {
+            break;
+        }
+    }
+
+    for response in &responses {
+        assert_eq!(response["nestedCheckouts"], json!(["vendor/cloned"]));
+        assert_eq!(response["discoveredFiles"], json!(2));
+    }
+    let paths = workspace
+        .state
+        .lock()
+        .unwrap()
+        .files
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(
+        paths.iter().all(|path| !path.contains("vendor/cloned")),
+        "nested checkout files were indexed: {paths:?}"
+    );
+    assert!(
+        paths.iter().any(|path| path == "vendor/linked/lib.py"),
+        "a folder holding a stray `.git` was not indexed: {paths:?}"
+    );
+    workspace.close();
+}
+
+#[test]
 fn repository_index_reads_at_most_one_batch_per_call_and_keeps_no_source_resident() {
     let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
     const FILES: usize = 80;
@@ -638,7 +703,7 @@ fn repository_index_reads_at_most_one_batch_per_call_and_keeps_no_source_residen
         .collect::<Vec<_>>();
     let directory = committed_repository("bounded-index", &files);
     let mut workspace = storage_workspace(&directory.0.join("repo"), directory.store());
-    workspace.add_code_rule(&print_code_rule()).unwrap();
+    workspace.add_code_rule(&print_code_rule(), None).unwrap();
     let mut read = 0;
     for call in 1..=FILES {
         let response = index_chunk(&workspace, u32::MAX);
@@ -682,7 +747,7 @@ fn repository_index_reports_paths_relative_to_the_storage_root() {
         ],
     );
     let mut workspace = storage_workspace(&directory.0.join("repo/sub"), directory.store());
-    workspace.add_code_rule(&print_code_rule()).unwrap();
+    workspace.add_code_rule(&print_code_rule(), None).unwrap();
     index_until_done(&workspace, u32::MAX);
     assert_eq!(
         located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES)),
@@ -717,7 +782,7 @@ fn repository_index_reports_unreadable_sources_as_failures() {
         ],
     );
     let mut workspace = storage_workspace(&directory.0.join("repo"), directory.store());
-    workspace.add_code_rule(&print_code_rule()).unwrap();
+    workspace.add_code_rule(&print_code_rule(), None).unwrap();
     let mut failures = index_until_done(&workspace, 64)
         .iter()
         .flat_map(|response| response["failures"].as_array().cloned().unwrap_or_default())
@@ -770,7 +835,7 @@ fn host_files_with_clean_blob_bytes_are_aliased_and_promoted() {
     let edited = repository.clean_source_alias("pkg/b.py").unwrap();
     std::fs::write(root.join("pkg/c.py"), "print(4)\n").unwrap();
     let mut workspace = storage_workspace(&root, directory.store());
-    workspace.add_code_rule(&print_code_rule()).unwrap();
+    workspace.add_code_rule(&print_code_rule(), None).unwrap();
     crate::git_workspace::reset_source_alias_hashes();
     apply_buffer(
         &workspace,
@@ -977,7 +1042,7 @@ fn removing_a_package_marker_never_reintroduces_the_removed_file() {
     };
     let deleted: Value = serde_json::from_str(&remove.compute().unwrap()).unwrap();
     let mut fresh = CodeRuleDslWorkspace::new();
-    fresh.add_code_rule(&code_rule).unwrap();
+    fresh.add_code_rule(&code_rule, None).unwrap();
     let expected = apply_json(
         &fresh,
         1,
@@ -994,7 +1059,7 @@ fn an_edit_without_a_module_keeps_the_module_the_workspace_markers_give() {
     let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace
-        .add_code_rule(&package_marker_code_rule())
+        .add_code_rule(&package_marker_code_rule(), None)
         .unwrap();
     let files = json!([
         { "path": "pkg/__init__.py", "language": "python", "source": "" },
@@ -1033,7 +1098,7 @@ fn buffer_inline_and_repository_ingestion_agree_on_python_module_context() {
     ]);
 
     let mut inline = CodeRuleDslWorkspace::new();
-    inline.add_code_rule(&code_rule).unwrap();
+    inline.add_code_rule(&code_rule, None).unwrap();
     let inline_result = apply_json(&inline, 1, files.clone());
     assert_eq!(
         located(&inline_result["evaluation"]["violations"]),
@@ -1042,7 +1107,7 @@ fn buffer_inline_and_repository_ingestion_agree_on_python_module_context() {
     inline.close();
 
     let mut buffered = CodeRuleDslWorkspace::new();
-    buffered.add_code_rule(&code_rule).unwrap();
+    buffered.add_code_rule(&code_rule, None).unwrap();
     let buffered_result = apply_buffer(&buffered, 1, &files).expect("buffer request with modules");
     assert_eq!(
         buffered_result["evaluation"]["violations"],
@@ -1053,7 +1118,7 @@ fn buffer_inline_and_repository_ingestion_agree_on_python_module_context() {
     let mut indexed = CodeRuleDslWorkspace::new();
     indexed.state.lock().unwrap().storage =
         Some(storage_context_in(root.to_str().unwrap(), repository.store()).unwrap());
-    indexed.add_code_rule(&code_rule).unwrap();
+    indexed.add_code_rule(&code_rule, None).unwrap();
     index_workspace(&indexed);
     assert_eq!(
         all_pages(&indexed, MAXIMUM_PAGE_BYTES),
@@ -1331,7 +1396,7 @@ fn a_registered_code_rule_reports_ast_violations_and_missing_llm_capability() {
         ]),
     );
     let mut workspace = CodeRuleDslWorkspace::new();
-    workspace.add_code_rule(&code_rule).unwrap();
+    workspace.add_code_rule(&code_rule, None).unwrap();
     let applied = apply_json(
         &workspace,
         1,
@@ -1587,7 +1652,7 @@ fn selector_index_misses_keep_input_budget_failures() {
     assert!(narrowed.state.lock().unwrap().files["plain.py"].selector_skipped);
     narrowed.close();
     let mut unstored = CodeRuleDslWorkspace::new();
-    unstored.add_code_rule(&capped).unwrap();
+    unstored.add_code_rule(&capped, None).unwrap();
     let fresh = apply_json(&unstored, 1, files);
     unstored.close();
     assert_eq!(
@@ -1739,7 +1804,7 @@ fn javascript_and_php_documents_have_distinct_persisted_grammars() {
 fn an_empty_resident_document_resolves_without_a_store() {
     let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
     let mut workspace = CodeRuleDslWorkspace::new();
-    workspace.add_code_rule(&print_code_rule()).unwrap();
+    workspace.add_code_rule(&print_code_rule(), None).unwrap();
     apply_json(
         &workspace,
         1,
@@ -1793,7 +1858,7 @@ fn evicted_resident_and_unstored_workspaces_publish_the_same_results() {
     let resident = stored_workspace(&store, "/eviction-resident", &code_rule);
     let evicted = stored_workspace(&store, "/eviction-evicted", &code_rule);
     let mut unstored = CodeRuleDslWorkspace::new();
-    unstored.add_code_rule(&code_rule).unwrap();
+    unstored.add_code_rule(&code_rule, None).unwrap();
     for (index, (files, removed)) in revisions.iter().enumerate() {
         let revision = index as u32 + 1;
         let apply = |workspace: &CodeRuleDslWorkspace| -> Value {
@@ -1910,7 +1975,7 @@ fn package_context_refresh_visits_only_affected_paths_across_index_batches() {
         }]),
     );
     let mut workspace = CodeRuleDslWorkspace::new();
-    workspace.add_code_rule(&code_rule).unwrap();
+    workspace.add_code_rule(&code_rule, None).unwrap();
 
     PACKAGE_CONTEXT_PATH_VISITS.store(0, Ordering::Relaxed);
     let batches = FILES.div_ceil(BATCH);
@@ -1957,7 +2022,7 @@ fn repository_index_carries_each_verified_blob_hash_to_publication() {
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace.state.lock().unwrap().storage =
         Some(storage_context_in(root.to_str().unwrap(), directory.store()).unwrap());
-    workspace.add_code_rule(&code_rule).unwrap();
+    workspace.add_code_rule(&code_rule, None).unwrap();
 
     crate::git_workspace::reset_source_alias_hashes();
     let indexed = index_workspace(&workspace);
@@ -1986,7 +2051,7 @@ fn a_bulk_restored_package_marker_names_unhosted_files_and_its_removal_rederives
     let mut first = CodeRuleDslWorkspace::new();
     first.state.lock().unwrap().storage =
         Some(storage_context_in(root.to_str().unwrap(), directory.store()).unwrap());
-    first.add_code_rule(&code_rule).unwrap();
+    first.add_code_rule(&code_rule, None).unwrap();
     index_workspace(&first);
     first.completion_task().compute().unwrap();
     first.close();
@@ -1994,7 +2059,7 @@ fn a_bulk_restored_package_marker_names_unhosted_files_and_its_removal_rederives
     let mut restored = CodeRuleDslWorkspace::new();
     restored.state.lock().unwrap().storage =
         Some(storage_context_in(root.to_str().unwrap(), directory.store()).unwrap());
-    restored.add_code_rule(&code_rule).unwrap();
+    restored.add_code_rule(&code_rule, None).unwrap();
     let indexed = index_workspace(&restored);
     assert!(
         restored.state.lock().unwrap().files["alpha/__init__.py"].restored_local_results > 0,
@@ -2052,7 +2117,7 @@ fn a_package_marker_offered_inline_names_unhosted_siblings() {
         }]),
     );
     let mut workspace = CodeRuleDslWorkspace::new();
-    workspace.add_code_rule(&code_rule).unwrap();
+    workspace.add_code_rule(&code_rule, None).unwrap();
     apply_json(
         &workspace,
         1,
@@ -2266,7 +2331,7 @@ fn a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_after_discovery() {
     let root = directory.0.join("repo");
     let code_rule = print_code_rule();
     let mut first = storage_workspace(&root, directory.store());
-    first.add_code_rule(&code_rule).unwrap();
+    first.add_code_rule(&code_rule, None).unwrap();
     index_workspace(&first);
     assert_eq!(all_pages(&first, MAXIMUM_PAGE_BYTES), json!([]));
     first.completion_task().compute().unwrap();
@@ -2274,7 +2339,7 @@ fn a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_after_discovery() {
 
     // Discovery runs here, while `api/a.py` is clean.
     let mut second = storage_workspace(&root, directory.store());
-    second.add_code_rule(&code_rule).unwrap();
+    second.add_code_rule(&code_rule, None).unwrap();
     let edited = root.join("api/a.py");
     super::index::gate_next_plan(move || {
         let modified = std::fs::metadata(&edited).unwrap().modified().unwrap();
@@ -2348,7 +2413,7 @@ fn checkouts_sharing_a_store_restore_only_results_of_their_own_checkout_bytes() 
     }
     let index = |root: &std::path::Path| {
         let mut workspace = storage_workspace(root, directory.store());
-        workspace.add_code_rule(&code_rule).unwrap();
+        workspace.add_code_rule(&code_rule, None).unwrap();
         let indexed = index_workspace(&workspace);
         let violations = located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES));
         workspace.completion_task().compute().unwrap();
@@ -2423,7 +2488,7 @@ fn selector_indexes_skip_only_error_free_tapes_that_cannot_match() {
     let narrowed = stored_workspace(&store, "/selectors-second", &lambdas);
     let applied = apply_json(&narrowed, 1, files.clone());
     let mut unstored = CodeRuleDslWorkspace::new();
-    unstored.add_code_rule(&lambdas).unwrap();
+    unstored.add_code_rule(&lambdas, None).unwrap();
     let fresh = apply_json(&unstored, 1, files);
     unstored.close();
     for key in ["violations", "failures"] {

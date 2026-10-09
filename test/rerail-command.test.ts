@@ -109,7 +109,6 @@ describe("/rerail", () => {
   });
 
   it.each([
-    { state: "never", running: false },
     { state: "stopped", running: false },
     { state: "started", running: true },
   ])("with no daemon and no session, asks the launcher whether Rerail is on here ($state)", async ({ state, running }) => {
@@ -125,34 +124,50 @@ describe("/rerail", () => {
       : [`○ Rerail is not on in ${basename(root)}.`, "  Start it with /rerail-start."]);
   });
 
-  it("hands the session read the launcher's start state for when no daemon answers", async () => {
-    const root = await launcherPackage(`[ "$1" = state ]\nprintf 'never\\n'`);
+  it("says a started repository that is not set up checks no rules, and how to set it up", async () => {
     mocks.presentation.mockResolvedValue({
-      status: "not-on-here", text: "", url: null, parts: [], presence: "compact", repositoryState: "never", counts: null,
+      status: "not-set-up", text: "", url: null, parts: [], presence: "compact", repositoryState: "not-set-up", counts: null,
+    });
+    mocks.rulesDashboard.mockResolvedValue({ url: null, reason: "daemon unavailable" });
+    const { run, notices } = commandHarness();
+    await run("rerail");
+    expect(notices[0]?.message.split("\n").slice(0, 2)).toEqual([
+      "○ Rerail is on in acme-web, which is not set up yet: no rules are checked.",
+      "  Set it up with /rerail-start (rerail start).",
+    ]);
+  });
+
+  it("hands the session read the launcher's start state for when no daemon answers", async () => {
+    const root = await launcherPackage(`[ "$1" = state ]\nprintf 'stopped\\n'`);
+    mocks.presentation.mockResolvedValue({
+      status: "not-on-here", text: "", url: null, parts: [], presence: "compact", repositoryState: "stopped", counts: null,
     });
     mocks.rulesDashboard.mockResolvedValue({ url: null, reason: "daemon unavailable" });
     const { run } = commandHarness({ packageRoot: root, cwd: () => root });
     await run("rerail");
     const [request] = mocks.presentation.mock.calls[0] as [{ startState: () => Promise<string> }];
-    expect(await request.startState()).toBe("never");
+    expect(await request.startState()).toBe("stopped");
   });
 });
 
 describe("/rerail-ui", () => {
-  it("opens the dashboard in the browser", async () => {
-    mocks.rulesDashboard.mockResolvedValue({ url: "http://127.0.0.1:4737/#rules", reason: null });
+  const scoped = "http://127.0.0.1:4737/?repository=remote%3Agithub.com%2Facme%2Fapp&checkout=%2Fworkspace#rules";
+
+  it("opens the rules page scoped to this checkout in the browser", async () => {
+    mocks.rulesDashboard.mockResolvedValue({ url: scoped, reason: null });
     const { run, notices } = commandHarness();
     await run("rerail-ui");
-    expect(mocks.openDashboard).toHaveBeenCalledWith("http://127.0.0.1:4737/#rules");
-    expect(notices).toEqual([{ message: "Opening http://127.0.0.1:4737/#rules", level: "info" }]);
+    expect(mocks.rulesDashboard).toHaveBeenCalledWith({ cwd: "/workspace/acme-web" });
+    expect(mocks.openDashboard).toHaveBeenCalledWith(scoped);
+    expect(notices).toEqual([{ message: `Opening ${scoped}`, level: "info" }]);
   });
 
   it("says so when the page opened as a tab in the Orca window", async () => {
-    mocks.rulesDashboard.mockResolvedValue({ url: "http://127.0.0.1:4737/#rules", reason: null });
+    mocks.rulesDashboard.mockResolvedValue({ url: scoped, reason: null });
     mocks.openDashboard.mockResolvedValue("orca-tab");
     const { run, notices } = commandHarness();
     await run("rerail-ui");
-    expect(notices).toEqual([{ message: "Opening http://127.0.0.1:4737/#rules in the Orca window", level: "info" }]);
+    expect(notices).toEqual([{ message: `Opening ${scoped} in the Orca window`, level: "info" }]);
   });
 
   it("reports why there is no dashboard instead of opening nothing", async () => {
@@ -219,5 +234,46 @@ describe("/rerail-rage-quit", () => {
     expect(notices).toEqual([expect.objectContaining({ message: expect.stringMatching(/^\/rerail-rage-quit: /u), level: "error" })]);
     expect(detach).toHaveBeenCalledOnce();
     expect(reattach).toHaveBeenCalledOnce();
+  });
+});
+
+describe("/rerail-start", () => {
+  /**
+   * A launcher that answers `state --set-up` with `setUp`, `state` with `state`, and echoes every other command's
+   * arguments.
+   */
+  const launcher = (state: string, setUp = "set-up") => launcherPackage([
+    `if [ "$*" = "state --set-up" ]; then printf '${setUp}\\n'`,
+    `elif [ "$1" = state ]; then printf '${state}\\n'`,
+    `else printf 'ran %s\\n' "$*"; fi`,
+  ].join("\n"));
+
+  it.each([
+    { choice: "Add the recommended rules", ran: "ran start" },
+    { choice: "I'll pick rules myself", ran: "ran start --no-packs" },
+  ])("asks how to set up a repository that is not set up: $choice", async ({ choice, ran }) => {
+    const root = await launcher("not-set-up", "not-set-up");
+    const reattach = vi.fn();
+    const { run, notices, selections } = commandHarness({ packageRoot: root, cwd: () => root, reattach }, choice);
+    await run("rerail-start");
+    expect(selections).toEqual([["Add the recommended rules", "I'll pick rules myself"]]);
+    expect(notices).toEqual([{ message: ran, level: "info" }]);
+    expect(reattach).toHaveBeenCalledOnce();
+  });
+
+  it("asks how to set up a repository Rerail has never started, which reads as stopped", async () => {
+    const root = await launcher("stopped", "not-set-up");
+    const { run, notices, selections } = commandHarness({ packageRoot: root, cwd: () => root }, "I'll pick rules myself");
+    await run("rerail-start");
+    expect(selections).toEqual([["Add the recommended rules", "I'll pick rules myself"]]);
+    expect(notices).toEqual([{ message: "ran start --no-packs", level: "info" }]);
+  });
+
+  it("starts a stopped repository that is set up without asking", async () => {
+    const root = await launcher("stopped");
+    const { run, notices, selections } = commandHarness({ packageRoot: root, cwd: () => root });
+    await run("rerail-start");
+    expect(selections).toEqual([]);
+    expect(notices).toEqual([{ message: "ran start", level: "info" }]);
   });
 });

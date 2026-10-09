@@ -250,7 +250,7 @@ async function repairManagedInstallation(packageRoot: string): Promise<SqliteRep
   return result;
 }
 
-const REPOSITORY_START_STATES: ReadonlySet<string> = new Set(["started", "stopped", "never"]);
+const REPOSITORY_START_STATES: ReadonlySet<string> = new Set(["started", "stopped", "not-set-up", "never"]);
 
 /** Starts Rerail in the health-check repository; any failure is the staged package's and is thrown. */
 async function startHealthRepository(cli: string, workspace: string, env: NodeJS.ProcessEnv): Promise<void> {

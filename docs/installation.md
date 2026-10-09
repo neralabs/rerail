@@ -46,8 +46,7 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
 
    Existing entries from other tools are preserved byte-for-byte; a backup
    `<file>.<timestamp>.bak` is written only when a file changes. Re-running is
-   a no-op. `--harness <list>` limits it; `--project <dir>` also seeds empty
-   `<dir>/.<harness>/conversation-rules.json` files.
+   a no-op. `--harness <list>` limits it.
 
 3. **Start** — the daemon comes up (`rerail daemon start`) unless `--skip-start`.
    Adapters also autostart it on the first session, so this is a convenience.
@@ -95,8 +94,8 @@ The following commands describe the managed installation, once `~/.rerail/bin`
 is on `PATH`:
 
 ```sh
-rerail start             # start Rerail in this repository (first time: also sets it up)
-rerail stop              # stop Rerail in this repository; the daemon keeps serving others
+rerail start             # start Rerail in this checkout (first time: sets the repository up with its recommended rule packs)
+rerail stop              # stop Rerail in this checkout; the daemon keeps serving others
 rerail daemon start      # start the background daemon (--port, --host, --open, --dev, ...)
 rerail daemon stop       # stop the background daemon
 rerail status            # whether Rerail is started here, otherwise daemon/database/kernel
@@ -107,7 +106,7 @@ rerail settings --session ID --mode log             # save this workspace's defa
 rerail update check      # is a newer version on the channel?
 rerail update            # install it; `rerail update rollback` undoes it
 rerail reset             # delete this repository's session history, across all worktrees; rules stay
-rerail rules export      # dump global and this project's rules to ~/.rerail/rules.json
+rerail rules export      # dump your rules and every repository's configuration to ~/.rerail/rules.json
 rerail install --remove  # take Rerail out of every coding agent, stop the daemon, back up the database
 ```
 
@@ -127,19 +126,17 @@ or installs a version in the background; `rerail update` and re-running
 selects the npm dist-tag (`latest`, `beta`, or `next`).
 
 Rerail keeps one database, `~/.rerail/rerail.sqlite` (`$RERAIL_HOME/rerail.sqlite`),
-holding the rules and the sessions, events, and work links of every repository
-on the machine; each session is attributed to its repository (`rerail status`
-names the file). The daemon's pages list the repository it was started in.
-Every runtime start and `rerail daemon start` seed the rules bundled with the package
-without overwriting a rule you edited or created (bootstrap records the digest
-each row was seeded from and only refreshes rows that still match it).
+holding each repository's rule configuration, the rules you created, and the
+sessions, events, and work links of every repository on the machine; each
+session is attributed to its repository (`rerail status` names the file). The
+daemon serves every repository; its pages are scoped to one with
+`?repository=<key>&checkout=<path>`. The rules that ship with Rerail are read
+from the package and run only in repositories that add them (see
+[Rule scoping](rule-scoping.md)).
 `rerail update` first copies the database to `~/.rerail/rerail.sqlite.pre-update`;
 `rerail rules export [--output <file>]` and `rerail rules import <file>` move
-rules by hand. `rerail seed` fills the database with mock rules to work
-against. JSON rule files in
-`<project>/.omp|.pi|.claude|.codex|.cursor/conversation-rules.json` (as
-`{"version": 1, "rules": []}` plus rules) are also read, but a database row
-with the same id wins.
+your rules and each repository's configuration by hand. `rerail seed` fills the
+database with mock rules to work against.
 
 Policy evaluation caches parsed files and results in a content store. Which
 one a Rerail uses depends on where its package lives, not on a flag: the
@@ -156,27 +153,26 @@ no store and reports that on its first scan.
 
 ### Starting and stopping Rerail
 
-Rerail is off in every repository until it is started there. Set-up and rules
-belong to the repository; on and off belong to each checkout, stored in
-`~/.rerail/rerail.sqlite`. A linked worktree follows the nearest checkout of its
-repository that contains it and was turned on or off, at any depth, and
-otherwise the main checkout, until it is started or stopped itself.
-
-Starting or stopping a checkout also reaches every worktree that follows it:
-the worktrees inside it without their own setting, and, from the main
-checkout, every linked worktree without its own setting, wherever it is on
-disk. Worktrees with their own setting, and checkouts that contain this one,
-keep their state.
+Rerail is off in every repository until it is started there. Rules belong to
+the repository; on and off belong to each checkout, stored in
+`~/.rerail/rerail.sqlite`. A checkout without its own value follows the nearest
+checkout of the same repository that contains it and has one, and otherwise
+the repository. Two clones of one remote are one repository.
 
 - `/rerail-start` (OMP, Pi, Claude Code, Cursor) or `rerail start` (terminal,
   and the only spelling in Codex, which cannot expose an exact third-party
-  slash-command name) starts Rerail in the current checkout. In a
-  repository that has never been set up, it also does the first-time set-up
-  and seeds the default rules.
-- `/rerail-stop` or `rerail stop` stops Rerail in the current checkout: no
-  recording, evaluation, steering, or daemon autostart from its sessions.
-  Recorded history, rules, and the shared daemon stay, and other repositories
-  are unaffected.
+  slash-command name) starts Rerail in the current checkout and the checkouts
+  inside it. In a repository that is not set up, it also sets it up with the
+  rule packs recommended for it: a language pack in the folder it matched, a
+  repository pack for the whole repository (`rerail start --no-packs` adds
+  none, and you pick them on the rules page). Until a repository is set up,
+  its sessions are recorded but no rules run.
+- `/rerail-stop` or `rerail stop` stops Rerail in the current checkout and the
+  checkouts inside it: no recording, evaluation, steering, or daemon autostart
+  from their sessions. Recorded history, rules, and the shared daemon stay,
+  and other repositories are unaffected.
+- `rerail start --repository` and `rerail stop --repository` act on every
+  checkout of the repository, clearing their own values.
 
 `rerail daemon start` and `rerail daemon stop` control the background daemon
 itself, which serves every started repository on the machine.

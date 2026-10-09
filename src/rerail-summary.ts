@@ -1,5 +1,5 @@
 import { rerailCommandList, type CommandSigil } from "./rerail-commands.js";
-import type { RepositoryStartState } from "./repository-start.js";
+import type { RepositoryStartState } from "./repository-model.js";
 import type { SessionPresentation } from "./session-presentation.js";
 
 export interface RerailSummaryInput {
@@ -22,13 +22,17 @@ const NOT_RUNNING: readonly string[] = ["✕ Rerail is not running.", "  Start i
 const notOnLines = ({ repositoryName, sigil }: RerailSummaryInput): string[] =>
   [`○ Rerail is not on in ${repositoryName}.`, `  Start it with ${sigil}rerail-start.`];
 
+const notSetUpLines = ({ repositoryName, sigil }: RerailSummaryInput): string[] =>
+  [`○ Rerail is on in ${repositoryName}, which is not set up yet: no rules are checked.`, `  Set it up with ${sigil}rerail-start (rerail start).`];
+
 const onLine = ({ repositoryName }: RerailSummaryInput): string => `● Rerail is on in this repo · ${repositoryName}`;
 
 /** The headline without a session (Cursor, or OMP/Pi where none is attached): from the repository's state. */
 function repositoryHeadline(input: RerailSummaryInput): readonly string[] {
   const { repositoryState, ruleCount, rulesUrl } = input;
   if (repositoryState === null) return NOT_RUNNING;
-  if (repositoryState !== "started") return notOnLines(input);
+  if (repositoryState === "not-set-up") return notSetUpLines(input);
+  if (repositoryState === "stopped") return notOnLines(input);
   const lines = [onLine(input)];
   if (ruleCount !== null) lines.push(`  ${plural(ruleCount, "rule")} on`);
   if (rulesUrl !== null) lines.push(`  Dashboard → ${rulesUrl}`);
@@ -47,6 +51,8 @@ function headline(input: RerailSummaryInput): readonly string[] {
   switch (presentation.status) {
     case "not-on-here":
       return notOnLines(input);
+    case "not-set-up":
+      return notSetUpLines(input);
     case "not-running":
       return NOT_RUNNING;
     case "unavailable":

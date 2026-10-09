@@ -46,7 +46,7 @@ function build() {
   el.rail = h("div.rail", { id: "rail" }, h("div.line"));
   el.tl = h("div.tl", { id: "tl" });
   el.scroll = h("div.scroll", { id: "sscroll" }, h("div.tlwrap", null, el.rail, el.tl));
-  el.empty = h("div.list", { hidden: true }, h("div.empty", null, h("h3", null, "No agent sessions yet"), h("p", null, "Your first Claude Code, Cursor or Codex session in this project shows up here.")));
+  el.empty = h("div.list", { hidden: true }, h("div.empty", null, h("h3", null, "No agent sessions yet"), h("p", null, "Your first Claude Code, Cursor or Codex session in this repository shows up here.")));
   el.sess = h("div.sess", null,
     h("aside", null,
       h("div.spick", null, h("label", { for: "spick" }, "Session"), el.pick),

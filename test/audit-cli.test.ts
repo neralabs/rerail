@@ -6,15 +6,25 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { auditControlsResponseSchema } from "../src/api/operations.js";
 import { RerailDaemon } from "../src/daemon.js";
 import { resetRepositoryHistory } from "../src/database.js";
-import { openScopedRuleCatalog, resolveRepositoryContext } from "../src/scoped-rule-catalog.js";
 import { NativeCodeRuleEnforcer } from "../src/code-rule-enforcer.js";
-import { bootstrapCodeRuleDslCatalog } from "../src/code-rule-dsl-catalog.js";
+import { codeRuleSchema } from "../src/code-rule-schema.js";
 import { RerailRuntime, type RerailRuntimeOptions } from "../src/runtime.js";
 import { runAuditCommand } from "../src/audit-cli.js";
+import { setUpTestRepository, testCodeRuleCatalog } from "./support/repository-rules.js";
 import { SqliteAuditControlStore } from "../src/audit-control.js";
 import { auditRequestSchema } from "../src/audit-control-schema.js";
 import { registerRerailCommands, type RerailCommandHost } from "../src/rerail-command.js";
 import { isRerailStarted, workspaceStartState } from "../src/repository-start.js";
+
+const NO_PRINT = codeRuleSchema.parse({
+  format: "rerail.policy/v1", id: "test:no-print", revision: 1, mode: "block",
+  scope: { include: ["api/**/*.py"], exclude: [] },
+  clauses: [{
+    id: "no-print",
+    violation: { code: "PRINT", anchor: "witness.span", message: "Use logging" },
+    forbid: { regex: { pattern: "\\bprint\\(", source: "file.content" } },
+  }],
+});
 
 const fixtures: Array<{ root: string; runtime: RerailRuntime; daemon: RerailDaemon }> = [];
 afterEach(async () => {
@@ -36,17 +46,7 @@ async function fixture(createAuditor?: RerailRuntimeOptions["createAuditor"]) {
   execFileSync("git", ["add", ".gitignore", "api/clean.py"], { cwd: root });
   execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-m", "baseline"], { cwd: root });
   const database = join(home, "rerail.sqlite");
-  const rules = openScopedRuleCatalog(root, database);
-  rules.upsertCodeRule({
-    format: "rerail.policy/v1", id: "test:no-print", revision: 1, mode: "block",
-    scope: { include: ["api/**/*.py"], exclude: [] },
-    clauses: [{
-      id: "no-print",
-      violation: { code: "PRINT", anchor: "witness.span", message: "Use logging" },
-      forbid: { regex: { pattern: "\\bprint\\(", source: "file.content" } },
-    }],
-  });
-  rules.close();
+  const repositoryKey = setUpTestRepository(root, { library: [{ kind: "file", rule: NO_PRINT }] }, database);
   const runtime = new RerailRuntime({
     storageRoot: join(root, ".rerail/sessions"), databasePath: database,
     workspaceRoot: root,
@@ -59,7 +59,7 @@ async function fixture(createAuditor?: RerailRuntimeOptions["createAuditor"]) {
     stateFile: join(home, "daemon.json"), kernelSocketPath: join(root, "engine.sock"),
   });
   fixtures.push({ root, runtime, daemon });
-  return { root, home, database, daemon, runtime };
+  return { root, home, database, daemon, runtime, repositoryKey };
 }
 
 describe("rerail scan and settings CLI", () => {
@@ -74,20 +74,28 @@ describe("rerail scan and settings CLI", () => {
       cwd: () => root,
       reattach: async () => { reattached += 1; },
     });
+    const selections: string[][] = [];
     const ui = {
       notify(message: string) { notices.push(message); },
-      select: async () => undefined,
+      // The first start asks how to set the repository up; the person takes the recommended rules.
+      select: async (_title: string, options: string[]) => { selections.push(options); return "Add the recommended rules"; },
       input: async () => undefined,
       confirm: async () => false,
     };
 
-    // Stopping a repository that was never set up leaves it unset, so a later start still sets it up.
+    // Stopping a repository Rerail never recorded changes nothing, so a later start still sets it up.
     await commands.get("rerail-stop")!.handler("", { ui });
     expect(notices.at(-1)).toBe(`○ Rerail has not been started in ${name}, so there is nothing to stop. Start it with /rerail-start.`);
-    expect(workspaceStartState(root)).toBe("never");
+    expect(workspaceStartState(root)).toBe("stopped");
 
     await commands.get("rerail-start")!.handler("", { ui });
-    expect(notices.at(-1)).toMatch(new RegExp(`^● Rerail is on in ${name}\\. \\d+ rules are on\\.$`, "u"));
+    // A repository Rerail never set up asks how to set it up on its first start, though it reads as stopped, and is
+    // set up with the rule packs recommended for it (none here).
+    expect(selections).toEqual([["Add the recommended rules", "I'll pick rules myself"]]);
+    expect(notices.at(-1)).toBe([
+      `● Rerail is on in ${name}. 0 rules are on.`,
+      "  No rule pack fits this repository yet. Add rules on the rules page (/rerail-ui).",
+    ].join("\n"));
     expect(isRerailStarted(root)).toBe(true);
 
     await commands.get("rerail-stop")!.handler("", { ui });
@@ -112,7 +120,9 @@ describe("rerail scan and settings CLI", () => {
       updateSettings: () => undefined,
       acceptsPath: () => true,
       auditGeneratedEdits: async () => ({ revision: 0, disposition: "continue", violations: [], failures: [] }),
+      // The diagnostic is claimed and finished per checkout through the audit hooks, as the router does.
       audit: async (sessionId, input) => {
+        if (input.audit !== undefined && !input.audit.claim(options.workspaceRoot)) return [];
         automaticAuditRequests.push({ sessionId, scope: input.scope, mode: input.mode });
         const auditId = options.audits.start({
           sessionId,
@@ -125,6 +135,7 @@ describe("rerail scan and settings CLI", () => {
           paths: [],
         });
         options.audits.finish(auditId, { status: "completed", violations: [], failures: [] });
+        input.audit?.finish(options.workspaceRoot, auditId);
         return [auditId];
       },
       interrupt: () => undefined,
@@ -196,8 +207,8 @@ describe("rerail scan and settings CLI", () => {
     controls.close();
   });
   it("keeps another live runtime able to audit after its repository history is reset", async () => {
-    const { root, home, database } = await fixture();
-    resetRepositoryHistory(database, resolveRepositoryContext(root).repositoryId);
+    const { home, database, repositoryKey } = await fixture();
+    resetRepositoryHistory(database, repositoryKey);
     let output = "";
     expect(await runAuditCommand("scan", ["--session", "s1", "--scope", "repository", "--wait", "--json"], {
       home, stdout: { write: text => { output += text; return true; } },
@@ -208,11 +219,7 @@ describe("rerail scan and settings CLI", () => {
   it("applies saved log mode to new edits while an explicit audit is still running", async () => {
     const gate = Promise.withResolvers<void>();
     const { root, database, runtime, daemon } = await fixture(options => {
-      const databasePath = join(options.workspaceRoot, "home", "rerail.sqlite");
-      const catalog = bootstrapCodeRuleDslCatalog({ databasePath, store: openScopedRuleCatalog(options.workspaceRoot, databasePath) });
-      const auditor = new NativeCodeRuleEnforcer(catalog, options);
-      const close = auditor.close.bind(auditor);
-      auditor.close = async () => { await close(); catalog.close(); };
+      const auditor = new NativeCodeRuleEnforcer(testCodeRuleCatalog([NO_PRINT]), options);
       const audit = auditor.audit.bind(auditor);
       let auditRequestCount = 0;
       auditor.audit = async (...args) => {

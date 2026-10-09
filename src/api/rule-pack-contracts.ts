@@ -27,6 +27,12 @@ export const rulePackSchema = z.object({
 export const rulePackListSchema = z.object({ packs: z.array(rulePackSchema) });
 
 export const rulePackRecommendationsSchema = z.object({
-  repositoryId: z.string(),
-  recommendations: z.array(z.object({ packId: z.string(), ruleCount: z.number().int().positive(), reason: z.string() }).strict()),
+  repositoryKey: z.string(),
+  checkoutPath: z.string().describe("The checkout that was scanned: the target's, else the main checkout on disk, else the most recently seen."),
+  recommendations: z.array(z.object({
+    packId: z.string(),
+    ruleCount: z.number().int().positive(),
+    reason: z.string(),
+    folder: z.string().describe("Folder to add the pack in, relative to the repository root; \"\" is the whole repository."),
+  }).strict()),
 });
